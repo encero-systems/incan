@@ -117,8 +117,11 @@ impl StdlibSourceInputs {
     pub(super) fn read_module(&mut self, module: &[String]) -> Option<String> {
         let source = match &self.selection {
             StdlibSourceSelection::Legacy => {
-                self.retained.lock().ok()?.legacy_lookup = true;
                 let relative = incan_lang::lang::stdlib::stdlib_stub_path(module)?;
+                // A local/non-stdlib name cannot consult ambient stdlib files. Registered legacy lookups,
+                // including missing files, still prevent reuse because their discovery has no original owner.
+                self.retained.lock().ok()?.legacy_lookup = true;
+                tracing::trace!(target: "incan::invocation", decision = "legacy_metadata_lookup", module = ?module);
                 let path = super::find_stdlib_file(&relative)?;
                 return std::fs::read_to_string(&path)
                     .map_err(|error| {

@@ -227,23 +227,22 @@ All declared paths must be normalized relative paths to regular package files. A
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
 
-## `[tool.incan.envs]`
+## `[envs]`
 
-Named project environments define reusable command contexts for `incan env`. They are useful when a project has different test, build, or release workflows that need different environment variables, working directories, or script arguments. The ambient `default` environment is always available; defining `[tool.incan.envs.default]` customizes it.
+Named project environments define reusable command contexts for `incan env`. They are useful when a project has different test, build, or release workflows that need different environment variables, working directories, or script arguments. The ambient `default` environment is always available; defining `[envs.default]` customizes it.
 
 ```toml
-[tool.incan.envs.default]
+[envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
-[tool.incan.envs.default.scripts]
+[envs.default.scripts]
 test = ["incan", "test", "tests/"]
 
-[tool.incan.envs.release]
-extends = ["default"]
+[envs.release]
 requires-incan = ">=0.3,<0.4"
 env-vars = { INCAN_NO_BANNER = "1" }
 
-[tool.incan.envs.release.scripts]
+[envs.release.scripts]
 build = ["incan", "build", "src/main.incn", "--locked"]
 ```
 
@@ -251,7 +250,7 @@ Fields:
 
 | Field      | Type                  | Description                                                                 |
 | ---------- | --------------------- | --------------------------------------------------------------------------- |
-| `extends`  | list of strings       | Other environments to merge before this one                                 |
+| `extends`  | string or list of strings       | Other environments to merge before this one                                 |
 | `requires-incan` | string          | Additional Incan toolchain requirement for this env                         |
 | `detached` | bool                  | Do not include `default` automatically                                      |
 | `cwd`      | string                | Working directory for scripts, relative to the project root unless absolute |
@@ -591,10 +590,10 @@ fancy_logging = "0.3"
 [rust-dev-dependencies]
 criterion = "0.5"
 
-[tool.incan.envs.default]
+[envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
-[tool.incan.envs.default.scripts]
+[envs.default.scripts]
 test = ["incan", "test", "tests/"]
 ```
 

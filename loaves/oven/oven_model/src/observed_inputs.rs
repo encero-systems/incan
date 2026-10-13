@@ -139,6 +139,51 @@ impl InputObservations {
         }
     }
 
+    /// Observe a regular file and its plain directory ancestors once beneath an authenticated root.
+    ///
+    /// Returns the same non-following leaf metadata retained by this observer, so a byte consumer can reuse it
+    /// instead of restating the initial filesystem checks. The caller must still reconcile `current()` after use
+    /// and authenticate the enclosing root independently. Invalid coordinates, missing inputs, links and wrong
+    /// file types are errors; unsupported metadata identities disable acceleration without bypassing validation.
+    pub fn observe_regular_file_within(&mut self, root: &Path, path: &Path) -> io::Result<fs::Metadata> {
+        self.observe_regular_file_within_with_metadata(root, path, |path| fs::symlink_metadata(path))
+    }
+
+    /// Share each actual syscall result between path validation and the existing observation state.
+    fn observe_regular_file_within_with_metadata(
+        &mut self,
+        root: &Path,
+        path: &Path,
+        mut metadata: impl FnMut(&Path) -> io::Result<fs::Metadata>,
+    ) -> io::Result<fs::Metadata> {
+        let relative = path.strip_prefix(root).map_err(io::Error::other)?;
+        if !root.is_absolute()
+            || relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(io::Error::other(
+                "observed file requires a normalized descendant coordinate",
+            ));
+        }
+        let mut prefix = root.to_path_buf();
+        for component in relative.components() {
+            let parent = metadata(&prefix)?;
+            if !parent.is_dir() || parent.file_type().is_symlink() {
+                return Err(io::Error::other("observed file ancestor must be a plain directory"));
+            }
+            self.retain_observation(&prefix, Some(observation_stamp(&parent)?), true);
+            prefix.push(component);
+        }
+        let leaf = metadata(path)?;
+        if !leaf.is_file() || leaf.file_type().is_symlink() {
+            return Err(io::Error::other("observed input must be a regular non-symlink file"));
+        }
+        self.retain_observation(path, Some(observation_stamp(&leaf)?), false);
+        Ok(leaf)
+    }
+
     /// Merge an actual consulted input with prior structural observations without changing its original generation.
     fn observe_path(&mut self, path: &Path, structural: bool) {
         if let Some(existing) = self.paths.get_mut(path) {
@@ -152,6 +197,15 @@ impl InputObservations {
                 return;
             }
         };
+        self.retain_observation(path, stamp, structural);
+    }
+
+    /// Preserve the first generation when supplied metadata and ordinary path probes share an input.
+    fn retain_observation(&mut self, path: &Path, stamp: Option<FileStamp>, structural: bool) {
+        if let Some(existing) = self.paths.get_mut(path) {
+            existing.structural &= structural;
+            return;
+        }
         self.unsupported |= stamp.as_ref().is_some_and(|stamp| !stamp.supports_retention());
         self.paths
             .insert(path.to_path_buf(), PathObservation { stamp, structural });
@@ -181,5 +235,102 @@ fn observed_model_path(path: &Path) -> io::Result<Option<FileStamp>> {
         Ok(_) => Err(io::Error::other("unsupported project model input")),
         Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::InputObservations;
+    use std::{fs, path::PathBuf};
+
+    /// Initial validation visits each coordinate once and preserves the existing same-size edit guard.
+    #[test]
+    fn regular_file_observation_shares_metadata_and_detects_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let parent = root.path().join("source");
+        fs::create_dir(&parent)?;
+        let file = parent.join("loaf.toml");
+        fs::write(&file, b"original")?;
+        let mut inputs = InputObservations::default();
+        let mut visited = Vec::<PathBuf>::new();
+        let metadata = inputs.observe_regular_file_within_with_metadata(root.path(), &file, |path| {
+            visited.push(path.to_path_buf());
+            fs::symlink_metadata(path)
+        })?;
+        assert_eq!(visited, [root.path().to_path_buf(), parent, file.clone()]);
+        assert_eq!(metadata.len(), 8);
+        assert_eq!(inputs.len(), 3);
+        assert!(inputs.current());
+        fs::write(&file, b"modified")?;
+        fs::File::options()
+            .write(true)
+            .open(&file)?
+            .set_times(fs::FileTimes::new().set_modified(metadata.modified()?))?;
+        assert!(!inputs.current());
+        // Reobserving cannot overwrite the first generation and hide a change during one operation.
+        inputs.observe_regular_file_within(root.path(), &file)?;
+        assert!(!inputs.current());
+        Ok(())
+    }
+
+    /// Plain path validation refuses links, wrong file types and escaping coordinates before reuse.
+    #[test]
+    fn regular_file_observation_refuses_path_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let parent = root.path().join("source");
+        fs::create_dir(&parent)?;
+        let file = parent.join("loaf.toml");
+        fs::write(&file, b"original")?;
+        let held = root.path().join("held");
+        fs::rename(&parent, &held)?;
+        std::os::unix::fs::symlink(&held, &parent)?;
+        assert!(
+            InputObservations::default()
+                .observe_regular_file_within(root.path(), &file)
+                .is_err()
+        );
+        fs::remove_file(&parent)?;
+        fs::rename(&held, &parent)?;
+        let link = parent.join("link");
+        std::os::unix::fs::symlink(&file, &link)?;
+        for invalid in [
+            link,
+            parent,
+            root.path().join("missing"),
+            root.path().join("../outside"),
+        ] {
+            assert!(
+                InputObservations::default()
+                    .observe_regular_file_within(root.path(), &invalid)
+                    .is_err()
+            );
+        }
+        assert!(
+            InputObservations::default()
+                .observe_regular_file_within(root.path(), root.path())
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// A parent replaced during the initial walk cannot be retained even if the new file has identical bytes.
+    #[test]
+    fn regular_file_observation_detects_parent_replacement_during_walk() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let parent = root.path().join("source");
+        fs::create_dir(&parent)?;
+        let file = parent.join("loaf.toml");
+        fs::write(&file, b"original")?;
+        let mut inputs = InputObservations::default();
+        inputs.observe_regular_file_within_with_metadata(root.path(), &file, |path| {
+            if path == file {
+                fs::rename(&parent, root.path().join("held"))?;
+                fs::create_dir(&parent)?;
+                fs::write(&file, b"original")?;
+            }
+            fs::symlink_metadata(path)
+        })?;
+        assert!(!inputs.current());
+        Ok(())
     }
 }

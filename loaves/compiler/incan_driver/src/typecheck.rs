@@ -73,7 +73,7 @@ pub struct TypecheckModuleArtifacts {
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
     /// byte-stable across runs of the same source.
-    warnings: Vec<CliDiagnostic>,
+    pub(crate) warnings: Vec<CliDiagnostic>,
 }
 
 /// Typecheck a collected graph in dependency-safe order and retain one result for every input module plus the
@@ -88,6 +88,7 @@ pub fn typecheck_modules_with_import_graph_artifacts(
     c_abi_plan: Option<&CAbiVerificationPlan>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<TypecheckModuleArtifacts, CliDiagnosticFailure> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
     let declared = manifest.map(|m| m.declared_rust_crate_names());
     let module_idx_by_key = module_key_index(modules);
     let mut diagnostics_out = Vec::new();

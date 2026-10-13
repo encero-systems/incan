@@ -233,19 +233,6 @@ fn stable_id_root(path: &Path) -> PathBuf {
     }
 }
 
-/// Discover and enforce project-level toolchain constraints for a test path, when it belongs to a project.
-fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
-    let start = if path.is_file() {
-        path.parent().unwrap_or_else(|| Path::new("."))
-    } else {
-        path
-    };
-    if let Some(manifest) = incan_driver::project::discover_effective_project_manifest(start)? {
-        incan_driver::cargo_policy::enforce_project_toolchain_constraint(&manifest)?;
-    }
-    Ok(())
-}
-
 /// Stable test identifier used by `-k`, `--list`, and machine-readable reports.
 fn stable_test_id(test: &TestInfo, root: &Path) -> String {
     let file_path = test.file_path.canonicalize().unwrap_or_else(|_| test.file_path.clone());
@@ -1470,7 +1457,6 @@ fn collect_selected_tests(
     } = options;
     let stage = trace_test_stage("discovery");
     let path = Path::new(path);
-    enforce_test_path_toolchain_constraint(path)?;
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
     let rust_roots = if *languages != TestLanguages::Incan {
@@ -1517,6 +1503,7 @@ fn collect_selected_tests(
         )?
     };
     if let Some(manifest) = session.manifest.as_ref() {
+        incan_driver::cargo_policy::enforce_project_toolchain_constraint(manifest)?;
         let session_root =
             std::fs::canonicalize(manifest.project_root()).unwrap_or_else(|_| manifest.project_root().to_path_buf());
         if session_root != authority_root {
@@ -1568,7 +1555,7 @@ fn collect_selected_tests(
             .ok_or_else(|| CliError::failure("test command context escaped before collection"))?;
         context_mut.test_generation = owner.test_generation(&session)?;
         for root in rust_roots {
-            let prepared = rust::prepare(&root, context_mut, package_features)?;
+            let prepared = rust::prepare(&root, context_mut, package_features, owner)?;
             all_tests.extend(prepared.tests.iter().cloned());
             context_mut.rust_roots.insert(root, prepared);
         }

@@ -126,7 +126,7 @@ pub fn version_project(options: VersionCommandOptions) -> CliResult<ExitCode> {
 /// List available project environments.
 ///
 /// Names are returned in deterministic order. The ambient `default` environment is always listed, even when it has no
-/// explicit `[tool.incan.envs.default]` table.
+/// explicit `[envs.default]` table.
 pub fn env_list(format: EnvOutputFormat, project: Option<&Path>) -> CliResult<ExitCode> {
     let context = load_env_context(project)?;
     let names = context.config.env_names();
@@ -891,10 +891,10 @@ mod tests {
             name = "demo"
             version = "0.1.0"
 
-            [tool.incan.envs.release]
+            [envs.release]
             requires-incan = ">999.0.0"
 
-            [tool.incan.envs.release.scripts]
+            [envs.release.scripts]
             probe = ["incan", "--version"]
             "#,
         )?;

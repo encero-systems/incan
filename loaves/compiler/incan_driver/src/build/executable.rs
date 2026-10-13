@@ -24,9 +24,7 @@ use incan_provider::FeatureSelection;
 #[derive(Default)]
 pub struct ExecutableBuildOwner {
     authority: ProjectSourceAuthorityDigester,
-    native_preparation: Option<oven_rustc::native_loaf::NativeLoafConsumerPreparation>,
-    native_plan: Option<RetainedExecutableDependencies<ModelInputs>>,
-    native_store: Option<(PathBuf, oven_store::store::OvenStoreLimits)>,
+    native_plans: std::collections::BTreeMap<PathBuf, super::native_loaf_plan::RetainedNativeLoafPlan>,
     /// Successfully published output receipt, reconciled independently of dependency selection.
     native_receipt: Option<RetainedOutputReceipt>,
 }
@@ -150,6 +148,12 @@ pub fn build_executable(
 }
 
 impl ExecutableBuildOwner {
+    /// Run metadata-only checking through this serial owner using the single canonical driver pipeline.
+    /// The request returns diagnostics and warning output, never a native artifact or execution permission.
+    pub fn check(&mut self, request: &super::check::CheckRequest) -> CliResult<super::check::CheckOutput> {
+        super::check::execute_request(request, &mut self.authority)
+    }
+
     /// Borrow the canonical parser-only session for a fresh test collection request.
     ///
     /// The same owner, typed lock and input reconciler used by builds guard retention. Collection mode is part of
@@ -225,10 +229,33 @@ impl ExecutableBuildOwner {
                 SessionPurpose::Artifacts => {
                     crate::session::CompilationSession::discover_for_oven(entry, features, sdk_profile)?
                 }
+                SessionPurpose::CheckMetadata => {
+                    return Err(CliError::failure("metadata-only checks cannot prepare a test session"));
+                }
             }));
         }
         self.authority
             .compilation_session(root, entry, features, sdk_profile, purpose)
+    }
+
+    /// Share ordinary native preparation between builds and Rust tests in the same serial owner.
+    /// Each output has its own retained state; the producer reconciles dependencies, configuration and physical
+    /// inputs on every request. Runtime data and test results are never retained here.
+    pub fn native_loaf_plan(
+        &mut self,
+        store: &oven_store::store::OvenStore,
+        receipt: &oven_store::OvenReceipt,
+        request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+    ) -> CliResult<(
+        oven_store::OvenReceipt,
+        std::sync::Arc<oven_rustc::plan::OvenDirectRustcPlanSelection>,
+        String,
+        bool,
+    )> {
+        self.native_plans
+            .entry(request.output.to_path_buf())
+            .or_default()
+            .select(store, receipt, request)
     }
 
     /// Select and execute a receipt-bound native executable through existing Oven operations, retaining the same
@@ -242,32 +269,35 @@ impl ExecutableBuildOwner {
         let started = Instant::now();
 
         // ---- Declared inputs: reuse only the original reconciled preparation in this Store ----
-        let store_key = (request.store.clone(), request.limits);
-        if self.native_store.as_ref() != Some(&store_key) {
-            self.native_preparation = None;
-            self.native_plan = None;
-            self.native_store = Some(store_key);
-        }
         let store = OvenStore::new(&request.store, request.limits);
-        let (receipt, retained_plan, report, plan_reused) =
-            super::native_loaf_plan::select_declared_native_loaf_plan_retained(
-                &store,
-                &request.source_receipt,
-                &request.declaration,
-                &request.rustc,
-                &request.graph,
-                &request.index,
-                &request.blobs,
-                &request.preparation_output,
-                &mut self.native_preparation,
-                &mut self.native_plan,
-            )?;
+        let declaration = request
+            .declaration
+            .canonicalize()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let manifest = oven_model::manifest::ProjectManifest::load(&declaration)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let dependencies = manifest.rust_dependency_values();
+        let (receipt, selection, report, plan_reused) = self.native_loaf_plan(
+            &store,
+            &request.source_receipt,
+            &oven_rustc::native_loaf::NativeLoafConsumerRequest {
+                graph: &request.graph,
+                index: &request.index,
+                blobs: &request.blobs,
+                output: &request.preparation_output,
+                rustc: &request.rustc,
+                target: &request.source_receipt.intent.target,
+                profile: &request.source_receipt.intent.profile,
+                dependencies: &dependencies,
+                declaration_owner: manifest.project_root(),
+                domain: "target",
+            },
+        )?;
         let native_preparation: serde_json::Value =
             serde_json::from_str(&report).map_err(|error| CliError::failure(error.to_string()))?;
         let selection_seconds = started.elapsed().as_secs_f64();
 
         // ---- Physical execution: the existing receipt-bound executor checks the source and output ----
-        let selection = &retained_plan.selection;
         let plan = selection
             .source_artifact_plan(&request.source_key)
             .map_err(|error| CliError::failure(error.to_string()))?;
@@ -294,9 +324,6 @@ impl ExecutableBuildOwner {
         receipt_path.push(".receipt.json");
         let receipt_reused =
             RetainedOutputReceipt::publish(&mut self.native_receipt, &receipt, &PathBuf::from(receipt_path))?;
-        if retained_plan.native_inputs_current() {
-            self.native_plan = Some(retained_plan);
-        }
         Ok(serde_json::json!({
             "output_digest":result.output_digest, "source_digest":result.source_digest,
             "receipt_identity":receipt.identity, "build_unit_identity":receipt.build_unit_identity,

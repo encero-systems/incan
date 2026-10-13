@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use super::protocol::{self, Reply, Request};
-use super::{BuildIntent, NativeBuildIntent, TestExecutionIntent, TestListIntent};
+use super::{BuildIntent, CheckIntent, NativeBuildIntent, SourceFormatIntent, TestExecutionIntent, TestListIntent};
 use incan_driver::error::{CliError, CliResult};
 use sha2::{Digest, Sha256};
 
@@ -287,22 +287,68 @@ fn dispatch(
     }
     if request.intent.get("test_list").is_some() {
         let mut disconnected = false;
-        let result = serde_json::from_value::<TestListIntent>(request.intent)
-            .map_err(transport_error)
-            .and_then(|intent| {
-                if !Path::new(&intent.test_list.path).is_absolute() {
-                    return Err(CliError::failure("owner requires an absolute test collection path"));
-                }
-                crate::test_runner::list_tests_with_owner(&intent.test_list, owner, |message| {
-                    if !disconnected && protocol::write(stream, &Reply::Progress { message }).is_err() {
-                        disconnected = true;
+        let (result, warnings) = incan_driver::diagnostics::capture_warning_output(|| {
+            serde_json::from_value::<TestListIntent>(request.intent)
+                .map_err(transport_error)
+                .and_then(|intent| {
+                    if !Path::new(&intent.test_list.path).is_absolute() {
+                        return Err(CliError::failure("owner requires an absolute test collection path"));
                     }
+                    crate::test_runner::list_tests_with_owner(&intent.test_list, owner, |message| {
+                        if !disconnected && protocol::write(stream, &Reply::Progress { message }).is_err() {
+                            disconnected = true;
+                        }
+                    })
                 })
-            })
-            .and_then(|report| serde_json::to_value(report).map_err(transport_error));
+                .and_then(|report| serde_json::to_value(report).map_err(transport_error))
+        });
         if disconnected {
             return Ok(false);
         }
+        for message in warnings {
+            protocol::write(stream, &Reply::Diagnostic { message })?;
+        }
+        let reply = match result {
+            Ok(result) => Reply::Complete {
+                pid: std::process::id(),
+                result,
+            },
+            Err(error) => Reply::Failure {
+                message: error.message,
+                exit_code: error.exit_code.0,
+            },
+        };
+        protocol::write(stream, &reply)?;
+        return Ok(false);
+    }
+    if request.intent.get("source_format").is_some() {
+        let (result, warnings) = incan_driver::diagnostics::capture_warning_output(|| {
+            serde_json::from_value::<SourceFormatIntent>(request.intent)
+                .map_err(transport_error)
+                .map(|intent| super::source_format::execute_batch(&intent.source_format, owner))
+                .and_then(|results| serde_json::to_value(results).map_err(transport_error))
+        });
+        for message in warnings {
+            protocol::write(stream, &Reply::Diagnostic { message })?;
+        }
+        let reply = match result {
+            Ok(result) => Reply::Complete {
+                pid: std::process::id(),
+                result,
+            },
+            Err(error) => Reply::Failure {
+                message: error.message,
+                exit_code: error.exit_code.0,
+            },
+        };
+        protocol::write(stream, &reply)?;
+        return Ok(false);
+    }
+    if request.intent.get("check").is_some() {
+        let result = serde_json::from_value::<CheckIntent>(request.intent)
+            .map_err(transport_error)
+            .and_then(|intent| owner.check(&intent.check))
+            .and_then(|report| serde_json::to_value(report).map_err(transport_error));
         let reply = match result {
             Ok(result) => Reply::Complete {
                 pid: std::process::id(),
@@ -522,6 +568,91 @@ mod tests {
         assert!(
             matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { message, .. } if message.contains("absolute build paths"))
         );
+        Ok(())
+    }
+
+    /// Collection warnings must reach the client on first and retained requests, then disappear after correction.
+    #[test]
+    fn test_collection_forwards_current_manifest_warnings() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let manifest = "[project]\nname = \"list_warnings\"\nversion = \"0.1.0\"\n";
+        let manifest_path = directory.path().join("loaf.toml");
+        fs::write(
+            directory.path().join("test_value.incn"),
+            "def test_value() -> None:\n    assert True\n",
+        )?;
+        let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+        let mut previous_ids = None;
+        for deprecated in [true, true, false] {
+            fs::write(
+                &manifest_path,
+                format!("{manifest}{}", if deprecated { "[rust-dependencies]\n" } else { "" }),
+            )?;
+            let (mut server, mut client) = UnixStream::pair()?;
+            let request = Request {
+                generation: "current".to_string(),
+                intent: serde_json::json!({"test_list": {
+                    "languages": "Incan", "path": directory.path(), "verbose": false, "include_slow": false,
+                    "filter": null, "marker_expr": null, "strict_markers": false,
+                    "test_features": [], "package_features": incan_provider::FeatureSelection::default(),
+                    "sdk_profile": null, "timeout": null,
+                    "cargo_policy": incan_driver::cargo_policy::CargoPolicy::default(),
+                }}),
+            };
+            assert!(!dispatch(&mut server, "current", request, &mut owner)?);
+            let mut warnings = Vec::new();
+            let ids = loop {
+                match protocol::read::<Reply>(&mut client)? {
+                    Reply::Diagnostic { message } => warnings.push(message),
+                    Reply::Progress { .. } => {}
+                    Reply::Complete { result, .. } => break result["ids"].clone(),
+                    Reply::Failure { message, .. } => return Err(message.into()),
+                }
+            };
+            assert_eq!(warnings.len(), usize::from(deprecated));
+            if deprecated {
+                assert!(warnings[0].contains("[rust-dependencies] is deprecated"));
+            }
+            assert_eq!(ids.as_array().ok_or("missing listed IDs")?.len(), 1);
+            if let Some(previous) = &previous_ids {
+                assert_eq!(&ids, previous);
+            }
+            previous_ids = Some(ids);
+        }
+        Ok(())
+    }
+
+    /// Formatting returns ordered successes and failures directly, without embedding JSON in progress text.
+    #[test]
+    fn formatting_batch_completes_with_ordered_results() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?;
+        fs::write(
+            root.join("loaf.toml"),
+            "[project]\nname = \"format_reply\"\nversion = \"0.1.0\"\n",
+        )?;
+        let source = "def main() -> None:\n    println(42)\n";
+        let mut inputs = Vec::new();
+        for (name, text) in [("one.incn", source), ("bad.incn", "def main(\n"), ("two.incn", source)] {
+            let path = root.join(name);
+            fs::write(&path, text)?;
+            inputs.push(serde_json::json!({"path": path, "display_path": path, "source": text}));
+        }
+        let request = Request {
+            generation: "current".to_string(),
+            intent: serde_json::json!({"source_format": inputs}),
+        };
+        let (mut server, mut client) = UnixStream::pair()?;
+        let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+        assert!(!dispatch(&mut server, "current", request, &mut owner)?);
+        let Reply::Complete { result, .. } = protocol::read::<Reply>(&mut client)? else {
+            return Err("format results did not arrive in one completion".into());
+        };
+        let results: Vec<Result<String, String>> = serde_json::from_value(result)?;
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_deref(), Ok(source));
+        assert!(results[1].is_err());
+        assert_eq!(results[2].as_deref(), Ok(source));
         Ok(())
     }
 

@@ -1068,6 +1068,7 @@ fn trusted_rustdoc_compiles_a_proc_macro_doctest_root() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Bounded publication coexists with the held execution lease; pruning can reclaim the plan only after release.
 #[test]
 fn stored_receipt_bound_plan_runs_without_cargo_and_retains_its_lease() -> Result<(), Box<dyn std::error::Error>> {
     let project = tempfile::tempdir()?;
@@ -1139,14 +1140,35 @@ fn stored_receipt_bound_plan_runs_without_cargo_and_retains_its_lease() -> Resul
         materialized_files: Vec::new(),
         materialized_directories: Vec::new(),
     };
-    assert!(matches!(
-        bounded.publish(&replacement),
-        Err(oven_store::store::OvenStoreError::CapacityBlocked { .. })
-    ));
+    let replacement = bounded.publish(&replacement)?;
+    let inspection = bounded.inspect()?;
+    assert_eq!(inspection.entries.len(), 2);
+    assert!(
+        inspection
+            .entries
+            .iter()
+            .any(|entry| entry.manifest.identity == stored.identity)
+    );
+    assert!(inspection.active_lease_physical_bytes > 0);
+
+    // Retention targets permit bounded publications; an explicit zero-target sweep must still preserve the reader.
+    let pressure = OvenStore::new(store_root.path(), OvenStoreLimits::new(0, 128 * 1024, 64 * 1024));
+    let retained = pressure.prune()?;
+    assert!(retained.removed_entries.contains(&replacement.identity));
+    assert!(retained.skipped_active_entries.contains(&stored.identity));
+    assert!(!retained.removed_entries.contains(&stored.identity));
+    let inspection = pressure.inspect()?;
+    assert_eq!(inspection.entries.len(), 1);
+    assert_eq!(inspection.entries[0].manifest.identity, stored.identity);
     assert!(Command::new(&bake.output).status()?.success());
+
     drop(bake);
-    bounded.publish(&replacement)?;
-    assert_eq!(bounded.inspect()?.entries.len(), 1);
+    let released = pressure.prune()?;
+    assert!(released.removed_entries.contains(&stored.identity));
+    assert!(released.skipped_active_entries.is_empty());
+    let inspection = pressure.inspect()?;
+    assert!(inspection.entries.is_empty());
+    assert_eq!(inspection.active_lease_physical_bytes, 0);
     Ok(())
 }
 
@@ -1179,6 +1201,7 @@ fn receipt_selection_rejects_ambiguous_stored_direct_rustc_plans() -> Result<(),
     Ok(())
 }
 
+/// Bounded publication coexists with the held execution lease; pruning can reclaim the plan only after release.
 #[test]
 fn stored_receipt_bound_binary_runs_without_cargo_and_retains_its_lease() -> Result<(), Box<dyn std::error::Error>> {
     let project = tempfile::tempdir()?;
@@ -1242,14 +1265,35 @@ fn stored_receipt_bound_binary_runs_without_cargo_and_retains_its_lease() -> Res
         materialized_files: Vec::new(),
         materialized_directories: Vec::new(),
     };
-    assert!(matches!(
-        bounded.publish(&replacement),
-        Err(oven_store::store::OvenStoreError::CapacityBlocked { .. })
-    ));
+    let replacement = bounded.publish(&replacement)?;
+    let inspection = bounded.inspect()?;
+    assert_eq!(inspection.entries.len(), 2);
+    assert!(
+        inspection
+            .entries
+            .iter()
+            .any(|entry| entry.manifest.identity == stored.identity)
+    );
+    assert!(inspection.active_lease_physical_bytes > 0);
+
+    // Retention targets permit bounded publications; an explicit zero-target sweep must still preserve the reader.
+    let pressure = OvenStore::new(store_root.path(), OvenStoreLimits::new(0, 128 * 1024, 64 * 1024));
+    let retained = pressure.prune()?;
+    assert!(retained.removed_entries.contains(&replacement.identity));
+    assert!(retained.skipped_active_entries.contains(&stored.identity));
+    assert!(!retained.removed_entries.contains(&stored.identity));
+    let inspection = pressure.inspect()?;
+    assert_eq!(inspection.entries.len(), 1);
+    assert_eq!(inspection.entries[0].manifest.identity, stored.identity);
     assert!(Command::new(&bake.output).status()?.success());
+
     drop(bake);
-    bounded.publish(&replacement)?;
-    assert_eq!(bounded.inspect()?.entries.len(), 1);
+    let released = pressure.prune()?;
+    assert!(released.removed_entries.contains(&stored.identity));
+    assert!(released.skipped_active_entries.is_empty());
+    let inspection = pressure.inspect()?;
+    assert!(inspection.entries.is_empty());
+    assert_eq!(inspection.active_lease_physical_bytes, 0);
     Ok(())
 }
 

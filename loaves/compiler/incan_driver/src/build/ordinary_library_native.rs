@@ -318,7 +318,7 @@ impl OrdinaryLibraryNativeProfiles {
         let owners = session
             .admitted_library_dependencies()
             .ok_or_else(|| failure("ordinary test envelope lacks checked package owners"))?;
-        let physical = owners.physical_native_dependencies(&session.provider_plan, &dependencies)?;
+        let physical = owners.physical_native_dependencies(session.provider_plan(), &dependencies)?;
         // ---- Complete promoted declaration and original physical-root coverage ----
         let dependency_surface_digest =
             oven_store::digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())

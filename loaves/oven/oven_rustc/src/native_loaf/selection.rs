@@ -301,6 +301,7 @@ pub(super) fn source_manifest_with_reader(
 
 /// Retain declaration integrity on native handoffs using the existing replacement-sensitive file observer.
 pub(crate) fn verify_native_source_declaration(owner: &oven_store::store::OvenStoreExecutionPayload) -> Result<()> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::verify_native_source_declaration", input = %owner.manifest().identity, inventory_members = owner.admitted_materialized_files().len()).entered();
     if let Some(member) = owner
         .admitted_materialized_files()
         .iter()

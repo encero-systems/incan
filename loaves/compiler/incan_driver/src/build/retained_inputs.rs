@@ -60,6 +60,8 @@ struct ObservedProject {
 pub(super) enum SessionPurpose {
     /// Parser/vocabulary collection without native execution preparation.
     Collection,
+    /// Metadata-only checking of unbaked dependencies; never grants native execution authority.
+    CheckMetadata,
     /// Full Oven artifact preparation for actual compilation and execution.
     Artifacts,
 }
@@ -69,6 +71,9 @@ struct RetainedSession {
     identity: String,
     inputs: ModelInputs,
     session: Arc<CompilationSession>,
+    /// Canonical discovery warnings replayed for every check request, including retained sessions.
+    check_warnings: Vec<String>,
+    check_report: Option<super::check::CompletedCheck>,
     executable: Option<RetainedExecutableDependencies>,
     native_admission: Option<ObservedNativeAdmission>,
     test_generation: Arc<super::test_generation::RetainedTestGeneration>,
@@ -332,12 +337,21 @@ impl RetainedProjectInputs {
         sdk_profile: Option<&str>,
         purpose: SessionPurpose,
     ) -> CliResult<Arc<CompilationSession>> {
-        let project = self.project(root)?;
+        let project = if purpose != SessionPurpose::Artifacts {
+            // Model reconciliation is internal; canonical metadata discovery owns visible warnings.
+            crate::diagnostics::capture_warning_output(|| self.project(root)).0?
+        } else {
+            self.project(root)?
+        };
         if let Some(retained) = self.projects.get(root).and_then(|record| record.sessions.get(&purpose))
             && retained.identity == identity
             && retained.inputs.supports_retention()
             && retained.inputs.current()
+            && (purpose != SessionPurpose::CheckMetadata || retained.session.checked_source_metadata_current())
         {
+            for warning in &retained.check_warnings {
+                crate::diagnostics::emit_warning_output(warning.clone());
+            }
             tracing::trace!(target: "incan::invocation", decision = "reuse_dependency_session", input = %root.display());
             return Ok(Arc::clone(&retained.session));
         }
@@ -345,26 +359,40 @@ impl RetainedProjectInputs {
             record.sessions.remove(&purpose);
         }
         tracing::trace!(target: "incan::invocation", decision = "reload_dependency_session", input = %root.display());
-        let session = Arc::new(match purpose {
+        let discover = || match purpose {
             SessionPurpose::Collection => {
-                CompilationSession::discover_for_collection_with_selections(entry, features, sdk_profile)?
+                CompilationSession::discover_for_collection_with_selections(entry, features, sdk_profile)
             }
-            SessionPurpose::Artifacts => CompilationSession::discover_for_oven(entry, features, sdk_profile)?,
-        });
+            SessionPurpose::Artifacts => CompilationSession::discover_for_oven(entry, features, sdk_profile),
+            SessionPurpose::CheckMetadata => CompilationSession::discover_for_check(entry, features, sdk_profile),
+        };
+        let (discovered, check_warnings) = if purpose != SessionPurpose::Artifacts {
+            crate::diagnostics::capture_warning_output(discover)
+        } else {
+            (discover(), Vec::new())
+        };
+        for warning in &check_warnings {
+            crate::diagnostics::emit_warning_output(warning.clone());
+        }
+        let session = Arc::new(discovered?);
         let mut inputs = ModelInputs::default();
-        if let Some(inventory) = &session.sdk_inventory {
+        if let Some(inventory) = &session.sdk_inventory() {
             inputs.observe(&inventory.root.join(incan_provider::SDK_INVENTORY_FILE));
         }
         let mut roots = std::collections::BTreeSet::new();
         for artifact in session
-            .provider_plan
+            .provider_plan()
             .records()
             .filter_map(|record| record.artifact.as_ref())
         {
             inputs.observe(&artifact.manifest_path);
             roots.insert(&artifact.crate_root);
         }
-        for artifact in session.provider_plan.public_artifacts() {
+        for artifact in session
+            .provider_plan()
+            .public_artifacts()
+            .chain(session.provider_plan().checked_source_artifacts())
+        {
             inputs.observe(&artifact.artifact.manifest_path);
             roots.insert(&artifact.artifact.crate_root);
         }
@@ -386,12 +414,35 @@ impl RetainedProjectInputs {
                 identity,
                 inputs,
                 session: Arc::clone(&session),
+                check_warnings,
+                check_report: None,
                 executable: None,
                 native_admission: None,
                 test_generation: Arc::default(),
             },
         );
         Ok(session)
+    }
+
+    /// Borrow completed check state only from the exact session reconciled for this request.
+    pub(super) fn check_report(
+        &mut self,
+        root: &Path,
+        session: &Arc<CompilationSession>,
+    ) -> Option<&mut Option<super::check::CompletedCheck>> {
+        let retained = self
+            .projects
+            .get_mut(root)?
+            .sessions
+            .get_mut(&SessionPurpose::CheckMetadata)?;
+        Arc::ptr_eq(&retained.session, session).then_some(&mut retained.check_report)
+    }
+
+    /// Discard a session whose input generation changed during preparation, including failed reconciliation.
+    pub(super) fn discard_compilation_session(&mut self, root: &Path, purpose: SessionPurpose) {
+        if let Some(project) = self.projects.get_mut(root) {
+            project.sessions.remove(&purpose);
+        }
     }
 
     /// Borrow generated test sources only from the exact, already reconciled artifact session.

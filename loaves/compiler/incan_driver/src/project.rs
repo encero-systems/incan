@@ -79,7 +79,7 @@ pub(crate) fn effective_project_manifest_with_workspace(
     workspace: Option<&WorkspaceGraph>,
 ) -> CliResult<ProjectManifest> {
     for diagnostic in &manifest.deprecations {
-        eprintln!("warning: {}: {diagnostic}", manifest.path().display());
+        crate::diagnostics::emit_warning_output(format!("warning: {}: {diagnostic}\n", manifest.path().display()));
     }
     let Some(workspace) = workspace else {
         if manifest.has_workspace_inherited_dependencies() {

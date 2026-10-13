@@ -458,7 +458,9 @@ fn prepare_runner_program(
     let semantics = match testing_marker_semantics {
         Some(semantics) => semantics,
         None if !requires_testing_semantics => &default_semantics,
-        None => return Err("std.testing fixture execution requires the compiled std.testing provider".to_string()),
+        None => {
+            return Err("std.testing fixture execution requires the compiled std.testing provider".to_string());
+        }
     };
     prune_shadowed_fixture_declarations(&mut runner_ast, semantics);
     dedupe_import_declarations(&mut runner_ast);
@@ -618,7 +620,7 @@ fn prepare_isolated_source_module_batch(
             Some(library_imported_vocab),
             Some(library_imported_dsl_surfaces),
             Some(library_manifest_index),
-            compilation_session.provider_plan.as_ref(),
+            compilation_session.provider_plan().as_ref(),
         )? {
             deferred_dependencies.push(dependency);
         }
@@ -2278,7 +2280,9 @@ fn run_file_tests_batch_oven(
                         source_parts.push(source.clone());
                         batch_parse_sources.push((conftest.clone(), source));
                     }
-                    Err(error) => return failure(format!("failed to read conftest {}: {error}", conftest.display())),
+                    Err(error) => {
+                        return failure(format!("failed to read conftest {}: {error}", conftest.display()));
+                    }
                 }
             }
         }
@@ -2288,7 +2292,9 @@ fn run_file_tests_batch_oven(
                 batch_parse_sources.push((test.file_path.clone(), source.clone()));
                 sources_by_file.push((test.file_path.clone(), source));
             }
-            Err(error) => return failure(format!("failed to read test {}: {error}", test.file_path.display())),
+            Err(error) => {
+                return failure(format!("failed to read test {}: {error}", test.file_path.display()));
+            }
         }
     }
     let source = source_parts.join("\n");
@@ -2346,7 +2352,7 @@ fn run_file_tests_batch_oven(
             Some(&library_imported_vocab),
             Some(&library_imported_dsl_surfaces),
             Some(&library_manifest_index),
-            session.provider_plan.as_ref(),
+            session.provider_plan().as_ref(),
         ) {
             Ok(modules) => modules,
             Err(error) => return failure(format!("failed to collect source modules: {error}")),
@@ -2810,7 +2816,9 @@ fn run_file_tests_batch_oven(
     };
     let plan_selection = match shared_plan_selection.or(owned_plan_selection.as_deref()) {
         Some(selection) => selection,
-        None => return failure("Oven test dependency plan selection lost its exact authority".to_string()),
+        None => {
+            return failure("Oven test dependency plan selection lost its exact authority".to_string());
+        }
     };
     let selection_elapsed = selection_start.elapsed();
 
@@ -2952,7 +2960,9 @@ fn run_file_tests_batch_oven(
     });
     let bake = match bake {
         Ok(bake) => bake,
-        Err(error) => return failure(format!("Oven direct-rustc test compilation failed: {error}")),
+        Err(error) => {
+            return failure(format!("Oven direct-rustc test compilation failed: {error}"));
+        }
     };
     let bake_elapsed = bake_start.elapsed();
     if !generation_reused
@@ -3428,6 +3438,7 @@ def captured_resource() -> int:
         Ok(())
     }
 
+    /// Only authored dependencies enter the caller-owned registry surface, including the selected test overlay.
     #[test]
     fn manifest_declared_rust_dependencies_are_the_manifest_tables_only_issue2005()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3436,15 +3447,26 @@ def captured_resource() -> int:
 name = "declared_surface"
 version = "0.1.0"
 
-[rust-dependencies]
-terminal_unit = "1"
+[dependencies]
+terminal_unit = { loaf = "crates-io/terminal_unit", version = "1" }
 
-[rust-dev-dependencies]
-assert_unit = "1"
+[envs.test.dependencies]
+assert_unit = { loaf = "crates-io/assert_unit", version = "1" }
 "#,
             Path::new("loaf.toml"),
         )?;
 
+        let production = manifest_declared_rust_dependencies(Some(&manifest));
+        assert_eq!(
+            production
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            ["terminal_unit"]
+        );
+        let environment =
+            oven_model::project_lifecycle::env::EnvConfigSet::from_manifest(&manifest).resolve_env("test")?;
+        let manifest = manifest.with_environment_dependencies(&environment.dependencies)?;
         let declared = manifest_declared_rust_dependencies(Some(&manifest));
 
         assert_eq!(

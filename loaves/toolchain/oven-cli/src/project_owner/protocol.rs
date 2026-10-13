@@ -1,13 +1,15 @@
-//! Bounded, request-local messages for the shared project owner.
+//! Bounded wire fragments for request-local messages for the shared project owner.
 //!
 //! The transport carries intent and results, never cached compiler authority. A generation mismatch refuses the
 //! request before dispatch. Progress is framed separately so machine-readable reports remain intact.
 
 use serde::{Deserialize, Serialize};
-use std::io::{self, Read, Write};
+use std::io::{self, BufReader, Cursor, Read, Write};
 
-/// Bound both requests and reports before allocating an incoming frame.
+/// Bound each wire fragment before allocation; source text and reports may span multiple fragments.
 const MAX_FRAME: usize = 16 * 1024 * 1024;
+/// Continuation is explicit, so the decoder never consumes the next independent reply.
+const MORE_FRAGMENTS: u32 = 1 << 31;
 
 /// One command intent addressed to a compatible owner generation.
 #[derive(Serialize, Deserialize)]
@@ -33,28 +35,85 @@ pub(super) enum Reply {
     Failure { message: String, exit_code: i32 },
 }
 
-/// Read one complete bounded frame; truncated and oversized input never reaches dispatch.
+/// Read one complete message without letting a declared fragment length allocate beyond the wire bound.
+/// Small messages retain the slice decoder. Larger messages decode from a framed stream rather than copying
+/// every fragment into a second whole-message buffer. Truncated fragments never reach successful dispatch.
 pub(super) fn read<T: for<'de> Deserialize<'de>>(reader: &mut impl Read) -> io::Result<T> {
-    let mut header = [0; 4];
-    reader.read_exact(&mut header)?;
-    let length = usize::try_from(u32::from_be_bytes(header)).map_err(io::Error::other)?;
-    if length > MAX_FRAME {
-        return Err(io::Error::other("project-owner frame exceeds size limit"));
-    }
+    let (length, more) = read_header(reader)?;
     let mut bytes = vec![0; length];
     reader.read_exact(&mut bytes)?;
-    serde_json::from_slice(&bytes).map_err(io::Error::other)
+    if !more {
+        return serde_json::from_slice(&bytes).map_err(io::Error::other);
+    }
+    let tail = FragmentReader {
+        reader,
+        remaining: 0,
+        more: true,
+    };
+    serde_json::from_reader(Cursor::new(bytes).chain(BufReader::new(tail))).map_err(io::Error::other)
 }
 
-/// Write and flush one bounded message, preserving ordering between progress and its terminal answer.
+/// Decode a fragment header before allocating or reading its body; empty continuations cannot make progress.
+fn read_header(reader: &mut impl Read) -> io::Result<(usize, bool)> {
+    let mut header = [0; 4];
+    reader.read_exact(&mut header)?;
+    let header = u32::from_be_bytes(header);
+    let length = usize::try_from(header & !MORE_FRAGMENTS).map_err(io::Error::other)?;
+    let more = header & MORE_FRAGMENTS != 0;
+    if length > MAX_FRAME || (more && length == 0) {
+        return Err(io::Error::other(
+            "project-owner fragment exceeds size limit or makes no progress",
+        ));
+    }
+    Ok((length, more))
+}
+
+/// Present exactly one continued message as bytes, leaving the following independent frame unread.
+struct FragmentReader<'a, R> {
+    reader: &'a mut R,
+    remaining: usize,
+    more: bool,
+}
+
+impl<R: Read> Read for FragmentReader<'_, R> {
+    /// Read only within the current bounded fragment and require every promised continuation to arrive.
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        if self.remaining == 0 && self.more {
+            (self.remaining, self.more) = read_header(self.reader)?;
+        }
+        if self.remaining == 0 {
+            return Ok(0);
+        }
+        let limit = bytes.len().min(self.remaining);
+        let count = self.reader.read(&mut bytes[..limit])?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated project-owner fragment",
+            ));
+        }
+        self.remaining -= count;
+        Ok(count)
+    }
+}
+
+/// Write one message as bounded fragments, preserving ordering between progress and its terminal answer.
+/// The common single-fragment representation is unchanged. Continuations allow large source files and reports
+/// through the same owner operation without adding a fallback route or raising the per-fragment allocation bound.
 pub(super) fn write(writer: &mut impl Write, message: &impl Serialize) -> io::Result<()> {
     let bytes = serde_json::to_vec(message).map_err(io::Error::other)?;
-    if bytes.len() > MAX_FRAME {
-        return Err(io::Error::other("project-owner frame exceeds size limit"));
+    let mut fragments = bytes.chunks(MAX_FRAME).peekable();
+    while let Some(fragment) = fragments.next() {
+        let mut header = u32::try_from(fragment.len()).map_err(io::Error::other)?;
+        if fragments.peek().is_some() {
+            header |= MORE_FRAGMENTS;
+        }
+        writer.write_all(&header.to_be_bytes())?;
+        writer.write_all(fragment)?;
     }
-    let length = u32::try_from(bytes.len()).map_err(io::Error::other)?;
-    writer.write_all(&length.to_be_bytes())?;
-    writer.write_all(&bytes)?;
     writer.flush()
 }
 
@@ -99,6 +158,48 @@ mod tests {
         assert!(matches!(read::<Reply>(&mut reader)?, Reply::Complete { pid: 7, .. }));
         assert!(matches!(read::<Reply>(&mut reader)?, Reply::Diagnostic { message } if message == "diagnostic\n"));
         assert!(reader.is_empty());
+        Ok(())
+    }
+
+    /// A large Unicode/escaped reply spans fragments without consuming the following terminal frame.
+    #[test]
+    fn large_reply_preserves_unicode_and_next_message() -> Result<(), Box<dyn std::error::Error>> {
+        let message = "λ\"\n".repeat(MAX_FRAME / 4 + 1);
+        let mut wire = Vec::new();
+        write(
+            &mut wire,
+            &Reply::Progress {
+                message: message.clone(),
+            },
+        )?;
+        write(
+            &mut wire,
+            &Reply::Complete {
+                pid: 7,
+                result: serde_json::json!(1),
+            },
+        )?;
+        let mut input = wire.as_slice();
+        assert!(matches!(read::<Reply>(&mut input)?, Reply::Progress { message: actual } if actual == message));
+        assert!(matches!(read::<Reply>(&mut input)?, Reply::Complete { pid: 7, .. }));
+        assert!(input.is_empty());
+        Ok(())
+    }
+
+    /// An initial valid fragment cannot hide missing, empty-continuation or oversized follow-up fragments.
+    #[test]
+    fn continued_message_requires_valid_complete_fragments() -> Result<(), Box<dyn std::error::Error>> {
+        for suffix in [
+            Vec::new(),
+            MORE_FRAGMENTS.to_be_bytes().to_vec(),
+            u32::try_from(MAX_FRAME + 1)?.to_be_bytes().to_vec(),
+            vec![0, 0, 0, 3, b'x'],
+        ] {
+            let mut wire = (MORE_FRAGMENTS | 1).to_be_bytes().to_vec();
+            wire.push(b'"');
+            wire.extend(suffix);
+            assert!(read::<String>(&mut wire.as_slice()).is_err());
+        }
         Ok(())
     }
 

@@ -341,8 +341,8 @@ fn ordinary_admitted_session_reuses_projection_and_refuses_changed_source() -> R
         &FeatureSelection::default(),
         prepared,
     )?;
-    assert!(session.sdk_inventory.is_none());
-    assert!(session.sdk_components.is_none());
+    assert!(session.sdk_inventory().is_none());
+    assert!(session.sdk_components().is_none());
     assert!(
         session
             .provider_plan_for_used_module_paths(BTreeSet::from([vec!["std".into(), "unselected".into()]]))
@@ -356,11 +356,11 @@ fn ordinary_admitted_session_reuses_projection_and_refuses_changed_source() -> R
     assert_eq!(first.used_modules(record), usage);
     assert_ne!(
         first.semantic_projection_identity(),
-        session.provider_plan.semantic_projection_identity()
+        session.provider_plan().semantic_projection_identity()
     );
     assert_eq!(
         first.semantic_projection_persistent_key()?,
-        session.provider_plan.semantic_projection_persistent_key()?
+        session.provider_plan().semantic_projection_persistent_key()?
     );
     let source = provider.path().join("src/lib.incn");
     let previous_modified = fs::metadata(&source)?.modified()?;

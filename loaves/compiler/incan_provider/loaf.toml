@@ -45,3 +45,8 @@ test_support = []
 edition = "2024"
 name = "incan_provider"
 type = "lib"
+
+# Test-only dependencies and helper features; production defaults are unchanged.
+[envs.test.dependencies]
+incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }

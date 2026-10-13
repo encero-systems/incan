@@ -52,8 +52,15 @@ use oven_model::manifest::ProjectManifest;
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 
 /// Source dependencies already checked in one invocation, keyed by package root and enabled features.
-type CheckedSourceDependencies =
-    BTreeMap<(PathBuf, BTreeSet<String>), (incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>)>;
+type CheckedSourceDependencies = BTreeMap<(PathBuf, BTreeSet<String>), CheckedSourceDependency>;
+
+/// Checked public metadata and the original source-backed metadata owners that justified it.
+#[derive(Clone)]
+struct CheckedSourceDependency {
+    manifest: incan_frontend::library_manifest::LibraryManifest,
+    provider: Arc<ProviderPlan>,
+    source_metadata: Vec<StdlibAstCache>,
+}
 
 #[cfg(test)]
 thread_local! {
@@ -231,13 +238,35 @@ fn add_selected_standard_vocab_providers(
 ///
 /// This owns the project-level inputs that affect context-sensitive parsing and typechecking so entrypoints do not
 /// independently rediscover manifests, library vocabulary, provider surfaces, or checked contract metadata.
+/// Provider selection is owned by the session. Consumers borrow it through getters instead of replacing inputs.
+///
+/// ```compile_fail,E0616
+/// fn replace(session: &mut incan_driver::session::CompilationSession) {
+///     session.provider_plan = session.provider_plan.clone();
+/// }
+/// ```
+/// ```compile_fail,E0616
+/// fn replace(session: &mut incan_driver::session::CompilationSession) {
+///     session.sdk_inventory = None;
+/// }
+/// ```
+/// ```compile_fail,E0616
+/// fn replace(session: &mut incan_driver::session::CompilationSession) {
+///     session.sdk_components = None;
+/// }
+/// ```
+/// ```compile_fail,E0616
+/// fn replace(session: &mut incan_driver::session::CompilationSession) {
+///     session.package_feature_plan = None;
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct CompilationSession {
     pub manifest: Option<ProjectManifest>,
     pub source_root: PathBuf,
     pub library_manifest_index: LibraryManifestIndex,
     /// Immutable provider projection shared by compiler stages for ordinary package dependencies and SDK providers.
-    pub provider_plan: Arc<ProviderPlan>,
+    provider_plan: Arc<ProviderPlan>,
     /// Module-usage projections already derived from the immutable session inputs.
     ///
     /// Collection, requirement discovery, and semantic analysis all need the same projection. Rebuilding it makes
@@ -250,12 +279,15 @@ pub struct CompilationSession {
     admitted_provider_plan: Option<Arc<ProviderPlan>>,
     /// Semantic provider identities reused only within this checked compilation context.
     provider_semantic_identities: Arc<incan_provider::lock_semantics::ProviderSemanticIdentitySession>,
+    /// Original metadata sources consulted by recursive unbaked dependency checks, retained without execution
+    /// authority.
+    checked_source_metadata: Vec<StdlibAstCache>,
     /// Integrity-checked active SDK catalog, when this toolchain is component-aware.
-    pub sdk_inventory: Option<Arc<SdkInventory>>,
+    sdk_inventory: Option<Arc<SdkInventory>>,
     /// Project-selected SDK component closure, when an inventory is active.
-    pub sdk_components: Option<ResolvedSdkComponents>,
+    sdk_components: Option<ResolvedSdkComponents>,
     /// Typed additive feature closure for the root package and active path dependencies.
-    pub package_feature_plan: Option<PackageFeaturePlan>,
+    package_feature_plan: Option<PackageFeaturePlan>,
     /// Active root-package features used to project compilation-unit `when feature(...)` declarations.
     pub active_features: BTreeSet<String>,
     /// Declared root-package features used for source diagnostics before projection.
@@ -291,6 +323,15 @@ impl CompilationSession {
         Ok(session)
     }
 
+    /// Reuse checked dependencies only while their original source-backed metadata remains authenticated.
+    /// Legacy metadata without retained owners keeps canonical checking on every request.
+    pub(crate) fn checked_source_metadata_current(&self) -> bool {
+        self.checked_source_metadata
+            .iter()
+            .all(StdlibAstCache::supports_generation_reuse)
+            && self.provider_plan.verify_standard_source_publication().is_ok()
+    }
+
     /// Check one unbaked path dependency through its public metadata, recursing into its own source dependencies.
     #[cfg(feature = "cli")]
     fn check_source_dependency(
@@ -300,7 +341,7 @@ impl CompilationSession {
         sdk_profile_override: Option<&str>,
         completed: &mut CheckedSourceDependencies,
         visiting: &mut BTreeSet<PathBuf>,
-    ) -> CliResult<(incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>)> {
+    ) -> CliResult<CheckedSourceDependency> {
         let child_manifest = discover_effective_project_manifest(root)?
             .ok_or_else(|| CliError::failure("source dependency manifest disappeared during checking"))?;
         let child_entry = crate::build::library_exports::validate_library_entrypoint(&child_manifest)?;
@@ -317,8 +358,14 @@ impl CompilationSession {
             sdk_profile_override,
         )?;
         child.check_source_dependencies(features, sdk_profile_override, completed, visiting)?;
-        let checked = crate::build::library_project::checked_source_library_manifest(&child, &child_entry)?;
-        Ok((checked, Arc::clone(&child.provider_plan)))
+        let (manifest, metadata) =
+            crate::build::library_project::checked_source_library_manifest(&child, &child_entry)?;
+        child.checked_source_metadata.push(metadata);
+        Ok(CheckedSourceDependency {
+            manifest,
+            provider: Arc::clone(&child.provider_plan),
+            source_metadata: child.checked_source_metadata,
+        })
     }
 
     /// Without the build pipeline (the `cli` feature, #1479) an unbaked path dependency has no public-metadata
@@ -331,7 +378,7 @@ impl CompilationSession {
         _sdk_profile_override: Option<&str>,
         _completed: &mut CheckedSourceDependencies,
         _visiting: &mut BTreeSet<PathBuf>,
-    ) -> CliResult<(incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>)> {
+    ) -> CliResult<CheckedSourceDependency> {
         Err(CliError::failure(format!(
             "checking the unbaked source dependency at {} requires the build pipeline",
             root.display()
@@ -346,6 +393,8 @@ impl CompilationSession {
         completed: &mut CheckedSourceDependencies,
         visiting: &mut BTreeSet<PathBuf>,
     ) -> CliResult<()> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::check_source_dependencies").entered();
         let Some(manifest) = self.manifest.as_ref() else {
             return Ok(());
         };
@@ -401,8 +450,9 @@ impl CompilationSession {
                 completed.insert(identity, checked.clone());
                 checked
             };
-            let (checked, child_plan) = checked;
-            checked_dependencies.push((key.clone(), child_plan));
+            self.checked_source_metadata.extend(checked.source_metadata);
+            checked_dependencies.push((key.clone(), checked.provider));
+            let checked = checked.manifest;
             let metadata = LibraryArtifactMetadata::for_checked_source(&key, &checked.name, root);
             entries.insert(
                 key,
@@ -411,6 +461,12 @@ impl CompilationSession {
                     metadata,
                 },
             );
+        }
+        // Discovery already validated this catalog. Only checked source dependencies introduce new metadata;
+        // an empty replacement set must keep the original plan and its exact authority owners.
+        if checked_dependencies.is_empty() {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_unchanged_checked_provider_plan");
+            return Ok(());
         }
         self.library_manifest_index = LibraryManifestIndex::from_entries(entries);
         add_selected_standard_vocab_providers(
@@ -598,6 +654,7 @@ impl CompilationSession {
             provider_plan,
             #[cfg(feature = "cli")]
             admitted_library_dependencies: Some(dependencies),
+            checked_source_metadata: Vec::new(),
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -880,6 +937,7 @@ impl CompilationSession {
             #[cfg(feature = "cli")]
             admitted_library_dependencies: None,
             admitted_provider_plan: None,
+            checked_source_metadata: Vec::new(),
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -892,6 +950,32 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             contract_model_bundles,
         })
+    }
+
+    /// Borrow the validated catalog shared by this session's module-use projections.
+    pub fn provider_plan(&self) -> &Arc<ProviderPlan> {
+        &self.provider_plan
+    }
+
+    /// Borrow the catalog selected when this session was constructed; callers cannot substitute its authority.
+    pub fn sdk_inventory(&self) -> &Option<Arc<SdkInventory>> {
+        &self.sdk_inventory
+    }
+
+    /// Borrow the component selection that was validated with the original provider catalog.
+    pub fn sdk_components(&self) -> &Option<ResolvedSdkComponents> {
+        &self.sdk_components
+    }
+
+    /// Borrow the feature closure that determined this session's dependency and provider selection.
+    pub fn package_feature_plan(&self) -> &Option<PackageFeaturePlan> {
+        &self.package_feature_plan
+    }
+
+    /// Deliberately corrupt private authority for existing adversarial controls; unavailable in production.
+    #[cfg(test)]
+    pub(crate) fn replace_provider_plan_for_test(&mut self, plan: Arc<ProviderPlan>) {
+        self.provider_plan = plan;
     }
 
     /// Borrow the ordinary original-owner capability retained by an explicitly admitted dependency session.
@@ -1009,23 +1093,8 @@ impl CompilationSession {
         }
         let _projection =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::construct_provider_projection").entered();
-        let plan = if self.has_admitted_library_dependencies() {
-            Arc::new(self.provider_plan.project_module_usage(used_module_paths.clone()))
-        } else {
-            ProviderPlan::from_resolved_inputs(
-                self.provider_plan.library_manifest_index().clone(),
-                self.package_feature_plan.as_ref(),
-                self.sdk_inventory.as_deref(),
-                self.sdk_components.as_ref(),
-                used_module_paths.clone(),
-            )
-            .map(|plan| {
-                plan.with_checked_source_graph(&self.provider_plan)
-                    .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
-            })
-            .map(Arc::new)
-            .map_err(|error| CliError::failure(error.to_string()))?
-        };
+        // The session alone owns catalog inputs. Module use changes the projection, never the catalog.
+        let plan = Arc::new(self.provider_plan.project_module_usage(used_module_paths.clone()));
         let mut cached = self
             .provider_plans_by_modules
             .lock()
@@ -1276,6 +1345,37 @@ mod tests {
     use incan_frontend::library_manifest::{LibraryManifest, VocabExports};
     use incan_provider::test_support::{parsed_module_for_test, write_minimal_library_artifact};
 
+    /// A metadata check without source dependencies keeps the already validated provider catalog and projection cache.
+    #[test]
+    fn metadata_check_preserves_catalog_without_source_dependency_replacements()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        std::fs::create_dir_all(tmp.path().join("src"))?;
+        std::fs::write(
+            tmp.path().join("loaf.toml"),
+            "[project]\nname = \"checked_catalog\"\nversion = \"0.1.0\"\n",
+        )?;
+        let entry = tmp.path().join("src/main.incn");
+        std::fs::write(&entry, "def main() -> None:\n    pass\n")?;
+        let mut session = CompilationSession::discover_with_dependency_mode_and_sdk_source(
+            &entry,
+            DependencyManifestMode::CheckMetadata,
+            SdkInventorySource::DiscoverOnly,
+            &FeatureSelection::default(),
+            None,
+        )?;
+        let original = Arc::clone(&session.provider_plan);
+        let projections = Arc::clone(&session.provider_plans_by_modules);
+        let features = session
+            .package_feature_plan
+            .clone()
+            .ok_or("project feature plan missing")?;
+        session.check_source_dependencies(&features, None, &mut BTreeMap::new(), &mut BTreeSet::new())?;
+        assert!(Arc::ptr_eq(&original, &session.provider_plan));
+        assert!(Arc::ptr_eq(&projections, &session.provider_plans_by_modules));
+        Ok(())
+    }
+
     #[test]
     fn compilation_session_reuses_provider_plan_for_identical_module_usage() -> Result<(), Box<dyn std::error::Error>> {
         let library_manifest_index = LibraryManifestIndex::default();
@@ -1293,6 +1393,7 @@ mod tests {
             #[cfg(feature = "cli")]
             admitted_library_dependencies: None,
             admitted_provider_plan: None,
+            checked_source_metadata: Vec::new(),
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -1602,6 +1703,7 @@ mod tests {
             #[cfg(feature = "cli")]
             admitted_library_dependencies: None,
             admitted_provider_plan: None,
+            checked_source_metadata: Vec::new(),
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),

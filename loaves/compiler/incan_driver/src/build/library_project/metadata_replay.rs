@@ -124,7 +124,7 @@ impl MetadataPreparation {
         };
         let toolchain = rustc_identity(&rustc).map_err(|error| invalid(error.to_string()))?;
         let feature_plan = session
-            .package_feature_plan
+            .package_feature_plan()
             .as_ref()
             .ok_or_else(|| invalid("checked metadata lacks a current feature graph"))?;
         let source_digest = current_source_digest(project.project_root(), feature_plan)?;
@@ -139,7 +139,7 @@ impl MetadataPreparation {
         let mut dependencies = BTreeMap::new();
         let mut dependency_owners = Vec::new();
         if let Some(admitted) = session.admitted_library_dependencies() {
-            admitted.validate_provider_projection(&session.provider_plan)?;
+            admitted.validate_provider_projection(session.provider_plan())?;
             for alias in admitted.direct_aliases().keys() {
                 let selected = admitted.checked_dependency(alias)?;
                 let reference = selected.reference();
@@ -329,7 +329,7 @@ impl MetadataPreparation {
     ) -> CliResult<()> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::revalidate_library_metadata", metadata = %self.receipt.identity).entered();
         let features = session
-            .package_feature_plan
+            .package_feature_plan()
             .as_ref()
             .ok_or_else(|| invalid("missing current feature authority"))?;
         if current_delivery_coordinates(out_dir, session)? != self.delivery_coordinates
@@ -438,7 +438,7 @@ fn current_delivery_coordinates(output: &Path, session: &CompilationSession) -> 
     }
     // Selection is intentionally conservative until checked and delivery representations are independent. Unused
     // available SDK providers may cause misses, but an emitted private edge cannot escape this coordinate contract.
-    for record in session.provider_plan.active_sdk_records() {
+    for record in session.provider_plan().active_sdk_records() {
         if let Some(artifact) = &record.artifact {
             roots.insert(
                 format!("private:{}", record.identity.stable_key()),
@@ -704,11 +704,11 @@ fn semantic_authority(
 ) -> CliResult<String> {
     crate::build::library_metadata::validate_rust_fact_agreement(
         session
-            .provider_plan
+            .provider_plan()
             .records()
             .filter_map(|record| record.manifest.as_deref()),
     )?;
-    let providers = session.provider_plan.records().map(|record| {
+    let providers = session.provider_plan().records().map(|record| {
         Ok(serde_json::json!({
             "identity": record.identity, "authority": record.authority,
             "namespace_claims": record.namespace_claims, "available": record.available,
@@ -723,7 +723,7 @@ fn semantic_authority(
             }
             (
                 native.semantic_inputs()?,
-                Some(native.standard_source_digest(session.provider_plan.standard_source_publication())?),
+                Some(native.standard_source_digest(session.provider_plan().standard_source_publication())?),
             )
         }
         NativeMetadataAuthority::SdkPublication => {
@@ -869,7 +869,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
             .require_ordinary_source_inspection_native(
                 session
                     .admitted_library_dependencies()
-                    .map(|owners| (owners.as_ref(), session.provider_plan.as_ref())),
+                    .map(|owners| (owners.as_ref(), session.provider_plan().as_ref())),
             )
             .map_err(|error| invalid(format!("ordinary metadata replay demands: {}", error.message)))?;
         if include_interop_execution {
@@ -1029,7 +1029,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         source_files: contract.source_modules.iter().map(|(path, module)| SourceFileReport { path: project.project_root().join(path).to_string_lossy().into_owned(), module_path: module.clone() }).collect(),
         generated: oven_generated_project_report(generator.output_dir(), &generator.crate_root_path(), &generator.output_dir().join("oven")),
         artifacts: Vec::new(), dependencies: dependencies_report(&resolved.dependencies, &resolved.dev_dependencies, incan_dependencies_report(project.library_dependencies().iter().collect()), requirements.stdlib_facets),
-        semantic: semantic_report(session.sdk_inventory.as_deref(), session.sdk_components.as_ref(), session.package_feature_plan.as_ref(), &provider_plan),
+        semantic: semantic_report(session.sdk_inventory().as_deref(), session.sdk_components().as_ref(), session.package_feature_plan().as_ref(), &provider_plan),
         cargo: None, oven: Some(BuildOvenReport { receipt_identity: chosen.receipt.identity.clone(), build_unit_identity: chosen.receipt.build_unit_identity.clone(), plan_identity: chosen.plan_selection.report_identity() }),
         interop: interop_report(&imports, contract.rust_extern_paths.clone(), contract.rust_abi_queries.iter().cloned().collect()),
         notes: vec!["Selected unchanged checked metadata from its ordinary Loaf; rebuilt current profile plans from checked requirements.".into()],

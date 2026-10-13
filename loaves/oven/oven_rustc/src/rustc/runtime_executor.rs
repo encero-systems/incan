@@ -1511,6 +1511,9 @@ pub(crate) mod tests {
         for name in ["first", "second"] {
             let root = temp.path().join(name);
             fs::create_dir_all(&root)?;
+            // Materialization supplies canonical roots. Preserve that invariant when replacing the fixture root,
+            // otherwise macOS's /var alias escapes the remap when rustc records its canonical working directory.
+            let root = fs::canonicalize(root)?;
             let mut source = materialized.clone();
             source.source_root = root.clone();
             source.root_module = root.join("probe.rs");

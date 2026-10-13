@@ -102,8 +102,9 @@ pub(super) fn prepare(
     source: &Path,
     context: &OvenTestCommandContext,
     features: &FeatureSelection,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
 ) -> CliResult<PreparedRustRoot> {
-    prepare_inner(source, context, features)
+    prepare_inner(source, context, features, owner)
         .map_err(|e| CliError::failure(format!("Rust test {}: {e}", source.display())))
 }
 
@@ -112,6 +113,7 @@ fn prepare_inner(
     source: &Path,
     context: &OvenTestCommandContext,
     features: &FeatureSelection,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
 ) -> Result<PreparedRustRoot, Box<dyn std::error::Error>> {
     let _stage = trace_test_stage("rust_test_preparation");
     let declaration = source.with_extension("loaf.toml");
@@ -124,6 +126,10 @@ fn prepare_inner(
         .as_ref()
         .or(context.session.manifest.as_ref())
         .ok_or("Rust tests require loaf.toml")?;
+    let environment_selection =
+        oven_model::project_lifecycle::env::EnvConfigSet::from_manifest(manifest).resolve_env("test")?;
+    let effective_manifest = manifest.with_environment_dependencies(&environment_selection.dependencies)?;
+    let manifest = &effective_manifest;
     if manifest
         .rust_facet
         .as_ref()
@@ -132,37 +138,23 @@ fn prepare_inner(
         return Err("Rust test roots with build scripts require declared build facts in their native plan".into());
     }
     let selected_features = incan_provider::PackageFeatureGraph::from_manifest(manifest)?.resolve(features)?;
-    if !selected_features.dependency_features.is_empty() || !selected_features.active_optional_dependencies.is_empty() {
-        return Err(
-            "Rust test feature forwarding must be represented by the selected native dependency declaration".into(),
-        );
-    }
-    let features = selected_features.active_features.into_iter().collect::<Vec<_>>();
-    let resolved = incan_provider::dependency_resolver::resolve_dependencies(
+    let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
+    let mut resolved = incan_provider::dependency_resolver::resolve_dependencies(
         Some(manifest),
         &[],
         true,
         &oven_model::lock::CargoFeatureSelection::default().normalized(),
     )
     .map_err(|errors| format!("invalid Rust test dependencies: {errors:?}"))?;
+    resolved
+        .apply_package_features(manifest, &selected_features)
+        .map_err(|errors| format!("invalid Rust test feature projection: {errors:?}"))?;
     let dependencies = resolved
         .dependencies
         .iter()
         .chain(&resolved.dev_dependencies)
         .cloned()
         .collect::<Vec<_>>();
-    let requirements = incan_provider::requirements::ProjectRequirements::default();
-    let semantic_identities = context.session.provider_semantic_identities(
-        &context.session.provider_plan,
-        &incan_provider::requirements::semantic_sdk_path_dependencies(&requirements),
-    )?;
-    let inputs = incan_driver::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
-        &context.session.provider_plan,
-        &requirements,
-        &resolved,
-        &semantic_identities,
-        context.native_sdk_context.as_deref(),
-    )?;
     let rustc = resolve_active_rustc()?;
     let project = manifest
         .project
@@ -173,14 +165,23 @@ fn prepare_inner(
         .as_deref()
         .ok_or("Rust test declaration has no project name")?
         .replace('-', "_");
-    let environment = BTreeMap::from([(
-        "CARGO_MANIFEST_DIR".into(),
-        context.project_root.to_string_lossy().into_owned(),
-    )]);
-    let mut request = OvenGeneratedProjectRequest::new(
+    let compiler = incan_driver::build::native_runtime_inputs::bound_compiler_executable()?;
+    let environment = BTreeMap::from([
+        (
+            "CARGO_MANIFEST_DIR".into(),
+            context.project_root.to_string_lossy().into_owned(),
+        ),
+        ("CARGO_BIN_EXE_incan".into(), compiler.to_string_lossy().into_owned()),
+    ]);
+    // Compile-time package metadata comes from the same authored version bound into the receipt.
+    // Keep it out of the runtime environment so child tests cannot inherit another package identity.
+    let version = project.version.as_deref().unwrap_or("0.1.0");
+    let mut compile_environment = environment.clone();
+    compile_environment.insert("CARGO_PKG_VERSION".into(), version.to_string());
+    let request = OvenGeneratedProjectRequest::new(
         &context.project_root,
         &name,
-        project.version.as_deref().unwrap_or("0.1.0"),
+        version,
         rustc_host_target(&rustc)?,
         rustc_identity(&rustc)?,
         "debug",
@@ -196,25 +197,33 @@ fn prepare_inner(
             context.project_root.join("loaf.toml")
         },
     )
-    .with_build_unit_input("test-environment", serde_json::to_string(&environment)?);
-    for (key, value) in inputs {
-        request = request.with_build_unit_input(key, value);
-    }
-    let receipt = receipt_generated_project(&request)?;
-    let selection = incan_driver::build::oven_project::select_retained_oven_direct_rustc_plan(
-        &context.store,
-        &receipt,
-        &dependencies,
-        context.native_sdk_context.as_deref(),
-    )?
-    .ok_or("Rust test dependencies have no matching prepared Loaves")?;
-    let mut plan = selection.source_artifact_plan("test-root")?;
-    plan.compile_environment.extend(environment.clone());
-    let mut artifacts = selection.artifacts().clone();
-    artifacts.compile_environment.extend(environment.clone());
+    .with_build_unit_input("test-environment", serde_json::to_string(&compile_environment)?);
+    let source_receipt = receipt_generated_project(&request)?;
+    let native = incan_driver::build::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?
+        .ok_or("Rust tests require the toolchain's ordinary native Loaf producer coordinates")?;
     let root_key = hex::encode(Sha256::digest(source.to_string_lossy().as_bytes()));
     let directory = context.project_root.join("target/oven-tests").join(root_key);
     std::fs::create_dir_all(&directory)?;
+    let (receipt, selection, _, _) = owner.native_loaf_plan(
+        &context.store,
+        &source_receipt,
+        &oven_rustc::native_loaf::NativeLoafConsumerRequest {
+            graph: &native.graph,
+            index: &native.index,
+            blobs: &native.blobs,
+            output: &directory.join("native-hints"),
+            rustc: &rustc,
+            target: &source_receipt.intent.target,
+            profile: &source_receipt.intent.profile,
+            dependencies: &dependencies,
+            declaration_owner: manifest.project_root(),
+            domain: "target",
+        },
+    )?;
+    let mut plan = selection.source_artifact_plan("test-root")?;
+    plan.compile_environment.extend(compile_environment.clone());
+    let mut artifacts = selection.artifacts().clone();
+    artifacts.compile_environment.extend(compile_environment);
     let executable = directory.join("native-libtest");
     let edition = manifest
         .rust_facet
@@ -237,6 +246,20 @@ fn prepare_inner(
             prefer_dynamic: false,
         },
         &context.store,
+    )?;
+    // Native test helpers consume the same leased closure as their root. Propagate the existing typed
+    // vocabulary capability so nested extraction cannot silently choose a Cargo-built dependency graph.
+    let mut environment = environment;
+    environment.insert("RUSTC".to_string(), rustc.display().to_string());
+    environment.insert(
+        oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUSTC_ENV.to_string(),
+        rustc.display().to_string(),
+    );
+    crate::commands::oven::append_compiler_suite_direct_rustc_environment(
+        &mut environment,
+        oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV,
+        &rustc,
+        &plan,
     )?;
     let collection = inventory_native_tests_for_collection(
         &executable,

@@ -9,10 +9,118 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::path::PathBuf;
 
+mod source_format;
+
 #[cfg(unix)]
 mod protocol;
 #[cfg(unix)]
 mod unix;
+
+/// One metadata-only check addressed to the same compatible project owner as build and test.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckIntent {
+    check: incan_driver::build::check::CheckRequest,
+}
+
+/// Submit checking to the existing owner and return canonical presentation data to the invoking CLI.
+/// Non-Unix clients use the same driver operation in process; transport failure never starts another compiler route.
+pub fn check(
+    path: &Path,
+    features: &incan_provider::FeatureSelection,
+    sdk_profile: Option<&str>,
+    interop_target: Option<&str>,
+) -> CliResult<incan_driver::build::check::CheckOutput> {
+    let request = incan_driver::build::check::CheckRequest {
+        path: std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?,
+        features: features.clone(),
+        sdk_profile: sdk_profile.map(str::to_owned),
+        interop_target: interop_target.map(str::to_owned),
+    };
+    #[cfg(unix)]
+    {
+        let result = unix::submit(
+            &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
+            serde_json::to_value(CheckIntent { check: request })
+                .map_err(|error| CliError::failure(error.to_string()))?,
+            |_| {},
+        )?;
+        serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))
+    }
+    #[cfg(not(unix))]
+    {
+        incan_driver::build::executable::ExecutableBuildOwner::default().check(&request)
+    }
+}
+
+/// Source formatting batch addressed to the same compatible owner as build, check and tests.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceFormatIntent {
+    source_format: Vec<source_format::SourceFormatRequest>,
+}
+
+/// Format fresh file contents through bounded batches in the existing owner, preserving input/result order.
+/// Each batch reconciles each project once and returns its ordered results in one completion message. The protocol
+/// fragments large replies at its existing wire bound. Callers retain file writes and presentation; no result is
+/// cached.
+pub fn format_sources(files: &[(PathBuf, String)]) -> CliResult<Vec<CliResult<String>>> {
+    let mut results = Vec::with_capacity(files.len());
+    let mut batch = Vec::new();
+    let mut batch_bytes = 0usize;
+    for (path, source) in files {
+        let request = source_format::SourceFormatRequest {
+            path: std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?,
+            display_path: path.clone(),
+            source: source.clone(),
+        };
+        let bytes = serde_json::to_vec(&request)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .len();
+        if !batch.is_empty() && batch_bytes.saturating_add(bytes) > 8 * 1024 * 1024 {
+            results.extend(submit_format_batch(std::mem::take(&mut batch))?);
+            batch_bytes = 0;
+        }
+        batch_bytes = batch_bytes.saturating_add(bytes);
+        batch.push(request);
+    }
+    if !batch.is_empty() {
+        results.extend(submit_format_batch(batch)?);
+    }
+    Ok(results
+        .into_iter()
+        .map(|result| result.map_err(CliError::failure))
+        .collect())
+}
+
+/// Submit one bounded set of formatting inputs and verify that every input has exactly one ordered result.
+fn submit_format_batch(requests: Vec<source_format::SourceFormatRequest>) -> CliResult<Vec<Result<String, String>>> {
+    #[cfg(unix)]
+    {
+        let expected = requests.len();
+        let result = unix::submit(
+            &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
+            serde_json::to_value(SourceFormatIntent {
+                source_format: requests,
+            })
+            .map_err(|error| CliError::failure(error.to_string()))?,
+            |_| {},
+        )?;
+        let results: Vec<Result<String, String>> =
+            serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))?;
+        if results.len() != expected {
+            return Err(CliError::failure("owner formatting result count differs from request"));
+        }
+        Ok(results)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(source_format::execute_batch(
+            &requests,
+            &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
+        ))
+    }
+}
 
 /// A build intent with explicit paths and the existing driver option model.
 #[derive(Serialize, Deserialize)]

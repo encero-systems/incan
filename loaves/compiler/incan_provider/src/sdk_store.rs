@@ -1036,7 +1036,7 @@ mod tests {
     /// than the whole `src/`, `crates/` and `tests/` tree v3 walked.
     #[test]
     fn the_effect_memo_key_over_this_checkout_stays_cheap() -> Result<(), Box<dyn std::error::Error>> {
-        let checkout = oven_model::toolchain_layout::development_root();
+        let checkout = incan_test_support::repo_root();
         let compiler_stamp = running_compiler_stamp().ok_or("the test executable must be stampable")?;
         let started = std::time::Instant::now();
         let key = sdk_provider_effect_input_key(&checkout, &compiler_stamp)?;

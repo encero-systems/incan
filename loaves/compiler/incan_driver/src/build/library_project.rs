@@ -357,7 +357,7 @@ fn checked_public_library_metadata(
 pub(crate) fn checked_source_library_manifest(
     session: &CompilationSession,
     entry: &Path,
-) -> CliResult<LibraryManifest> {
+) -> CliResult<(LibraryManifest, StdlibAstCache)> {
     let manifest = session
         .manifest
         .as_ref()
@@ -403,7 +403,7 @@ pub(crate) fn checked_source_library_manifest(
         .last()
         .ok_or_else(|| CliError::failure("source provider has no library module"))?;
     let feature_plan = session
-        .package_feature_plan
+        .package_feature_plan()
         .as_ref()
         .ok_or_else(|| CliError::failure("source provider has no package feature plan"))?;
     library_manifest.contract_metadata.provider =
@@ -442,7 +442,7 @@ pub(crate) fn checked_source_library_manifest(
         library_manifest.vocab = Some(vocab.payload);
         library_manifest.soft_keywords.activations = vocab.compatibility_activations;
     }
-    Ok(library_manifest)
+    Ok((library_manifest, public.stdlib_cache))
 }
 
 /// Validate a library project and generate its Rust project without running Cargo.
@@ -868,7 +868,9 @@ pub(crate) fn prepare_admitted_library_project_with_caller_facet<'a>(
         Some(inputs),
     )? {
         LibraryPreparation::Project(project) => *project,
-        LibraryPreparation::Native { .. } => return Err(CliError::failure("unexpected native library publication")),
+        LibraryPreparation::Native { .. } => {
+            return Err(CliError::failure("unexpected native library publication"));
+        }
     };
     Ok(PreparedAdmittedLibrary {
         project,
@@ -918,11 +920,11 @@ pub(crate) fn current_admitted_library_session(
         ));
     }
     let input_features = input
-        .package_feature_plan
+        .package_feature_plan()
         .as_ref()
         .ok_or_else(|| CliError::failure("explicit ordinary session has no feature authority"))?;
     let current_features = current
-        .package_feature_plan
+        .package_feature_plan()
         .as_ref()
         .ok_or_else(|| CliError::failure("current ordinary session has no feature authority"))?;
     if input.active_features != current.active_features
@@ -1185,7 +1187,7 @@ fn prepare_library_project_with_context(
     let requirements_start = Instant::now();
     let declared = manifest.declared_rust_crate_names();
     let package_feature_plan = compilation_session
-        .package_feature_plan
+        .package_feature_plan()
         .clone()
         .ok_or_else(|| CliError::failure("library compilation session is missing its package feature graph"))?;
     let library_manifest_index = compilation_session.library_manifest_index.clone();
@@ -1214,8 +1216,8 @@ fn prepare_library_project_with_context(
     let semantic = incan_provider::lock_semantics::semantic_lock_state_with_provider_identities(
         &project_root,
         manifest.interop_c(),
-        compilation_session.sdk_inventory.as_deref(),
-        compilation_session.sdk_components.as_ref(),
+        compilation_session.sdk_inventory().as_deref(),
+        compilation_session.sdk_components().as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
         &semantic_sdk_paths,
@@ -1989,8 +1991,8 @@ fn prepare_library_project_with_context(
             project_requirements.stdlib_facets.clone(),
         ),
         semantic: semantic_report(
-            compilation_session.sdk_inventory.as_deref(),
-            compilation_session.sdk_components.as_ref(),
+            compilation_session.sdk_inventory().as_deref(),
+            compilation_session.sdk_components().as_ref(),
             Some(&package_feature_plan),
             &provider_plan,
         ),

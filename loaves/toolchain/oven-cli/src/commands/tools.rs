@@ -1485,9 +1485,10 @@ mod tests {
         assert_eq!(registry_candidate_selector(&candidate), "catalog::feature::functions");
     }
 
+    /// The selected test package supplies the checkout; remapped dependency paths are not source authority.
     #[test]
     fn std_feature_inventory_is_checked_and_generates_reference() -> Result<(), Box<dyn std::error::Error>> {
-        let source = oven_model::toolchain_layout::development_root().join("loaves/stdlib/core/src/features.incn");
+        let source = incan_test_support::repo_root().join("loaves/stdlib/core/src/features.incn");
         let package = collect_registry_metadata_package(&source)?;
         let entries = stdlib_feature_inventory(&package)?;
         assert!(!entries.is_empty());

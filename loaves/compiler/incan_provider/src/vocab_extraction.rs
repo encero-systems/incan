@@ -19,9 +19,7 @@ use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{
     OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTargetPlan, clear_inherited_cargo_environment,
 };
-use oven_store::compiler_suite_env::{
-    OVEN_COMPILER_SUITE_RUSTC_ENV, OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OvenCompilerSuiteCapability,
-};
+use oven_store::compiler_suite_env::{OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OvenCompilerSuiteCapability};
 const VOCAB_COMPANION_CACHE_FORMAT: u32 = 1;
 const VOCAB_COMPANION_CACHE_DIR_ENV: &str = "INCAN_VOCAB_COMPANION_CACHE_DIR";
 const VOCAB_COMPANION_CACHE_FILE: &str = "metadata.json";
@@ -355,13 +353,7 @@ fn collect_library_vocab_metadata_with_mode(
     let metadata = if let Some(cached) = cached.as_ref() {
         cached.metadata.clone()
     } else {
-        let extraction_target_dir = cache_context.cache_dir.join("target");
-        extract_vocab_metadata_from_library_entrypoint(
-            &companion_crate_root,
-            &package_name,
-            &extraction_target_dir,
-            direct_rustc,
-        )?
+        extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name, direct_rustc)?
     };
     ensure_supported_vocab_metadata_version(&metadata, &companion_crate_root)?;
     let mut pending_desugarer_artifact = cached
@@ -845,66 +837,20 @@ fn parse_installed_rust_targets(stdout: &str) -> HashSet<String> {
         .collect()
 }
 
-/// Run the vocab extraction helper against a companion crate entrypoint.
+/// Run vocabulary extraction only through the explicitly selected native context or the scheduler's typed capability.
+/// Missing capabilities are refused before reading companion inputs or creating a helper workspace; extraction
+/// never constructs a Cargo package, copies a workspace lockfile or selects an ambient dependency graph.
 fn extract_vocab_metadata_from_library_entrypoint(
     companion_crate_root: &Path,
     package_name: &str,
-    target_dir: &Path,
     direct_rustc: Option<&OvenVocabDirectRustcContext>,
 ) -> ProviderResult<incan_vocab::VocabMetadata> {
-    if let Some(context) = direct_rustc {
-        return extract_vocab_metadata_with_direct_rustc(context, companion_crate_root, package_name);
-    }
-    if env::var_os(OVEN_COMPILER_SUITE_RUSTC_ENV).is_some() {
-        let context = oven_compiler_suite_rustc_context()?.ok_or_else(|| {
-            ProviderError::failure(
-                "stored Oven compiler suite has no direct-Rustc vocab companion capability; Cargo fallback is forbidden"
-                    .to_string(),
-            )
-        })?;
-        return extract_vocab_metadata_with_direct_rustc(&context, companion_crate_root, package_name);
-    }
-
-    let extraction_dir = create_extraction_workspace_dir()?;
-    let helper_root = extraction_dir.join("runner");
-    fs::create_dir_all(helper_root.join("src")).map_err(|err| {
-        ProviderError::failure(format!(
-            "failed to create vocab extraction workspace {}: {err}",
-            helper_root.display()
-        ))
-    })?;
-    write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
-    write_extraction_runner_source(&helper_root)?;
-
-    let mut command = oven_cargo_compat::cargo_process::cargo_command();
-    oven_cargo_compat::cargo_process::configure_cargo_target(&mut command, target_dir);
-    let output = command
-        .arg("run")
-        .arg("--quiet")
-        .arg("--manifest-path")
-        .arg(helper_root.join("Cargo.toml"))
-        .output()
-        .map_err(|err| ProviderError::failure(format!("failed to run vocab extraction helper: {err}")))?;
-
-    let metadata_result = if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str::<incan_vocab::VocabMetadata>(stdout.trim()).map_err(|err| {
-            ProviderError::failure(format!(
-                "failed to parse metadata extracted from `library_vocab()` in {}: {err}",
-                companion_crate_root.display()
-            ))
-        })
+    let inherited = if direct_rustc.is_none() {
+        oven_compiler_suite_rustc_context()?
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(ProviderError::failure(format!(
-            "failed to extract vocab metadata from companion crate via `library_vocab()` ({}):\n{}",
-            companion_crate_root.display(),
-            stderr.trim()
-        )))
+        None
     };
-
-    let _ = fs::remove_dir_all(&extraction_dir);
-    metadata_result
+    extract_vocab_metadata_with_direct_rustc(direct_rustc.or(inherited.as_ref()), companion_crate_root, package_name)
 }
 
 /// Load the direct-Rustc capability exported by an active Oven compiler-suite scheduler.
@@ -1062,10 +1008,15 @@ fn oven_vocab_auxiliary_target_context(
 /// This intentionally supports only dependencies already named by that closure. A companion that needs an arbitrary
 /// Cargo package fails as an unsupported direct compilation; the normal command never resolves or launches Cargo.
 fn extract_vocab_metadata_with_direct_rustc(
-    context: &OvenVocabDirectRustcContext,
+    context: Option<&OvenVocabDirectRustcContext>,
     companion_crate_root: &Path,
     package_name: &str,
 ) -> ProviderResult<incan_vocab::VocabMetadata> {
+    let context = context.ok_or_else(|| {
+        ProviderError::failure(
+            "vocabulary extraction requires a prepared native compiler capability; Cargo fallback is forbidden",
+        )
+    })?;
     let (source, edition, version) = vocab_companion_rustc_inputs(companion_crate_root)?;
     extract_vocab_metadata_with_direct_rustc_inputs(
         context,
@@ -1369,46 +1320,7 @@ fn create_extraction_workspace_dir() -> ProviderResult<PathBuf> {
     Ok(dir)
 }
 
-/// Write the temporary Cargo package that calls the companion crate's `library_vocab()` entrypoint.
-fn write_extraction_runner_manifest(
-    helper_root: &Path,
-    companion_crate_root: &Path,
-    package_name: &str,
-) -> ProviderResult<()> {
-    let helper_manifest = helper_root.join("Cargo.toml");
-    let escaped_companion_path = escape_cargo_toml_string(companion_crate_root);
-    let escaped_package_name = package_name.replace('\\', "\\\\").replace('"', "\\\"");
-    let manifest = format!(
-        "[package]\nname = \"incan_vocab_extraction_runner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\ncompanion = {{ package = \"{escaped_package_name}\", path = \"{escaped_companion_path}\" }}\nserde_json = \"1.0\"\n"
-    );
-    fs::write(&helper_manifest, manifest).map_err(|err| {
-        ProviderError::failure(format!(
-            "failed to write vocab extraction helper manifest {}: {err}",
-            helper_manifest.display()
-        ))
-    })?;
-    copy_workspace_lockfile_to_extraction_runner(helper_root)
-}
-
-/// Seed the temporary helper with the repo lockfile so path-only vocab tests do not re-resolve crates.io.
-fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> ProviderResult<()> {
-    let workspace_lockfile = oven_model::toolchain_layout::development_root().join("Cargo.lock");
-    if !workspace_lockfile.is_file() {
-        return Ok(());
-    }
-
-    let helper_lockfile = helper_root.join("Cargo.lock");
-    fs::copy(&workspace_lockfile, &helper_lockfile).map_err(|err| {
-        ProviderError::failure(format!(
-            "failed to copy workspace lockfile {} to vocab extraction helper {}: {err}",
-            workspace_lockfile.display(),
-            helper_lockfile.display()
-        ))
-    })?;
-    Ok(())
-}
-
-/// Write the Rust entrypoint for the temporary Cargo package that prints serialized vocab metadata.
+/// Write the native helper entrypoint that prints serialized vocabulary metadata.
 fn write_extraction_runner_source(helper_root: &Path) -> ProviderResult<()> {
     let source_path = helper_root.join("src").join("main.rs");
     let source = "fn main() {\n    let registration = companion::library_vocab();\n    let metadata = registration.metadata();\n    let text = match serde_json::to_string_pretty(&metadata) {\n        Ok(text) => text,\n        Err(err) => {\n            eprintln!(\"failed to serialize registration metadata: {err}\");\n            std::process::exit(1);\n        }\n    };\n    print!(\"{text}\");\n}\n";
@@ -1418,10 +1330,6 @@ fn write_extraction_runner_source(helper_root: &Path) -> ProviderResult<()> {
             source_path.display()
         ))
     })
-}
-
-fn escape_cargo_toml_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Materialize a declared vocab desugarer into the selected generated target.
@@ -1757,12 +1665,7 @@ mod tests {
     fn extract_vocab_metadata_from_library_entrypoint_parses_valid_payload() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
-        let parsed = extract_vocab_metadata_from_library_entrypoint(
-            &crate_root,
-            "widgets_vocab_companion",
-            &temp.path().join("extraction-target"),
-            None,
-        )?;
+        let parsed = extract_vocab_metadata_from_library_entrypoint(&crate_root, "widgets_vocab_companion", None)?;
         assert_eq!(parsed.keyword_registrations.len(), 1);
         assert_eq!(
             parsed.keyword_registrations[0].activation,
@@ -1773,26 +1676,23 @@ mod tests {
         Ok(())
     }
 
+    /// Missing native authority is refused before companion discovery or helper generation, without a Cargo route.
     #[test]
-    fn extraction_runner_manifest_reuses_workspace_lockfile() -> Result<(), Box<dyn std::error::Error>> {
+    fn vocabulary_extraction_refuses_missing_native_capability() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let helper_root = temp.path().join("runner");
-        let companion_root = temp.path().join("vocab_companion");
-        fs::create_dir_all(helper_root.join("src"))?;
-        fs::create_dir_all(&companion_root)?;
-
-        write_extraction_runner_manifest(&helper_root, &companion_root, "widgets_vocab_companion")?;
-
-        let manifest = fs::read_to_string(helper_root.join("Cargo.toml"))?;
-        assert!(manifest.contains("serde_json = \"1.0\""));
+        let missing_companion = temp.path().join("companion-not-created");
+        let error = match extract_vocab_metadata_with_direct_rustc(None, &missing_companion, "widgets_vocab_companion")
+        {
+            Ok(_) => return Err("missing native capability unexpectedly admitted extraction".into()),
+            Err(error) => error,
+        };
         assert!(
-            manifest.contains("\n[workspace]\n"),
-            "the temporary runner must opt out of an enclosing checkout workspace"
+            error
+                .to_string()
+                .contains("requires a prepared native compiler capability")
         );
-        assert!(
-            helper_root.join("Cargo.lock").is_file(),
-            "helper runner should inherit the workspace lockfile"
-        );
+        assert!(error.to_string().contains("Cargo fallback is forbidden"));
+        assert_eq!(fs::read_dir(temp.path())?.count(), 0);
         Ok(())
     }
 

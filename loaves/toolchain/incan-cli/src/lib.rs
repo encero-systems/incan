@@ -1481,10 +1481,11 @@ fn execute_build(
     }
 }
 
+/// One member result from the canonical owner, retaining its existing diagnostic envelope for workspace rendering.
 struct WorkspaceCheckMemberOutcome {
     member: WorkspaceMember,
     target: Option<PathBuf>,
-    report: Option<commands::diagnostics::DiagnosticReport>,
+    report: Option<incan_driver::build::check::CheckOutput>,
     error: Option<String>,
 }
 
@@ -1499,6 +1500,11 @@ fn execute_check(
     member_selectors: Vec<String>,
 ) -> CliResult<ExitCode> {
     let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        let path = if path == Path::new(".") {
+            resolve_main_script_entry_file(None, "check", "a file path")?
+        } else {
+            path
+        };
         return commands::diagnostics::check_path_with_interop_target_selection(
             &path,
             format,
@@ -1522,18 +1528,23 @@ fn execute_check(
                 continue;
             }
         };
-        match commands::diagnostics::check_path_report_with_interop_target_selection(
+        match oven_cli::project_owner::check(
             &target,
             &package_features,
             sdk_profile.as_deref(),
             interop_target.as_deref(),
         ) {
-            Ok(report) => outcomes.push(WorkspaceCheckMemberOutcome {
-                member: member.clone(),
-                target: Some(target),
-                report: Some(report),
-                error: None,
-            }),
+            Ok(report) => {
+                for warning in &report.warnings {
+                    eprint!("{warning}");
+                }
+                outcomes.push(WorkspaceCheckMemberOutcome {
+                    member: member.clone(),
+                    target: Some(target),
+                    report: Some(report),
+                    error: None,
+                });
+            }
             Err(error) => outcomes.push(WorkspaceCheckMemberOutcome {
                 member: member.clone(),
                 target: Some(target),
@@ -1545,7 +1556,7 @@ fn execute_check(
 
     let ok = outcomes
         .iter()
-        .all(|outcome| outcome.error.is_none() && outcome.report.as_ref().is_some_and(|report| report.ok()));
+        .all(|outcome| outcome.error.is_none() && outcome.report.as_ref().is_some_and(|report| report.exit_code == 0));
 
     match format {
         DiagnosticOutputFormat::Text => {
@@ -1557,13 +1568,22 @@ fn execute_check(
                     .unwrap_or_else(|| "<unresolved>".to_string());
                 println!("workspace member {}: {target}", outcome.member.name());
                 if let Some(report) = &outcome.report {
-                    if report.ok() {
+                    if report.exit_code == 0 {
                         println!("✓ Type check passed!");
+                    } else if report.json.is_none() {
+                        eprintln!(
+                            "{}",
+                            report
+                                .human_message
+                                .as_deref()
+                                .unwrap_or("type check failed without diagnostics")
+                        );
                     } else {
                         eprint!(
                             "{}",
                             report
-                                .human_message()
+                                .human_message
+                                .as_deref()
                                 .unwrap_or("type check failed without diagnostics\n")
                         );
                     }
@@ -1586,16 +1606,32 @@ fn execute_check(
                     });
                     if let Some(object) = result.as_object_mut() {
                         if let Some(report) = &outcome.report {
-                            object.insert("report".to_string(), serde_json::json!(report));
+                            if let Some(json) = &report.json {
+                                let diagnostics = serde_json::from_str(json).map_err(|error| {
+                                    CliError::failure(format!("invalid member diagnostic report: {error}"))
+                                })?;
+                                object.insert("report".to_string(), diagnostics);
+                            } else {
+                                object.insert("ok".to_string(), serde_json::Value::Bool(false));
+                                object.insert(
+                                    "error".to_string(),
+                                    serde_json::Value::String(
+                                        report
+                                            .human_message
+                                            .clone()
+                                            .unwrap_or_else(|| "type check failed without diagnostics".to_string()),
+                                    ),
+                                );
+                            }
                         }
                         if let Some(error) = &outcome.error {
                             object.insert("ok".to_string(), serde_json::Value::Bool(false));
                             object.insert("error".to_string(), serde_json::Value::String(error.clone()));
                         }
                     }
-                    result
+                    Ok(result)
                 })
-                .collect::<Vec<_>>();
+                .collect::<CliResult<Vec<_>>>()?;
             let report = serde_json::json!({
                 "schema_version": "incan.workspace.check.v1",
                 "workspace": {

@@ -49,7 +49,7 @@ impl MetadataLockTransition {
         let lock = canonical_lock_coordinate(context.project.project_root())?;
         let features = context
             .session
-            .package_feature_plan
+            .package_feature_plan()
             .as_ref()
             .ok_or_else(|| invalid("lock transition lacks original feature graph"))?;
         let source = current_source_snapshot(context.project.project_root(), features)?;
@@ -115,7 +115,7 @@ impl MetadataLockTransition {
         }
         let features = context
             .session
-            .package_feature_plan
+            .package_feature_plan()
             .as_ref()
             .ok_or_else(|| invalid("lock transition lacks current feature graph"))?;
         let source = current_source_snapshot(context.project.project_root(), features)?;

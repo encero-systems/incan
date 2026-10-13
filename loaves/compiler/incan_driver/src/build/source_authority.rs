@@ -233,17 +233,72 @@ impl ProjectSourceAuthorityDigester {
         let _trace =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::retain_dependency_session").entered();
         let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
-        let identity = serde_json::to_vec(&(
-            self.dependency_generation(&root)?,
-            self.lock_fingerprint(&root)?,
-            ordinary_preparation_identity_digest()?,
-            features,
-            sdk_profile,
-            purpose,
-        ))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-        self.retained_inputs
-            .compilation_session(&root, entry, digest_bytes(&identity), features, sdk_profile, purpose)
+        let identity = match self.session_identity(&root, features, sdk_profile, purpose) {
+            Ok(identity) => identity,
+            Err(error) if purpose == super::retained_inputs::SessionPurpose::CheckMetadata => {
+                // An execution-oriented identity may not admit a metadata-only project. Fall back before discovery;
+                // errors produced by actual checking must propagate once, without starting the same check again.
+                tracing::trace!(target: "incan::invocation", decision = "check_session_unretained", reason = %error.message);
+                return crate::session::CompilationSession::discover_for_check(entry, features, sdk_profile)
+                    .map(std::sync::Arc::new);
+            }
+            Err(error) => return Err(error),
+        };
+        let session =
+            self.retained_inputs
+                .compilation_session(&root, entry, identity.clone(), features, sdk_profile, purpose)?;
+        if purpose == super::retained_inputs::SessionPurpose::CheckMetadata {
+            self.begin_request();
+            match self.session_identity(&root, features, sdk_profile, purpose) {
+                Ok(current) if current == identity => {}
+                result => {
+                    self.retained_inputs.discard_compilation_session(&root, purpose);
+                    result?;
+                    return Err(CliError::failure(
+                        "check dependency inputs changed during session preparation",
+                    ));
+                }
+            }
+        }
+        Ok(session)
+    }
+
+    /// Bind one retained session to the existing dependency graph, lock, compiler and explicit selection.
+    /// Internal model observations cannot create extra user-visible diagnostics for checking or parser-only collection.
+    fn session_identity(
+        &mut self,
+        root: &Path,
+        features: &incan_provider::FeatureSelection,
+        sdk_profile: Option<&str>,
+        purpose: super::retained_inputs::SessionPurpose,
+    ) -> CliResult<String> {
+        let mut identity = || {
+            let bytes = serde_json::to_vec(&(
+                self.dependency_generation(root)?,
+                self.lock_fingerprint(root)?,
+                ordinary_preparation_identity_digest()?,
+                features,
+                sdk_profile,
+                purpose,
+            ))
+            .map_err(|error| CliError::failure(error.to_string()))?;
+            Ok(digest_bytes(&bytes))
+        };
+        if purpose != super::retained_inputs::SessionPurpose::Artifacts {
+            crate::diagnostics::capture_warning_output(identity).0
+        } else {
+            identity()
+        }
+    }
+
+    /// Access completed metadata-only reports through the existing reconciled project/session owner.
+    pub(super) fn check_report(
+        &mut self,
+        root: &Path,
+        session: &std::sync::Arc<crate::session::CompilationSession>,
+    ) -> Option<&mut Option<super::check::CompletedCheck>> {
+        let root = fs::canonicalize(root).ok()?;
+        self.retained_inputs.check_report(&root, session)
     }
 
     /// Borrow the original native plan only from a dependency session reconciled by this request.
