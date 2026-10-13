@@ -135,6 +135,39 @@ pub fn report_build_phase_timing(label: &str, output: &Output) {
     );
 }
 
+/// Run one exact test from the existing checkout-relative compiler source layout.
+///
+/// The parent creates a uniquely owned hard link to its current libtest executable under the selected checkout's
+/// `target/compiler-development/bin`. The child preserves the runner's compiler binding, native plan and environment;
+/// production source discovery still validates its actual executable and pinned declarations. No source tree or test
+/// binary is copied. Cross-filesystem linking refuses instead of silently duplicating a large harness. Returns `true`
+/// after the parent has verified the child passed; the selected child returns `false` so the original test body runs.
+pub fn in_compiler_source_layout(test_name: &str) -> std::io::Result<bool> {
+    const CHILD: &str = "INCAN_TEST_COMPILER_SOURCE_LAYOUT";
+    if std::env::var(CHILD).ok().as_deref() == Some(test_name) {
+        return Ok(false);
+    }
+    let directory = repo_root().canonicalize()?.join("target/compiler-development/bin");
+    std::fs::create_dir_all(&directory)?;
+    let source = std::env::current_exe()?;
+    let executable = tempfile::Builder::new()
+        .prefix("incan-source-test-")
+        .make_in(&directory, |path| std::fs::hard_link(&source, path))?;
+    let output = Command::new(executable.path())
+        .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, test_name)
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() || !stdout.contains("1 passed") {
+        return Err(std::io::Error::other(format!(
+            "compiler-source test `{test_name}` failed or selected no test:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    print!("{stdout}");
+    Ok(true)
+}
+
 /// Return the Incan CLI built alongside the current integration-test executable.
 ///
 /// Nextest rewrites `CARGO_BIN_EXE_incan` when a portable archive is extracted on another runner. Read it at runtime
@@ -345,6 +378,30 @@ mod fixture_bake_tests {
     use std::collections::BTreeMap;
     use std::ffi::OsStr;
     use std::process::Command;
+
+    /// The relocated exact test sees the genuine checkout source layout without changing production discovery.
+    #[test]
+    fn compiler_source_layout_selects_actual_checkout() -> Result<(), Box<dyn std::error::Error>> {
+        if super::in_compiler_source_layout("fixture_bake_tests::compiler_source_layout_selects_actual_checkout")? {
+            return Ok(());
+        }
+        let layout = oven_model::toolchain_layout::CompilerOwnedSourceLayout::discover()?
+            .ok_or("test executable has no compiler source layout")?;
+        assert_eq!(
+            layout.verified_source_root()?,
+            super::repo_root().join("loaves/stdlib").canonicalize()?
+        );
+        layout.verify()?;
+        Ok(())
+    }
+
+    /// A successful libtest process with zero selected tests must not become a passing fixture result.
+    #[test]
+    fn compiler_source_layout_refuses_empty_selection() -> std::io::Result<()> {
+        let result = super::in_compiler_source_layout("incan_test_support_missing_source_layout_case");
+        assert!(result.is_err(), "an absent exact test was accepted");
+        Ok(())
+    }
 
     /// A sealed dependency path needs the selected native checkout; invalid anchors cannot select an ancestor instead.
     #[test]
