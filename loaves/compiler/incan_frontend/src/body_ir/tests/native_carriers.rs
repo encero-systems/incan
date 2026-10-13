@@ -140,7 +140,7 @@ fn web_payloads_retain_construction_and_projection_facts() -> Result<(), Box<dyn
     assert!(
         main.block.stmts.iter().any(|statement| matches!(
             &statement.kind,
-            bir::StatementKind::Assign { value: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _), .. }
+            bir::StatementKind::Assign { rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _), .. }
                 if target.name == "Query" && target.canonical_field_layout.as_deref() == Some(&["0".to_owned()])
         )),
         "{}",
