@@ -13881,3 +13881,19 @@ fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dy
         ),
     )
 }
+
+
+/// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
+#[test]
+fn method_partial_of_a_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("method-partial-of-a-value")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_functions_and_aliases/local_partials_of_methods_of_values.incn"
+        ),
+    )
+}

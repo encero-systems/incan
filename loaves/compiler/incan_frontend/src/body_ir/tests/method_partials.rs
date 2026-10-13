@@ -1,6 +1,7 @@
-//! Checked method-partial frames and presets for direct execution.
+//! Checked method-partial default frames and receiver snapshots for direct execution.
 
-use super::*;
+use super::{IncanType, bir, body_named, build};
+use incan_semantics_core::SemanticSourceTargetKind;
 
 /// A method partial on a model or class retains its target method's frame, through a method alias too, with the presets
 /// as defaults beside the target's own, and a call of the partial omits the preset as a defaulted slot of its target.
@@ -57,5 +58,73 @@ fn method_partials_retain_target_frames_with_presets_as_defaults() -> Result<(),
     assert!(module.is_well_formed_nominal_declaration(counter));
     let rendered = body_named(&module, "main")?.render_snapshot();
     assert!(rendered.contains("call method:short defaults=[0, 1]"), "{rendered}");
+    Ok(())
+}
+
+/// Aliases, closed generic owners and `self` retain the same captured receiver and method forwarding contract.
+#[test]
+fn method_partials_capture_receivers_and_keep_checked_targets() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_functions_and_aliases/local_partials_of_methods_of_values.incn"
+    );
+    let module = build(source, &["method_partials"])?;
+    let mut count = 0;
+    for body in &module.bodies {
+        for statement in &body.block.stmts {
+            let bir::StatementKind::Assign {
+                rvalue:
+                    bir::Rvalue::Closure {
+                        params,
+                        captured_operands,
+                        body: closure,
+                    },
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            count += 1;
+            assert_eq!(captured_operands.len(), 2);
+            assert_eq!(closure.capture_locals.len(), 2);
+            let receiver = closure.capture_locals[0];
+            assert_eq!(body.locals[receiver.index()].origin, bir::LocalOrigin::Captured);
+            let [forward] = closure.stmts.as_slice() else {
+                return Err("a method partial must have exactly one forwarding call".into());
+            };
+            let bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } = &forward.kind
+            else {
+                return Err("a method partial must forward to the checked method".into());
+            };
+            let canonical = target.canonical.as_ref().ok_or("method identity missing")?;
+            assert_eq!(canonical.kind, SemanticSourceTargetKind::Method);
+            assert!(matches!(target.name.as_str(), "label" | "pair" | "greet"));
+            assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(params.len()));
+            let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = args.first() else {
+                return Err("method receiver must be the first forwarding operand".into());
+            };
+            assert_eq!(read.place.local_id(), Some(receiver));
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(
+                params
+                    .iter()
+                    .any(|param| matches!(param.default, bir::CallableParamDefault::PartialPreset { .. }))
+            );
+            if target.name == "pair" {
+                assert_eq!(params[0].ty, IncanType::Int);
+                assert_eq!(
+                    body.locals[receiver.index()].ty,
+                    IncanType::Generic {
+                        base: "Box".to_string(),
+                        args: vec![IncanType::Int]
+                    }
+                );
+            }
+        }
+    }
+    assert_eq!(count, 5, "{}", module.render_snapshot());
     Ok(())
 }
