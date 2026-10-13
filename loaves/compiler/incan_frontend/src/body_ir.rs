@@ -441,6 +441,9 @@ fn build_body_ir_module_v0_with_provider_operations(
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);
+    for body in &mut bodies {
+        representation_facts::retain(body);
+    }
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     let mut module = bir::BodyIrModule {
         decorated_bindings,
@@ -1950,6 +1953,7 @@ mod collect;
 mod collection_context;
 mod decorated_bindings;
 mod entrypoint_effects;
+mod representation_facts;
 mod static_aliases;
 
 mod bodies;

@@ -133,7 +133,7 @@ from rust::incan_semantics_core::body_ir import (
     IterProtocol,
 )
 # ---- Admission helpers owned by this Loaf ----
-from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
+from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind, canonical_module_identity
 from rust::incan_semantics_core::body_ir import EntrypointEffect as RustEntrypointEffect
 from classes import (
     frame_type,
@@ -2426,13 +2426,21 @@ def lower_if(
     else_body: &Option[RustBlock],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Lower both branches into their own blocks and join them in a common successor."""
+    """Lower a proven constant branch directly; otherwise join the independently lowered branches and their owners."""
+    condition_value = value_operand(builder, condition, span)?
+    match constant_boolean(builder, condition_value):
+        Some(selected) =>
+            if selected:
+                return lower_block(module, builder, then_body)
+            match else_body:
+                Some(body) => return lower_block(module, builder, body)
+                None => return Ok(None)
+        None => pass
     then_index = builder.new_block(span)
     else_index = builder.new_block(span)
     after = builder.new_block(span)
     # `SwitchBool` takes its false target first, then its true target.
     # Legacy E0499: materialize before borrowing the builder receiver again, until dev.8.
-    condition_value = value_operand(builder, condition, span)?
     builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
 
     incoming = builder.owned
@@ -2459,6 +2467,34 @@ def lower_if(
     builder.current = after
     builder.closed[after] = len(branch_ends) == 0
     return Ok(None)
+
+
+def constant_boolean(builder: Builder, operand: Operand) -> Option[bool]:
+    """Read a literal or the latest whole-slot boolean literal in this block, never propagating across control-flow edges."""
+    match operand.kind:
+        OperandKind.Literal(Constant.Bool(value)) => return Some(value)
+        OperandKind.Copy(place) =>
+            if place.projection != Projection.Whole:
+                return None
+            statements = builder.blocks[builder.current].statements
+            for offset in range(len(statements)):
+                match statements[len(statements) - offset - 1].kind:
+                    StatementKind.Assign(target, value) =>
+                        if target.local == place.local:
+                            if target.projection != Projection.Whole:
+                                return None
+                            match value.kind:
+                                RvalueKind.Use(value) =>
+                                    match value.kind:
+                                        OperandKind.Literal(Constant.Bool(flag)) => return Some(flag)
+                                        _ => return None
+                                _ => return None
+                    StatementKind.StorageDead(local) =>
+                        if local == place.local:
+                            return None
+                    _ => pass
+        _ => pass
+    return None
 
 
 def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, span: SourceSpan) -> Result[None, str]:
@@ -9241,7 +9277,7 @@ def lower_union_isinstance(
     target: &RustType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
-    """Inspect the physical carrier's tag without consuming it; a narrowed view never changes stored variant indexes."""
+    """Inspect carrier tags or compare a retained newtype's exact identity without consuming its storage."""
     source_ty = isinstance_source_type(builder, value, ty, span)?
     member = native_source_type(builder.nominals, builder.enums, builder.unions, target, builder.intrinsics)?
     match source_ty:
@@ -9252,6 +9288,10 @@ def lower_union_isinstance(
             return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
         PlanType.FrozenStr =>
             return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
+        PlanType.Model(owner, _name) =>
+            if owner < 0 or owner >= len(builder.nominals) or builder.nominals[owner].canonical.kind != SemanticSourceTargetKind.Newtype:
+                return Err("unsupported Body IR isinstance over a non-newtype nominal")
+            return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
         _ => pass
     owner = enum_owner(source_ty)?
     if is_option_carrier(builder, owner):

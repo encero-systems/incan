@@ -371,7 +371,7 @@ pub def function_assignment(
     value: Operand,
     pointer_storage: bool,
 ) -> Result[tuple[PlanType, RvalueKind], str]:
-    """Preserve inferred function items and reify only an explicitly typed function-pointer destination."""
+    """Preserve exact item, pointer, or shared closure signatures; reify only a proven function-pointer destination."""
     match source:
         PlanType.FunctionItem(_name, signature) =>
             if pointer_storage:
@@ -388,7 +388,13 @@ pub def function_assignment(
             if destination != source:
                 return Err("invalid Body IR callable assignment signature")
             return Ok((destination, RvalueKind.Use(value)))
-        _ => return Err("unsupported Body IR noncallable assignment to function value")
+        PlanType.ClosureRef(signature) =>
+            if pointer_storage:
+                return Err("unsupported Body IR shared closure stored as a function pointer")
+            if callable_signature(destination)? != signature:
+                return Err("invalid Body IR shared closure assignment signature")
+            return Ok((source, RvalueKind.Use(value)))
+        _ => return Err(f"unsupported Body IR noncallable assignment to function value: {source:?} to {destination:?}")
 
 
 pub def source_function_item(
