@@ -13586,3 +13586,49 @@ fn constrained_newtype_validation_boundaries_produce_no_binary() -> Result<(), B
     }
     Ok(())
 }
+
+
+/// Foreign Json/Query payloads and Html's string specialization preserve live legacy bytes without a server.
+#[test]
+fn web_payload_carriers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("web-payload-carriers")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"import std.web as web
+from std.web import Json, Query, Html
+from std.web import Html as Page
+from std.serde import json
+
+@derive(json)
+model Search:
+    q: str
+
+def query_text(query: Query[Search]) -> str:
+    return query.value.q
+
+def json_text(reply: Json[Search]) -> str:
+    return reply.q
+
+def render(text: str) -> Html:
+    return Html(text)
+
+def render_alias(text: str) -> Page:
+    return Page(text)
+
+def render_qualified(text: str) -> web.Html:
+    return Html(text)
+
+def main() -> None:
+    println(query_text(Query(Search(q="query"))))
+    println(json_text(Json(Search(q="json"))))
+    render("<p>html</p>")
+    render_alias("<p>alias</p>")
+    render_qualified("<p>qualified</p>")
+    println("html")
+"#,
+    )?;
+    Ok(())
+}

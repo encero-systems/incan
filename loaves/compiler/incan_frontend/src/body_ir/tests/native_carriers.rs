@@ -1,8 +1,8 @@
 //! Native stdlib carriers retain checked ownership independently of source types with the same spelling.
 
-use super::{build, library_nominal_declarations};
+use super::{bir, body_named, build, library_nominal_declarations};
 use crate::{lexer, parser, typechecker::TypeChecker};
-use incan_semantics_core::{CompilerNodeId, SymbolOrigin};
+use incan_semantics_core::{CompilerNodeId, IncanPrimitiveType, IncanType, SymbolOrigin};
 
 /// An untouched ValidationError builtin in an unused signature still retains its foreign ABI carrier.
 #[test]
@@ -61,5 +61,111 @@ fn source_validation_error_keeps_its_declared_layout() -> Result<(), Box<dyn std
     assert!(error.native_item.is_empty());
     assert_eq!(error.fields, ["reason"]);
     assert!(matches!(error.canonical.origin, SymbolOrigin::Module(_)));
+    Ok(())
+}
+
+/// The std.web imports retain their actual foreign tuple layouts, including Html's fixed String argument.
+#[test]
+fn web_carriers_retain_foreign_tuple_layouts() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.web import Json, Query, Html\n\nmodel Search:\n    q: str\n\ndef carriers(query: Query[Search], reply: Json[Search], page: Html) -> None:\n    pass\n\ndef main() -> None:\n    pass\n";
+    let program = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["m".to_owned(), "web_carriers".to_owned()]));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let declarations = library_nominal_declarations(checker.type_info());
+    for (name, item) in [
+        ("Json", "axum::Json"),
+        ("Query", "axum::extract::Query"),
+        ("Html", "axum::response::Html"),
+    ] {
+        let owner = declarations.iter().find(|owner| owner.name == name).ok_or_else(|| {
+            format!(
+                "missing {name} carrier; imports: {:?}",
+                checker.type_info().declarations.resolved_import_identities
+            )
+        })?;
+        assert_eq!(owner.native_item, item);
+        assert_eq!(owner.fields, ["0"]);
+        assert!(
+            matches!(owner.canonical.origin, SymbolOrigin::RustCrate(_)),
+            "{:?}",
+            owner.canonical
+        );
+        if name == "Html" {
+            assert!(owner.type_parameters.is_empty());
+            assert_eq!(owner.field_types, [IncanType::Primitive(IncanPrimitiveType::Str)]);
+            let encoded = serde_json::to_value(owner)?;
+            assert_eq!(
+                encoded["native_type_arguments"],
+                serde_json::to_value(vec![IncanType::Primitive(IncanPrimitiveType::Str)])?
+            );
+        } else {
+            assert_eq!(owner.type_parameters, ["T"]);
+            assert_eq!(owner.field_types, [IncanType::TypeVar("T".to_owned())]);
+        }
+    }
+    Ok(())
+}
+
+/// A checked extractor read records the tuple slot before the payload field, and construction records that slot.
+#[test]
+fn web_payloads_retain_construction_and_projection_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.web import Query\n\nmodel Search:\n    q: str\n\ndef read(query: Query[Search]) -> str:\n    return query.value.q\n\ndef main() -> None:\n    println(read(Query(Search(q=\"payload\"))))\n";
+    let module = build(source, &["m", "web_tuple_facts"])?;
+    let read = body_named(&module, "read")?;
+    let projection = read
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(value)),
+            } => Some(&value.place.projection),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing payload return: {}", read.render_snapshot()))?;
+    assert_eq!(projection.len(), 2, "{projection:?}");
+    assert!(
+        matches!(&projection[0], bir::PlaceElem::Field { name, canonical: Some(_), structural: false } if name == "0"),
+        "{projection:?}"
+    );
+    assert!(
+        matches!(&projection[1], bir::PlaceElem::Field { name, canonical: Some(_), structural: false } if name == "q"),
+        "{projection:?}"
+    );
+    let main = body_named(&module, "main")?;
+    assert!(
+        main.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Assign { value: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _), .. }
+                if target.name == "Query" && target.canonical_field_layout.as_deref() == Some(&["0".to_owned()])
+        )),
+        "{}",
+        main.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A source Json model's value field remains its declared field, rather than becoming a foreign tuple projection.
+#[test]
+fn source_json_keeps_its_declared_value_projection() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Json:\n    value: str\n\ndef read(value: Json) -> str:\n    return value.value\n\ndef main() -> None:\n    println(read(Json(value=\"source\")))\n";
+    let module = build(source, &["m", "source_json"])?;
+    let owner = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Json")
+        .ok_or("missing source Json")?;
+    assert!(owner.native_item.is_empty());
+    assert_eq!(owner.fields, ["value"]);
+    let read = body_named(&module, "read")?;
+    assert!(read.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Return { value: Some(bir::Operand::Place(value)) }
+            if matches!(value.place.projection.as_slice(), [bir::PlaceElem::Field { name, canonical: Some(_), .. }] if name == "value")
+    )), "{}", read.render_snapshot());
     Ok(())
 }
