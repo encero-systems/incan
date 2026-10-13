@@ -45,10 +45,11 @@ def main() -> None:
     )
 }
 
-/// Imported field expectations retain every original nominal collection and tuple carrier without extra imports.
+/// Imported tuple layouts reach the generators-owned projected-read boundary while the original legacy output stays
+/// fixed.
 #[test]
 fn unimported_constructor_field_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_case(
+    check_project_modules_refusal_case(
         "unimported_constructor_field_types",
         include_str!(
             "../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/main.incn"
@@ -68,6 +69,7 @@ fn unimported_constructor_field_types_output_matches_legacy() -> Result<(), Box<
             ),
         ],
         b"0\ntrue\n1\ntrue\n1\n0\nnone\n1\np\n0\n3\n",
+        "unsupported Body IR model index or slice projection",
     )
 }
 
@@ -9695,6 +9697,46 @@ def main() -> None:
         ),
         "unsupported Body IR nonlocal or trait-object Method",
     )
+}
+
+/// Pin a full multi-module program's next-stage refusal and verify its unchanged legacy output before handing it off.
+fn check_project_modules_refusal_case(
+    name: &str,
+    text: &str,
+    modules: &[(&str, &str)],
+    expected_stdout: &[u8],
+    reason: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let main = support::cli_project::write_minimal_project(&root, name, "")?;
+    fs::write(&main, text)?;
+    let source = main.parent().ok_or("project main has no source directory")?;
+    for (file, module) in modules {
+        fs::write(source.join(file), module)?;
+    }
+    let native = root.join("native");
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    let actual = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &main,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    )
+    .current_dir(&root)
+    .output()?;
+    assert!(!actual.status.success());
+    let diagnostic = String::from_utf8(actual.stderr)?;
+    assert!(diagnostic.contains(reason), "{diagnostic}");
+    let expected = support::repo_command()
+        .current_dir(&root)
+        .args(["run", "src/main.incn"])
+        .output()?;
+    success(&expected, "legacy project execution before next-stage handoff");
+    assert_eq!(expected.stdout, expected_stdout);
+    Ok(())
 }
 
 /// Compare a program of several modules in the minimal project layout, pinning its output.
