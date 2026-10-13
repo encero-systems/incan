@@ -30,6 +30,10 @@ fn sdk_task_handle_results_retain_native_arguments() -> Result<(), Box<dyn std::
         .ok_or("missing native handle")?;
     assert!(handle.fields.is_empty());
     assert!(!handle.derives.iter().any(|name| name == "Clone"));
+    assert!(
+        layouts.iter().any(|layout| layout.name == "TaskJoinError"),
+        "{layouts:?}"
+    );
     Ok(())
 }
 
