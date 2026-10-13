@@ -197,6 +197,12 @@ pub def lower_enum_declarations(
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
+        mut native_arguments: list[PlanType] = []
+        if item != "":
+            for argument in declaration.native_type_arguments:
+                native_arguments.append(
+                    retained_source_type(module.nominal_declarations, module.enum_declarations, [], argument, intrinsics)?,
+                )
         selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
         mut derives: list[str] = []
         if item == "":
@@ -217,6 +223,7 @@ pub def lower_enum_declarations(
                 derives=derives,
                 span=SourceSpan(file=file, line=1, column=1),
                 library_item=item,
+                library_type_arguments=native_arguments,
                 raw_kind=raw_kind,
                 raw_values=raw_values,
             ),

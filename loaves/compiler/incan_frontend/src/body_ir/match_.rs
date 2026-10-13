@@ -499,9 +499,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let mut positional_fields = Vec::new();
                 let mut has_named = false;
                 let mut positional_index = 0usize;
-                let payload_types = self
+                let variant_identity = self
                     .type_info
                     .resolved_identity(name.span)
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                    .cloned()
+                    .or_else(|| runtime_enums::pattern_identity(self.local_enum_declarations, &name.node, expected_ty));
+                let payload_types = variant_identity
+                    .as_ref()
                     .and_then(|identity| self.enum_payload_types(identity, expected_ty));
                 for arg in args {
                     match arg {
@@ -532,7 +537,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                                 self.settled_types.insert((pat.span.start, pat.span.end), ty.clone());
                             }
                             positional_index += 1;
-                            let lowered = self.lower_match_pattern(
+                            let mut lowered = self.lower_match_pattern(
                                 pat,
                                 &IncanType::Unknown,
                                 &field_place,
@@ -541,6 +546,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                                 seen,
                                 saved_bindings,
                             );
+                            if variant_identity.as_ref().is_some_and(|identity| {
+                                matches!(&identity.origin,
+                                incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                                if library == "incan_std_async" && module_path == &["time"])
+                            }) && let bir::Pattern::Var(binding) = &mut lowered
+                            {
+                                self.native_enum_payload_bindings.insert(binding.local);
+                                if binding.fact == bir::OwnershipFact::Borrow {
+                                    binding.fact = bir::OwnershipFact::Move;
+                                }
+                            }
                             positional_fields.push(lowered);
                         }
                     }
@@ -553,11 +569,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     }
                 } else {
                     bir::Pattern::Enum {
-                        canonical: self.type_info.resolved_identity(name.span).cloned(),
+                        canonical: variant_identity.clone(),
                         name: String::new(),
-                        variant: self
-                            .type_info
-                            .resolved_identity(name.span)
+                        variant: variant_identity
+                            .as_ref()
                             .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)
                             .map_or_else(|| name.node.clone(), |identity| identity.declaration_name.clone()),
                         fields: positional_fields,

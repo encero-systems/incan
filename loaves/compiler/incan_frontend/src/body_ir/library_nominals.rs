@@ -47,6 +47,7 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
         .named_type_identities
         .values()
         .cloned()
+        .chain(type_info.declarations.body_ir_native_type_identities.values().cloned())
         .chain(expression_leaves)
         .chain(signature_leaves)
         .filter(|identity| {
@@ -56,6 +57,7 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
                     | SemanticSourceTargetKind::Class
                     | SemanticSourceTargetKind::Enum
                     | SemanticSourceTargetKind::Newtype
+                    | SemanticSourceTargetKind::Rusttype
             )
         })
         .filter_map(|identity| declaring_identity(&identity, cache))

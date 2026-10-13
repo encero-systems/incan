@@ -168,7 +168,12 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         .split('.')
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    if let Some(identity) = type_info.declarations.named_type_identities.get(name) {
+    if let Some(identity) = type_info
+        .declarations
+        .named_type_identities
+        .get(name)
+        .or_else(|| type_info.declarations.body_ir_native_type_identities.get(name))
+    {
         match &identity.origin {
             SymbolOrigin::Module(owner) if owner == &path => {}
             SymbolOrigin::Package { library, module_path }

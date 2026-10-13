@@ -2225,6 +2225,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || !names.insert(&declaration.name)
             || declaration.variants.is_empty()
             || !valid_library_item(&declaration.library_item)
+            || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
             || (!declaration.library_item.is_empty()
                 && (!declaration.carrier.is_empty()
                     || !declaration.derives.is_empty()
@@ -2238,6 +2239,12 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             })
         {
             return Err(error());
+        }
+        for argument in &declaration.library_type_arguments {
+            if !source_signature_type(&scalar(argument)) {
+                return Err(error());
+            }
+            validate_model_type(plan, argument)?;
         }
         let mut variants = BTreeSet::new();
         for variant in &declaration.variants {

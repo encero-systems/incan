@@ -185,6 +185,12 @@ pub fn library_nominal_declarations(type_info: &TypeCheckInfo) -> Vec<bir::Nomin
     layouts
 }
 
+/// SDK enum contracts travel in declaration-only modules under their native owner's physical identity.
+/// Consumer bodies retain selected variant and payload facts but never claim ownership of the SDK declaration.
+pub fn library_enum_declarations(type_info: &TypeCheckInfo) -> Vec<bir::EnumDeclaration> {
+    runtime_enums::collect(type_info)
+}
+
 /// Crate-call records for the stdlib functions and model or class methods one module calls, retaining their type
 /// parameters.
 ///
@@ -329,8 +335,10 @@ fn build_body_ir_module_v0_with_provider_operations(
     let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
     let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    let runtime_enum_declarations = runtime_enums::collect(type_info);
     let local_enum_declarations = enum_declarations
         .iter()
+        .chain(runtime_enum_declarations.iter())
         .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
         .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
         .collect::<HashMap<_, _>>();
@@ -996,6 +1004,8 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
+    /// Locals whose selected SDK enum payload layout replaces legacy's opaque Rust pattern placeholder.
+    native_enum_payload_bindings: HashSet<bir::LocalId>,
     /// The same retained layouts used to close constructor destinations and pattern payload facts.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
     /// Provider-owned method records; the Incan consumer receives their selected identity rather than names to
@@ -1108,6 +1118,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Start a fresh builder for one function body, with no locals, scopes, or accumulated facts yet.
     fn new(lowering_facts: &BodyIrLoweringFacts<'type_info, 'source>, owner_return_type: IncanType) -> Self {
         Self {
+            native_enum_payload_bindings: HashSet::new(),
             local_enum_declarations: lowering_facts.local_enum_declarations,
             published_methods: lowering_facts.published_methods,
             published_callable_returns: lowering_facts.published_callable_returns,
@@ -1235,6 +1246,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let checked = self.retained_result_read_type(span, checked);
+        if let Some(identity) = self.type_info.resolved_identity(span)
+            && let Some(local) = self
+                .bindings
+                .values()
+                .filter(|id| self.native_enum_payload_bindings.contains(id))
+                .filter_map(|id| self.locals.get(id.index()))
+                .find(|local| local.identity.as_ref() == Some(identity))
+        {
+            return local.ty.clone();
+        }
         if self.leaves_type_open(&checked)
             && let Some(identity) = self.type_info.resolved_identity(span)
             && let Some(local) = self
@@ -1948,6 +1969,7 @@ mod library_defaults;
 mod library_nominals;
 mod library_opaque_returns;
 mod library_unions;
+mod runtime_enums;
 pub(crate) mod runtime_nominals;
 mod runtime_storage;
 mod stdlib_delegations;

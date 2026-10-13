@@ -641,7 +641,7 @@ pub struct FieldlessEnumDeclaration {
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
 }
 
-/// Canonical checked payload layout of a normal source enum; generic templates retain their ordered binders.
+/// Canonical payload layout of a checked source or SDK enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
     /// Exact source-local declaration identity derived from the enum's span.
@@ -656,6 +656,10 @@ pub struct EnumDeclaration {
     /// Older publications retain an empty list and cannot authorize a generic payload layout.
     #[serde(default)]
     pub type_parameters: Vec<String>,
+    /// Concrete arguments of a specialized SDK enum alias, in declaration order. Source enums redeclare their closed
+    /// layout instead; only an SDK package owner and native metadata validation authorize this alias representation.
+    #[serde(default)]
+    pub native_type_arguments: Vec<IncanType>,
     /// Source-ordered variants; native discriminants use these exact indices.
     pub variants: Vec<EnumVariantDeclaration>,
     /// Explicit and automatic derives selected by the checker.

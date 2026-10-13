@@ -54,8 +54,14 @@ impl BodyBuilder<'_, '_> {
         let arguments = match destination {
             IncanType::Generic { base, args }
                 if self.type_info.declarations.named_type_identities.get(base) == Some(&owner.canonical)
-                    && args.len() == owner.type_parameters.len() =>
+                    || (*base == owner.name
+                        && matches!(&owner.canonical.origin,
+                        incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                        if library == "incan_std_async" && module_path == &["time"])) =>
             {
+                if args.len() != owner.type_parameters.len() {
+                    return None;
+                }
                 args.as_slice()
             }
             IncanType::Named(name) if owner.type_parameters.is_empty() && *name == owner.name => &[],

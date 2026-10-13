@@ -7394,7 +7394,8 @@ impl TypeChecker {
     }
 
     /// Retain active native builtin owners once for opaque nominal storage and checked runtime operations, without
-    /// changing legacy lookup. Web placeholders use their checked surface binding and original Rust re-export;
+    /// changing legacy lookup. Active rusttype aliases retain their checked source owner for native enum contracts.
+    /// Web placeholders use their checked surface binding and original Rust re-export;
     /// the kernel whitelist validates identities and source shadows yield nothing.
     fn checked_native_nominal_type_identities(&mut self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         let mut identities = self
@@ -7407,6 +7408,9 @@ impl TypeChecker {
                     return None;
                 }
                 let identity = self.symbols.identity_of(id)?;
+                if identity.kind == SemanticSourceTargetKind::Rusttype {
+                    return Some((symbol.name.clone(), identity.clone()));
+                }
                 if identity.origin != incan_semantics_core::SymbolOrigin::Builtin {
                     return None;
                 }

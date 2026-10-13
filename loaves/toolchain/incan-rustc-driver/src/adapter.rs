@@ -358,29 +358,32 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     Ok(())
 }
 
-/// Check a stdlib enum against its crate's metadata: a nongeneric enum whose variants have the plan's names, order and
-/// payload types, since construction and matching address variants by index.
+/// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
+/// native metadata. Construction and matching address variants by index; generic templates never authorize storage.
 fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
         function: value.library_item.clone(),
         reason: reason.into(),
     };
     let def = callees::library_item(tcx, &value.library_item, rustc_hir::def::DefKind::Enum)?;
-    if tcx.generics_of(def).count() != 0 {
-        return Err(invalid("stdlib enum has generic parameters"));
+    if tcx.generics_of(def).count() != value.library_type_arguments.len() {
+        return Err(invalid(
+            "unsupported stdlib enum type argument count differs from metadata",
+        ));
     }
     let declared = tcx.adt_def(def).variants();
     if declared.len() != value.variants.len() {
-        return Err(invalid("stdlib enum variant count differs from metadata"));
+        return Err(invalid("unsupported stdlib enum variant count differs from metadata"));
     }
-    let identity = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def);
+    let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
+    callees::verify_bounds(tcx, def, arguments)?;
     for (variant, planned) in declared.iter().zip(&value.variants) {
         if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
-            return Err(invalid("stdlib enum variant differs from metadata"));
+            return Err(invalid("unsupported stdlib enum variant differs from metadata"));
         }
         for (field, ty) in variant.fields.iter().zip(&planned.fields) {
-            if field.ty(tcx, identity).skip_normalization() != crate::types::native_type(tcx, ty)? {
-                return Err(invalid("stdlib enum payload differs from metadata"));
+            if field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, ty)? {
+                return Err(invalid("unsupported stdlib enum payload differs from metadata"));
             }
         }
     }

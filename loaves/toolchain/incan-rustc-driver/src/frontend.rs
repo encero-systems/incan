@@ -110,6 +110,7 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     let mut sources = vec![String::new(); bodies.len()];
     let mut entry = entry + bodies.len();
     let mut library_layouts = Vec::new();
+    let mut library_enums = Vec::new();
     let mut library_calls = Vec::new();
     for module in modules {
         let type_info = analysis
@@ -124,6 +125,7 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         );
         validate_retained_storage(&module.ast, &body_ir)?;
         library_layouts.extend(incan_frontend::body_ir::library_nominal_declarations(type_info));
+        library_enums.extend(incan_frontend::body_ir::library_enum_declarations(type_info));
         library_calls.extend(incan_frontend::body_ir::library_call_delegations(type_info));
         bodies.push(body_ir);
         sources.push(module.source);
@@ -148,7 +150,7 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         .collect::<std::collections::BTreeSet<_>>();
     library_layouts
         .retain(|layout: &incan_semantics_core::body_ir::NominalDeclaration| !published.contains(&layout.canonical));
-    let libraries = library_modules(library_layouts, library_calls);
+    let libraries = library_modules(library_layouts, library_enums, library_calls);
     for module in libraries {
         carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
     }
@@ -248,11 +250,12 @@ fn sdk_constant_binding_modules(
     Ok(owners.into_values().collect())
 }
 
-/// Carry the stdlib layouts and crate calls the checked modules use into lowering as declaration-only modules, one per
-/// declaring stdlib module, so each layout validates against its own module identity as a published package layout
-/// does. Each layout and call travels once; whether a layout is linked rather than declared is the lowering's decision.
+/// Carry checked stdlib layouts, enums, and crate calls once into declaration-only modules grouped by their declaring
+/// module. Each layout validates against its retained module identity; lowering decides whether to link it or declare
+/// it locally.
 fn library_modules(
     layouts: Vec<incan_semantics_core::body_ir::NominalDeclaration>,
+    enums: Vec<incan_semantics_core::body_ir::EnumDeclaration>,
     calls: Vec<incan_semantics_core::body_ir::StdlibDelegation>,
 ) -> Vec<BodyIrModule> {
     let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
@@ -265,6 +268,11 @@ fn library_modules(
     for call in calls {
         if let Some(module) = library_module(&mut owners, &mut carried, &call.canonical) {
             module.stdlib_delegations.push(call);
+        }
+    }
+    for declaration in enums {
+        if let Some(module) = library_module(&mut owners, &mut carried, &declaration.canonical) {
+            module.enum_declarations.push(declaration);
         }
     }
     owners.into_values().collect()

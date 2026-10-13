@@ -1346,6 +1346,7 @@ mod tests {
         variant.kind = SemanticSourceTargetKind::Variant;
         variant.namespace = SymbolNamespace::Member;
         let value = crate::body_ir::EnumDeclaration {
+            native_type_arguments: Vec::new(),
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
             canonical: owner.clone(),
             name: "Signal".into(),

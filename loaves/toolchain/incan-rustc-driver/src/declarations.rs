@@ -1034,7 +1034,13 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
         return carrier_alias(value, span);
     }
     if !value.library_item.is_empty() {
-        return library_alias(&value.name, &value.library_item, value.public, &[], span);
+        return library_alias(
+            &value.name,
+            &value.library_item,
+            value.public,
+            &value.library_type_arguments,
+            span,
+        );
     }
     let variants = value
         .variants

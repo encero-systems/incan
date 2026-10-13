@@ -9473,7 +9473,7 @@ def bind_enum_fields(
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:
-                    value = enum_payload_read(builder, projected, binding.fact, span)?
+                    value = moved_sdk_enum_payload(builder, source, projected, fields, binding.fact, span)?
                     track_rvalue_moves(builder, RvalueKind.Use(value))
                     builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
                     if ty == PlanType.String or is_nominal_type(ty):
@@ -9482,6 +9482,24 @@ def bind_enum_fields(
                 if pattern_binds(fields[slot]):
                     bind_nested_payload(builder, source, variant, slot, fields[slot], span)?
     return Ok(None)
+
+
+def moved_sdk_enum_payload(
+    mut builder: Builder,
+    source: Place,
+    payload: Place,
+    fields: &list[RustPattern],
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Transfer a checked SDK payload move, retiring its complete single-field carrier before cleanup edges."""
+    owner = enum_owner(place_type(builder.locals, source))?
+    if fact != OwnershipFact.Move or owner >= len(builder.enums) or library_enum_item(builder.enums[owner]) == "":
+        return enum_payload_read(builder, payload, fact, span)
+    if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
+        return Err("unsupported Body IR SDK enum payload move outside a whole owned single-field carrier")
+    forget_owned(builder, source.local)
+    return Ok(read_place(payload, true, span))
 
 
 def bind_nested_payload(

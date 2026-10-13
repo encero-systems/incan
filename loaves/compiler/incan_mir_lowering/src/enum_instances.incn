@@ -117,6 +117,7 @@ def close_layout(instance: EnumInstance) -> Result[EnumDeclaration, str]:
     mut result = instance.declaration.clone()
     symbol: str = nominal_symbol(str(instance.declaration.name), instance.arguments)
     result.name = symbol
+    result.native_type_arguments = instance.arguments.clone()
     result.variants.clear()
     for variant in instance.declaration.variants:
         mut closed = variant.clone()
