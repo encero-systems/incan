@@ -281,6 +281,33 @@ def main() -> None:
     )
 }
 
+/// Trait-typed inputs retain legacy's independent concrete generic carriers and declaration-slot binding.
+#[test]
+fn trait_value_input_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("trait-value-input")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Named:
+    pass
+
+model One with Named:
+    number: int
+
+model Two with Named:
+    text: str
+
+def consume(left: Named, right: Named) -> int:
+    return 7
+
+def main() -> None:
+    println(consume(right=Two(text="x"), left=One(number=3)))
+"#,
+    )
+}
+
 /// Literal and checked tuple spreads bind fixed function, rest, keyword and method parameters with legacy output.
 #[test]
 fn fixed_call_spreads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

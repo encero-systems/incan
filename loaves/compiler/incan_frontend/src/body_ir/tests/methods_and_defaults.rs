@@ -4,6 +4,51 @@
 
 use super::*;
 
+/// Legacy's trait-typed input is a hidden concrete binder, recorded independently of its source trait identity.
+#[test]
+fn trait_value_input_retains_hidden_binder_and_call_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel Item with Named:\n  number: int\n\ndef consume(value: Named) -> int:\n  return 7\n\ndef main() -> None:\n  println(consume(Item(number=3)))\n",
+        &["trait_value_input"],
+    )?;
+    let body = body_named(&module, "consume")?;
+    assert_eq!(body.type_parameters, ["__IncanTrait0"]);
+    assert_eq!(body.params[0].ty, IncanType::TypeVar("__IncanTrait0".to_owned()));
+    assert_eq!(
+        body.named_type_identities.get("__IncanTrait0"),
+        module.trait_declarations.first()
+    );
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "consume")
+        .ok_or("call missing")?;
+    assert_eq!(target.type_args, [IncanType::Named("Item".to_owned())]);
+    Ok(())
+}
+
+/// Two independently typed trait inputs receive separate binders and preserve named argument slot order.
+#[test]
+fn trait_value_inputs_bind_independent_concrete_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel One with Named:\n  number: int\n\nmodel Two with Named:\n  text: str\n\ndef consume(left: Named, right: Named) -> int:\n  return 7\n\ndef main() -> None:\n  println(consume(right=Two(text=\"x\"), left=One(number=3)))\n",
+        &["trait_value_inputs"],
+    )?;
+    let body = body_named(&module, "consume")?;
+    assert_eq!(body.type_parameters, ["__IncanTrait0", "__IncanTrait1"]);
+    assert_eq!(body.params[1].ty, IncanType::TypeVar("__IncanTrait1".to_owned()));
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "consume")
+        .ok_or("call missing")?;
+    assert_eq!(
+        target.type_args,
+        [IncanType::Named("One".to_owned()), IncanType::Named("Two".to_owned())]
+    );
+    Ok(())
+}
+
 /// The record-pattern fixture closes every enum construction even alongside inferred generic model and class calls.
 #[test]
 fn generic_enum_record_fixture_has_closed_temporaries() -> Result<(), Box<dyn std::error::Error>> {
