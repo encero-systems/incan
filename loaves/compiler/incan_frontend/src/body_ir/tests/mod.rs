@@ -44,6 +44,7 @@ mod raises_assertions;
 mod result_callbacks;
 mod returned_callables;
 mod static_storage;
+mod trait_placeholders;
 mod web_path;
 
 use helpers::{

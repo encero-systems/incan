@@ -6256,6 +6256,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_placeholders.rs": {
+      "disposition": "keep",
+      "notes": "Documented trait placeholders retain interface-only context, while real default bodies and unit no-ops remain executable.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/contract_metadata.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",

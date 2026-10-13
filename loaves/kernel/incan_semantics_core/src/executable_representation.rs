@@ -1307,6 +1307,36 @@ mod tests {
         Ok(())
     }
 
+    /// An executable trait method retains its public declaring owner even when its body names no other slot.
+    #[test]
+    fn public_default_trait_body_requires_its_declaring_context() -> Result<(), Box<dyn std::error::Error>> {
+        let mut owner = identity("Reading", 2);
+        owner.kind = SemanticSourceTargetKind::Trait;
+        let mut slot = identity("touch", 3);
+        slot.kind = SemanticSourceTargetKind::Method;
+        slot.namespace = SymbolNamespace::Member;
+        slot.declaration_span = HirSourceSpan::new(210, 225);
+        let mut default = body("touch", 3);
+        default.canonical = Some(slot.clone());
+        default.span = slot.declaration_span;
+        let mut source = module(vec![default]);
+        source.trait_declarations.push(owner.clone());
+        let bytes = publish(&source, &BTreeSet::from([owner.clone(), slot.clone()]))?;
+        let reader = SurfaceReader::open(&bytes)?;
+        let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&slot)? else {
+            return Err("default method has no executable coverage".into());
+        };
+        assert_eq!(requirements, &[owner.clone()]);
+        assert!(matches!(reader.fragment(&owner)?, ExecutableDeclaration::Trait(value) if value == owner));
+        let private_owner = publish(&source, &BTreeSet::from([slot.clone()]))?;
+        let private_reader = SurfaceReader::open(&private_owner)?;
+        assert!(matches!(
+            private_reader.index().coverage(&slot)?,
+            DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency)
+        ));
+        Ok(())
+    }
+
     /// Normal enum payload layouts round-trip through public fragments, and their variants resolve to the owner.
     #[test]
     fn public_normal_enum_payload_context_round_trips() -> Result<(), Box<dyn std::error::Error>> {
