@@ -12000,6 +12000,14 @@ fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::
 /// Channel errors close before the separately owned sender/newtype boundary; explicit constructors keep that boundary.
 #[test]
 fn stdlib_channel_errors_reach_sender_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("closed-send-error")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.async.channel import SendError\n\ndef main() -> None:\n    error: SendError[int] = SendError(value=1)\n    println(error.value)\n",
+    )?;
     for (name, source, reason) in [
         (
             "unpacked-channel",
