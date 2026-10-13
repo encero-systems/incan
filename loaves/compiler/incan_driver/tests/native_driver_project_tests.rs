@@ -15671,35 +15671,76 @@ fn math_constants_and_functions_output_match_legacy() -> Result<(), Box<dyn std:
     )
 }
 
-/// Computed-static admission leaves the original unwrap-or fixture at its separate intrinsic carrier boundary.
+/// Local, field, generic, mutable and static carrier reads preserve the unedited original's legacy output.
 #[test]
-fn static_unwrap_or_original_keeps_intrinsic_carrier_refusal() -> Result<(), Box<dyn std::error::Error>> {
+fn static_unwrap_or_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let root = fixture.scratch("static-unwrap-or-original")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("static-unwrap-or-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn"
         ),
-    )?;
-    let binary = root.join("refused");
-    let output = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &binary,
-        &fixture.sysroot,
-        &corpus::runtime_closure(&fixture.formatting)?,
     )
-    .output()?;
-    assert!(!output.status.success());
-    let diagnostic = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        diagnostic.contains("unsupported Body IR intrinsic carrier receiver"),
-        "{diagnostic}"
-    );
-    assert!(!binary.exists());
-    Ok(())
+}
+
+/// Consumed frame receivers are read before eager defaults, while static defaults precede guarded storage reads.
+#[test]
+fn carrier_receiver_default_order_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("carrier-receiver-default-order")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static SHARED: Option[str] = Some("static-old")
+
+model Holder:
+    value: Option[str]
+
+def reset_option(mut value: Option[str]) -> str:
+    value = Some("option-new")
+    return "fallback"
+
+def reset_result(mut value: Result[str, str]) -> str:
+    value = Ok("result-new")
+    return "fallback"
+
+def reset_holder(mut holder: Holder) -> str:
+    holder.value = Some("field-new")
+    return "fallback"
+
+def reset_static() -> str:
+    SHARED = Some("static-new")
+    return "fallback"
+
+def choose_option(mut value: Option[str]) -> str:
+    first = value.unwrap_or(reset_option(value))
+    return f"{first}/{value.unwrap()}"
+
+def choose_result(mut value: Result[str, str]) -> str:
+    first = value.unwrap_or(reset_result(value))
+    return f"{first}/{value.unwrap()}"
+
+def main() -> None:
+    mut option: Option[str] = Some("option-old")
+    mut result: Result[str, str] = Ok("result-old")
+    println(choose_option(option))
+    println(option.unwrap())
+    println(choose_result(result))
+    println(result.unwrap())
+    mut local: Option[str] = Some("local-old")
+    println(local.unwrap_or(reset_option(local)))
+    println(local.unwrap())
+    mut holder = Holder(value=Some("field-old"))
+    println(holder.value.unwrap_or(reset_holder(holder)))
+    println(holder.value.unwrap())
+    println(SHARED.unwrap_or(reset_static()))
+    println(SHARED.unwrap())
+"#,
+    )
 }
 
 /// A factory method on an imported static initializes a callable replacement with legacy byte parity.
