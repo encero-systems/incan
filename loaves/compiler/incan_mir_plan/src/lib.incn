@@ -23,7 +23,6 @@ pub enum TupleElement:
     Unit
     String
     List(ListLeaf, int)
-    Model(int, str)
     Enum(int, str)
     Tuple(list[TupleElement])
     Model(int, str)
@@ -224,7 +223,6 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String
         TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
-        TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
         TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
         TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
