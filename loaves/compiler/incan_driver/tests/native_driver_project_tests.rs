@@ -15076,3 +15076,48 @@ def main() -> None:
 "#,
     )
 }
+/// Supplied model-field validation preserves canonical error labels and the live legacy success output.
+#[test]
+fn single_field_newtype_ingress_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("single-field-newtype-ingress")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_implicit_coercion.incn"
+        ),
+    )
+}
+
+/// A failed sole field executes its supplied expression and hook once, then raises the aggregate field error.
+#[test]
+fn single_field_newtype_ingress_failure_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_validation_failure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("single-field-newtype-failure")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def supplied() -> int:
+    println("supplied")
+    return -1
+
+type Positive = newtype int:
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        println("hook")
+        if value <= 0:
+            return Err(ValidationError("must be positive"))
+        return Ok(Positive(value))
+
+model Job:
+    amount: Positive
+
+def main() -> None:
+    job = Job(amount=supplied())
+    println(job.amount.0)
+"#,
+        "ValidationError: Job validation failed with 1 error(s)\n  amount: must be positive\n",
+    )
+}

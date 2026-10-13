@@ -6112,6 +6112,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_fields.rs": {
+      "disposition": "keep",
+      "notes": "Sole-field checked validation extraction, missing canonical layout and multi-field refusal boundaries in Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_hooks.rs": {
       "disposition": "keep",
       "notes": "Canonical source hook calls, own-owner raw construction, and ordered fail-fast coercion chains retained in Body IR.",

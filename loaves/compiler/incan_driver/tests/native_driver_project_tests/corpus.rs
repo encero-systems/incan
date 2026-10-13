@@ -1037,3 +1037,50 @@ def main() -> None:
     );
     Ok(())
 }
+/// Compare aggregate validation failure after both routes compile, retaining complete outputs and panic status.
+pub(super) fn check_validation_failure(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    program: &str,
+    payload: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("aggregate-validation-parity");
+    fs::create_dir_all(&project)?;
+    let source = project.join("main.incn");
+    fs::write(&source, program)?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
+        "aggregate validation native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "aggregate validation legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/main")).output()?;
+    let actual = Command::new(native).output()?;
+    for (label, output) in [("legacy", &expected), ("native", &actual)] {
+        fs::write(project.join(format!("{label}.stdout")), &output.stdout)?;
+        fs::write(project.join(format!("{label}.stderr")), &output.stderr)?;
+        fs::write(project.join(format!("{label}.status")), output.status.to_string())?;
+        assert!(
+            !output.status.success(),
+            "{label} unexpectedly accepted aggregate validation"
+        );
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(error.matches(payload).count(), 1, "{label}: {error}");
+    }
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "supplied-field effects must be byte-identical"
+    );
+    Ok(())
+}
