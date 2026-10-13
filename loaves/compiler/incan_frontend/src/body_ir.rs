@@ -1176,6 +1176,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// use the contextual expression type. Missing facts remain [`IncanType::Unknown`], never inferred from operands.
     /// Standard-library Self calls use their additive declared-result fact before the legacy expression type, so
     /// enclosing operators can validate the same type that the call itself retains.
+    /// Canonical local Result reads retain closed constructor channels without replacing fixed contextual channels.
     /// While one evaluation of a chained value written per target is lowered, that target's types for the value's
     /// nodes come first (see [`Self::type_overrides`]), then the settled type of a `Result` constructor whose open
     /// side its destination fixes (see [`Self::settled_types`]).
@@ -1232,6 +1233,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             })
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
+        let checked = self.retained_result_read_type(span, checked);
         if self.leaves_type_open(&checked)
             && let Some(identity) = self.type_info.resolved_identity(span)
             && let Some(local) = self
@@ -1972,6 +1974,7 @@ mod decorated_bindings;
 mod entrypoint_effects;
 mod published_methods;
 mod representation_facts;
+mod result_channels;
 mod static_aliases;
 
 mod bodies;

@@ -155,7 +155,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             stmts: body_stmts,
             result,
         };
-        let ty = self.resolve_ty(expr_span);
+        let ty = self.retain_closure_result_channels(expr_span, &closure_body.result);
         self.push_assign_temp(
             bir::Rvalue::Closure {
                 params: closure_params,

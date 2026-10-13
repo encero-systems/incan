@@ -287,6 +287,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
         // Checking can convert this value into a newtype where it is used. A conversion that only wraps the value in a
         // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR

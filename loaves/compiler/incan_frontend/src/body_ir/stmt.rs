@@ -209,6 +209,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        if let Some(actual) = self.result_operand_type(&value) {
+            ty = self.refine_result_channels(&ty, &actual);
+        }
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
         // An inferred SDK task binding also keeps the individual checked call's concrete output argument.

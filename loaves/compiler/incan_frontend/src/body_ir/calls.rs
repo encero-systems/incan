@@ -1852,6 +1852,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut call_args = Vec::with_capacity(arg_operands.len() + 1);
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
+        self.retain_result_call_channels(span, recv.span, &call_args);
         let checked = native_member.as_ref().map_or_else(
             || {
                 retained_method.as_ref().map_or_else(
