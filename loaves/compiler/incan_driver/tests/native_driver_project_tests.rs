@@ -10955,19 +10955,81 @@ fn stdlib_uuid_comparison_capabilities_output_matches_legacy() -> Result<(), Box
     )
 }
 
-/// Runtime reflection keeps ordered static FieldInfo storage while iteration produces its owned metadata values.
+/// Nominal frozen snapshots reach exact dispatch frontiers; the original live legacy reflection still prints its
+/// fields.
 #[test]
-fn stdlib_frozen_metadata_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+fn stdlib_frozen_metadata_iteration_reaches_dispatch_frontier() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("stdlib-frozen-metadata-iteration")?,
-        &fixture.sysroot,
-        &fixture.formatting,
-        include_str!(
-            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/reflection_omits_private_fields.incn"
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    for (case, source, companion, reason) in [
+        (
+            "frozen-metadata-private-fields",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/reflection_omits_private_fields.incn"
+            ),
+            None,
+            "unsupported Body IR nonlocal or trait-object Method",
         ),
-    )
+        (
+            "frozen-metadata-host-keywords",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/host_keyword_identifiers.incn"
+            ),
+            None,
+            "unsupported Body IR nonlocal or trait-object Method",
+        ),
+        (
+            "frozen-metadata-qualified-types",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/qualified_type_annotations/main.incn"
+            ),
+            Some(include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/qualified_type_annotations/errors.incn"
+            )),
+            "unsupported Body IR imported or unresolved canonical call target",
+        ),
+    ] {
+        let root = fixture.scratch(case)?;
+        let path = root.join("main.incn");
+        fs::write(&path, source)?;
+        if let Some(companion) = companion {
+            fs::write(root.join("errors.incn"), companion)?;
+        }
+        let binary = root.join("native");
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &path,
+            &binary,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        let diagnostic = String::from_utf8_lossy(&refused.stderr);
+        assert!(diagnostic.contains(reason), "{diagnostic}");
+        assert!(!diagnostic.contains("frozen collection snapshot"), "{diagnostic}");
+        assert!(!diagnostic.contains("type FrozenList"), "{diagnostic}");
+        assert!(!binary.exists());
+        if case == "frozen-metadata-private-fields" {
+            let legacy = root.join("legacy");
+            success(
+                &support::repo_command()
+                    .current_dir(&root)
+                    .env("INCAN_HOME", support::oven_fixture_home()?)
+                    .arg("build")
+                    .arg(&path)
+                    .arg(&legacy)
+                    .output()?,
+                "legacy original frozen metadata compilation",
+            );
+            let expected = Command::new(legacy.join("oven/release/main"))
+                .current_dir(&root)
+                .output()?;
+            success(&expected, "legacy original frozen metadata execution");
+            assert_eq!(expected.stdout, b"label\n1\npublic\n");
+        }
+    }
+    Ok(())
 }
 
 /// Frozen byte literals keep static storage, exact unsigned bytes, copyable parameters, and legacy length behavior.
