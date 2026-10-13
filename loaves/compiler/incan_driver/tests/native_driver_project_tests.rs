@@ -16486,3 +16486,31 @@ fn closed_generic_trait_return_output_matches_legacy() -> Result<(), Box<dyn std
         ),
     )
 }
+
+/// A model's subtrait adoption fixes the imported supertrait method's generic result.
+#[test]
+fn closed_imported_subtrait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "closed-imported-subtrait",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/subtrait_bound_calls_unimported_supertrait_method/main.incn"
+        ),
+        &[(
+            "readers.incn",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/subtrait_bound_calls_unimported_supertrait_method/readers.incn"
+            ),
+        )],
+        b"42\n",
+    )
+}
+
+/// Standard testing helper calls preserve their concrete payload and comparison arguments.
+#[test]
+fn closed_testing_helper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "closed-testing-helpers",
+        include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn"),
+        b"plain and messaged assert_eq passed\ncomparison operand passed\nassert_ne passed\nconstructor comparisons passed\nsome 5\nnone passed\nok 42\nerr boom\nraised from call expression\nraised from function reference\nassert_eq failure is an AssertionError\nempty message failure is an AssertionError\n",
+    )
+}

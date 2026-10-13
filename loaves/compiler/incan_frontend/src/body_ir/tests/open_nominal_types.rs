@@ -1,6 +1,6 @@
 //! Closed nominal value facts supplement legacy inference without rewriting its snapshots.
 
-use super::{body_named, build, local_types_at};
+use super::{body_named, build, local_types_at, named_targets};
 
 /// Payload inference fixes the initial generic newtype carrier at the constructor's source span.
 #[test]
@@ -45,7 +45,24 @@ fn adopted_trait_argument_retains_closed_instantiation() -> Result<(), Box<dyn s
     let source = "trait Reader[T]:\n    def read(self) -> T: ...\n\nmodel Packet with Reader[int]:\n    value: int\n\n    def read(self) -> int:\n        return self.value\n\ndef read[T](value: Reader[T]) -> T:\n    return value.read()\n\ndef main() -> None:\n    println(read(Packet(value=42)))\n";
     let module = build(source, &["m", "closed_trait_argument"])?;
     let main = body_named(&module, "main")?;
-    assert_eq!(local_types_at(main, source, "read(Packet(value=42))"), ["int"]);
+    assert_eq!(local_types_at(main, source, "read(Packet(value=42))"), ["int", "str"]);
+    Ok(())
+}
+
+/// A standard testing helper keeps the value-selected parameter in its executable call target.
+#[test]
+fn testing_helper_retains_closed_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.testing import assert_eq\n\ndef main() -> None:\n    assert_eq(1, 1)\n";
+    let module = build(source, &["m", "closed_testing_argument"])?;
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "assert_eq")
+        .ok_or("missing testing helper")?;
+    assert_eq!(
+        target.type_args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ["int"]
+    );
     Ok(())
 }
 
