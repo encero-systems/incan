@@ -12069,6 +12069,38 @@ fn decorated_variadic_function_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// Empty and multiple keyword packs use owned ABI slots; ordinary collection inputs keep borrowing caller storage.
+#[test]
+fn decorated_rest_pack_shapes_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-rest-pack-shapes")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+def total(first: int, *rest: int, **labels: str) -> int:
+    mut result = first
+    for value in rest:
+        result += value
+    return result + len(labels)
+
+def first(values: List[int]) -> int:
+    return values[0]
+
+def main() -> None:
+    println(total(1))
+    println(total(1, 2, 3, left="a", right="b"))
+    values = [7, 8]
+    println(first(values))
+    println(len(values))
+"#,
+    )
+}
+
 /// Method replacements initialize once and preserve shared receiver calls and changed return types.
 #[test]
 fn decorated_shared_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
