@@ -199,7 +199,7 @@ fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::erro
     )
 }
 
-/// The original reader adapter reaches callable-value assignment while its live legacy output stays pinned.
+/// The original reader adapter passes callable-value assignment and reaches the SDK iteration hook with legacy pinned.
 #[test]
 fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_sdk_adapter_fixture(
@@ -208,24 +208,20 @@ fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std:
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
         ),
         b"16\n4\ndone\n",
-        "unsupported Body IR noncallable assignment to function value",
+        "unsupported Body IR nonlocal or trait-object Method __iter__",
     )
 }
 
-/// A captured callable passed by generic SDK value keeps its environment and the original reader's legacy output.
+/// A captured SDK generic value no longer coerces to a function pointer; its remaining iteration hook stays refused.
 #[test]
 fn sdk_generic_callable_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
-    closure.extend_with(&sdk_closure(fixture)?)?;
-    corpus::check_builtin_source_with_closure(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("sdk-generic-callable-value")?,
-        &fixture.sysroot,
-        &closure,
+    check_sdk_adapter_fixture(
+        "sdk-generic-callable-value",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
         ),
+        b"16\n4\ndone\n",
+        "unsupported Body IR nonlocal or trait-object Method __iter__",
     )
 }
 
