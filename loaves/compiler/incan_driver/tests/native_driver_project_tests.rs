@@ -11112,6 +11112,21 @@ fn stdlib_frozen_metadata_iteration_reaches_dispatch_frontier() -> Result<(), Bo
     Ok(())
 }
 
+/// The web Path parameter keeps Axum storage even when the called function only reads Query's payload.
+#[test]
+fn stdlib_web_path_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-web-path-payload")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/web_extractor_value_reads_the_payload.incn"
+        ),
+    )
+}
+
 /// Frozen byte literals keep static storage, exact unsigned bytes, copyable parameters, and legacy length behavior.
 #[test]
 fn stdlib_frozen_bytes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

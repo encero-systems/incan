@@ -41,6 +41,7 @@ mod provider_plans;
 mod raises_assertions;
 mod returned_callables;
 mod static_storage;
+mod web_path;
 
 use helpers::{
     body_named, build, build_after_expected_typecheck_errors, build_with_stand_in_refusal, local_for_binding,
