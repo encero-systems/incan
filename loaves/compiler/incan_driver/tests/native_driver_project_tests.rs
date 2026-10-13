@@ -35,7 +35,7 @@ fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::E
         &fixture.scratch("sdk-native-take")?,
         &fixture.sysroot,
         &closure,
-        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcde\").chunks(2)\n    adapter = source.take(3)\n    println(adapter.remaining)\n    println(adapter.source.chunk_size)\n",
+        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcdefg\").chunks(2)\n    match source.take(2).collect():\n        Ok(items) => println(len(items))\n        Err(error) => println(error.detail)\n",
     )
 }
 
