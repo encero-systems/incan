@@ -131,6 +131,21 @@ fn newtype_union_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
+/// Each Result combinator executes its capturing callback with legacy output and contextual channels.
+#[test]
+fn capturing_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("capturing-result-callbacks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_as_result_combinator_callbacks.incn"
+        ),
+    )
+}
+
 /// A callable-bound function invokes both a capturing closure and a model using their checked representations.
 #[test]
 fn callable_bound_closure_and_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -142,6 +157,36 @@ fn callable_bound_closure_and_model_output_matches_legacy() -> Result<(), Box<dy
         &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/callable_bound_closure_and_model.incn"
+        ),
+    )
+}
+
+/// Constructor-returning callbacks keep the call's settled success and error channels.
+#[test]
+fn result_constructor_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constructor-result-callbacks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/result_combinator_closures_return_constructors.incn"
+        ),
+    )
+}
+
+/// A Result receiver remains usable after callbacks through generic values, fields, loops and branches.
+#[test]
+fn reused_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("reused-result-callbacks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/result_methods_leave_their_receiver_usable.incn"
         ),
     )
 }

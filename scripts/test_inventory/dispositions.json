@@ -6192,6 +6192,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/result_callbacks.rs": {
+      "disposition": "keep",
+      "notes": "Contextual Result callback parameter and settled constructor channels retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs": {
       "disposition": "keep",
       "notes": "Checked callable expression values and evaluation order retained in Body IR; frontend-only contract coverage.",
