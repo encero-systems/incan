@@ -206,6 +206,7 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
 
 /// A native ABI is needed by a checked expression or declaration signature, including unused function parameters.
 /// Checking supplies the active owner separately; this leaf walk never selects a carrier from a spelling alone.
+/// Scan the original checked names as well as their projected storage, since a runtime token hides its nominal leaf.
 fn uses_native_carrier(type_info: &TypeCheckInfo, name: &str) -> bool {
     let signatures = type_info.declarations.function_bindings.values().flat_map(|binding| {
         binding
@@ -220,6 +221,7 @@ fn uses_native_carrier(type_info: &TypeCheckInfo, name: &str) -> bool {
             &super::parameter_types::checked_semantic_type(ty, type_info),
             &mut names,
         );
+        super::library_calls::named_leaves(&super::semantic_type_from_resolved(ty), &mut names);
         names.contains(name)
     })
 }

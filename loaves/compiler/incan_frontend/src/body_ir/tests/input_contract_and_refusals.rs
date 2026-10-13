@@ -345,17 +345,13 @@ fn a_declaration_rebound_by_a_user_defined_decorator_retains_the_binding() -> Re
     Ok(())
 }
 
+/// A checked identity method decorator keeps the mutable receiver and initialized callable binding executable.
 #[test]
-fn a_method_rebound_by_a_user_defined_decorator_is_a_representation_gap() -> Result<(), Box<dyn std::error::Error>> {
+fn a_method_rebound_by_a_user_defined_decorator_retains_the_binding() -> Result<(), Box<dyn std::error::Error>> {
     let source = "class Counter:\n    value: int\n\n    @keep\n    def bump(mut self, by: int) -> int:\n        self.value += by\n        return self.value\n\n    def peek(self) -> int:\n        return self.value\n\ndef keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:\n    return func\n";
     let module = build(source, &["m", "method_decorator_rebinding"])?;
     let bump = body_named(&module, "bump")?;
-    assert_eq!(
-        bump.first_representation_gap(),
-        Some("declaration `bump` rebound by a user-defined decorator"),
-        "{}",
-        bump.render_snapshot()
-    );
+    assert_eq!(bump.first_representation_gap(), None, "{}", bump.render_snapshot());
     let peek = body_named(&module, "peek")?;
     assert_eq!(peek.first_representation_gap(), None, "{}", peek.render_snapshot());
     Ok(())

@@ -1286,12 +1286,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // The checked expression type is the eventual output for immediately awaited source calls. Body IR
         // represents construction and awaiting separately, so their intervening local must own the future.
-        let returned = declaration
-            .canonical
-            .as_ref()
-            .and_then(|identity| self.published_callable_returns.get(identity))
-            .cloned()
-            .unwrap_or_else(|| self.resolve_ty(span));
+        let checked_return = self.resolve_ty(span);
+        // A published signature may refine an open carrier, but it cannot override a checked provenance refusal.
+        let returned = if matches!(checked_return, IncanType::Unsupported(_)) {
+            checked_return
+        } else {
+            declaration
+                .canonical
+                .as_ref()
+                .and_then(|identity| self.published_callable_returns.get(identity))
+                .cloned()
+                .unwrap_or(checked_return)
+        };
         let ty = if is_async {
             IncanType::Generic {
                 base: "Awaitable".to_string(),
