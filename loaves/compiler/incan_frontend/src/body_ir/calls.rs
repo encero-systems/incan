@@ -1698,7 +1698,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// In the standard library's own trait defaults, a call on an open `Self` receiver keeps its checked type open for
     /// legacy; its slot's declared result, which the checker retains for Body IR only, is the call's type instead.
-    fn method_call_result_type(&self, span: ast::Span) -> IncanType {
+    pub(super) fn method_call_result_type(&self, span: ast::Span) -> IncanType {
         let checked = self.resolve_ty(span);
         if !matches!(checked, IncanType::Unknown) {
             return checked;
@@ -1788,6 +1788,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return lowered;
         }
         if let Some(lowered) = self.lower_list_repeat_call(recv, name, type_args, args, span, scope, out) {
+            return lowered;
+        }
+        if type_args.is_empty()
+            && let Some(lowered) = self.lower_text_codec_call(recv, args, span, scope, out)
+        {
             return lowered;
         }
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {

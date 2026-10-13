@@ -6638,6 +6638,8 @@ def lower_builtin_method(
         _ => pass
     if receiver_type == PlanType.FrozenBytes and member == "frozenbytes.len":
         return lower_list_builtin(builder, arguments, destination, span)
+    if lower_text_codec_method(builder, member, arguments, destination, span)?:
+        return Ok(None)
     match text_method(member, receiver_type):
         Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
         None => pass
@@ -6661,6 +6663,80 @@ def lower_builtin_method(
             return lower_float_method(builder, name, parameters, result, arguments, destination, span)
         None => pass
     return lower_list_method(builder, member, arguments, destination, span)
+
+
+def lower_text_codec_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Call the exact borrowed UTF-8 runtime boundary after the frontend fills all checked codec slots."""
+    if member not in ["str.encode", "frozenstr.encode", "bytes.decode", "frozenbytes.decode"]:
+        return Ok(false)
+    decoding = member in ["bytes.decode", "frozenbytes.decode"]
+    mut arity = 2
+    if decoding:
+        arity = 3
+    if len(arguments) != arity:
+        return Err("unsupported Body IR incomplete builtin codec arguments")
+    incoming = builder.owned
+    receiver_type = argument_type(builder, arguments, 0, span)?
+    mut parameters: list[PlanType] = []
+    mut operands: list[Operand] = []
+    mut name = ""
+    if member == "str.encode" and receiver_type in [PlanType.String, PlanType.StringRef]:
+        name = "encode_text"
+        parameters.append(PlanType.StringRef)
+        operands.append(text_argument(builder, arguments, 0, span)?)
+    elif member == "frozenstr.encode" and receiver_type == PlanType.FrozenStr:
+        name = "encode_frozen_text"
+        parameters.append(PlanType.FrozenStr)
+        operands.append(argument_value(builder, arguments, 0, span)?)
+    elif member == "bytes.decode":
+        leaf, depth = require_list_shape(receiver_type, "unsupported Body IR nonbytes codec receiver")?
+        if leaf != ListLeaf.U8 or depth != 1:
+            return Err("unsupported Body IR nonbytes codec receiver")
+        name = "decode_bytes"
+        parameters.append(PlanType.ListRef(ListLeaf.U8, 1))
+        operands.append(borrowed_list_argument(builder, arguments, 0, false, span)?)
+    elif member == "frozenbytes.decode" and receiver_type == PlanType.FrozenBytes:
+        name = "decode_frozen_bytes"
+        parameters.append(PlanType.FrozenBytes)
+        operands.append(argument_value(builder, arguments, 0, span)?)
+    else:
+        return Err("unsupported Body IR builtin codec identity with a different receiver")
+    for index in range(1, arity):
+        parameters.append(PlanType.StringRef)
+        operands.append(text_argument(builder, arguments, index, span)?)
+    mut result = PlanType.List(ListLeaf.U8, 1)
+    mut output = plan_place(0, span)
+    if decoding:
+        match destination:
+            Some(place) =>
+                output = list_root_place(builder, place, span)?
+                result = place_type(builder.locals, output)
+            None => return Err("unsupported Body IR discarded codec result without a checked carrier")
+        _owner, declaration = carrier_layout(builder, result)?
+        if declaration.carrier != "Result" or declaration.variants[0].fields != [PlanType.String]:
+            return Err("unsupported Body IR decode result carrier")
+        if len(declaration.variants[1].fields) != 1:
+            return Err("unsupported Body IR decode error carrier")
+        match declaration.variants[1].fields[0]:
+            PlanType.Model(owner, _name) =>
+                if builder.nominals[owner].native_item != "incan_std_core::validation::ValidationError":
+                    return Err("unsupported Body IR decode error identity")
+            _ => return Err("unsupported Body IR decode error identity")
+    else:
+        output = call_destination(builder, destination, result, span)?
+        if place_type(builder.locals, output) != result:
+            return Err("unsupported Body IR encode result carrier")
+    drop_owned(builder, output.local, span)
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    builder.owned.append(output.local)
+    drop_borrowed_text_temporaries(builder, incoming, output.local, span)
+    return Ok(true)
 
 
 def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:

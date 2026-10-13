@@ -5,6 +5,7 @@ pub from decimals import less_decimal, less_equal_decimal, greater_decimal, grea
 pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
 pub from frozen_text import length_frozen_bytes
+pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
 pub from frozen_collections import frozen_list_length, frozen_list_items, frozen_list_text_items
 pub from frozen_collections import frozen_set_length, frozen_set_items, frozen_set_text_items
 pub from frozen_collections import frozen_list_byte_items, own_static_bytes
