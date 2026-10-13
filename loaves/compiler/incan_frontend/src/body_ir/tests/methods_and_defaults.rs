@@ -4,6 +4,22 @@
 
 use super::*;
 
+/// A concrete witness reached through a call also closes a later hidden trait input's retained argument binding.
+#[test]
+fn trait_value_returns_close_later_hidden_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Root:\n  pass\n\ntrait Mid with Root:\n  pass\n\nmodel Item with Mid:\n  number: int\n\ndef make() -> Mid:\n  return Item(number=3)\n\ndef upcast(value: Mid) -> Root:\n  return value\n\ndef main() -> None:\n  value = upcast(make())\n  println(7)\n",
+        &["trait_value_return_calls"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "upcast")
+        .ok_or("upcast missing")?;
+    assert_eq!(target.type_args, [IncanType::Named("Item".to_owned())]);
+    Ok(())
+}
+
 /// An opaque trait result keeps the single concrete carrier selected by its checked return expression.
 #[test]
 fn trait_value_return_retains_concrete_carrier() -> Result<(), Box<dyn std::error::Error>> {
