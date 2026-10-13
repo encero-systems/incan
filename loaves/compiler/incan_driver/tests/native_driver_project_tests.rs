@@ -14674,7 +14674,9 @@ async def main() -> None:
             message: str = error.message()
             println(len(message) > 0)
             source: Option[str] = error.source()
-            println(source.is_none())
+            match source:
+                Some(_detail) => println(false)
+                None => println(true)
 "#,
     )
 }
