@@ -18,6 +18,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// The complete original callable storage and capture fixture preserves legacy output after returned-callable intake.
+#[test]
+fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("callable-storage-projection")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
+        ),
+    )
+}
+
 /// Option text Debug preserves Some/None spelling and the original borrowed value across repeated formatting.
 #[test]
 fn option_text_debug_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
