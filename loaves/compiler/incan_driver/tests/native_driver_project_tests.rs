@@ -6511,7 +6511,6 @@ def main() -> None:
     )
 }
 
-/// SDK prelude tasks preserve the original fixture's executor, task handles and output.
 /// Opaque SDK task admission removes the join-error refusal while preserving every unimplemented next boundary.
 #[test]
 fn async_sdk_nominal_frontiers_are_named() -> Result<(), Box<dyn std::error::Error>> {
@@ -6521,7 +6520,7 @@ fn async_sdk_nominal_frontiers_are_named() -> Result<(), Box<dyn std::error::Err
             include_str!(
                 "../../incan_test_support/fixtures/behavior/cli_values_and_calls/awaiting_task_handles_of_a_call_result_and_a_literal.incn"
             ),
-            "unsupported Body IR type RustInteropPath in made local 1",
+            "unsupported Body IR type RustInteropPath in made frame local 1",
         ),
         (
             "task-list",
@@ -6542,7 +6541,7 @@ fn async_sdk_nominal_frontiers_are_named() -> Result<(), Box<dyn std::error::Err
             include_str!(
                 "../../incan_test_support/fixtures/behavior/snapshots_stdlib/awaitable_bound_join_handle.incn"
             ),
-            "unsupported Body IR type RustInteropPath in main local 1",
+            "unsupported Body IR type RustInteropPath in main frame local 1",
         ),
         (
             "race",
@@ -13068,7 +13067,7 @@ fn model_method_partial_body_ir_refusal_is_retained() -> Result<(), Box<dyn std:
 fn reflection_metadata_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let closure = corpus::runtime_closure(&fixture.formatting)?;
-    let message = "unsupported Body IR type FrozenList[Named[FieldInfo]]";
+    let message = "unsupported Body IR frozen collection snapshot with nonprimitive elements";
     for (case, source, companion) in [
         (
             "reflection-private-fields",
