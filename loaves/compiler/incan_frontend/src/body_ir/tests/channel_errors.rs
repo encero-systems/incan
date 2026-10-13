@@ -38,6 +38,25 @@ fn annotated_channel_send_keeps_error_payload() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// A generic newtype method's Self result remains its checked receiver type at the native boundary.
+#[test]
+fn newtype_self_result_keeps_checked_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "type Token[T] = newtype T:\n    def replace(self, value: T) -> Self:\n        return Token(value)\n\ndef retain(token: Token[int]) -> None:\n    replacement = token.replace(2)\n",
+        &["m", "newtype_self"],
+    )?;
+    let body = body_named(&module, "retain")?;
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::SelfType),
+        "{}",
+        body.render_snapshot()
+    );
+    assert!(body.locals.iter().filter(|local| matches!(&local.ty,
+        IncanType::Generic { base, args } if base == "Token" && args == &[IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int)]
+    )).count() >= 3, "{}", body.render_snapshot());
+    Ok(())
+}
+
 /// Identify only a send error's open payload, including the Result or Awaitable that encloses it.
 fn open_send_error(ty: &IncanType) -> bool {
     match ty {
