@@ -18,8 +18,8 @@ pub(super) fn source_parameter_kind(kind: ast::ParamKind) -> IncanCallableParamK
 /// Project checked nominal spellings onto their declaring carrier names, without resolving source syntax again.
 ///
 /// Imported checker types can use package-qualified names while the retained declaration uses its source name.
-/// Only checker-minted canonical bindings authorize this projection. Project assembly still refuses equal carrier
-/// names from distinct owners, so this does not choose between conflicting declarations.
+/// Only checker-minted canonical bindings authorize this projection. Distinct checked owners sharing a source name
+/// retain separate identity-encoded carrier keys instead of collapsing their imported aliases.
 pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> IncanType {
     retain_checked_nominal_names(
         super::runtime_nominals::project_type(semantic_type_from_resolved(ty), facts),
@@ -174,14 +174,7 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 IncanType::NativeBuiltin(incan_semantics_core::RuntimeBuiltinType::ValidationError)
             }
         }
-        IncanType::Named(name) => IncanType::Named(
-            facts
-                .declarations
-                .named_type_identities
-                .get(&name)
-                .or_else(|| facts.declarations.body_ir_native_type_identities.get(&name))
-                .map_or(name.clone(), |identity| identity.declaration_name.clone()),
-        ),
+        IncanType::Named(name) => retained_nominal_name(name, facts),
         IncanType::Generic { base, args } => {
             let base = facts
                 .declarations
@@ -220,6 +213,59 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
         }
         ty => ty,
     }
+}
+
+/// Preserve a checked alias's owner when another checked binding has the same declaration name. An application
+/// binding colliding with the encoded key refuses rather than acquiring another declaration's storage identity.
+fn retained_nominal_name(name: String, facts: &TypeCheckInfo) -> IncanType {
+    let Some(identity) = facts
+        .declarations
+        .named_type_identities
+        .get(&name)
+        .or_else(|| facts.declarations.body_ir_native_type_identities.get(&name))
+    else {
+        return IncanType::Named(name);
+    };
+    if has_nominal_name_conflict(identity, facts) {
+        let encoded = incan_semantics_core::encode_incan_symbol_identity(identity);
+        if facts
+            .declarations
+            .named_type_identities
+            .get(&encoded)
+            .is_some_and(|other| other != identity)
+        {
+            return IncanType::Unsupported("ambiguous canonical nominal carrier name".into());
+        }
+        return IncanType::Named(encoded);
+    }
+    IncanType::Named(identity.declaration_name.clone())
+}
+
+/// Detect distinct checked model or class owners, without treating two aliases of one declaration as a collision.
+fn has_nominal_name_conflict(identity: &super::CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
+    matches!(
+        identity.kind,
+        SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+    ) && facts
+        .declarations
+        .named_type_identities
+        .values()
+        .any(|other| other.declaration_name == identity.declaration_name && other != identity)
+}
+
+/// Carry the checked binding proof beside every identity-encoded Body IR carrier key. The original checker table
+/// remains immutable, and source lookalikes never overwrite a retained binding.
+pub(super) fn retained_type_identities(
+    facts: &TypeCheckInfo,
+) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
+    let mut identities = facts.declarations.named_type_identities.clone();
+    for identity in facts.declarations.named_type_identities.values() {
+        if has_nominal_name_conflict(identity, facts) {
+            let encoded = incan_semantics_core::encode_incan_symbol_identity(identity);
+            identities.entry(encoded).or_insert_with(|| identity.clone());
+        }
+    }
+    identities
 }
 
 /// Refuse bare provider leaves that share a builtin's name until exact annotation and signature provenance survives

@@ -28,7 +28,7 @@ pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     return specialize_for(module, implementations, owners)
 
 
-pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[BodyIrModule, str]:
+pub def specialize_project_traits(module: &BodyIrModule, modules: list[BodyIrModule]) -> Result[BodyIrModule, str]:
     """
     Instantiate this module's open defaults for every adopter of the project the frontend retained.
 

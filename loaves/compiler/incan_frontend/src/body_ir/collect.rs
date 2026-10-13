@@ -158,7 +158,7 @@ pub(super) fn collect_type_aliases(
             Some(bir::TypeAliasDeclaration {
                 canonical,
                 ty: parameter_types::checked_semantic_type(type_info.type_alias_target(&item.name)?, type_info),
-                named_type_identities: type_info.declarations.named_type_identities.clone(),
+                named_type_identities: parameter_types::retained_type_identities(type_info),
             })
         })
         .collect()
@@ -612,7 +612,7 @@ pub(super) fn collect_local_nominal_declarations(
                         }
                     })
                     .collect(),
-                named_type_identities: type_info.declarations.named_type_identities.clone(),
+                named_type_identities: parameter_types::retained_type_identities(type_info),
                 type_parameter_count: type_parameters.len(),
                 type_parameters,
             };
@@ -738,7 +738,7 @@ fn collect_plain_newtype(
         method_partial_defaults: Vec::new(),
         display_method: None,
         derives,
-        named_type_identities: type_info.declarations.named_type_identities.clone(),
+        named_type_identities: parameter_types::retained_type_identities(type_info),
         type_parameters: facts.type_params.clone(),
         type_parameter_count: facts.type_params.len(),
     })

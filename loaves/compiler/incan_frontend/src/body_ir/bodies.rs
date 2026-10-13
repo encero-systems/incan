@@ -202,7 +202,7 @@ pub(super) fn lower_static_initializer_body(
             closure_holding_parameters: Vec::new(),
             closure_holding_return: false,
         }),
-        named_type_identities: lowering_facts.type_info.declarations.named_type_identities.clone(),
+        named_type_identities: parameter_types::retained_type_identities(lowering_facts.type_info),
         locals: builder.locals,
         params: Vec::new(),
         param_locals: Vec::new(),
@@ -364,7 +364,7 @@ pub(super) fn lower_function_body(
                 .type_info
                 .is_closure_returning_type(function.return_type.span),
         }),
-        named_type_identities: lowering_facts.type_info.declarations.named_type_identities.clone(),
+        named_type_identities: parameter_types::retained_type_identities(lowering_facts.type_info),
         locals: builder.locals,
         params,
         param_locals,
@@ -580,7 +580,7 @@ pub(super) fn lower_method_body(
                 .type_info
                 .is_closure_returning_type(method.return_type.span),
         }),
-        named_type_identities: lowering_facts.type_info.declarations.named_type_identities.clone(),
+        named_type_identities: parameter_types::retained_type_identities(lowering_facts.type_info),
         locals: builder.locals,
         params,
         param_locals,
