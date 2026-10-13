@@ -3812,7 +3812,12 @@ def library_function_arguments(
     if len(names) == 0:
         return Ok([])
     mut closed: list[RustType] = []
-    if names[0] == "Self":
+    mut associated = false
+    match target.canonical:
+        Some(identity) =>
+            associated = identity.kind == SemanticSourceTargetKind.Method
+        None => pass
+    if names[0] == "Self" and associated:
         match target.receiver_type:
             Some(receiver) =>
                 closed = checked_type_arguments(builder, [receiver.clone()])?
