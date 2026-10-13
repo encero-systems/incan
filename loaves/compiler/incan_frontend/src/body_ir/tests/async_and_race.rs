@@ -1054,7 +1054,6 @@ fn retains_sdk_join_error_source_contract() -> Result<(), Box<dyn std::error::Er
     );
     Ok(())
 }
-
 /// An inferred task binding keeps the checked native future output that closed its SDK spawn call.
 #[test]
 fn inferred_task_binding_retains_closed_output() -> Result<(), Box<dyn std::error::Error>> {

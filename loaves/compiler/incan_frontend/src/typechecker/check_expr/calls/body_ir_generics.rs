@@ -294,7 +294,6 @@ impl TypeChecker {
         }
         selected
     }
-
     /// Retain a checked async call as a future argument while leaving legacy's eventual-output expression type alone.
     fn body_ir_argument_type(&self, expression: &Spanned<Expr>, actual: &ResolvedType) -> ResolvedType {
         if matches!(actual, ResolvedType::Generic(name, args) if name == "Awaitable" && args.len() == 1) {
