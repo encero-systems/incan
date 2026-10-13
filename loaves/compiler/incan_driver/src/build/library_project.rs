@@ -572,7 +572,20 @@ fn prepare_core_checked_dependency(
         let input = AdmittedLibraryPreparation::with_ordinary_native(session, native)?;
         super::bake::bake_admitted_library(&input, &features, Some(target))?;
     }
-    let artifact_root = incan_frontend::library_manifest_index::dependency_crate_root(&root);
+    select_core_checked_dependency(source)
+}
+
+/// Select an already published core loaf through the original namespace issuer and exact handoff bytes.
+///
+/// Publication and metadata-only consumers share this boundary. Missing or stale publications refuse through the
+/// same checked dependency admission; selection never prepares native inputs or publishes a replacement.
+fn select_core_checked_dependency(
+    source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+) -> CliResult<super::library_dependencies::LibraryDependencyInput> {
+    let root = source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let artifact_root = incan_frontend::library_manifest_index::dependency_crate_root(root);
     let namespace = incan_frontend::provider::namespaces::SelectedProviderNamespace::from_source_publication(
         source,
         &artifact_root,
@@ -589,6 +602,95 @@ fn prepare_core_checked_dependency(
         import_alias: None,
         namespace: Some(namespace),
     })
+}
+
+/// Build a session from the same ordinary dependency owners for publication and metadata inspection.
+/// Standard package authors retain their own source capability; consumers receive checked loaf namespaces only.
+fn ordinary_library_session(
+    manifest: &oven_model::manifest::ProjectManifest,
+    entry: &Path,
+    package_features: &FeatureSelection,
+    dependencies: Arc<super::library_dependencies::PreparedLibraryDependencies>,
+    core_source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+) -> CliResult<CompilationSession> {
+    let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    let core_root = core_source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    // Authored standard packages use their own original source capability; consumers receive only checked loaves.
+    let own_source = if root == core_root {
+        Some(core_source)
+    } else if let Some(name) = manifest.project.as_ref().and_then(|project| project.name.as_deref())
+        && incan_lang::lang::standard_packages::standard_package_namespace_policy(name).is_some()
+    {
+        match incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover(name)
+            .map_err(|error| CliError::failure(error.to_string()))?
+        {
+            Some(source)
+                if source
+                    .verified_package_root()
+                    .map_err(|error| CliError::failure(error.to_string()))?
+                    == root =>
+            {
+                Some(Arc::new(source))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    match own_source {
+        Some(source) => {
+            CompilationSession::discover_with_admitted_standard_source(entry, package_features, dependencies, source)
+        }
+        None => CompilationSession::discover_with_admitted_library_dependencies(entry, package_features, dependencies),
+    }
+}
+
+/// Select checked ordinary dependencies for metadata inspection without native preparation or SDK discovery.
+///
+/// The configured ordinary route requires existing publications matching the host target, toolchain and resolved
+/// features. Failures propagate; only an unconfigured toolchain or a manifest-free source uses the existing reader.
+pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Option<CompilationSession>> {
+    if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none() {
+        return Ok(None);
+    }
+    let root = crate::project::resolve_project_root(entry);
+    let Some(manifest) = discover_effective_project_manifest(&root)? else {
+        return Ok(None);
+    };
+    let package_features = FeatureSelection::default();
+    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, &package_features)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+    let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let core_source = Arc::new(
+        incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover("incan_stdlib_core")
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .ok_or_else(|| {
+                CliError::failure("ordinary metadata inspection requires compiler-owned core publication")
+            })?,
+    );
+    let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    let core_root = core_source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let namespaces = if root == core_root {
+        Vec::new()
+    } else {
+        vec![select_core_checked_dependency(Arc::clone(&core_source))?]
+    };
+    let dependencies = Arc::new(
+        super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
+            &features,
+            namespaces,
+            &target,
+            &toolchain,
+            *open_default_oven_store()?.limits(),
+        )?,
+    );
+    ordinary_library_session(&manifest, entry, &package_features, dependencies, core_source).map(Some)
 }
 
 /// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
@@ -675,39 +777,7 @@ impl AdmittedLibraryPreparation {
             )?,
         );
         let entry = validate_library_entrypoint(manifest)?;
-        // Authored standard packages use their own original source capability; consumers receive only checked loaves.
-        let own_source = if root == core_root {
-            Some(core_source)
-        } else if let Some(name) = manifest.project.as_ref().and_then(|project| project.name.as_deref())
-            && incan_lang::lang::standard_packages::standard_package_namespace_policy(name).is_some()
-        {
-            match incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover(name)
-                .map_err(|error| CliError::failure(error.to_string()))?
-            {
-                Some(source)
-                    if source
-                        .verified_package_root()
-                        .map_err(|error| CliError::failure(error.to_string()))?
-                        == root =>
-                {
-                    Some(Arc::new(source))
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
-        let session = match own_source {
-            Some(source) => CompilationSession::discover_with_admitted_standard_source(
-                &entry,
-                package_features,
-                dependencies,
-                source,
-            )?,
-            None => {
-                CompilationSession::discover_with_admitted_library_dependencies(&entry, package_features, dependencies)?
-            }
-        };
+        let session = ordinary_library_session(manifest, &entry, package_features, dependencies, core_source)?;
         Self::with_ordinary_native(session, native).map(Some)
     }
 

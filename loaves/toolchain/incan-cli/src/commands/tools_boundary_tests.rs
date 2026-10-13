@@ -1,5 +1,5 @@
-//! The one `tools` test that needs `incan build --lib`: it publishes a library through this crate's build command
-//! and then asks `oven_cli`'s registry inspection what a consumer of that library may see. The handler lives in
+//! The `tools` boundary test that needs ordinary library publication: it publishes a library through this crate's build
+//! command and then asks `oven_cli`'s registry inspection what a consumer of that library may see. The handler lives in
 //! `oven-cli`; the build command lives here, so the test that needs both lives here.
 
 use std::fs;
@@ -13,7 +13,7 @@ use oven_cli::commands::tools::{RegistryInspectionFormat, inspect_registry};
 use oven_model::lock::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
 
 /// A consumer of a compiled library sees the library's public registries and none of its private ones: the
-/// producer publishes through `incan build --lib`, the consumer's inspection reads the sealed metadata.
+/// producer publishes through the library build lifecycle, the consumer's inspection reads the sealed metadata.
 #[test]
 fn inspect_registry_reads_only_public_facts_from_a_library_consumer() -> Result<(), Box<dyn std::error::Error>> {
     if incan_test_support::in_compiler_source_layout(
@@ -22,17 +22,21 @@ fn inspect_registry_reads_only_public_facts_from_a_library_consumer() -> Result<
         return Ok(());
     }
 
+    if std::env::var_os("INCAN_TRACE_DIR").is_some() {
+        oven_cli::invocation_trace::initialize()?;
+    }
     let tmp = tempfile::tempdir()?;
-    let producer_root = tmp.path().join("registrylib");
-    let producer_src = producer_root.join("src");
-    fs::create_dir_all(&producer_src)?;
-    fs::write(
-        producer_root.join("loaf.toml"),
-        "[project]\nname = \"registrylib\"\nversion = \"0.1.0\"\n",
-    )?;
-    fs::write(
-        producer_src.join("lib.incn"),
-        r#"
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let producer_root = tmp.path().join("registrylib");
+        let producer_src = producer_root.join("src");
+        fs::create_dir_all(&producer_src)?;
+        fs::write(
+            producer_root.join("loaf.toml"),
+            "[project]\nname = \"registrylib\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            producer_src.join("lib.incn"),
+            r#"
 from std.registry import Registry, SubjectKind, describe
 
 @derive(Clone, Eq)
@@ -57,52 +61,79 @@ pub def public_function() -> None:
 def private_function() -> None:
     pass
 "#,
-    )?;
-    write_test_incan_lock(&producer_root)?;
-    let producer_entry = producer_src.join("lib.incn");
-    let exit = build_library(
-        producer_entry.to_str(),
-        None,
-        BuildCommandOptions::default(),
-        BuildReportOptions::default(),
-    )?;
-    assert_eq!(exit, ExitCode::SUCCESS);
+        )?;
+        write_test_incan_lock(&producer_root)?;
+        let producer_entry = producer_src.join("lib.incn");
+        let exit = build_library(
+            producer_entry.to_str(),
+            None,
+            BuildCommandOptions::default(),
+            BuildReportOptions::default(),
+        )?;
+        assert_eq!(exit, ExitCode::SUCCESS);
 
-    let consumer_root = tmp.path().join("consumer");
-    let consumer_src = consumer_root.join("src");
-    fs::create_dir_all(&consumer_src)?;
-    fs::write(
-        consumer_root.join("loaf.toml"),
-        "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nregistrylib = { path = \"../registrylib\" }\n",
-    )?;
-    fs::write(
-        consumer_src.join("main.incn"),
-        "from pub::registrylib import FunctionId\n\ndef main() -> None:\n    assert FunctionId(\"consumer\") == FunctionId(\"consumer\")\n",
-    )?;
+        let consumer_root = tmp.path().join("consumer");
+        let consumer_src = consumer_root.join("src");
+        fs::create_dir_all(&consumer_src)?;
+        fs::write(
+            consumer_root.join("loaf.toml"),
+            "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nregistrylib = { path = \"../registrylib\" }\n",
+        )?;
+        fs::write(
+            consumer_src.join("main.incn"),
+            "from pub::registrylib import FunctionId\n\ndef main() -> None:\n    assert FunctionId(\"consumer\") == FunctionId(\"consumer\")\n",
+        )?;
 
-    assert_eq!(
-        inspect_registry(
+        assert_eq!(
+            inspect_registry(
+                "lib::public_functions",
+                Some(&consumer_root),
+                RegistryInspectionFormat::Json,
+            )?,
+            ExitCode::SUCCESS
+        );
+        let private_error = match inspect_registry(
+            "lib::private_functions",
+            Some(&consumer_root),
+            RegistryInspectionFormat::Json,
+        ) {
+            Ok(code) => {
+                return Err(format!("consumer inspection unexpectedly exposed a private registry: {code:?}").into());
+            }
+            Err(error) => error,
+        };
+        assert!(
+            private_error.to_string().contains("was not found"),
+            "expected private registry to be absent from consumer inspection, got: {private_error}"
+        );
+        // A published dependency must remain source-current even for a metadata-only reader.
+        let source = fs::read_to_string(&producer_entry)?;
+        fs::write(&producer_entry, format!("{source}\n# Changed after publication.\n"))?;
+        let stale = inspect_registry(
             "lib::public_functions",
             Some(&consumer_root),
             RegistryInspectionFormat::Json,
-        )?,
-        ExitCode::SUCCESS
-    );
-    let private_error = match inspect_registry(
-        "lib::private_functions",
-        Some(&consumer_root),
-        RegistryInspectionFormat::Json,
-    ) {
-        Ok(code) => {
-            return Err(format!("consumer inspection unexpectedly exposed a private registry: {code:?}").into());
-        }
-        Err(error) => error,
-    };
-    assert!(
-        private_error.to_string().contains("was not found"),
-        "expected private registry to be absent from consumer inspection, got: {private_error}"
-    );
-    Ok(())
+        );
+        fs::write(&producer_entry, source)?;
+        assert!(
+            stale.is_err(),
+            "metadata inspection accepted a stale dependency publication"
+        );
+        assert_eq!(
+            inspect_registry(
+                "lib::public_functions",
+                Some(&consumer_root),
+                RegistryInspectionFormat::Json
+            )?,
+            ExitCode::SUCCESS
+        );
+        Ok(())
+    })();
+    if result.is_err() {
+        // Retain a failed publication's actual owners for diagnosis instead of deleting the evidence.
+        eprintln!("registry fixture retained at {}", tmp.keep().display());
+    }
+    result
 }
 
 /// Write the minimal `oven.lock` a library build expects beside the fixture's manifest.

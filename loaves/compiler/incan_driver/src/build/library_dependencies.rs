@@ -193,7 +193,15 @@ impl PreparedLibraryDependencies {
                 limits,
                 &incan_oven_facet::compiler_identity(),
             );
-            let metadata = select_library_metadata_reference(&store, reference)?;
+            let metadata = select_library_metadata_reference(&store, reference).map_err(|error| {
+                invalid(format!(
+                    "ordinary dependency `{}` at {} could not select checked owner {} from {}: {error}",
+                    manifest.name,
+                    artifact_root.display(),
+                    reference.owner_identity,
+                    store.root().display(),
+                ))
+            })?;
             metadata.verify_materialization(&artifact_root)?;
             let generation = select_library_generation_reference(
                 &store,
