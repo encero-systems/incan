@@ -90,13 +90,17 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     // They are context for every module's Body IR, so stdlib enums, newtypes and layouts resolve by identity as package
     // declarations do, and declaration-only program modules the lowering names by their crate items.
     let mut library_identities = std::collections::BTreeSet::new();
+    let mut constant_bindings = std::collections::BTreeMap::new();
     for module in &modules {
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
         library_identities.extend(incan_frontend::body_ir::library_type_identities(type_info));
+        constant_bindings.extend(referenced_sdk_constants(type_info, &session.provider_plan));
     }
-    bodies.extend(published_library_modules(&session.provider_plan, &library_identities));
+    library_identities.extend(constant_bindings.values().cloned());
+    bodies.extend(published_library_modules(&session.provider_plan, &library_identities)?);
+    bodies.extend(sdk_constant_binding_modules(&bodies, &constant_bindings)?);
     // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the
     // entry.
     let mut files = bodies
@@ -161,6 +165,89 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     })
 }
 
+/// Request integer constants by their checked canonical identities from active SDK providers, preserving published
+/// values.
+fn referenced_sdk_constants(
+    type_info: &incan_frontend::typechecker::TypeCheckInfo,
+    plan: &incan_frontend::provider::ProviderPlan,
+) -> std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, incan_semantics_core::CanonicalSymbolId> {
+    type_info
+        .references
+        .resolved_identities
+        .values()
+        .filter(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Const)
+        .filter_map(|identity| {
+            let mut published = identity.clone();
+            match &identity.origin {
+                incan_semantics_core::SymbolOrigin::Package { library, .. }
+                    if plan
+                        .active_sdk_records()
+                        .any(|provider| &provider.identity.name == library) => {}
+                incan_semantics_core::SymbolOrigin::Module(path) => {
+                    let provider = plan.active_sdk_provider_for_module(path)?;
+                    let (root, module_path) = path.split_first()?;
+                    if root != "std" {
+                        return None;
+                    }
+                    published.origin = incan_semantics_core::SymbolOrigin::Package {
+                        library: provider.identity.name.clone(),
+                        module_path: module_path.to_vec(),
+                    };
+                }
+                _ => return None,
+            }
+            Some((identity.clone(), published))
+        })
+        .collect()
+}
+
+/// Preserve checked source-cache identities as declaration-only views of the exact selected SDK constant.
+///
+/// The SDK decoder validates coverage, spans, digests and values under the package identity first. This bridge changes
+/// only the origin to the original checked binding, whose canonical module is the SDK provider's admitted module.
+/// It never changes names, kinds, spans or values, and absent publication remains a named refusal.
+fn sdk_constant_binding_modules(
+    modules: &[BodyIrModule],
+    bindings: &std::collections::BTreeMap<
+        incan_semantics_core::CanonicalSymbolId,
+        incan_semantics_core::CanonicalSymbolId,
+    >,
+) -> Result<Vec<BodyIrModule>, String> {
+    let constants = modules
+        .iter()
+        .flat_map(|module| &module.constant_declarations)
+        .map(|declaration| (&declaration.canonical, declaration))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
+    for (binding, published) in bindings {
+        let declaration = constants.get(published).ok_or_else(|| {
+            format!(
+                "unsupported Body IR selected SDK constant `{}` has no retained value",
+                published.declaration_name,
+            )
+        })?;
+        if !matches!(declaration.value, incan_semantics_core::body_ir::Constant::Int(_)) {
+            return Err(format!(
+                "unsupported Body IR selected SDK constant `{}` outside integer representation",
+                published.declaration_name,
+            ));
+        }
+        if binding == published {
+            continue;
+        }
+        let owner = incan_semantics_core::canonical_module_identity(binding)
+            .ok_or("unsupported Body IR SDK constant binding without a module")?;
+        let mut view = (*declaration).clone();
+        view.canonical = binding.clone();
+        owners
+            .entry(owner.clone())
+            .or_insert_with(|| declaration_module(owner))
+            .constant_declarations
+            .push(view);
+    }
+    Ok(owners.into_values().collect())
+}
+
 /// Carry the stdlib layouts and crate calls the checked modules use into lowering as declaration-only modules, one per
 /// declaring stdlib module, so each layout validates against its own module identity as a published package layout
 /// does. Each layout and call travels once; whether a layout is linked rather than declared is the lowering's decision.
@@ -192,7 +279,7 @@ fn library_modules(
 fn published_library_modules(
     plan: &incan_frontend::provider::ProviderPlan,
     identities: &std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-) -> Vec<BodyIrModule> {
+) -> Result<Vec<BodyIrModule>, String> {
     use std::collections::BTreeSet;
     let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
     let (mut nominals, mut enums, mut fieldless, mut values) =
@@ -200,8 +287,14 @@ fn published_library_modules(
     let (mut constants, mut aliases) = (BTreeSet::new(), BTreeSet::new());
     for identity in identities {
         let required = std::iter::once(identity.clone()).collect();
-        let Ok(resolved) = incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required) else {
-            continue;
+        let resolved = match incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required) {
+            Ok(resolved) => resolved,
+            Err(error) if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Const => {
+                return Err(format!(
+                    "unsupported Body IR selected SDK constant publication: {error}"
+                ));
+            }
+            Err(_) => continue,
         };
         for module in resolved.modules {
             let path = module.module_id.path().to_owned();
@@ -238,7 +331,7 @@ fn published_library_modules(
             }
         }
     }
-    owners.into_values().collect()
+    Ok(owners.into_values().collect())
 }
 
 /// Resolve the bodies the linked SDK packages publish for the standard-library trait defaults the program's
