@@ -168,7 +168,7 @@ fn layout_dependencies(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache)
 }
 
 /// Read the layout of every stdlib model, class or plain newtype one module uses whose declaration the stdlib source
-/// confirms.
+/// confirms, plus opaque runtime types whose storage the surface registry assigns to the SDK.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
     let mut cache = StdlibAstCache::new();
     let mut identities = type_identities(type_info, &mut cache);
@@ -187,6 +187,7 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
             SemanticSourceTargetKind::Newtype => library_newtype(identity, &mut cache),
             _ => None,
         })
+        .chain(super::runtime_nominals::collect(type_info))
         .collect::<Vec<_>>();
     for (name, identity) in &type_info.declarations.body_ir_native_type_identities {
         if uses_native_carrier(type_info, name)

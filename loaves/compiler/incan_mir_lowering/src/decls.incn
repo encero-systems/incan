@@ -275,14 +275,15 @@ def library_path(origin: &SymbolOrigin, name: str) -> str:
 
     SDK packages compile each stdlib module into the like-named module of their crate, and the native route links
     those crates, so a stdlib type is named rather than declared. A dependency package's type is declared from its
-    published representation instead.
+    published representation instead. Registered async runtime types name their runtime facet directly; their opaque
+    records expose no fields or constructors.
     """
     # Comparing in expression position keeps the `SymbolOrigin` import that the match patterns alone would not.
     if origin == SymbolOrigin.Builtin:
         return ""
     match origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
-            if not str(library).startswith("incan_stdlib_"):
+            if not str(library).startswith("incan_stdlib_") and str(library) != "incan_std_async":
                 return ""
             mut segments = [str(library)]
             for segment in path:
