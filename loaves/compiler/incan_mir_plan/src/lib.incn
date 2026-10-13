@@ -759,9 +759,9 @@ pub def consuming_closure_example(file: str, output_function: str) -> Plan:
     capture_declaration = ModelDeclaration(
         name="OwnedCapture",
         public=false,
-        fields=[Parameter(name="value", ty=PlanType.Int, span=location)],
+        fields=[Parameter(name="0", ty=PlanType.Int, span=location)],
         field_public=[false],
-        derives=[],
+        derives=["Debug", "Clone"],
         span=location,
     )
     output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
