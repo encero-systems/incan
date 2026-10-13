@@ -8009,7 +8009,7 @@ def main() -> None:
     )
 }
 
-/// A package's generic method retains its active SDK Clone requirement without importing the trait in the consumer.
+/// A package's bound callable reaches the selected SDK while its generic receiver preserves ordinary value reads.
 #[test]
 fn published_generic_sdk_bound_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -8028,14 +8028,22 @@ fn published_generic_sdk_bound_output_matches_legacy() -> Result<(), Box<dyn std
     fs::write(
         provider.join("src/lib.incn"),
         r#"from std.derives.copying import Clone
+from std.traits.callable import Callable1
+
 
 pub model Holder[T with Clone]:
     """Keep the SDK bound on the public generic owner."""
+
     pub value: T
 
     def get(self) -> T:
         """Read the payload without consuming the holder."""
         return self.value
+
+
+pub def apply[F with Callable1[int, int]](mapper: F, value: int) -> int:
+    """Call the dependency's declared SDK callable slot."""
+    return mapper(value)
 "#,
     )?;
     let mut publish = support::cli_project::configured_incan_command(&provider, &["oven", "bake", "--project", "."]);
@@ -8047,13 +8055,20 @@ pub model Holder[T with Clone]:
         &root,
         &fixture.sysroot,
         &fixture.formatting,
-        r#"from pub::bounded_items import Holder
+        r#"from pub::bounded_items import Holder, apply
+
+
+def plus_one(value: int) -> int:
+    """Supply a named function as the concrete callable witness."""
+    return value + 1
+
 
 def main() -> None:
     """Reuse the generic value without importing its provider's SDK trait."""
     value = Holder[int](value=7)
     println(value.get())
     println(value.get())
+    println(apply(plus_one, 7))
 "#,
     )
 }
