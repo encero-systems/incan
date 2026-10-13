@@ -6008,6 +6008,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs": {
+      "disposition": "keep",
+      "notes": "Checked channel value arguments close send-error payload types without changing legacy inference.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6251,14 +6259,6 @@
     "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
       "disposition": "keep",
       "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs": {
-      "disposition": "keep",
-      "notes": "Checked channel value arguments close send-error payload types without changing legacy inference.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
