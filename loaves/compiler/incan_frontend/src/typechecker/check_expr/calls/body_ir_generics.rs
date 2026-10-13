@@ -5,10 +5,66 @@ use std::collections::{HashMap, HashSet};
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Span, Spanned};
 use crate::resolved_type_subst::substitute_resolved_type;
-use crate::symbols::{FunctionInfo, ResolvedType, TypeBoundInfo};
+use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, TypeBoundInfo, TypeInfo};
 use incan_lang::interop::is_rust_capability_bound;
 
 impl TypeChecker {
+    /// Retain a generic source newtype method's native output before legacy erases an open receiver binder.
+    /// The selected declaration and already checked arguments supply the constraint; no legacy binding is changed.
+    pub(super) fn retain_body_ir_newtype_method_result(
+        &mut self,
+        method: &MethodInfo,
+        receiver: &ResolvedType,
+        args: &[CallArg],
+        legacy_bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        let ResolvedType::Generic(owner, _) = receiver else {
+            return;
+        };
+        let Some(TypeInfo::Newtype(owner)) = self.lookup_semantic_type_info(owner) else {
+            return;
+        };
+        if owner.is_rusttype || owner.type_params.is_empty() || method.identity.is_none() {
+            return;
+        }
+        let mut names = owner.type_params.clone();
+        names.extend(method.type_params.iter().cloned());
+        let mut bindings: HashMap<_, _> = legacy_bindings
+            .iter()
+            .filter(|(_, value)| concrete(value))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        for (expression, parameter) in Self::arguments_with_parameter_types(&method.params, args) {
+            let Some(actual) = self.type_info.expr_type(expression.span) else {
+                return;
+            };
+            let expected = normalized(&parameter, &names, &self.type_info);
+            let actual = normalized(actual, &[], &self.type_info);
+            if !concrete(&actual) {
+                return;
+            }
+            self.infer_type_param_bindings(&expected, &actual, &mut bindings);
+            let closed = substitute_resolved_type(&expected, &bindings);
+            if !self.types_compatible(&closed, &actual) {
+                return;
+            }
+        }
+        let output = substitute_resolved_type(&normalized(&method.return_type, &names, &self.type_info), &bindings);
+        if !concrete(&output) {
+            return;
+        }
+        let native = if method.is_async {
+            ResolvedType::Generic("Awaitable".into(), vec![output])
+        } else {
+            output
+        };
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .insert((span.start, span.end), native);
+    }
+
     /// Record a concrete native instantiation from already checked parameter/argument relationships.
     ///
     /// Legacy preserves its own bindings and Rust inference. Body IR additionally normalizes the checked tuple

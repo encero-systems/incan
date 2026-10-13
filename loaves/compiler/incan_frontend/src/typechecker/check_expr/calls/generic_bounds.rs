@@ -428,7 +428,7 @@ impl TypeChecker {
 
     /// Pair each argument with the type of the parameter it binds, as [`Self::arguments_with_parameters`] pairs them,
     /// leaving out an argument that binds no parameter.
-    fn arguments_with_parameter_types<'a, 'p>(
+    pub(super) fn arguments_with_parameter_types<'a, 'p>(
         params: &'p [CallableParam],
         args: &'a [CallArg],
     ) -> Vec<(&'a Spanned<Expr>, &'p ResolvedType)> {
@@ -1077,6 +1077,7 @@ impl TypeChecker {
         }
         if self.errors.len() == errors_before_call {
             self.record_call_site_monomorph_if_complete(call_site_span, &method_info.type_params, &type_bindings);
+            self.retain_body_ir_newtype_method_result(&method_info, receiver_ty, args, &type_bindings, call_site_span);
             if explicit_type_args.is_empty() {
                 self.retain_constructor_call_instantiation(
                     call_site_span,

@@ -228,6 +228,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(actual) = self.result_operand_type(&value) {
             ty = self.refine_result_channels(&ty, &actual);
         }
+        // An awaited method can retain its closed output only after its future has been constructed. Preserve that
+        // checked native constraint through an inferred binding without changing an explicit annotation.
+        if assignment.ty.is_none()
+            && let Some(settled) = self
+                .settled_types
+                .get(&(assignment.value.span.start, assignment.value.span.end))
+        {
+            ty = self.fill_open_type_parts(&ty, settled);
+        }
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
         // An inferred SDK task binding also keeps the individual checked call's concrete output argument.
