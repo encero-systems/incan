@@ -6232,6 +6232,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/task_handles.rs": {
+      "disposition": "keep",
+      "notes": "Registered opaque task storage and native argument identity; unrelated Rust paths remain unprojected.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs": {
       "disposition": "keep",
       "notes": "Builtin codec slots and registry defaults retained in Body IR; source-owned members keep their own contract.",
