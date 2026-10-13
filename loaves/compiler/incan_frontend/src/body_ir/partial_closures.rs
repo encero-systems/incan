@@ -39,6 +39,8 @@ impl BodyBuilder<'_, '_> {
         if !partial.type_args.is_empty() {
             return Err("partial callable with explicit type arguments".to_owned());
         }
+
+        // ---- Checked target identity and retained constructor layout ----
         let selected = self.type_info.resolved_identity(partial.target.span);
         let constructor = if selected.is_some_and(|identity| {
             matches!(
@@ -59,6 +61,8 @@ impl BodyBuilder<'_, '_> {
         } else {
             None
         };
+
+        // ---- Complete source parameter signature ----
         let binding = if let Some(declaration) = &constructor {
             let Some(ResolvedType::Function(params, result)) = self.type_info.expr_type(partial.target.span) else {
                 return Err("partial constructor without a checked callable signature".to_owned());
@@ -82,6 +86,8 @@ impl BodyBuilder<'_, '_> {
         }) {
             return Err("partial callable target with an unnamed or rest parameter".to_owned());
         }
+
+        // ---- Declaration-owned defaults and executable identity ----
         let source_name = constructor
             .as_ref()
             .map_or(name.as_str(), |declaration| declaration.name.as_str());
@@ -125,6 +131,8 @@ impl BodyBuilder<'_, '_> {
             previous_bindings: Vec::new(),
         };
         let mut presets = std::collections::HashMap::new();
+
+        // ---- Written presets at the creation site ----
         for argument in &partial.args {
             let ty = self.resolve_ty(argument.value.span);
             frame
@@ -138,6 +146,8 @@ impl BodyBuilder<'_, '_> {
             presets.insert(argument.name.clone(), local);
             frame.previous_bindings.push((name, previous));
         }
+
+        // ---- Full parameter surface with overridable defaults ----
         for (index, parameter) in target.binding.params.iter().enumerate() {
             let Some(name) = &parameter.name else {
                 continue;
@@ -186,6 +196,7 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        // ---- Declaration-order operands and passing modes ----
         let arguments = frame
             .argument_locals
             .iter()
@@ -204,6 +215,8 @@ impl BodyBuilder<'_, '_> {
             .collect::<Vec<_>>();
         let ty = semantic_type_from_resolved(&target.binding.return_type);
         let binding = bir::ArgumentBinding::resolved_positional(arguments.len());
+
+        // ---- Retained physical construction layout ----
         if let Some(declaration) = target.constructor {
             if !super::partials::constructor_parameter_layout_matches(&frame.parameters, &declaration) {
                 return self.unsupported_operand(
@@ -231,6 +244,8 @@ impl BodyBuilder<'_, '_> {
                 out,
             );
         }
+
+        // ---- Checked function forwarding ----
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: None,
