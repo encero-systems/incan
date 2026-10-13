@@ -74,5 +74,50 @@ fn numeric_newtype_sum_requires_canonical_owner() -> Result<(), Box<dyn std::err
     let module = super::build_body_ir_module_v0(&program, &path, &facts);
     let raw = super::body_named(&module, "raw")?.render_snapshot();
     assert!(!raw.contains("newtype_sum_add"), "{raw}");
+    assert!(raw.contains("unsupported"), "{raw}");
+    Ok(())
+}
+
+/// Independent missing checked selection and mismatched hook provenance each retain a named refusal.
+#[test]
+fn numeric_newtype_sum_requires_complete_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let tokens = super::lexer::lex(SOURCE).map_err(|errors| format!("{errors:?}"))?;
+    let program = super::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let path = vec!["m".to_owned(), "numeric_sum_missing_selection".to_owned()];
+    let mut checker = super::TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    for corruption in 0..3 {
+        let mut facts = checker.type_info().clone();
+        match corruption {
+            0 => facts.body_ir_iterator_sum_items.clear(),
+            1 => {
+                let hook = facts
+                    .declarations
+                    .newtype_construction
+                    .get_mut("Positive")
+                    .and_then(|facts| facts.checked_constructor_identity.as_mut())
+                    .ok_or("missing checked hook identity")?;
+                hook.kind = super::SemanticSourceTargetKind::Function;
+            }
+            _ => {
+                facts
+                    .declarations
+                    .newtype_construction
+                    .get_mut("Positive")
+                    .ok_or("missing checked construction facts")?
+                    .underlying = crate::symbols::ResolvedType::Float;
+            }
+        }
+        let module = super::build_body_ir_module_v0(&program, &path, &facts);
+        let checked = super::body_named(&module, "checked")?.render_snapshot();
+        assert!(!checked.contains("newtype_sum_add"), "{corruption}: {checked}");
+        assert!(
+            checked.contains("numeric-newtype sum without complete checked local selection"),
+            "{corruption}: {checked}"
+        );
+    }
     Ok(())
 }
