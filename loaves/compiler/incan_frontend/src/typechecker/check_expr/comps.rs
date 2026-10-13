@@ -248,6 +248,7 @@ impl TypeChecker {
 
         self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(expected_ret));
+        let executable_return = self.body_ir_checked_value_type(body.span).unwrap_or(&return_ty).clone();
         self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, expected_ret) {
             self.errors.push(errors::type_mismatch(
@@ -271,6 +272,7 @@ impl TypeChecker {
         // A side the body's `Ok(...)` or `Err(...)` leaves open and the expected type does not fix, such as the error
         // side of an `or_else` callback's `Ok(...)`, is built with a type all the same (#1561).
         let resolved_return = self.settle_open_closure_result_side(body, resolved_return, Some(expected_ret));
+        self.retain_body_ir_closure_type(span, &param_types, &resolved_return, &executable_return);
         ResolvedType::Function(param_types, Box::new(resolved_return))
     }
 }

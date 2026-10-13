@@ -25,6 +25,7 @@ use super::{IdentKind, TypeChecker};
 
 mod access;
 mod basics;
+mod body_ir_values;
 mod builtin_method_args;
 mod calls;
 mod collections;
@@ -747,6 +748,7 @@ impl TypeChecker {
 
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
+        self.retain_body_ir_result_value(expr, &ty);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }
@@ -917,6 +919,7 @@ impl TypeChecker {
             self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
         }
         self.record_expr_type(expr.span, ty.clone());
+        self.retain_body_ir_result_value(expr, &ty);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }

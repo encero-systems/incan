@@ -765,6 +765,11 @@ pub struct DerivationArtifacts {
 /// Expression-local resolution facts keyed by source spans.
 #[derive(Debug, Default, Clone)]
 pub struct ExpressionArtifacts {
+    /// Executable expression types closed from checked value contracts, consumed only by Body IR. Legacy keeps its
+    /// original contextual expression snapshot, including holes that Rust inference completes later.
+    pub body_ir_expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// Closed value contracts for exact checked lexical bindings; shadowed names never share an entry.
+    pub body_ir_binding_types: HashMap<CanonicalSymbolId, ResolvedType>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
     /// Canonical named-type leaves of each checked expression type, addressed by generic/tuple child indices.

@@ -1211,6 +1211,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .expression_type(span, self.type_info)
             .or_else(|| {
                 self.type_info
+                    .expressions
+                    .body_ir_expr_types
+                    .get(&(span.start, span.end))
+            })
+            .or_else(|| {
+                self.type_info
+                    .calls
+                    .body_ir_constructor_types
+                    .get(&(span.start, span.end))
+            })
+            .or_else(|| {
+                self.type_info
                     .calls
                     .body_ir_constructor_types
                     .get(&(span.start, span.end))
