@@ -4,6 +4,23 @@ use super::*;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_semantics_core::SymbolOrigin;
 
+/// The error type in ReaderChunks' checked FallibleIterator adoption is a dependency even without a field or import.
+#[test]
+fn sdk_trait_arguments_retain_nominal_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let identity = cache
+        .lookup_identity(&["std".to_owned(), "io".to_owned()], "ReaderChunks")
+        .ok_or("missing reader identity")?;
+    let mut facts = TypeCheckInfo::default();
+    facts
+        .declarations
+        .named_type_identities
+        .insert("ReaderChunks".to_owned(), identity);
+    let layouts = library_nominal_declarations(&facts);
+    assert!(layouts.iter().any(|layout| layout.name == "IoError"), "{layouts:?}");
+    Ok(())
+}
+
 /// A closed source function call already supplies the reader argument; nominal admission must not infer it again.
 #[test]
 fn sdk_reader_call_retains_checked_function_arguments() -> Result<(), Box<dyn std::error::Error>> {
