@@ -5,6 +5,7 @@ from rust::incan_semantics_core import (
     IncanCallableParam,
     IncanCallableParamKind,
     RuntimeBuiltinType,
+    SemanticSourceTargetKind,
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
@@ -66,6 +67,10 @@ pub def native_source_type(
                 match zip_pair_type(nominals, enums, unions, arguments[0], intrinsics):
                     Some(pair) => return Ok(pair)
                     None => pass
+            if (base == "Iterator" or base == "Generator") and len(arguments) == 1:
+                match numeric_newtype_iterator(nominals, arguments[0]):
+                    Some(iterator) => return Ok(iterator)
+                    None => pass
             match collection_type(str(base)):
                 Some(CollectionTypeId.Tuple) => return layout_tuple_type(nominals, enums, unions, arguments, intrinsics)
                 _ => pass
@@ -90,6 +95,25 @@ pub def callable_parameter_type(
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
         IncanCallableParamKind.RestKeyword => return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(element)?))
+
+
+def numeric_newtype_iterator(nominals: list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
+    """Retain an integer newtype's exact owned generator leaf through the same canonical layout as its list items."""
+    match element:
+        RustType.Named(name) =>
+            for index in range(len(nominals)):
+                declaration = nominals[index]
+                if declaration.name != str(name) or declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
+                    continue
+                if len(declaration.type_parameters) != 0 or declaration.fields != ["0"] or len(declaration.field_types) != 1:
+                    return None
+                if declaration.field_identities != [declaration.canonical]:
+                    return None
+                match model_type(nominals, declaration.field_types[0]):
+                    Ok(PlanType.Int) => return Some(PlanType.Generator(ListLeaf.Model(index, str(name)), 0))
+                    _ => return None
+        _ => pass
+    return None
 
 
 def hashed_leaf(

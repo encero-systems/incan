@@ -15,7 +15,7 @@ pub def lower_newtype_sum_add(
 ) -> Result[None, str]:
     """Add already projected integer payloads through the frozen release wrapping operation."""
     if len(arguments) != 2:
-        return Err("invalid Body IR NewtypeSumAdd arity")
+        return Err("unsupported Body IR NewtypeSumAdd arity")
     match destination:
         None => return Err("unsupported Body IR newtype sum addition without a destination")
         Some(place) =>
@@ -45,7 +45,7 @@ pub def lower_newtype_sum_extract(
 ) -> Result[None, str]:
     """Extract the already selected final hook's Result with the retained frozen sum failure message."""
     if len(arguments) != 2:
-        return Err("invalid Body IR NewtypeSumExtract arity")
+        return Err("unsupported Body IR NewtypeSumExtract arity")
     match destination:
         None => return Err("unsupported Body IR newtype sum extraction without a destination")
         Some(place) =>
