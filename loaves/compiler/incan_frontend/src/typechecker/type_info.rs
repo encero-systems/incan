@@ -1209,7 +1209,8 @@ pub struct DeclarationArtifacts {
 pub struct BodyIrDecoratorApplication {
     /// Returned decorator signature before applying the validated bindings.
     pub callable_type: ResolvedType,
-    /// Generic variable bindings established by ordinary callable argument validation.
+    /// Generic variable bindings established by ordinary callable argument validation. A checked generic identity
+    /// method application additionally retains its receiver's passing reference here, exclusively for Body IR.
     pub type_bindings: HashMap<String, ResolvedType>,
     /// Factory type arguments in the resolved declaration's parameter order, before application substitution.
     pub factory_type_args: Vec<ResolvedType>,

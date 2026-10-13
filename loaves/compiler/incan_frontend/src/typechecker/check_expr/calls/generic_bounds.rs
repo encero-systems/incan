@@ -7,6 +7,7 @@ use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
+use crate::typechecker::type_info::BodyIrDecoratorApplication;
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
@@ -702,6 +703,7 @@ impl TypeChecker {
         type_params: &[String],
         bindings: &std::collections::HashMap<String, ResolvedType>,
     ) {
+        self.retain_body_ir_factory_arguments(call_span, type_params, bindings);
         let mut out: Vec<ResolvedType> = Vec::new();
         for p in type_params {
             let Some(ty) = bindings.get(p) else {
@@ -716,6 +718,37 @@ impl TypeChecker {
             .calls
             .call_site_monomorph_type_args
             .insert((call_span.start, call_span.end), out);
+    }
+
+    /// Preserve checked partial factory inference before the legacy complete-only record is considered.
+    /// Only the exact explicitly checked factory span participates. The selected single-function identity and the
+    /// decorator application must subsequently validate this provisional record before Body IR can consume it.
+    fn retain_body_ir_factory_arguments(
+        &mut self,
+        call_span: Span,
+        parameters: &[String],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) {
+        if self.body_ir_decorator_factory_span != Some(call_span) {
+            return;
+        }
+        let arguments = parameters
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .cloned()
+                    .unwrap_or_else(|| ResolvedType::TypeVar(parameter.clone()))
+            })
+            .collect();
+        self.type_info.declarations.body_ir_decorator_applications.insert(
+            (call_span.start, call_span.end),
+            BodyIrDecoratorApplication {
+                callable_type: ResolvedType::Unknown,
+                type_bindings: std::collections::HashMap::new(),
+                factory_type_args: arguments,
+            },
+        );
     }
 
     /// Retain concrete inferred call arguments from checked constructor facts without changing legacy contextual types.

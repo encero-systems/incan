@@ -5559,6 +5559,10 @@ impl TypeChecker {
 
     /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
     fn check_decorator_factory_expr(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        self.type_info
+            .declarations
+            .body_ir_decorator_applications
+            .remove(&(decorator.span.start, decorator.span.end));
         let Some(args) = self.decorator_call_args(decorator, display) else {
             return ResolvedType::Unknown;
         };
@@ -5582,7 +5586,9 @@ impl TypeChecker {
                 decorator.span,
             )
         };
+        let previous = self.body_ir_decorator_factory_span.replace(decorator.span);
         let result = self.check_expr(&factory_expr);
+        self.body_ir_decorator_factory_span = previous;
         self.retain_body_ir_decorator_factory(decorator, &result);
         result
     }
@@ -5590,6 +5596,13 @@ impl TypeChecker {
     /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
     /// legacy call-site facts. Unbound declaration parameters remain placeholders until decorator validation.
     fn retain_body_ir_decorator_factory(&mut self, decorator: &Spanned<Decorator>, result: &ResolvedType) {
+        let key = (decorator.span.start, decorator.span.end);
+        let partial_arguments = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .remove(&key)
+            .map(|application| application.factory_type_args);
         let [name] = decorator.node.path.segments.as_slice() else {
             return;
         };
@@ -5609,13 +5622,8 @@ impl TypeChecker {
         else {
             return;
         };
-        let key = (decorator.span.start, decorator.span.end);
-        let arguments = self
-            .type_info
-            .calls
-            .call_site_monomorph_type_args
-            .get(&key)
-            .cloned()
+        let arguments = partial_arguments
+            .or_else(|| self.type_info.calls.call_site_monomorph_type_args.get(&key).cloned())
             .unwrap_or_else(|| info.type_params.iter().cloned().map(ResolvedType::TypeVar).collect());
         self.type_info.declarations.body_ir_decorator_applications.insert(
             key,

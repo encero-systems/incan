@@ -98,9 +98,9 @@ fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
     shape
 }
 
-/// Admit only nongeneric function decorators whose checked path can be read as a source callable.
-/// Generic originals, extern delegations and method receivers retain their existing named refusal until
-/// independently proven; an extern's delegation must not bypass the visible replacement wrapper.
+/// Admit decorators of nongeneric original functions whose checked path can be read as a source callable.
+/// Factories can have type parameters when their validated application closes them. Generic originals and extern
+/// delegations retain their named refusal; an extern's delegation must not bypass the visible replacement wrapper.
 pub(super) fn supports_function(
     function: &ast::FunctionDecl,
     span: ast::Span,

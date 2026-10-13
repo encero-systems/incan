@@ -613,6 +613,9 @@ pub struct TypeChecker {
     current_module_public_declarations: HashSet<String>,
     /// What method-decorator receiver planning (#1790) gathers while bodies are checked.
     receiver_plan_inputs: decorated_method_receivers::ReceiverPlanInputs,
+    /// Exact factory call currently collecting partial type arguments for Body IR. Ordinary calls and synthesized
+    /// probes never publish into the decorator snapshot; the enclosing value is restored after factory checking.
+    body_ir_decorator_factory_span: Option<Span>,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
@@ -963,6 +966,7 @@ impl TypeChecker {
             local_function_decls: HashMap::new(),
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
+            body_ir_decorator_factory_span: None,
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             rejected_member_bindings: HashSet::new(),
