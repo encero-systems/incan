@@ -3,7 +3,7 @@
 //! This projection changes only Body IR. Each independent input receives a binder with its canonical trait
 //! identity, and each checked call retains the concrete carrier occupying that input's declaration slot.
 
-use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, bir};
+use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir};
 use std::collections::{BTreeMap, HashMap};
 
 /// One checked function's hidden input slots, appended after its explicitly declared type parameters.
@@ -14,7 +14,12 @@ struct TraitInputs {
 
 /// Retain the generic representation of trait inputs and the concrete argument bindings that instantiate it.
 /// Unknown carriers and unbound arguments stay open so native admission refuses rather than guessing a layout.
-pub(super) fn retain_inputs(module: &mut bir::BodyIrModule, context: &[bir::BodyIrModule]) {
+pub(super) fn retain_inputs(
+    module: &mut bir::BodyIrModule,
+    program: &ast::Program,
+    facts: &TypeCheckInfo,
+    context: &[bir::BodyIrModule],
+) {
     let mut signatures = HashMap::new();
     for body in &mut module.bodies {
         let Some(identity) = body.canonical.clone() else {
@@ -23,6 +28,7 @@ pub(super) fn retain_inputs(module: &mut bir::BodyIrModule, context: &[bir::Body
         if identity.kind != SemanticSourceTargetKind::Function {
             continue;
         }
+        retain_annotation_identities(body, program, facts);
         let inputs = retain_body_inputs(body);
         if !inputs.slots.is_empty() {
             signatures.insert(identity, inputs);
@@ -63,6 +69,35 @@ pub(super) fn retain_inputs(module: &mut bir::BodyIrModule, context: &[bir::Body
             &module.nominal_declarations,
             &body.named_type_identities,
         );
+    }
+}
+
+/// Retain identities from the checked annotation spans rather than widening legacy's nominal-only identity table.
+fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, facts: &TypeCheckInfo) {
+    let Some(function) = program.declarations.iter().find_map(|declaration| {
+        if declaration.span.start != body.span.start || declaration.span.end != body.span.end {
+            return None;
+        }
+        match &declaration.node {
+            ast::Declaration::Function(function) => Some(function),
+            _ => None,
+        }
+    }) else {
+        return;
+    };
+    for (source, parameter) in function.params.iter().zip(&body.params) {
+        let Some(identity) = facts
+            .resolved_identity(source.node.ty.span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+        else {
+            continue;
+        };
+        let name = match &parameter.ty {
+            IncanType::Named(name) => name,
+            IncanType::Generic { base, .. } => base,
+            _ => continue,
+        };
+        body.named_type_identities.insert(name.clone(), identity.clone());
     }
 }
 
