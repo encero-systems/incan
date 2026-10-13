@@ -1954,6 +1954,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.static_receiver_type(recv, span).is_some() {
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
+        if let Some(sum) = self.lower_newtype_sum(recv, name, type_args, args, span, scope, out) {
+            return sum;
+        }
         let retained_binding = self.retained_receiver_method_binding(recv, name, span);
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,

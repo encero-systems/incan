@@ -1639,6 +1639,40 @@ impl TypeChecker {
         ResolvedType::Unknown
     }
 
+    /// Preserve the legacy arity/type decisions, then snapshot only direct-profile selections for Body IR.
+    fn checked_iterator_sum_output_type(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+        elem: &ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
+        let valid_arity = self.validate_iterator_method_arity(method, 0, args.len(), span);
+        let result = self.iterator_sum_output_type(elem, span);
+        if valid_arity && self.native_iterator_sum_item_profile(&result) && !matches!(result, ResolvedType::Unknown) {
+            self.type_info
+                .body_ir_iterator_sum_items
+                .insert((span.start, span.end), result.clone());
+        }
+        result
+    }
+
+    /// Keep source trait adoptions and `sum` members outside automatic reconstruction until their dispatch is retained.
+    fn native_iterator_sum_item_profile(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Named(name) => match self.lookup_semantic_type_info(name) {
+                Some(TypeInfo::Newtype(info)) => {
+                    info.traits.is_empty()
+                        && !info.methods.contains_key("sum")
+                        && !info.method_aliases.contains_key("sum")
+                        && !info.method_rebindings.contains_key("sum")
+                }
+                _ => true,
+            },
+            _ => true,
+        }
+    }
+
     /// Track the narrow same-binding case after a terminal iterator method consumes a direct local binding.
     fn mark_direct_iterator_binding_consumed(&mut self, base: &Spanned<Expr>, method: &str, span: Span) {
         if !Self::is_iterator_terminal_method(method) {
@@ -1912,10 +1946,7 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Unit)
             }
-            M::Sum => {
-                self.validate_iterator_method_arity(method, 0, args.len(), span);
-                Some(self.iterator_sum_output_type(&iterator_elem, span))
-            }
+            M::Sum => Some(self.checked_iterator_sum_output_type(method, args, &iterator_elem, span)),
         }
     }
 
