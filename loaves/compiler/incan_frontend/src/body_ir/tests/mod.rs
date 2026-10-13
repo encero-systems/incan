@@ -40,6 +40,7 @@ mod newtypes;
 mod nominal_factories;
 mod nominal_parameters;
 mod opaque_returns;
+mod open_nominal_types;
 mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod properties;
