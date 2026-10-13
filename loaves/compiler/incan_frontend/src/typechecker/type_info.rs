@@ -702,6 +702,9 @@ pub struct TraitArtifacts {
     /// SDK publishes, carry the provider's package identity. Body IR names the call by the provider identity recorded
     /// here; the resolved identity, which legacy reads, is unchanged.
     pub provider_slot_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Compiler-owned requirements inferred for otherwise unresolved calls on rigid declaration parameters. Only
+    /// Body IR consumes these span-keyed targets; legacy call identities and explicit bound selections stay intact.
+    pub inferred_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Checked type arguments of each source `with Trait[...]` adoption clause, keyed by the clause's span.
     ///
     /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no
@@ -1883,6 +1886,7 @@ pub(crate) struct CallSiteFacts {
     body_ir_self_method_result_type: Option<ResolvedType>,
     body_ir_self_method_params: Option<Vec<CallableParam>>,
     body_ir_provider_slot_identity: Option<CanonicalSymbolId>,
+    body_ir_inferred_method_identity: Option<CanonicalSymbolId>,
 }
 
 /// Exact checker-selected calls behind one structural or fallible iteration; only Body IR consumes this record.
@@ -3172,6 +3176,7 @@ impl TypeCheckInfo {
             body_ir_self_method_result_type: self.traits.self_method_result_types.remove(&key),
             body_ir_self_method_params: self.traits.self_method_params.remove(&key),
             body_ir_provider_slot_identity: self.traits.provider_slot_identities.remove(&key),
+            body_ir_inferred_method_identity: self.traits.inferred_method_identities.remove(&key),
         }
     }
 
@@ -3186,6 +3191,7 @@ impl TypeCheckInfo {
         self.traits.self_method_result_types.remove(&key);
         self.traits.self_method_params.remove(&key);
         self.traits.provider_slot_identities.remove(&key);
+        self.traits.inferred_method_identities.remove(&key);
     }
 
     /// Make `facts`, as [`Self::take_call_site_facts`] returned them, the facts of the call at `span`, dropping any a
@@ -3260,6 +3266,11 @@ impl TypeCheckInfo {
             &mut self.traits.provider_slot_identities,
             key,
             facts.body_ir_provider_slot_identity,
+        );
+        put(
+            &mut self.traits.inferred_method_identities,
+            key,
+            facts.body_ir_inferred_method_identity,
         );
     }
 

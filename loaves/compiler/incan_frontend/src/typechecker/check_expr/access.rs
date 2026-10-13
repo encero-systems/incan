@@ -1959,6 +1959,29 @@ impl TypeChecker {
         crate::symbols::canonical_builtin_member_identity(owner, member)
     }
 
+    /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
+    /// and explicit bound methods have already resolved before this boundary; no legacy fact is changed here.
+    fn record_body_ir_inferred_clone(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) {
+        if method != trait_bounds::rust::CLONE_METHOD
+            || !type_args.is_empty()
+            || !args.is_empty()
+            || self.rigid_type_param_name(receiver).is_none()
+        {
+            return;
+        }
+        self.type_info.traits.inferred_method_identities.insert(
+            (span.start, span.end),
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
+    }
+
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
     fn synthetic_member_identity(
         owner: &CanonicalSymbolId,
@@ -6031,6 +6054,10 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        self.type_info
+            .traits
+            .inferred_method_identities
+            .remove(&(span.start, span.end));
         if let Some(result) = self.check_c_abi_c_string_constructor(base, method, type_args, args, span) {
             return result;
         }
@@ -7401,6 +7428,7 @@ impl TypeChecker {
                 }
                 return ResolvedType::Unknown;
             }
+            self.record_body_ir_inferred_clone(&base_ty, method, type_args, args, span);
             return base_ty.clone();
         }
 

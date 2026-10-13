@@ -2084,6 +2084,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             .or_else(|| {
                                 self.type_info
                                     .traits
+                                    .inferred_method_identities
+                                    .get(&(span.start, span.end))
+                            })
+                            .or_else(|| {
+                                self.type_info
+                                    .traits
                                     .self_method_identities
                                     .get(&(span.start, span.end))
                             })

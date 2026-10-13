@@ -6623,8 +6623,8 @@ def lower_builtin_method(
                 return Err("unsupported Body IR non-builtin list Method")
             member = str(identity.declaration_name)
         None => return Err("unsupported Body IR Method without canonical identity")
-    # Option's checked builtin Clone selects its native carrier, not a list member with a same-named method.
-    if member == "Option.clone":
+    # Checked builtin and inferred Clone calls select their native carrier before list member dispatch.
+    if member == "Option.clone" or member == "Clone.clone":
         return lower_derived_clone(builder, arguments, destination, span)
     receiver_type = argument_type(builder, arguments, 0, span)?
     match receiver_type:

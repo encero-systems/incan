@@ -1,4 +1,4 @@
-"""Explicit calls of a standard-library derive's method on a source nominal, through the derive's own implementation."""
+"""Canonical standard derive calls and inferred Clone requirements through their concrete native implementations."""
 
 from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import (
@@ -12,12 +12,13 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import CalleeKind, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, place_type, read_place, temporary, drop_owned, track_rvalue_moves
+from frame import Builder, place_type, read_place, temporary, drop_owned, forget_owned, track_rvalue_moves
 from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator
 from numerics import numeric_carrier
 from trait_links import contains
 from options import carrier_payload_value, clone_tuple_operand
 from tuples import is_tuple_type
+from text_plan import clone_text
 
 
 pub def is_derived_clone(target: &MethodTarget) -> bool:
@@ -62,10 +63,9 @@ pub def lower_derived_clone(
     span: SourceSpan,
 ) -> Result[None, str]:
     """
-    Copy the receiver through its real derived Clone implementation, as legacy's `.clone()` call does.
+    Clone a standard or inferred Clone receiver through its concrete native representation.
 
-    Models and classes always derive Clone; a source enum's checked derives must name it. Builtin values and synthetic
-    union, Option and Result carriers use the same native cloning path as a borrowed payload read.
+    Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same native cloning path as a borrowed payload read.
     """
     if len(arguments) != 1:
         return Err("invalid Body IR Clone arguments")
@@ -85,8 +85,12 @@ def clone_place(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Select the nominal's own Clone implementation from its native carrier."""
+    """Select copying, owned text cloning, or the nominal's own Clone implementation from its native carrier."""
     ty = place_type(builder.locals, source)
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
+        return copy_clone_into(builder, source, ty, destination, span)
+    if ty == PlanType.String:
+        return clone_string_into(builder, source, destination, span)
     match ty:
         PlanType.Model(index, name) =>
             reference = PlanType.ModelRef(index, name)
@@ -99,6 +103,47 @@ def clone_place(
             reference = PlanType.EnumRef(index, name)
             return clone_into(builder, source, reference, CalleeKind.CloneEnum(index, name), ty, destination, span)
         _ => return clone_builtin_place(builder, source, destination, span)
+
+
+def copy_clone_into(
+    mut builder: Builder,
+    source: Place,
+    ty: PlanType,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Copy an admitted scalar or frozen string without consuming the receiver; a discarded copy has no effect."""
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if place_type(builder.locals, output) != ty:
+                return Err("unsupported Body IR Clone destination carrier mismatch")
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(source, false, span)), span))
+        None => pass
+    return Ok(None)
+
+
+def clone_string_into(
+    mut builder: Builder,
+    source: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the source, replace a whole owned text destination after cloning, or immediately drop a discarded clone."""
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if output.projection != Projection.Whole or place_type(builder.locals, output) != PlanType.String:
+                return Err("unsupported Body IR Clone projected or nontext destination")
+            cloned = clone_text(builder, source, span)?
+            drop_owned(builder, output.local, span)
+            forget_owned(builder, cloned.local)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(cloned, true, span)), span))
+            builder.owned.append(output.local)
+        None =>
+            cloned = clone_text(builder, source, span)?
+            drop_owned(builder, cloned.local, span)
+    return Ok(None)
 
 
 def clone_builtin_place(
