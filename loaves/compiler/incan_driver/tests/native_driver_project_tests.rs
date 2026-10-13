@@ -2492,6 +2492,24 @@ impl DriverFixture {
 /// The process-wide fixture; a bake failure is kept as text so every test reports it.
 static DRIVER_FIXTURE: OnceLock<Result<DriverFixture, String>> = OnceLock::new();
 
+/// Imported field defaults supply their declaration-owned values with byte-identical legacy output.
+#[test]
+fn imported_model_field_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported_model_field_defaults",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/main.incn"
+        ),
+        &[(
+            "records.incn",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/records.incn"
+            ),
+        )],
+        b"7 none 0\n0 named 1\n",
+    )
+}
+
 /// The original advances past expression hooks and retains its separately unproven iteration method identity.
 #[test]
 fn protocol_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

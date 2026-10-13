@@ -61,6 +61,34 @@ fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// Empty model field defaults retain the declaration's checked element type in their deferred frame.
+#[test]
+fn empty_model_field_defaults_retain_declared_elements() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/records.incn"
+        ),
+        &["records"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("Record declaration missing")?;
+    let frame = declaration
+        .field_default_body
+        .as_ref()
+        .ok_or("Record default frame missing")?;
+    for local in &frame.locals {
+        assert!(
+            !matches!(&local.ty, IncanType::Generic { args, .. } if args.iter().any(|ty|
+                matches!(ty, IncanType::Unknown | IncanType::Infer))),
+            "{}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
 /// A concrete witness reached through a call also closes a later hidden trait input's retained argument binding.
 #[test]
 fn trait_value_returns_close_later_hidden_inputs() -> Result<(), Box<dyn std::error::Error>> {

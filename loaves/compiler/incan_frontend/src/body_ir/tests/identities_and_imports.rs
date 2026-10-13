@@ -489,6 +489,33 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// An imported model's constructor and field reads retain the same concrete types as its declaring module.
+#[test]
+fn imported_model_default_fill_retains_consumer_types() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/records.incn"
+    );
+    let provider = build(provider_source, &["records"])?;
+    let module = build_with_published_imports(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/main.incn"
+        ),
+        &["main"],
+        &[("records", &["records"], provider_source)],
+        &[provider],
+    )?;
+    for body in &module.bodies {
+        assert!(
+            body.locals
+                .iter()
+                .all(|local| !matches!(local.ty, IncanType::Unknown | IncanType::Infer)),
+            "{}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
 /// Lower a module that imports from other modules, declaring each dependency's flattened cache name *and* its
 /// real path segments.
 ///
