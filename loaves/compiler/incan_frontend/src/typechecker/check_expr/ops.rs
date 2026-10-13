@@ -1286,6 +1286,10 @@ impl TypeChecker {
         };
         BodyIrProtocolCallInfo {
             canonical,
+            dispatch: self
+                .type_info
+                .resolved_method_call(span)
+                .map(|call| call.dispatch.clone()),
             params,
             type_args,
             return_type: returned.clone(),

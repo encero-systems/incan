@@ -1927,6 +1927,8 @@ pub struct BodyIrIterationHooksInfo {
 pub struct BodyIrProtocolCallInfo {
     /// Exact source or active SDK declaration; absent remains a named refusal.
     pub canonical: Option<CanonicalSymbolId>,
+    /// Exact checked trait instantiation for this Body IR-only hook snapshot; the written call's facts stay intact.
+    pub dispatch: Option<ResolvedMethodDispatch>,
     /// Checked ordinary parameters, excluding the receiver, including their default-presence contract.
     pub params: Option<Vec<CallableParam>>,
     /// Checked method-scoped instantiation arguments, independent of the written iterable's generic call.
