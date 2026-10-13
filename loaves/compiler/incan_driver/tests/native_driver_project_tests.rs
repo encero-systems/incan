@@ -8600,6 +8600,124 @@ def main() -> None:
     )
 }
 
+/// Imported payload identities survive a package facade and match native construction and patterns to legacy.
+#[test]
+fn published_imported_enum_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("published-imported-enum-payload")?;
+    let project = root.join("builtin-parity");
+    let provider = project.join("deps/payloads");
+    fs::create_dir_all(provider.join("src"))?;
+    fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'probe.incn'\n[dependencies]\npayloads = { path = 'deps/payloads' }\n",
+    )?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = 'payloads'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        "pub from crate.results import Outcome\npub from crate.shapes import Payload\n",
+    )?;
+    fs::write(
+        provider.join("src/shapes.incn"),
+        "pub model Payload:\n    \"\"\"Retain the declaring payload layout.\"\"\"\n\n    pub value: int\n",
+    )?;
+    fs::write(
+        provider.join("src/results.incn"),
+        "from crate.shapes import Payload as Item\n\npub enum Outcome:\n    \"\"\"Carry an imported payload through an enum.\"\"\"\n\n    Found(Item)\n    Missing\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&provider, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&publish.output()?, "imported enum payload package publication");
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from pub::payloads import Outcome, Payload
+from pub::payloads.shapes import Payload as DeclaredPayload
+
+
+def main() -> None:
+    """Construct and read the same payload through both public paths."""
+    item: DeclaredPayload = Payload(value=17)
+    result = Outcome.Found(item)
+    match result:
+        case Outcome.Found(payload):
+            println(payload.value)
+        case Outcome.Missing:
+            println(-1)
+    println(item.value)
+"#,
+    )
+}
+
+/// A public package reader and writer share one canonical cell across calls and facade imports.
+#[test]
+fn published_static_storage_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("published-static-storage")?;
+    let project = root.join("builtin-parity");
+    let provider = project.join("deps/cells");
+    fs::create_dir_all(provider.join("src"))?;
+    fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'probe.incn'\n[dependencies]\ncells = { path = 'deps/cells' }\n",
+    )?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = 'cells'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        "pub from crate.storage import count, current_count, bump\n",
+    )?;
+    fs::write(
+        provider.join("src/storage.incn"),
+        r#""""Retain one public cell and its exact deferred reads."""
+
+pub static count: int = 10
+
+
+pub def current_count() -> int:
+    """Read the same retained public cell on every call."""
+    return count
+
+
+pub def bump(amount: int) -> int:
+    """Mutate the declaration's cell, keeping later reads live."""
+    count += amount
+    return count
+"#,
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&provider, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&publish.output()?, "public static package publication");
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from pub::cells import count, current_count, bump
+from pub::cells.storage import current_count as declared_read
+
+
+def main() -> None:
+    """Observe initialization once and every later update through the facade and declaration."""
+    println(current_count())
+    println(bump(3))
+    println(declared_read())
+    println(count)
+    println(bump(2))
+    println(current_count())
+"#,
+    )
+}
+
 /// Value-enum static and receiver bodies share the checked layout and preserve raw scalar values exactly as legacy.
 #[test]
 fn value_enum_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
