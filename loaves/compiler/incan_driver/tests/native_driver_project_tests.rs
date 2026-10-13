@@ -18,6 +18,59 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// A tuple's checked model and newtype layouts survive construction, return, list storage, and projected reads.
+#[test]
+fn nominal_tuple_elements_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("nominal-tuple-elements")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Clone)
+model Item:
+    name: str
+
+@derive(Clone)
+type Token = newtype str
+
+def pair() -> tuple[Item, Token]:
+    return (Item(name="item"), Token("token"))
+
+def main() -> None:
+    values = [pair()]
+    println(values[0].0.name)
+    println(values[0].1.0)
+"#,
+    )
+}
+
+/// Imported field expectations retain every original nominal collection and tuple carrier without extra imports.
+#[test]
+fn unimported_constructor_field_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "unimported_constructor_field_types",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/main.incn"
+        ),
+        &[
+            (
+                "ids.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/ids.incn"
+                ),
+            ),
+            (
+                "records.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/records.incn"
+                ),
+            ),
+        ],
+        b"0\ntrue\n1\ntrue\n1\n0\nnone\n1\np\n0\n3\n",
+    )
+}
+
 /// Startup text precedes successful main output and matches the frozen legacy bytes.
 #[test]
 fn import_this_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
