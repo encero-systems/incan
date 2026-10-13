@@ -165,9 +165,9 @@ fn method_partial_materializes_receiver_before_preset_effects() -> Result<(), Bo
 /// An unretained method source default is explicitly unsupported, while a construction-time preset fills its slot.
 #[test]
 fn method_partial_keeps_unretained_defaults_explicit() -> Result<(), Box<dyn std::error::Error>> {
-    for (preset, supported) in [("", false), ("step=2", true)] {
+    for (preset, supported) in [("scale=1", false), ("scale=1, step=2", true)] {
         let source = format!(
-            "model Counter:\n  value: int\n  def add(self, step: int = 1) -> int:\n    return self.value + step\n\ndef make(counter: Counter) -> int:\n  held = partial counter.add({preset})\n  return held()\n"
+            "model Counter:\n  value: int\n  def add(self, scale: int, step: int = 1) -> int:\n    return self.value * scale + step\n\ndef make(counter: Counter) -> int:\n  held = partial counter.add({preset})\n  return held()\n"
         );
         let module = build(&source, &["partial_method_default"])?;
         let body = body_named(&module, "make")?;
@@ -183,9 +183,10 @@ fn method_partial_keeps_unretained_defaults_explicit() -> Result<(), Box<dyn std
                 _ => None,
             })
             .ok_or("method partial missing")?;
-        let [param] = params.as_slice() else {
-            return Err("expected the method's one declared slot".into());
-        };
+        let param = params
+            .iter()
+            .find(|param| param.name == "step")
+            .ok_or("method default slot missing")?;
         match (&param.default, supported) {
             (bir::CallableParamDefault::PartialPreset { .. }, true) => {}
             (bir::CallableParamDefault::Unsupported { description, .. }, false) => {

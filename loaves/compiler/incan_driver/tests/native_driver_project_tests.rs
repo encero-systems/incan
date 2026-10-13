@@ -13930,10 +13930,10 @@ fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std:
     let fixture = driver_fixture()?;
     let root = fixture.scratch("method-partial-default-refusal")?;
     let source = root.join("default.incn");
-    let prefix = "model Counter:\n  value: int\n  def add(self, step: int = 1) -> int:\n    return self.value + step\n\ndef main() -> None:\n  counter = Counter(value=5)\n";
+    let prefix = "model Counter:\n  value: int\n  def add(self, scale: int, step: int = 1) -> int:\n    return self.value * scale + step\n\ndef main() -> None:\n  counter = Counter(value=5)\n";
     fs::write(
         &source,
-        format!("{prefix}  held = partial counter.add()\n  println(held())\n"),
+        format!("{prefix}  held = partial counter.add(scale=1)\n  println(held())\n"),
     )?;
     let output = root.join("refused");
     let refused = corpus::source_command(
@@ -13957,6 +13957,6 @@ fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std:
         &root.join("preset"),
         &fixture.sysroot,
         &fixture.formatting,
-        &format!("{prefix}  held = partial counter.add(step=2)\n  println(held())\n"),
+        &format!("{prefix}  held = partial counter.add(scale=1, step=2)\n  println(held())\n"),
     )
 }
