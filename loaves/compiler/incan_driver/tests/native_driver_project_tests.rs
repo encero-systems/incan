@@ -18,6 +18,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Option text Debug preserves Some/None spelling and the original borrowed value across repeated formatting.
+#[test]
+fn option_text_debug_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("option-text-debug")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n    value: Option[str] = Some(\"Ann\")\n    println(f\"{value:?}\")\n    println(f\"{value:?}\")\n    empty: Option[str] = None\n    println(f\"{empty:?}\")\n",
+    )
+}
+
 /// Concrete typed fields and generic string reflection preserve both original fixtures' complete legacy output.
 #[test]
 fn field_value_reflection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
