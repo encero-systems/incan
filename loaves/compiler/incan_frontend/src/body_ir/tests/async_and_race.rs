@@ -608,3 +608,34 @@ fn retains_native_task_sdk_signature() -> Result<(), Box<dyn std::error::Error>>
     );
     Ok(())
 }
+
+/// A checked source async argument closes the native RuntimeFuture output only in Body IR's additive tables.
+#[test]
+fn retains_runtime_future_argument_and_output() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom rust::incan_std_async::task import RuntimeFuture\ndef accept[T, F with RuntimeFuture[T]](task: F) -> None:\n  pass\nasync def work() -> int:\n  return 1\ndef launch() -> None:\n  accept(work())\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let retained = &checker.type_info().calls.body_ir_call_type_arguments;
+    assert!(
+        retained.values().any(|arguments| arguments
+            == &[
+                crate::symbols::ResolvedType::Int,
+                crate::symbols::ResolvedType::Generic("Awaitable".into(), vec![crate::symbols::ResolvedType::Int]),
+            ]),
+        "native future arguments: {retained:?}"
+    );
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .call_site_monomorph_type_args
+            .values()
+            .all(|arguments| arguments.len() != 2),
+        "legacy inference stays open"
+    );
+    Ok(())
+}
