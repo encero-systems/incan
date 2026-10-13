@@ -94,7 +94,8 @@ fn execute(
         .project
         .as_ref()
         .ok_or("test declaration has no project identity")?;
-    let features = compilation_features(&manifest)?;
+    let selected_features = compilation_features(&manifest)?;
+    let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
     let compile_environment = compilation_environment(owner)?;
     let receipt = test_receipt(
         &compiler_root,
@@ -108,7 +109,7 @@ fn execute(
     )?;
     std::fs::create_dir_all(&output)?;
     let store = native_test_store(store_options)?;
-    let dependencies = native_test_dependencies(&manifest)?;
+    let dependencies = native_test_dependencies(&manifest, &selected_features)?;
     let prepared = if dependencies.is_empty() {
         None
     } else {
@@ -170,7 +171,7 @@ fn execute(
     let mut environment = execution_environment(&compiler_root, owner, &explicit_bake_workspace, &rustc)?;
     super::suite_environment::append_compiler_suite_direct_rustc_environment(
         &mut environment,
-        oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
+        &[oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV],
         &rustc,
         &plan,
     )?;
@@ -191,19 +192,38 @@ fn execute(
 /// Project declared Loaves into the explicit Rust test unit's native requests, including mixed Incan/Rust Loaves.
 /// The existing native selector must validate each actual Rust facet and its original source declaration. A parsed
 /// Incan dependency is not itself native authority, and a Loaf without a selected Rust facet must still be refused.
-fn native_test_dependencies(
+pub(crate) fn native_test_dependencies(
     manifest: &ProjectManifest,
+    features: &incan_provider::ResolvedPackageFeatures,
 ) -> Result<Vec<oven_model::manifest::DependencySpec>, Box<dyn std::error::Error>> {
-    let mut dependencies = manifest
-        .rust_dependencies()
-        .iter()
-        .map(|(alias, dependency)| (alias.clone(), dependency.clone()))
+    let mut resolved = incan_provider::dependency_resolver::resolve_dependencies(
+        Some(manifest),
+        &[],
+        true,
+        &oven_model::lock::CargoFeatureSelection::default().normalized(),
+    )
+    .map_err(|errors| format!("invalid Rust test dependencies: {errors:?}"))?;
+    resolved
+        .apply_package_features(manifest, features)
+        .map_err(|errors| format!("invalid Rust test feature projection: {errors:?}"))?;
+    let mut dependencies = resolved
+        .dependencies
+        .into_iter()
+        .chain(resolved.dev_dependencies)
+        .map(|dependency| (dependency.crate_name.clone(), dependency))
         .collect::<BTreeMap<_, _>>();
     for (alias, library) in manifest.library_dependencies() {
+        if library.optional && !features.active_optional_dependencies.contains(alias) {
+            continue;
+        }
+        let mut requested = library.features.clone();
+        requested.extend(features.dependency_features.get(alias).into_iter().flatten().cloned());
+        requested.sort();
+        requested.dedup();
         let dependency = oven_model::manifest::DependencySpec {
             crate_name: alias.clone(),
             version: None,
-            features: library.features.clone(),
+            features: requested,
             default_features: library.default_features,
             source: oven_model::manifest::DependencySource::Path {
                 path: library.path.clone(),
@@ -249,7 +269,9 @@ fn validated_input(root: &Path, input: &Path) -> Result<PathBuf, Box<dyn std::er
 }
 
 /// Resolve local unit cfg features with the package feature authority; dependency features remain authored Rust inputs.
-fn compilation_features(manifest: &ProjectManifest) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn compilation_features(
+    manifest: &ProjectManifest,
+) -> Result<incan_provider::ResolvedPackageFeatures, Box<dyn std::error::Error>> {
     let selected = incan_provider::PackageFeatureGraph::from_manifest(manifest)?
         .resolve(&incan_provider::FeatureSelection::default())?;
     if !selected.active_optional_dependencies.is_empty()
@@ -261,7 +283,7 @@ fn compilation_features(manifest: &ProjectManifest) -> Result<Vec<String>, Box<d
                 .into(),
         );
     }
-    Ok(selected.active_features.into_iter().collect())
+    Ok(selected)
 }
 
 /// Bind the test's full module closure and explicit compilation inputs before native dependency selection.
