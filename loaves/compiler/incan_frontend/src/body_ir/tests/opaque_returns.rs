@@ -52,7 +52,7 @@ fn local_fallible_iterator_retains_self_carrier() -> Result<(), Box<dyn std::err
 #[test]
 fn explicit_trait_return_does_not_grant_self_carrier() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "trait Read:\n    def as_read(self) -> Read:\n        return self\n\nmodel Reading with Read:\n    value: int\n\ndef producer() -> Read:\n    return Reading(value=7)\n\ndef main() -> None:\n    erased = producer().as_read()\n    pass\n",
+        "trait Read:\n    def as_read(self) -> Read:\n        return producer()\n\nmodel Reading with Read:\n    value: int\n\ndef producer() -> Read:\n    return Reading(value=7)\n\ndef main() -> None:\n    erased = producer().as_read()\n    pass\n",
         &["m", "explicit_trait_return"],
     )?;
     let body = body_named(&module, "main")?;

@@ -66,8 +66,9 @@ fn carrier(module: &bir::BodyIrModule, body: &bir::Body, type_info: &TypeCheckIn
     })
 }
 
-/// Read the local trait's physical defaults whose checked declaration result is exactly Self, even after its body
-/// return type has closed Self to the owner frame. Returning the trait explicitly grants no Self-carrier relation.
+/// Read a local trait's physical defaults with a checked Self result and only its owner's generic binders.
+/// Owner parameters are retained by generic trait bodies; extra method binders and explicit trait returns grant no
+/// Self-carrier relation.
 fn self_returning_methods(
     module: &bir::BodyIrModule,
     owner: &CanonicalSymbolId,
@@ -89,7 +90,13 @@ fn self_returning_methods(
                 && binding.identity.as_ref() == Some(identity)
                 && binding.return_type == ResolvedType::SelfType
                 && body.params.len() == 1
-                && body.type_parameters.is_empty())
+                && body.type_parameters.as_slice()
+                    == type_info
+                        .traits
+                        .type_params
+                        .get(&owner.declaration_name)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]))
             .then(|| identity.clone())
         })
         .collect()
