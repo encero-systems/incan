@@ -79,6 +79,24 @@ fn ordinal_map_unconstrained_decode_keeps_owner_open() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// A conflicting destination cannot authorize a native factory result even when legacy leaves the owner open.
+#[test]
+fn static_factory_conflicting_context_publishes_no_closed_result() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Holder[T]:\n    value: T\n\n    @staticmethod\n    def from_value(value: T) -> Self:\n        return Holder(value=value)\n\ndef choose() -> None:\n    holder: Holder[str] = Holder.from_value(3)\n",
+        &["m", "factory_conflict"],
+    )?;
+    let body = body_named(&module, "choose")?;
+    assert!(
+        body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, args } if base == "Holder" && args == &[IncanType::Unknown]
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Inspect only the factory owner's unresolved argument, preserving ordinary open generic templates elsewhere.
 fn open_ordinal_map(ty: &IncanType) -> bool {
     match ty {
