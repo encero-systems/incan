@@ -27,6 +27,7 @@ impl TypeChecker {
         expected: Option<&ResolvedType>,
         span: Span,
     ) {
+        // ---- Selected static declaration ----
         if method.receiver.is_some()
             || method.is_async
             || !method.type_params.is_empty()
@@ -40,6 +41,8 @@ impl TypeChecker {
         };
         let (parameters, result) = self.method_types_substituting_call_site_self(method, &template);
         let result = normalized(&result, &names, &self.type_info);
+
+        // ---- Checked argument and destination constraints ----
         let mut bindings: HashMap<_, _> = legacy
             .iter()
             .filter(|(_, ty)| concrete(ty))
@@ -69,6 +72,8 @@ impl TypeChecker {
         let Some(arguments) = arguments else {
             return;
         };
+
+        // ---- Complete owner bounds and native result ----
         let bounds = self.body_ir_factory_owner_bounds(&owner);
         if bounds.iter().any(|(name, requirements)| {
             bindings.get(name).is_none_or(|actual| {
@@ -105,6 +110,8 @@ impl TypeChecker {
         else {
             return bounds;
         };
+
+        // ---- Authenticated declaring source ----
         let mut cache = StdlibAstCache::new();
         cache.bind_provider_plan(&self.provider_plan);
         let Some(source) = cache.callable_source_identity(identity) else {
@@ -117,6 +124,8 @@ impl TypeChecker {
         if cache.verify_retained_sources().is_err() {
             return bounds;
         }
+
+        // ---- Missing bound provenance ----
         for (parameter, requirements) in &mut bounds {
             let Some((_, declared)) = source_bounds.iter().find(|(name, _)| name == parameter) else {
                 continue;
