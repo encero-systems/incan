@@ -10716,14 +10716,14 @@ def main() -> None:
     Ok(())
 }
 
-/// An inferred generic newtype without a closed checked owner keeps its named refusal and produces no binary.
+/// An inferred generic newtype outside the admitted primitive payload profile keeps its refusal and produces no binary.
 #[test]
 fn generic_newtypes_retain_parameter_carrier_refusals() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let closure = corpus::runtime_closure(&fixture.formatting)?;
     for (name, source, expected) in [(
         "generic-newtype",
-        include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
+        "type Box[T] = newtype T\n\ndef main() -> None:\n    value = Box(1.5)\n",
         [
             "unsupported Body IR type Box[TypeVar]",
             "unsupported Body IR type Box[Unknown]",
@@ -14771,6 +14771,48 @@ async def main() -> None:
             println("fast callback")
             value
     println(winner)
+"#,
+    )
+}
+
+/// The original generic newtype fixture closes direct and static construction, instance calls and tuple projections.
+#[test]
+fn generic_newtype_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-newtype-construction")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
+    )
+}
+
+/// Specializing a string payload keeps both duplicated values and the original wrapper readable.
+#[test]
+fn generic_newtype_string_duplication_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-newtype-string-duplication")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Box[T] = newtype T:
+    @staticmethod
+    def wrap(value: T) -> Self:
+        return Box(value)
+
+    def duplicate(self) -> Tuple[T, T]:
+        return (self.0, self.0)
+
+def main() -> None:
+    integer = Box(42)
+    boxed = Box.wrap("text")
+    pair = boxed.duplicate()
+    println(integer.0)
+    println(pair[0])
+    println(pair[-1])
+    println(boxed.0)
 "#,
     )
 }
