@@ -122,7 +122,10 @@ pub(super) fn sdk_identity(identity: &CanonicalSymbolId) -> Option<CanonicalSymb
     Some(published)
 }
 
-/// Collect each type a retained SDK declaration holds, resolving field names in that declaration's module.
+/// Collect each nominal carried by an SDK declaration's fields and checked trait arguments in its declaring module.
+///
+/// Trait arguments can supply an error or item type absent from storage, such as ReaderChunks' IoError. Retaining
+/// their layouts does not select an implementation or grant a call target; those remain separate checked facts.
 fn layout_dependencies(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Vec<CanonicalSymbolId> {
     let Some(source) = cache.callable_source_identity(identity) else {
         return Vec::new();
@@ -133,13 +136,23 @@ fn layout_dependencies(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache)
     let Some(info) = cache.lookup_type(&path, &identity.declaration_name) else {
         return Vec::new();
     };
-    let types = match info {
-        TypeInfo::Model(model) => model.fields.into_values().map(|field| field.ty).collect::<Vec<_>>(),
-        TypeInfo::Class(class) => class.fields.into_values().map(|field| field.ty).collect(),
-        TypeInfo::Enum(declaration) => declaration.variant_fields.into_values().flatten().collect(),
-        TypeInfo::Newtype(newtype) => vec![newtype.underlying],
-        _ => Vec::new(),
+    let (mut types, adoptions) = match info {
+        TypeInfo::Model(model) => (
+            model.fields.into_values().map(|field| field.ty).collect::<Vec<_>>(),
+            model.trait_adoptions,
+        ),
+        TypeInfo::Class(class) => (
+            class.fields.into_values().map(|field| field.ty).collect(),
+            class.trait_adoptions,
+        ),
+        TypeInfo::Enum(declaration) => (
+            declaration.variant_fields.into_values().flatten().collect(),
+            declaration.trait_adoptions,
+        ),
+        TypeInfo::Newtype(newtype) => (vec![newtype.underlying], newtype.trait_adoptions),
+        _ => (Vec::new(), Vec::new()),
     };
+    types.extend(adoptions.into_iter().flat_map(|adoption| adoption.type_args));
     let mut names = BTreeSet::new();
     for ty in types {
         super::library_calls::named_leaves(&semantic_type_from_resolved(&ty), &mut names);
