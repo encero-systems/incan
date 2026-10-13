@@ -6066,7 +6066,7 @@
     },
     "loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs": {
       "disposition": "keep",
-      "notes": "Checked method-partial frames and presets retained for direct-route execution; relocated from methods_and_defaults.rs.",
+      "notes": "Checked method-partial declaration frames, value-receiver snapshots, presets and named default admission; frontend-only Body IR contracts.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",

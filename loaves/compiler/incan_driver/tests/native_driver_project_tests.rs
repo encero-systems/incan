@@ -13897,3 +13897,66 @@ fn method_partial_of_a_value_output_matches_legacy() -> Result<(), Box<dyn std::
         ),
     )
 }
+
+/// Receiver snapshots precede a preset expression that mutates the same source receiver.
+#[test]
+fn method_partial_snapshot_before_preset_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("method-partial-snapshot-order")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model User:\n  name: str\n  def label(self, prefix: str) -> str:\n    return prefix + self.name\n\ndef rename(mut user: User) -> str:\n  user.name = \"after\"\n  return \"<\"\n\ndef main() -> None:\n  mut user = User(name=\"before\")\n  held = partial user.label(prefix=rename(user))\n  println(held())\n  println(user.name)\n",
+    )
+}
+
+/// A projected preset is snapshotted before a following preset mutates its source collection.
+#[test]
+fn partial_presets_snapshot_left_to_right_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("partial-preset-snapshot-order")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def join(first: int, second: int) -> int:\n  return first * 10 + second\n\ndef change(mut values: list[int]) -> int:\n  values[0] = 9\n  return 2\n\ndef main() -> None:\n  mut values = [1]\n  held = partial join(first=values[0], second=change(values))\n  println(held())\n  println(values[0])\n",
+    )
+}
+
+/// A missing retained method source default refuses by name; an explicit preset still executes with legacy parity.
+#[test]
+fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("method-partial-default-refusal")?;
+    let source = root.join("default.incn");
+    let prefix = "model Counter:\n  value: int\n  def add(self, step: int = 1) -> int:\n    return self.value + step\n\ndef main() -> None:\n  counter = Counter(value=5)\n";
+    fs::write(
+        &source,
+        format!("{prefix}  held = partial counter.add()\n  println(held())\n"),
+    )?;
+    let output = root.join("refused");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &output,
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting)?,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        diagnostic
+            .contains("unsupported Body IR default: partial target add declares a default Body IR could not source"),
+        "{diagnostic}"
+    );
+    assert!(!output.exists());
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root.join("preset"),
+        &fixture.sysroot,
+        &fixture.formatting,
+        &format!("{prefix}  held = partial counter.add(step=2)\n  println(held())\n"),
+    )
+}

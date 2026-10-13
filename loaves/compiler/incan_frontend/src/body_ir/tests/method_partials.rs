@@ -128,3 +128,71 @@ fn method_partials_capture_receivers_and_keep_checked_targets() -> Result<(), Bo
     assert_eq!(count, 5, "{}", module.render_snapshot());
     Ok(())
 }
+
+/// A receiver snapshot is a completed temporary assignment before a later preset can mutate its source place.
+#[test]
+fn method_partial_materializes_receiver_before_preset_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model User:\n  name: str\n  def label(self, prefix: str) -> str:\n    return prefix + self.name\n\ndef rename(mut user: User) -> str:\n  user.name = \"after\"\n  return \"<\"\n\ndef main() -> None:\n  mut user = User(name=\"before\")\n  held = partial user.label(prefix=rename(user))\n  println(held())\n";
+    let module = build(source, &["partial_receiver_order"])?;
+    let body = body_named(&module, "main")?;
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { captured_operands, .. },
+                ..
+            } => captured_operands.first(),
+            _ => None,
+        })
+        .ok_or("method partial capture missing")?;
+    let bir::Operand::Place(read) = receiver else {
+        return Err("expected a materialized receiver place".into());
+    };
+    let local = read.place.local_id().ok_or("receiver temporary missing")?;
+    assert_eq!(body.locals[local.index()].origin, bir::LocalOrigin::Temporary);
+    let snapshot = body.block.stmts.iter().position(|statement| matches!(
+        &statement.kind, bir::StatementKind::Assign { place, rvalue: bir::Rvalue::Use(_), .. } if place.local_id() == Some(local)
+    )).ok_or("receiver snapshot assignment missing")?;
+    let mutation = body.block.stmts.iter().position(|statement| matches!(
+        &statement.kind, bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. } if target.name == "rename"
+    )).ok_or("preset mutation call missing")?;
+    assert!(snapshot < mutation, "{}", module.render_snapshot());
+    Ok(())
+}
+
+/// An unretained method source default is explicitly unsupported, while a construction-time preset fills its slot.
+#[test]
+fn method_partial_keeps_unretained_defaults_explicit() -> Result<(), Box<dyn std::error::Error>> {
+    for (preset, supported) in [("", false), ("step=2", true)] {
+        let source = format!(
+            "model Counter:\n  value: int\n  def add(self, step: int = 1) -> int:\n    return self.value + step\n\ndef make(counter: Counter) -> int:\n  held = partial counter.add({preset})\n  return held()\n"
+        );
+        let module = build(&source, &["partial_method_default"])?;
+        let body = body_named(&module, "make")?;
+        let params = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Closure { params, .. },
+                    ..
+                } => Some(params),
+                _ => None,
+            })
+            .ok_or("method partial missing")?;
+        let [param] = params.as_slice() else {
+            return Err("expected the method's one declared slot".into());
+        };
+        match (&param.default, supported) {
+            (bir::CallableParamDefault::PartialPreset { .. }, true) => {}
+            (bir::CallableParamDefault::Unsupported { description, .. }, false) => {
+                assert!(description.contains("partial target add declares a default Body IR could not source"))
+            }
+            _ => return Err("method default admission changed".into()),
+        }
+    }
+    Ok(())
+}
