@@ -463,7 +463,7 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
         "no suspension point may be emitted for a keyword that is not `await`: {out:?}"
     );
 }
-/// SDK provider native spellings retain the same task carrier and argument widths as source annotations.
+/// SDK provider native spellings retain the same task carrier and argument widths in expressions and parameter frames.
 #[test]
 fn native_task_paths_retain_sdk_carriers() -> Result<(), Box<dyn std::error::Error>> {
     let facts = TypeCheckInfo::default();
@@ -491,6 +491,31 @@ fn native_task_paths_retain_sdk_carriers() -> Result<(), Box<dyn std::error::Err
             ))]
         }
     );
+    assert_eq!(
+        super::super::parameter_types::checked_parameter_type(
+            &crate::symbols::ResolvedType::RustPath("incan_std_async::task::JoinHandle<i64>".to_owned()),
+            &facts,
+            &[],
+        ),
+        actual
+    );
+    assert_eq!(
+        super::super::parameter_types::checked_context_type(
+            &crate::symbols::ResolvedType::RustPath("incan_std_async::task::JoinHandle<i32>".to_owned()),
+            &facts,
+            &[],
+            &std::collections::BTreeSet::new(),
+        ),
+        sized
+    );
+    assert_eq!(
+        super::super::parameter_types::checked_parameter_type(
+            &crate::symbols::ResolvedType::Named("JoinHandle".to_owned()),
+            &facts,
+            &["JoinHandle".to_owned()],
+        ),
+        IncanType::TypeVar("JoinHandle".to_owned())
+    );
     Ok(())
 }
 
@@ -501,6 +526,10 @@ fn foreign_task_paths_remain_opaque() {
     let ty = crate::symbols::ResolvedType::RustPath("foreign::task::JoinHandle<i64>".to_owned());
     assert_eq!(
         super::super::parameter_types::checked_semantic_type(&ty, &facts),
+        semantic_type_from_resolved(&ty)
+    );
+    assert_eq!(
+        super::super::parameter_types::checked_parameter_type(&ty, &facts, &[]),
         semantic_type_from_resolved(&ty)
     );
 }
