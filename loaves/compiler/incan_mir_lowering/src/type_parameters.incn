@@ -7,7 +7,7 @@ from rust::incan_semantics_core import (
     function_type,
     generic,
 )
-from rust::incan_semantics_core::body_ir import Body
+from rust::incan_semantics_core::body_ir import Body, LocalId as RustLocalId
 from symbols import type_component
 
 
@@ -16,6 +16,7 @@ pub model Instance:
 
     pub body: Body
     pub arguments: list[RustType]
+    pub owned_callable_slots: list[int]
 
 
 pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -> Result[RustType, str]:
@@ -55,8 +56,8 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
         _ => return Ok(ty.clone())
 
 
-pub def instantiate(body: &Body, arguments: list[RustType]) -> Result[Body, str]:
-    """Close a declaration's frame while preserving every checked statement and canonical identity."""
+pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots: list[int]) -> Result[Body, str]:
+    """Close checked types and preserve the value ABI of captured callables passed to original generic parameters."""
     names = body.type_parameters.clone()
     match body.canonical:
         Some(identity) =>
@@ -65,7 +66,7 @@ pub def instantiate(body: &Body, arguments: list[RustType]) -> Result[Body, str]
         None => return Err("unsupported Body IR unproven declaration with type parameters")
     if len(names) != len(arguments):
         return Err(f"unsupported Body IR type argument arity on {body.name}")
-    mut result = body.clone()
+    mut result = retain_owned_callable_storage(body, owned_callable_slots)?
     for index in range(len(result.locals)):
         concrete: RustType = substitute(result.locals[index].ty, names, arguments)?
         result.locals[index].ty = concrete.clone()
@@ -77,5 +78,49 @@ pub def instantiate(body: &Body, arguments: list[RustType]) -> Result[Body, str]
     mut name = str(body.name)
     for argument in arguments:
         name += type_component(argument)
+    for slot in owned_callable_slots:
+        name += f"__owned_callable_{slot}"
     result.name = name
     return Ok(result)
+
+
+def retain_owned_callable_storage(original: &Body, slots: list[int]) -> Result[Body, str]:
+    """Return the updated imported body explicitly; retain owners only for verified generic values and their aliases."""
+    mut result = original.clone()
+    if len(slots) == 0:
+        return Ok(result)
+    mut names: list[str] = []
+    for slot in slots:
+        if slot < 0 or slot >= len(original.params) or original.params[slot].mutable:
+            return Err("unsupported Body IR owned generic callable parameter")
+        match original.params[slot].ty:
+            RustType.TypeVar(name) => names.append(str(name))
+            _ => return Err("invalid Body IR owned callable slot outside a generic value parameter")
+    match result.callable_representation:
+        None => return Err("unsupported Body IR generic callable without representation facts")
+        Some(representation) =>
+            mut retained = representation.clone()
+            for local in original.locals:
+                match local.ty:
+                    RustType.TypeVar(name) =>
+                        if str(name) in names:
+                            if has_local(retained.closure_holding_parameters, local.id):
+                                return Err("unsupported Body IR generic callable with borrowed parameter facts")
+                            if not has_local(retained.closure_holding_locals, local.id):
+                                retained.closure_holding_locals.push(local.id)
+                    _ => pass
+            match original.return_type:
+                RustType.TypeVar(name) =>
+                    if str(name) in names:
+                        retained.closure_holding_return = true
+                _ => pass
+            result.callable_representation = Some(retained)
+    return Ok(result)
+
+
+def has_local(locals: &list[RustLocalId], sought: &RustLocalId) -> bool:
+    """Compare opaque kernel local identities through their public indices, without cloning their Rust vector."""
+    for local in locals:
+        if int(local.index()) == int(sought.index()):
+            return true
+    return false
