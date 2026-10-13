@@ -11,7 +11,7 @@ from rust::incan_std_core::errors import raise_value_error
 pub def encode_text(value: &RustString, encoding: &RustString) -> bytes:
     """Copy shared UTF-8 text, reporting unsupported dynamic labels through legacy's ValueError primitive."""
     label = normalize_encoding_label(encoding.as_str())
-    if not is_utf8_encoding_label(label.as_str()):
+    if not is_utf8_encoding_label(label):
         raise_value_error(f"str.encode() supports only utf-8 in this release, got encoding '{label}'")
     return value.as_bytes().to_vec()
 
@@ -24,7 +24,7 @@ pub def encode_frozen_text(value: FrozenStr, encoding: &RustString) -> bytes:
 pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustString) -> Result[str, RuntimeError]:
     """Decode a shared byte vector with the exact strict, replacement, label and error-policy behavior."""
     label = normalize_encoding_label(encoding.as_str())
-    if not is_utf8_encoding_label(label.as_str()):
+    if not is_utf8_encoding_label(label):
         return Err(
             RuntimeError.with_code(
                 f"bytes.decode() supports only utf-8 in this release, got encoding '{label}'",

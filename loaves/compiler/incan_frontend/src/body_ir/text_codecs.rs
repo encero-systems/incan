@@ -3,7 +3,20 @@
 use super::args::{DeclaredSlot, plan_declared_args};
 use super::{BodyBuilder, ast, bir, hir_span};
 use incan_lang::lang::text_codecs::{DecodeErrorsPolicy, UTF8_ENCODING_LABEL};
-use incan_semantics_core::SymbolOrigin;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+
+/// Identify the existing checked builtin codec surface; lexical or source-owned lookalikes grant no codec facts.
+fn builtin_codec(identity: &CanonicalSymbolId) -> bool {
+    let admitted = identity.origin == SymbolOrigin::Builtin
+        && matches!(
+            identity.declaration_name.as_str(),
+            "str.encode" | "frozenstr.encode" | "bytes.decode" | "frozenbytes.decode"
+        );
+    let Some((owner, member)) = identity.declaration_name.split_once('.') else {
+        return false;
+    };
+    admitted && identity == &crate::symbols::canonical_builtin_member_identity(owner, member)
+}
 
 impl BodyBuilder<'_, '_> {
     /// Fill builtin codec slots after evaluating the receiver and supplied expressions in source order. Only the
@@ -17,8 +30,23 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let identity = self.type_info.resolved_identity(span)?.clone();
-        if identity.origin != SymbolOrigin::Builtin {
+        if !builtin_codec(&identity) {
             return None;
+        }
+        if !self.codec_expression_is_inert(receiver)
+            || args.iter().any(|argument| match argument {
+                ast::CallArg::Positional(value) | ast::CallArg::Named(_, value) => {
+                    !self.codec_expression_is_inert(value)
+                }
+                _ => true,
+            })
+        {
+            return Some(self.unsupported_operand(
+                "builtin codec observable expressions".to_owned(),
+                scope,
+                hir_span(span),
+                out,
+            ));
         }
         let defaults = match identity.declaration_name.as_str() {
             "str.encode" | "frozenstr.encode" => vec![("encoding", UTF8_ENCODING_LABEL)],
@@ -88,5 +116,26 @@ impl BodyBuilder<'_, '_> {
             false,
             out,
         ))
+    }
+
+    /// Admit only reads, literals, parentheses and checked codec chains. Legacy's dynamic guards evaluate labels
+    /// before the receiver and can skip it, so general calls and computed properties need a separate retained fact.
+    fn codec_expression_is_inert(&self, value: &ast::Spanned<ast::Expr>) -> bool {
+        match &value.node {
+            ast::Expr::Ident(_) | ast::Expr::Literal(_) => true,
+            ast::Expr::Paren(inner) => self.codec_expression_is_inert(inner),
+            ast::Expr::MethodCall(receiver, _, type_args, args) => {
+                type_args.is_empty()
+                    && self.type_info.resolved_identity(value.span).is_some_and(builtin_codec)
+                    && self.codec_expression_is_inert(receiver)
+                    && args.iter().all(|argument| match argument {
+                        ast::CallArg::Positional(value) | ast::CallArg::Named(_, value) => {
+                            self.codec_expression_is_inert(value)
+                        }
+                        _ => false,
+                    })
+            }
+            _ => false,
+        }
     }
 }
