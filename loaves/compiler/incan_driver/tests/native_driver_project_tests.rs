@@ -15359,19 +15359,35 @@ fn integer_constant_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
-/// The complete overflow-checking fixture reads its checked constant through the direct route.
+/// The original's constant reads reach the separate, still unretained error type argument in assert_raises.
 #[test]
-fn constant_abs_sum_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+fn constant_abs_sum_original_keeps_error_type_argument_refusal() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("constant-abs-sum-original")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    let root = fixture.scratch("constant-abs-sum-original")?;
+    let source = root.join("probe.incn");
+    fs::write(
+        &source,
         include_str!(
             "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/abs_and_sum_are_overflow_checked.incn"
         ),
+    )?;
+    let output = root.join("refused");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &output,
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting)?,
     )
+    .output()?;
+    assert!(!refused.status.success());
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        diagnostic.contains("unsupported Body IR unbound type parameter ValueError"),
+        "{diagnostic}"
+    );
+    assert!(!output.exists());
+    Ok(())
 }
 
 /// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
