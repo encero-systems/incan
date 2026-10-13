@@ -7686,7 +7686,7 @@ async def pending() -> str:
     await sleep_ms(80)
     return "retained"
 async def failing() -> str:
-    panic("failed")
+    assert false, "failed"
     return "unreachable"
 async def main() -> None:
     match await timeout_join_ms(1000, spawn(quick())):
