@@ -370,19 +370,27 @@ pub def activate_unit(
     catalog: RustDependencyCatalog,
     context: ActivationContext,
     manifest: str,
+    feature_authority: Option[RustDependencyCatalog] = None,
 ) -> Result[RustActivation, IntakeError]:
     """
     Return every original slot's activation outcome for one supplied host/target/purpose context.
 
     Original source admission, inherited unit/configuration validation and target snapshot authenticity remain
-    the caller's responsibility. This result is not a selected dependency graph: Active slots require exact child
+    the caller's responsibility. A resolved environment may supply effective slots while feature_authority retains
+    the original optional-feature contract; environment merging stays with its existing owner. This result is not a
+    selected dependency graph: Active slots require exact child
     source bindings before registration with the semantic projection. Inactive slots retain their original index.
     """
     if context.host.triple == "" or context.target.triple == "":
         return Err(refusal(manifest, [], IntakeErrorKind.Missing, "original host and target identities"))
     restrictions = slot_restrictions(catalog, context, manifest)?
-    features = feature_catalog(catalog, manifest)?
-    closure = expand_features(catalog, features, context, restrictions, manifest)?
+    mut authority = catalog
+    mut authority_restrictions = restrictions
+    if let Some(original) = feature_authority:
+        authority = original
+        authority_restrictions = slot_restrictions(authority, context, manifest)?
+    features = feature_catalog(authority, manifest)?
+    closure = expand_features(authority, features, context, authority_restrictions, manifest)?
     mut slots: list[SlotDemand] = []
     for declaration in catalog.dependencies:
         slots.append(slot_demand(declaration, restrictions[declaration.index], closure, context.domain))

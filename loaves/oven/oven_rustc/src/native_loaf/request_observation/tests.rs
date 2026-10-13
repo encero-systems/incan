@@ -46,6 +46,8 @@ impl Fixture {
             fs::write(project.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n")?;
         }
         let facets = ["selected", "unrelated"].map(|name| NativeLoafFacet {
+            target_predicates: Vec::new(),
+            target: None,
             project: name.into(),
             features: Vec::new(),
             domain: "target".to_string(),

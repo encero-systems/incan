@@ -310,3 +310,21 @@ pub def test_strong_forwarding_expands_explicit_alias_feature_per_domain() -> No
     assert target_result.effective_features == ["use"]
     direct = require_ok(activate_unit(catalog, context(["cache"], false, ActivationPurpose.Normal, false), "fixture"))
     assert direct.effective_features == ["cache", "extra"]
+
+
+pub def test_environment_slots_preserve_authored_optional_authority() -> None:
+    """A resolved test overlay may require an optional alias without invalidating authored dep forwarding."""
+    original = require_ok(read_dependency_catalog("[dependencies]\nleaf={version='1',optional=true}\n[features]\nchosen=['dep:leaf','leaf/extra']\n", "original"))
+    effective = require_ok(read_dependency_catalog("[dependencies]\nleaf={version='1',optional=false,features=['test-only'],default-features=false}\n", "effective"))
+    selected = require_ok(activate_unit(effective, context(["chosen"], false, ActivationPurpose.Test, false), "overlay", Some(original)))
+    assert selected.effective_features == ["chosen"]
+    match selected.slots[0].activation:
+        SlotActivation.Active(features, defaults, _) =>
+            assert features == ["extra", "test-only"]
+            assert not defaults
+        _ => fail("mandatory overlay dependency remained inactive")
+    plain = require_ok(activate_unit(effective, context([], false, ActivationPurpose.Test, false), "overlay", Some(original)))
+    assert plain.effective_features == []
+    match plain.slots[0].activation:
+        SlotActivation.Active(features, _, _) => assert features == ["test-only"]
+        _ => fail("overlay must not depend on selecting the optional feature")

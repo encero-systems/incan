@@ -23,6 +23,12 @@ pub struct LocalFacetSelection {
     pub features: Vec<String>,
     /// Compilation domain, either host or target.
     pub domain: String,
+    /// Resolver-owned target decisions, matched against original declaration positions before consumption.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_predicates: Vec<crate::native_loaf::NativeLoafPredicate>,
+    /// Exact target for these decisions; required whenever conditional declarations are selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 /// Compile a selected local graph in dependency order, preserving successful branches and named failures.
@@ -66,6 +72,11 @@ pub(crate) fn compile_local_native_facets_for_profile(
     let mut pending: BTreeSet<_> = (0..selections.len()).collect();
     let mut names = BTreeMap::new();
     for (index, selection) in selections.iter().enumerate() {
+        if selection.target.as_deref().is_some_and(|selected| selected != target)
+            || (!selection.target_predicates.is_empty() && selection.target.is_none())
+        {
+            return Err("local predicate selection does not bind the requested native target".into());
+        }
         let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(
             owner.join(&selection.project).join("loaf.toml"),
         )?)?;
@@ -87,23 +98,13 @@ pub(crate) fn compile_local_native_facets_for_profile(
             let selection = &selections[index];
             let project = owner.join(&selection.project);
             let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(project.join("loaf.toml"))?)?;
-            let (_, active) = local_feature_selection(&declaration, &selection.features)?;
-            let dependencies = declaration.get("dependencies").and_then(toml::Value::as_table);
-            let waits = dependencies
-                .into_iter()
-                .flatten()
-                .filter(|(alias, _)| active.contains_key(*alias))
-                .any(|(_, dependency)| {
-                    dependency
-                        .get("loaf")
-                        .and_then(toml::Value::as_str)
-                        .is_some_and(|loaf| {
-                            names
-                                .get(&(loaf.to_string(), selection.domain.clone()))
-                                .or_else(|| names.get(&(loaf.to_string(), "host".to_string())))
-                                .is_some_and(|dependency| pending.contains(dependency))
-                        })
-                });
+            let demands = local_dependency_demands(&declaration, &selection.features, &selection.target_predicates)?;
+            let waits = demands.iter().any(|dependency| {
+                names
+                    .get(&(dependency.loaf.clone(), selection.domain.clone()))
+                    .or_else(|| names.get(&(dependency.loaf.clone(), "host".to_string())))
+                    .is_some_and(|dependency| pending.contains(dependency))
+            });
             if waits {
                 continue;
             }
@@ -119,6 +120,7 @@ pub(crate) fn compile_local_native_facets_for_profile(
                 &target,
                 profile,
                 store,
+                &selection.target_predicates,
             ) {
                 closure
                     .report
@@ -249,7 +251,16 @@ pub fn compile_local_sdk_facet_for_target(
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
     );
     compile_local_native_facet_for_target_and_profile(
-        closure, project, features, domain, output, rustc, target, "debug", &store,
+        closure,
+        project,
+        features,
+        domain,
+        output,
+        rustc,
+        target,
+        "debug",
+        &store,
+        &[],
     )
 }
 
@@ -268,6 +279,7 @@ fn compile_local_native_facet_for_target_and_profile(
     target: &str,
     profile: &str,
     store: &OvenStore,
+    predicates: &[crate::native_loaf::NativeLoafPredicate],
 ) -> Result<(), Error> {
     if !matches!(profile, "debug" | "release") {
         return Err("local native profile must be debug or release".into());
@@ -279,6 +291,7 @@ fn compile_local_native_facet_for_target_and_profile(
     std::fs::create_dir_all(output)?;
     let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
     let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
+    unit.binding.target_predicates = predicates.to_vec();
     let edges = selected_local_edges(&unit, closure)?;
     for (alias, index) in &edges {
         if closure.units[*index].owner.manifest().intent.profile != profile {
@@ -293,6 +306,7 @@ fn compile_local_native_facet_for_target_and_profile(
         if selected.binding.version != unit.binding.version
             || selected.binding.archive_digest != unit.binding.archive_digest
             || selected.binding.features != unit.binding.features
+            || selected.binding.target_predicates != unit.binding.target_predicates
             || selected.owner.manifest().intent.target != target
             || selected.owner.manifest().intent.profile != profile
             || selected.owner.manifest().intent.toolchain != rustc_identity(rustc)?
@@ -644,7 +658,7 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
                 == Some(true),
         })
         .collect::<Vec<_>>();
-    local_dependency_demands(&unit.manifest, &unit.binding.features)?
+    local_dependency_demands(&unit.manifest, &unit.binding.features, &unit.binding.target_predicates)?
         .iter()
         .map(|demand| {
             Ok((
@@ -683,18 +697,36 @@ pub(crate) struct LocalDependencyCandidate<'a> {
 pub(crate) fn local_dependency_demands(
     manifest: &toml::Value,
     features: &[String],
+    predicates: &[crate::native_loaf::NativeLoafPredicate],
 ) -> Result<Vec<LocalDependencyDemand>, Error> {
     let mut demands = Vec::new();
-    let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) else {
-        return Ok(demands);
-    };
+    let dependencies = manifest.get("dependencies").and_then(toml::Value::as_table);
+    let mut decisions = BTreeMap::new();
+    for predicate in predicates {
+        if decisions.insert(predicate.declaration, predicate).is_some() {
+            return Err("local target decisions repeat a declaration position".into());
+        }
+    }
     let (_, activated) = local_feature_selection(manifest, features)?;
-    for (alias, declaration) in dependencies {
+    let ordered = dependencies.into_iter().flatten().collect::<BTreeMap<_, _>>();
+    for (index, (alias, declaration)) in ordered.into_iter().enumerate() {
+        if declaration.is_array() {
+            return Err(format!("local dependency {alias} requires selected alternative declarations").into());
+        }
+        if let Some(target) = declaration.get("target") {
+            let condition = target.as_str().ok_or("local dependency target must be a string")?;
+            let predicate = decisions
+                .remove(&index)
+                .ok_or_else(|| format!("local dependency {alias} needs resolved target predicates"))?;
+            if predicate.target != condition {
+                return Err(format!("local dependency {alias} target decision does not match its declaration").into());
+            }
+            if !predicate.matches {
+                continue;
+            }
+        }
         if declaration.get("optional").and_then(toml::Value::as_bool) == Some(true) && !activated.contains_key(alias) {
             continue;
-        }
-        if declaration.is_array() || declaration.get("target").is_some() {
-            return Err(format!("local dependency {alias} needs resolved target predicates").into());
         }
         let loaf = declaration
             .get("loaf")
@@ -726,6 +758,9 @@ pub(crate) fn local_dependency_demands(
             version,
             required,
         });
+    }
+    if !decisions.is_empty() {
+        return Err("local target decisions include undeclared conditions".into());
     }
     Ok(demands)
 }
@@ -953,6 +988,8 @@ mod tests {
         let selections: Vec<_> = ["consumer", "leaf"]
             .into_iter()
             .map(|name| LocalFacetSelection {
+                target_predicates: Vec::new(),
+                target: None,
                 project: name.into(),
                 features: Vec::new(),
                 domain: "target".to_string(),
@@ -1112,6 +1149,7 @@ mod tests {
             &target,
             "release",
             &store,
+            &[],
         )
         .err()
         .ok_or("selected debug owner was accepted as release")?;
@@ -1126,6 +1164,7 @@ mod tests {
             &target,
             "release",
             &store,
+            &[],
         )
         .err()
         .ok_or("debug dependency was accepted in release consumer")?;
@@ -1162,6 +1201,7 @@ mod tests {
             "unused-target",
             "fast",
             &store,
+            &[],
         )
         .err()
         .ok_or("unsupported profile was accepted")?;
@@ -1193,3 +1233,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod predicate_tests;

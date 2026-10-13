@@ -5,7 +5,7 @@ from std.toml import TomlValue, TomlKind
 from std.fs import Path
 from std.json import JsonValue
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource, RustRegistryRequest
-from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, SlotActivation, TargetConfiguration, activate_unit, version_matches
+from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, SlotActivation, TargetConfiguration, activate_unit, target_matches, version_matches
 
 
 @derive(Eq)
@@ -105,7 +105,7 @@ def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features:
         if not version_matches(requirement, version, declaration.alias).map_err((e) => e.message())?:
             return Err(f"local dependency {declaration.alias} does not satisfy {requirement}")
     mut domain = parent.domain
-    if document.get[str]("rust.type").map_err((e) => e.message())? == "proc-macro":
+    if document.get_optional[str]("rust.type").map_err((e) => e.message())? == Some("proc-macro"):
         domain = DependencyDomain.Host
     return Ok(LocalDemand(project=path.0, domain=domain, features=features, defaults=defaults))
 
@@ -123,8 +123,26 @@ def request(declaration: RustDependencyDeclaration, features: list[str], default
     }))
 
 
-pub def select(root: LocalDemand, configuration: TargetConfiguration) -> Result[JsonValue, str]:
-    """Reach a local feature fixed point, then emit native facet selections and active registry roots."""
+def predicates(document: TomlValue, configuration: TargetConfiguration, project: str) -> Result[list[JsonValue], str]:
+    """Carry original local declaration positions through the registry lock's existing predicate wire format."""
+    mut selected: list[JsonValue] = []
+    inputs = catalog(document)?
+    for edge in inputs.dependencies:
+        if let Some(condition) = edge.target_condition:
+            matched = target_matches(condition, configuration, project, edge.field).map_err((e) => e.message())?
+            selected.append(JsonValue.object({
+                "declaration": JsonValue.int(edge.index), "target": JsonValue.string(condition),
+                "matches": JsonValue.bool(matched),
+            }))
+    return Ok(selected)
+
+
+pub def select(
+    root: LocalDemand,
+    configuration: TargetConfiguration,
+    root_environment: Option[TomlValue] = None,
+) -> Result[JsonValue, str]:
+    """Select one shared graph; a canonically resolved environment replaces only the root's dependency slots."""
     mut demands: Dict[str, LocalDemand] = {}
     demands = add(demands, root)
     mut previous: Dict[str, LocalDemand] = {}
@@ -141,13 +159,22 @@ pub def select(root: LocalDemand, configuration: TargetConfiguration) -> Result[
             path = Path(demand.project).joinpath("loaf.toml")
             source = path.read_text("utf-8", "strict").map_err((e) => e.message())?
             document = toml.parse(source).map_err((e) => e.message())?
-            inputs = catalog(document)?
-            context = ActivationContext(host=configuration, target=configuration, purpose=ActivationPurpose.Normal,
+            mut inputs = catalog(document)?
+            mut authority: Option[RustDependencyCatalog] = None
+            mut purpose = ActivationPurpose.Normal
+            if identity == key(root):
+                if let Some(environment) = root_environment:
+                    authority = Some(inputs)
+                    inputs = catalog(environment)?
+                    purpose = ActivationPurpose.Test
+            context = ActivationContext(host=configuration, target=configuration, purpose=purpose,
                 domain=demand.domain, requested_features=demand.features, default_features=demand.defaults, build_unit_present=false)
-            activation = activate_unit(inputs, context, demand.project).map_err((e) => e.message())?
+            activation = activate_unit(inputs, context, demand.project, authority).map_err((e) => e.message())?
             facets.append(JsonValue.object({
                 "project": JsonValue.string(demand.project), "domain": JsonValue.string(demand.domain.value()),
                 "features": JsonValue.array([JsonValue.string(feature) for feature in activation.effective_features]),
+                "target": JsonValue.string(configuration.triple),
+                "target_predicates": JsonValue.array(predicates(document, configuration, demand.project)?),
             }))
             for slot in activation.slots:
                 match slot.activation:

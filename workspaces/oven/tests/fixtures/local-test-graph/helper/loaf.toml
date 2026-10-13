@@ -1,0 +1,7 @@
+[project]
+name='helper'
+version='1.0.0'
+[dependencies]
+registry={loaf='test/leaf',version='1',default-features=true}
+[rust]
+type='lib'

@@ -128,17 +128,8 @@ pub struct SdkLockedEdge {
     pub domain: String,
 }
 
-/// One evaluated dependency target condition from the seed.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SdkLockedPredicate {
-    /// Declaration position in the adopted dependency list.
-    pub declaration: usize,
-    /// Authored predicate text.
-    pub target: String,
-    /// Evaluation for this binding.
-    pub matches: bool,
-}
+/// Existing native source predicate record, retained under the seed boundary's historical name.
+pub type SdkLockedPredicate = crate::native_loaf::NativeLoafPredicate;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

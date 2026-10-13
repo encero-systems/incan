@@ -9772,6 +9772,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure/local/predicate_tests.rs": {
+      "disposition": "keep",
+      "notes": "Source-bound target decisions for ordinary local native loaves: exact declaration coverage, inactive missing dependencies, original-owner reuse and target invalidation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/sdk_closure/native.rs": {
       "disposition": "unaffected",
       "notes": "Oven-native link fact source-catalog and executable-owner refusal boundaries.",

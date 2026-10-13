@@ -387,6 +387,7 @@ impl Current {
             ));
         }
         let (owner, graph, graph_digest) = read_resolved_native_graph(request.graph)?;
+        super::preparation::validate_local_facet_targets(&graph.facets, request.target)?;
         let lock_path = owner.join(&graph.registry_lock);
         let lock_bytes = std::fs::read(&lock_path)
             .map_err(|error| input_failure("read native resolution lock", &lock_path, error))?;
@@ -684,8 +685,12 @@ impl Current {
         manifest: &toml::Value,
     ) -> Result<bool> {
         let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_local_native_dependencies", input = %record.source.loaf).entered();
-        let demands = current_inputs::local_dependency_demands(manifest, &record.source.features)
-            .map_err(NativeLoafError::Failed)?;
+        let demands = current_inputs::local_dependency_demands(
+            manifest,
+            &record.source.features,
+            &record.source.target_predicates,
+        )
+        .map_err(NativeLoafError::Failed)?;
         if demands.len() != record.dependencies.len() {
             return Ok(false);
         }
@@ -829,7 +834,7 @@ impl Current {
                 .manifests
                 .iter(),
         ) {
-            if facet.domain != source.domain {
+            if facet.domain != source.domain || facet.target_predicates != source.target_predicates {
                 continue;
             }
             let path = self.owner.join(&facet.project);

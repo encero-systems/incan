@@ -214,11 +214,12 @@ fn selected_candidates(
                     }
                 }
             }
-            Origin::Local(_) => {
+            Origin::Local(local) => {
                 let domain = candidates[index].domain.clone();
                 let demands = current_inputs::local_dependency_demands(
                     candidates[index].manifest()?,
                     &candidates[index].features,
+                    &current.graph.facets[local].target_predicates,
                 )
                 .map_err(NativeLoafError::Failed)?;
                 for demand in demands {
@@ -288,12 +289,12 @@ impl Candidate {
     fn source(&self, current: &Current) -> Result<NativeLoafSource> {
         match self.origin {
             Origin::Registry(index) => Ok(crate::sdk_closure::ordinary_native_source(&current.seed.units[index])),
-            Origin::Local(_) => Ok(NativeLoafSource {
+            Origin::Local(index) => Ok(NativeLoafSource {
                 loaf: self.loaf.clone(),
                 version: self.version.clone(),
                 domain: self.domain.clone(),
                 features: self.features.clone(),
-                target_predicates: Vec::new(),
+                target_predicates: current.graph.facets[index].target_predicates.clone(),
                 archive_digest: self
                     .source_digest
                     .clone()

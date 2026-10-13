@@ -5,3 +5,6 @@ version = "0.1.0"
 [project.scripts]
 core_engine = "src/plan_json_main.incn"
 acceptance = "src/acceptance.incn"
+
+[dependencies]
+toml = { loaf = "crates-io/toml", version = "0.9", default-features = true }

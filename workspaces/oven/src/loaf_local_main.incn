@@ -3,16 +3,64 @@
 from rust::std::env import args
 from rust::std::process import exit
 from std.fs import Path
+from std import toml
+from std.toml import TomlValue
+from rust::toml import to_string as encode_toml
+from std.json import JsonValue, parse
 from loaf_local_graph import LocalDemand, select
 from loaf_pin_check import read_cfg
 from rust_activation import DependencyDomain, TargetConfiguration
 
 
+pub def environment_dependencies(path: str) -> Result[TomlValue, str]:
+    """Read the existing `incan env show test --format json` result; never resolve or merge environments here."""
+    source = Path(path).read_text("utf-8", "strict").map_err((e) => e.message())?
+    document = parse(source).map_err((e) => e.message())?
+    match document.get("env"):
+        Some(value) =>
+            if value.expect_str().map_err((e) => e.message())? != "test":
+                return Err("local test selection requires the resolved test environment")
+        None => return Err("resolved environment has no name")
+    mut dependencies = JsonValue.object({})
+    match document.get("dependencies"):
+        Some(value) => dependencies = value
+        None => return Err("resolved environment has no dependencies")
+    dependencies.expect_object().map_err((e) => e.message())?
+    canonical = encode_toml(JsonValue.object({"dependencies": dependencies})).map_err((e) => str(e))?
+    return toml.parse(canonical).map_err((e) => e.message())
+
+
 def run(arguments: list[str]) -> Result[None, str]:
-    """Accept a local Loaf, retained host cfg, and explicit features with root defaults disabled."""
+    """Accept explicit features/defaults and an optional already-resolved root test environment."""
     root = Path(arguments[1]).resolve().map_err((e) => e.message())?
-    configuration = TargetConfiguration(triple="aarch64-apple-darwin", cfg=Some(read_cfg(arguments[2])?))
-    result = select(LocalDemand(project=root.0, domain=DependencyDomain.Target, features=arguments[3:], defaults=false), configuration)?
+    mut target = ""
+    mut features: list[str] = []
+    mut defaults = false
+    mut environment: Option[TomlValue] = None
+    mut index = 3
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--default-features":
+            defaults = true
+        elif argument == "--target":
+            index += 1
+            if index >= len(arguments):
+                return Err("--target requires the target triple owning CFG_FILE")
+            target = arguments[index]
+        elif argument == "--environment":
+            index += 1
+            if index >= len(arguments):
+                return Err("--environment requires a resolved environment JSON file")
+            environment = Some(environment_dependencies(arguments[index])?)
+        elif argument.startswith("--"):
+            return Err(f"unknown local selection option {argument}")
+        else:
+            features.append(argument)
+        index += 1
+    if target == "":
+        return Err("local selection requires --target and its original cfg snapshot")
+    configuration = TargetConfiguration(triple=target, cfg=Some(read_cfg(arguments[2])?))
+    result = select(LocalDemand(project=root.0, domain=DependencyDomain.Target, features=features, defaults=defaults), configuration, environment)?
     println(result.to_json().map_err((e) => e.message())?)
     return Ok(None)
 
@@ -23,7 +71,7 @@ pub def main() -> None:
     for argument in args():
         arguments.append(argument)
     if len(arguments) < 3:
-        println("usage: loaf_local_main PROJECT CFG_FILE [FEATURE ...]")
+        println("usage: loaf_local_main PROJECT CFG_FILE --target TRIPLE [--default-features] [--environment FILE] [FEATURE ...]")
         exit(2)
     match run(arguments):
         Ok(_) => return
