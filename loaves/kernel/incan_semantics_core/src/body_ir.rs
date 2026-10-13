@@ -2895,18 +2895,21 @@ impl AggregateKind {
 ///
 /// Body IR keeps a call's operand vector in *resolved declaration order* — declared parameter order for a callable,
 /// declared field order for a nominal constructor — while the statements that compute those operands are emitted in
-/// *written source order*. The two orders differ whenever a caller writes named arguments out of declaration order,
-/// and both are part of the source contract: the binding decides which parameter receives which value, while the
-/// written order decides the order in which argument sub-expressions take effect.
+/// *written source order* for ordinary calls. [`Self::ResolvedFactory`] preserves the frozen route's declaration-order
+/// evaluation for an imported SDK type-constructor factory. The two orders differ whenever a caller writes named
+/// arguments out of declaration order, and both are explicit facts: the binding decides which parameter receives
+/// which value, while its variant records whether ordinary written order or the factory's frozen declaration order
+/// sequences the argument effects.
 ///
-/// # Ownership facts are sequenced by written order, not by operand index
+/// # Ordinary ownership facts are sequenced by written order, not by operand index
 ///
 /// This is the invariant a consumer is most likely to get wrong. Each operand's [`OwnershipFact`] and last-use
-/// marker were decided while lowering the arguments **in written source order**, so they are only coherent when read
-/// in that order. For `two(q=a, p=a)` the operand vector is `[move(_0, last_use), clone(_0)]`: read left to right
-/// that appears to move a local and then clone it, but `written_position` says the clone happened first. An executor
-/// that walks `args` in vector order will observe a use-after-move. Walk [`Self::Resolved::arguments`] by ascending
-/// `written_position` when evaluating, and by operand index only when passing already-evaluated values.
+/// marker for [`Self::Resolved`] were decided while lowering the arguments **in written source order**, so they are
+/// only coherent when read in that order. For `two(q=a, p=a)` the operand vector is `[move(_0, last_use), clone(_0)]`:
+/// read left to right that appears to move a local and then clone it, but `written_position` says the clone happened
+/// first. An executor that walks `args` in vector order will observe a use-after-move. Walk
+/// [`Self::Resolved::arguments`] by ascending `written_position` when evaluating, and by operand index only when
+/// passing already-evaluated values.
 ///
 /// This is the single binding mechanism for every call shape, replacing the per-target slot map #1124 introduced on
 /// [`LocalCallableTarget`]: local callables, direct named calls, method calls, and nominal construction all record
@@ -2942,6 +2945,18 @@ pub enum ArgumentBinding {
         /// #1172's own scope, and this fact is what tells it which slots need a value.
         defaulted_slots: Vec<usize>,
     },
+    /// A checked imported SDK type-constructor factory whose frozen route evaluates arguments in declaration order.
+    ///
+    /// The producer evaluates supplied expressions and decides ownership in ascending slot order. `written_position`
+    /// retains source coordinates, but does not sequence these ownership facts. Consumers pass the already evaluated
+    /// values by slot and must not reinterpret this as an ordinary written-order binding. Defaults remain owned by the
+    /// selected declaration. Unchecked targets, dynamic callables and unproven spreads cannot supply this fact.
+    ResolvedFactory {
+        /// One record per surrounding argument operand, in declaration order.
+        arguments: Vec<BoundArgument>,
+        /// Omitted declared slots, in ascending order, without an evaluated operand or ownership fact.
+        defaulted_slots: Vec<usize>,
+    },
 }
 
 impl ArgumentBinding {
@@ -2968,14 +2983,21 @@ impl ArgumentBinding {
     /// and a non-trivial binding stands out. An unresolved binding always renders its own marker, so it can never be
     /// confused with a resolved identity binding.
     fn render_snapshot(&self) -> String {
-        let Self::Resolved {
-            arguments,
-            defaulted_slots,
-        } = self
-        else {
-            return " unbound".to_string();
+        let (arguments, defaulted_slots, factory) = match self {
+            Self::Resolved {
+                arguments,
+                defaulted_slots,
+            } => (arguments, defaulted_slots, false),
+            Self::ResolvedFactory {
+                arguments,
+                defaulted_slots,
+            } => (arguments, defaulted_slots, true),
+            Self::UnresolvedPositional => return " unbound".to_string(),
         };
         let mut out = String::new();
+        if factory {
+            out.push_str(" factory_order=declaration");
+        }
         if arguments
             .iter()
             .enumerate()

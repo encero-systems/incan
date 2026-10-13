@@ -904,7 +904,7 @@ fn lowers_a_partial_callable_into_a_forwarding_closure() -> Result<(), Box<dyn s
                 bir::ArgumentBinding::Resolved { arguments, .. } => {
                     Some(arguments.iter().map(|argument| argument.slot).collect())
                 }
-                bir::ArgumentBinding::UnresolvedPositional => None,
+                bir::ArgumentBinding::UnresolvedPositional | bir::ArgumentBinding::ResolvedFactory { .. } => None,
             },
             _ => None,
         })

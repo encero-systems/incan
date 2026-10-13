@@ -70,6 +70,56 @@ fn sdk_factory_argument_effects_retain_declaration_order() -> Result<(), Box<dyn
     }
     assert_eq!(effects, ["flag(\"ignore\", true)", "flag(\"verbose\", false)"]);
     assert!(body.render_snapshot().contains("factory_order=declaration"));
+    let targets = named_targets(&module, "build");
+    let factory = targets
+        .iter()
+        .find(|target| target.name == "Regex")
+        .ok_or("factory target missing")?;
+    let bir::ArgumentBinding::ResolvedFactory {
+        arguments,
+        defaulted_slots,
+    } = &factory.binding
+    else {
+        return Err("factory evaluation policy missing".into());
+    };
+    assert!(defaulted_slots.is_empty());
+    assert_eq!(
+        arguments.iter().map(|argument| argument.slot).collect::<Vec<_>>(),
+        [0, 1, 2, 3, 4]
+    );
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|argument| argument.written_position)
+            .collect::<Vec<_>>(),
+        [0, 2, 3, 4, 1]
+    );
+    Ok(())
+}
+
+/// An ordinary named call keeps written-order effects and never acquires the SDK factory compatibility policy.
+#[test]
+fn ordinary_argument_effects_keep_written_order() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def flag(label: str, value: bool) -> bool:\n    println(label)\n    return value\n\ndef choose(left: bool, right: bool) -> bool:\n    return left\n\ndef build() -> bool:\n    return choose(right=flag(\"right\", true), left=flag(\"left\", false))\n";
+    let module = build(source, &["ordinary_effect_order"])?;
+    let body = body_named(&module, "build")?;
+    let mut effects = Vec::new();
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+            && target.name == "flag"
+        {
+            effects.push(
+                source
+                    .get(statement.span.start..statement.span.end)
+                    .ok_or("effect span missing")?,
+            );
+        }
+    }
+    assert_eq!(effects, ["flag(\"right\", true)", "flag(\"left\", false)"]);
+    assert!(!body.render_snapshot().contains("factory_order=declaration"));
     Ok(())
 }
 
@@ -181,7 +231,7 @@ fn sdk_constructor_syntax_retains_selected_factory() -> Result<(), Box<dyn std::
         "{}",
         body_named(&module, "build")?.render_snapshot()
     );
-    let bir::ArgumentBinding::Resolved {
+    let bir::ArgumentBinding::ResolvedFactory {
         arguments,
         defaulted_slots,
     } = &target.binding
@@ -1383,6 +1433,9 @@ fn resolved_binding(kind: &bir::StatementKind) -> Result<ResolvedBindingParts<'_
             arguments,
             defaulted_slots,
         } => Ok((arguments, defaulted_slots)),
+        bir::ArgumentBinding::ResolvedFactory { .. } => {
+            Err("expected an ordinary written-order binding, found an SDK factory binding".into())
+        }
         bir::ArgumentBinding::UnresolvedPositional => {
             Err("expected a resolved declared-slot binding, found an unresolved positional call".into())
         }

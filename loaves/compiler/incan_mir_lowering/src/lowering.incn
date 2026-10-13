@@ -114,6 +114,7 @@ from rust::incan_semantics_core::body_ir import (
     NamedCallableTarget as RustNamedCallableTarget,
     LocalCallableTarget as RustLocalCallableTarget,
     CallableParam as RustCallableParam,
+    BoundArgument as RustBoundArgument,
     LocalId as RustLocalId,
     LocalDecl as RustLocalDecl,
     Operand as RustOperand,
@@ -3900,6 +3901,7 @@ def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
     """Report whether a resolved call leaves at least one declared slot to its default."""
     match binding:
         RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
+        RustArgumentBinding.ResolvedFactory(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
         _ => return false
 
 
@@ -3916,7 +3918,8 @@ def ordered_slot_operands(
     """
     Place the written arguments into the callee's declared parameter slots.
 
-    Body IR has already evaluated the arguments in written order; the binding says which slot each one fills.
+    Body IR has already evaluated the arguments in the binding's recorded order; ordinary calls use written order and
+    imported SDK factories use declaration order. The binding says which slot each materialized value fills.
     Defaults, missing slots, named or spread elements are refused. An offset of one skips a method receiver,
     whose borrow is lowered separately and whose slot is absent from the ordinary argument binding. With `owned`,
     a collection slot receives an owned value, as an SDK crate's compiled signature takes it.
@@ -3930,22 +3933,12 @@ def ordered_slot_operands(
     count = len(types)
     match binding:
         RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            if len(defaults) != 0 or len(bindings) != len(elements) - offset or len(bindings) != count:
-                return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
-            mut operands: list[Operand] = []
-            for _index in range(count):
-                operands.append(literal(Constant.Unit, span))
-            mut occupied: list[int] = []
-            for index in range(count):
-                slot = int(bindings[index].slot)
-                if slot < 0 or slot >= count or slot in occupied:
-                    return Err("invalid Body IR argument slot map")
-                occupied.append(slot)
-                match elements[index + offset].as_one():
-                    Some(value) =>
-                        operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
-                    None => return Err("unsupported Body IR named or spread ArgumentElement")
-            return Ok(operands)
+            return resolved_slot_operands(builder, bindings, len(defaults), elements, types, span, offset, owned)
+        RustArgumentBinding.ResolvedFactory(arguments=bindings, defaulted_slots=defaults) =>
+            for index in range(1, len(bindings)):
+                if int(bindings[index].slot) <= int(bindings[index - 1].slot):
+                    return Err("unsupported Body IR factory binding outside declaration order")
+            return resolved_slot_operands(builder, bindings, len(defaults), elements, types, span, offset, owned)
         RustArgumentBinding.UnresolvedPositional =>
             if not positional or len(elements) - offset != count:
                 return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -3956,6 +3949,36 @@ def ordered_slot_operands(
                         operands.append(call_argument_operand(builder, value, types[index], span, owned)?)
                     _ => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
+
+
+def resolved_slot_operands(
+    mut builder: Builder,
+    bindings: &list[RustBoundArgument],
+    default_count: int,
+    elements: &list[RustArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    offset: int,
+    owned: bool,
+) -> Result[list[Operand], str]:
+    """Pass already evaluated resolved values by slot, preserving the ownership order their binding variant records."""
+    count = len(types)
+    if default_count != 0 or len(bindings) != len(elements) - offset or len(bindings) != count:
+        return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
+    mut operands: list[Operand] = []
+    for _index in range(count):
+        operands.append(literal(Constant.Unit, span))
+    mut occupied: list[int] = []
+    for index in range(count):
+        slot = int(bindings[index].slot)
+        if slot < 0 or slot >= count or slot in occupied:
+            return Err("invalid Body IR argument slot map")
+        occupied.append(slot)
+        match elements[index + offset].as_one():
+            Some(value) =>
+                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
+            None => return Err("unsupported Body IR named or spread ArgumentElement")
+    return Ok(operands)
 
 
 pub def call_argument_operand(
