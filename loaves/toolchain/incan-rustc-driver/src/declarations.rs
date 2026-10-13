@@ -796,7 +796,7 @@ fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
     )
 }
 
-/// Mirror the path and tuple types produced by `ty` into tokens consumed by procedural derives.
+/// Mirror admitted paths, tuples, elided references, and function-pointer signatures into procedural derive tokens.
 fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
@@ -833,8 +833,49 @@ fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
                 AttrTokenStream::new(tokens),
             )]
         }
-        _ => unreachable!("the admitted AST type builder emits only paths and tuples"),
+        ast::TyKind::Ref(_lifetime, referent) => {
+            let mut tokens = vec![AttrTokenTree::Token(
+                Token::new(TokenKind::And, ty.span),
+                Spacing::Alone,
+            )];
+            if referent.mutbl == ast::Mutability::Mut {
+                tokens.push(keyword_token("mut", ty.span));
+            }
+            tokens.extend(type_tokens(&referent.ty));
+            tokens
+        }
+        ast::TyKind::FnPtr(pointer) => function_pointer_tokens(pointer, ty.span),
+        _ => unreachable!("the admitted AST type builder emits paths, tuples, references, and function pointers"),
     }
+}
+
+/// Mirror the safe, ordinary function-pointer AST builder's exact inputs and output without inventing token types.
+/// Borrowed signature components recurse through the same reference and container token projection as other fields.
+fn function_pointer_tokens(pointer: &ast::FnPtrTy, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
+    let mut parameters = Vec::new();
+    for parameter in &pointer.decl.inputs {
+        parameters.extend(type_tokens(&parameter.ty));
+        parameters.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
+    }
+    let mut tokens = vec![
+        keyword_token("fn", span),
+        AttrTokenTree::Delimited(
+            DelimSpan::from_single(span),
+            DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+            Delimiter::Parenthesis,
+            AttrTokenStream::new(parameters),
+        ),
+    ];
+    if let ast::FnRetTy::Ty(output) = &pointer.decl.output {
+        tokens.push(AttrTokenTree::Token(
+            Token::new(TokenKind::RArrow, span),
+            Spacing::Alone,
+        ));
+        tokens.extend(type_tokens(output));
+    }
+    tokens
 }
 
 /// Mirror a path segment's type arguments (`Vec<Tag>`, `HashMap<String, i64>`) into derive input tokens.
