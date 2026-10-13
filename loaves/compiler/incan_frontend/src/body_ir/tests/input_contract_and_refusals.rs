@@ -184,6 +184,7 @@ fn an_undesugared_scoped_dsl_symbol_call_is_refused_as_a_caller_contract_violati
     Ok(())
 }
 
+/// Retained acknowledged operations remain nested until a consumer explicitly admits their source receipt.
 #[test]
 fn an_unsafe_region_keeps_its_acknowledgment_boundary() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
@@ -214,6 +215,59 @@ fn an_unsafe_region_keeps_its_acknowledgment_boundary() -> Result<(), Box<dyn st
             .any(|line| line.starts_with("    ") && line.contains("probe")),
         "acknowledged calls must remain nested under their region: {snapshot}"
     );
+    Ok(())
+}
+
+/// A receipt from another module, span, or enclosing scope cannot admit operations at this source boundary.
+#[test]
+fn tampered_unsafe_acknowledgments_do_not_admit_their_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("def main() -> None:\n  unsafe:\n    pass\n", &["m", "unsafe_integrity"])?;
+    let block = &body_named(&module, "main")?.block;
+    assert!(block.unsafe_acknowledgments_valid(&module.module_id));
+    for mutation in 0..4 {
+        let mut tampered = block.clone();
+        let statement = tampered
+            .stmts
+            .iter_mut()
+            .find(|statement| matches!(statement.kind, bir::StatementKind::UnsafeRegion { .. }))
+            .ok_or("missing acknowledgment region")?;
+        let bir::StatementKind::UnsafeRegion { acknowledgment, body } = &mut statement.kind else {
+            return Err("expected acknowledgment region".into());
+        };
+        match mutation {
+            0 => {
+                acknowledgment.receipt =
+                    CompilerNodeId::statement_span("m::other", statement.span.start, statement.span.end)
+            }
+            1 => acknowledgment.span.end += 1,
+            2 => acknowledgment.scope = bir::ScopeId(99),
+            _ => body.scope = bir::ScopeId(99),
+        }
+        assert!(
+            !tampered.unsafe_acknowledgments_valid(&module.module_id),
+            "mutation {mutation} was admitted"
+        );
+    }
+    Ok(())
+}
+
+/// Acknowledgment does not bypass a nested input-contract violation or conceal its original source location.
+#[test]
+fn acknowledged_regions_keep_nested_unsupported_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def main() -> None:\n  unsafe:\n    ...\n";
+    let module = build_with_stand_in_refusal(source, &["m", "unsafe_gap"])?;
+    let body = body_named(&module, "main")?;
+    assert!(body.block.unsafe_acknowledgments_valid(&module.module_id));
+    assert!(body.first_representation_gap().is_some());
+    let bir::StatementKind::UnsafeRegion { body: operations, .. } = &body.block.stmts[0].kind else {
+        return Err("missing acknowledgment region".into());
+    };
+    let unsupported = operations
+        .stmts
+        .iter()
+        .find(|statement| matches!(statement.kind, bir::StatementKind::Unsupported { .. }))
+        .ok_or("missing nested unsupported operation")?;
+    assert_eq!(source.get(unsupported.span.start..unsupported.span.end), Some("..."));
     Ok(())
 }
 
