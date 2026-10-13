@@ -271,16 +271,14 @@ pub(super) fn check_builtin_source_with_closure(
         "native builtin compilation",
     );
     let legacy_output = project.join("legacy");
-    success(
-        &support::repo_command()
-            .current_dir(&project)
-            .env("INCAN_HOME", support::oven_fixture_home()?)
-            .arg("build")
-            .arg(&source)
-            .arg(&legacy_output)
-            .output()?,
-        "legacy builtin compilation",
-    );
+    let mut legacy_build = support::repo_command();
+    legacy_build
+        .current_dir(&project)
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .arg("build")
+        .arg(&source)
+        .arg(&legacy_output);
+    success(&legacy_build.output()?, "legacy builtin compilation");
     let expected = Command::new(legacy_output.join("oven/release/main"))
         .current_dir(&project)
         .output()?;
