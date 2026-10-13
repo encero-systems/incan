@@ -6716,6 +6716,18 @@ impl TypeChecker {
             && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
         {
             self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
+            if is_frozen_bytes(&base_ty) {
+                let owner = incan_lang::lang::types::stringlike::as_str(
+                    incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
+                );
+                self.type_info.calls.body_ir_native_codec_members.insert(
+                    (span.start, span.end),
+                    Self::compiler_builtin_member_identity(
+                        owner,
+                        bytes_methods::as_str(bytes_methods::BytesMethodId::Decode),
+                    ),
+                );
+            }
             // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
             // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
             return ResolvedType::Generic(

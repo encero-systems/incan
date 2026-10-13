@@ -13,7 +13,8 @@ pub def encode_text(value: &RustString, encoding: &RustString) -> bytes:
     label = normalize_encoding_label(encoding.as_str())
     if not is_utf8_encoding_label(label):
         raise_value_error(f"str.encode() supports only utf-8 in this release, got encoding '{label}'")
-    return value.as_bytes().to_vec()
+    copy: RustString = value.clone()
+    return copy.into_bytes()
 
 
 pub def encode_frozen_text(value: FrozenStr, encoding: &RustString) -> bytes:

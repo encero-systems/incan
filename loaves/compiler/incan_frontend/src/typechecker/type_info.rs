@@ -1562,6 +1562,9 @@ pub struct CallArtifacts {
     /// Body IR-only tuple constructor facts selected by an active std.web surface binding. Legacy keeps its existing
     /// construction table; the canonical owner is checked from the original Rust re-export at this call site.
     pub body_ir_native_constructor_bindings: HashMap<(usize, usize), (CanonicalSymbolId, ConstructorFieldBinding)>,
+    /// Selected frozen codec members whose legacy registry omits an identity. This independent Body IR fact is
+    /// recorded only at the existing checked builtin branch; legacy reference and method tables stay unchanged.
+    pub body_ir_native_codec_members: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Native surface payload types missing from legacy's expression snapshot. An already checked String symbol or
     /// literal authorizes Html's fixed String slot; legacy expression typing remains unchanged.
     pub body_ir_native_argument_types: HashMap<(usize, usize), ResolvedType>,

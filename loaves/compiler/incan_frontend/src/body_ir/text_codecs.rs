@@ -29,7 +29,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let identity = self.type_info.resolved_identity(span)?.clone();
+        let identity = self.selected_codec_identity(span)?.clone();
         if !builtin_codec(&identity) {
             return None;
         }
@@ -126,7 +126,7 @@ impl BodyBuilder<'_, '_> {
             ast::Expr::Paren(inner) => self.codec_expression_is_inert(inner),
             ast::Expr::MethodCall(receiver, _, type_args, args) => {
                 type_args.is_empty()
-                    && self.type_info.resolved_identity(value.span).is_some_and(builtin_codec)
+                    && self.selected_codec_identity(value.span).is_some_and(builtin_codec)
                     && self.codec_expression_is_inert(receiver)
                     && args.iter().all(|argument| match argument {
                         ast::CallArg::Positional(value) | ast::CallArg::Named(_, value) => {
@@ -137,5 +137,15 @@ impl BodyBuilder<'_, '_> {
             }
             _ => false,
         }
+    }
+
+    /// Reuse the ordinary checked target first, then the independent frozen-codec selection legacy does not read.
+    fn selected_codec_identity(&self, span: ast::Span) -> Option<&CanonicalSymbolId> {
+        self.type_info.resolved_identity(span).or_else(|| {
+            self.type_info
+                .calls
+                .body_ir_native_codec_members
+                .get(&(span.start, span.end))
+        })
     }
 }
