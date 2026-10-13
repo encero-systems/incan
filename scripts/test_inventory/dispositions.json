@@ -6200,6 +6200,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/open_nominal_types.rs": {
+      "disposition": "keep",
+      "notes": "Closed checked nominal payloads, destinations, trait adoptions and canonical testing arguments retained as additive Body IR facts without rewriting legacy inference.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",

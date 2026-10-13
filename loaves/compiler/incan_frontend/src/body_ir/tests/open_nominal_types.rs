@@ -45,7 +45,7 @@ fn adopted_trait_argument_retains_closed_instantiation() -> Result<(), Box<dyn s
     let source = "trait Reader[T]:\n    def read(self) -> T: ...\n\nmodel Packet with Reader[int]:\n    value: int\n\n    def read(self) -> int:\n        return self.value\n\ndef read[T](value: Reader[T]) -> T:\n    return value.read()\n\ndef main() -> None:\n    println(read(Packet(value=42)))\n";
     let module = build(source, &["m", "closed_trait_argument"])?;
     let main = body_named(&module, "main")?;
-    assert_eq!(local_types_at(main, source, "read(Packet(value=42))"), ["int", "str"]);
+    assert_eq!(local_types_at(main, source, "read(Packet(value=42))"), ["int"]);
     Ok(())
 }
 
