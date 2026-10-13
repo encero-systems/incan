@@ -193,6 +193,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a local partial using the checker's target identity and full parameter surface.
     ///
+    /// A retained same-module constructor uses its checked field layout; functions and methods keep their existing
+    /// forwarding frames. Checked newtype ingress remains refused until its deferred validation operations are
+    /// retained.
+    ///
     /// A method receiver and each preset are evaluated once before any deferred-frame binding is introduced.
     /// Forwarding borrows the captured receiver, retains named overrideable presets, and preserves source defaults
     /// only when their declaration-owned computations are available.
@@ -203,6 +207,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        if self
+            .type_info
+            .resolved_identity(partial.target.span)
+            .is_some_and(|identity| {
+                matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Model
+                        | SemanticSourceTargetKind::Class
+                        | SemanticSourceTargetKind::Newtype
+                )
+            })
+        {
+            return self.lower_local_partial(partial, expr_span, scope, out);
+        }
         match self.partial_target(partial) {
             Ok(target) => self.lower_partial_target(partial, target, expr_span, scope, out),
             Err(description) => self.unsupported_operand(description, scope, hir_span(expr_span), out),

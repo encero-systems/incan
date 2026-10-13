@@ -179,8 +179,12 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                         "unsupported Body IR closure input outside scalars, text, models, collection views and borrows",
                     )
         elements.append(input)
-    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]) and not owned_model_result(signature[-1]):
-        return Err("unsupported Body IR closure result outside scalars, owned text, collections and retained model values")
+    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]) and not owned_model_result(
+        signature[-1],
+    ):
+        return Err(
+            "unsupported Body IR closure result outside scalars, owned text, collections and retained model values",
+        )
     return Ok(elements)
 
 
