@@ -5640,20 +5640,26 @@ def lower_function(
 def lower_entrypoint_effects(module: &BodyIrModule, mut builder: Builder) -> Result[None, str]:
     """Print the entry module's retained setup before its body; project assembly does not merge dependency effects."""
     for effect in module.entrypoint_effects:
-        match effect:
-            RustEntrypointEffect.PrintText(text=text, span=source_span) =>
-                span = location(source_span, builder.source, builder.file)
-                value = owned_literal(builder, str(text), span)
-                output = temporary(builder, PlanType.Unit, span)
-                external_call(
-                    builder,
-                    "incan_native_runtime::println_text",
-                    [PlanType.String],
-                    PlanType.Unit,
-                    [read_place(value, true, span)],
-                    output,
-                    span,
-                )
+        lower_entrypoint_effect(effect, builder)?
+    return Ok(None)
+
+
+def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder) -> Result[None, str]:
+    """Lower one retained effect; its explicit interop type also preserves the enum import in legacy bake emission."""
+    match effect:
+        RustEntrypointEffect.PrintText(text=text, span=source_span) =>
+            span = location(source_span, builder.source, builder.file)
+            value = owned_literal(builder, str(text), span)
+            output = temporary(builder, PlanType.Unit, span)
+            external_call(
+                builder,
+                "incan_native_runtime::println_text",
+                [PlanType.String],
+                PlanType.Unit,
+                [read_place(value, true, span)],
+                output,
+                span,
+            )
     return Ok(None)
 
 
