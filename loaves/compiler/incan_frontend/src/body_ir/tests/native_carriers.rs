@@ -83,8 +83,12 @@ fn web_carriers_retain_foreign_tuple_layouts() -> Result<(), Box<dyn std::error:
     ] {
         let owner = declarations.iter().find(|owner| owner.name == name).ok_or_else(|| {
             format!(
-                "missing {name} carrier; imports: {:?}",
-                checker.type_info().declarations.resolved_import_identities
+                "missing {name} carrier; target: {:?}; surface: {:?}",
+                checker
+                    .symbols
+                    .lookup(name)
+                    .and_then(|id| checker.symbols.identity_of(id)),
+                checker.surface_type_import_bindings.get(name)
             )
         })?;
         assert_eq!(owner.native_item, item);
