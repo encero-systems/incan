@@ -67,8 +67,9 @@ pub def lower_reflection(
                                     if len(builder.nominals[owner].type_parameters) != 0:
                                         return Err("unsupported Body IR reflection over generic fields")
                                     mut fields: list[int] = []
-                                    for slot in slots:
-                                        fields.append(int(slot))
+                                    # Indexed reads copy Rust's primitive slot; a borrowed loop item cannot be cast by legacy.
+                                    for index in range(len(slots)):
+                                        fields.append(int(slots[index]))
                                     validate_reflection_fields(builder, owner, receiver, fields, string, target, span)?
                                     match destination:
                                         None => return Err("unsupported Body IR discarded reflection result")
