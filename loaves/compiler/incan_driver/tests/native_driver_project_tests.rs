@@ -11712,6 +11712,31 @@ fn generic_decorator_factory_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
+/// A factory retains the type selected by its value argument as well as the later decorated-callable argument.
+#[test]
+fn generic_decorator_factory_value_argument_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-decorator-factory-value-argument")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def preserve[Tag, F](tag: Tag) -> ((F) -> F):
+    println("factory")
+    return (func) => func
+
+@preserve(7)
+def increment(value: int) -> int:
+    return value + 1
+
+def main() -> None:
+    println("main")
+    println(increment(2))
+    println(increment(4))
+"#,
+    )
+}
+
 /// Method replacements initialize once and preserve shared receiver calls and changed return types.
 #[test]
 fn decorated_shared_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -281,9 +281,52 @@ fn generic_decorator_factory_retains_closed_applications() -> Result<(), Box<dyn
             })
             .ok_or("missing checked factory call")?;
         assert_eq!(target.type_args.len(), 1, "{}", initializer.render_snapshot());
+        assert_eq!(
+            target.type_args[0], storage.ty,
+            "factory instance must retain the exact free or shared carrier"
+        );
         assert!(!format!("{:?}", target.type_args).contains("TypeVar"));
         assert!(!format!("{:?}", initializer.locals).contains("TypeVar"));
         assert!(module.is_well_formed_static_declaration(storage));
     }
+    Ok(())
+}
+
+/// Factory arguments fixed by values survive application inference of the remaining callable parameter.
+#[test]
+fn generic_decorator_factory_keeps_partially_inferred_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"def preserve[Tag, F](tag: Tag) -> ((F) -> F):
+    return (func) => func
+
+@preserve(7)
+def increment(value: int) -> int:
+    return value + 1
+
+def main() -> None:
+    println(increment(2))
+"#;
+    let module = build(source, &["m", "partial_factory_inference"])?;
+    let [storage] = module.static_declarations.as_slice() else {
+        return Err("expected one initialized replacement".into());
+    };
+    let bir::StaticInitializer::Computed(initializer) = &storage.initial else {
+        return Err("expected an executable factory initializer".into());
+    };
+    let target = initializer
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } if target.name == "preserve" => Some(target),
+            _ => None,
+        })
+        .ok_or("missing checked factory instance")?;
+    assert_eq!(
+        target.type_args,
+        vec![IncanType::Primitive(IncanPrimitiveType::Int), storage.ty.clone()]
+    );
     Ok(())
 }
