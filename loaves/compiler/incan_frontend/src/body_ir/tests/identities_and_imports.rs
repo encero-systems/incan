@@ -127,6 +127,17 @@ fn module_nominal_construction_retains_owner_and_fields() -> Result<(), Box<dyn 
             .values()
             .any(|identity| identity == &declaration.canonical)
     );
+    let field = declaration
+        .field_identities
+        .first()
+        .ok_or("provider field identity missing")?;
+    for written in ["value=42", "value=7"] {
+        let start = source.find(written).ok_or("written field argument missing")?;
+        assert_eq!(
+            type_info.resolved_identity(ast::Span { start, end: start + 5 }),
+            Some(field)
+        );
+    }
     let module =
         build_body_ir_module_v0_with_executable_context(&program, &["consumer".to_owned()], &type_info, &[provider]);
     let body = body_named(&module, "main")?;
@@ -154,37 +165,49 @@ fn module_nominal_construction_retains_owner_and_fields() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// A surviving member identity does not turn an unproven receiver into a module namespace.
+/// Construction requires the module receiver, selected nominal owner, and argument field identities independently.
 #[test]
-fn module_nominal_construction_requires_receiver_identity() -> Result<(), Box<dyn std::error::Error>> {
+fn module_nominal_construction_requires_checked_identities() -> Result<(), Box<dyn std::error::Error>> {
     let source =
         "import pub::provider as p\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  println(first.value)\n";
-    let (program, mut type_info, provider) = checked_package_counter(source)?;
+    let (program, checked, provider) = checked_package_counter(source)?;
     let module_path = vec!["consumer".to_owned()];
-    assert!(
+    for missing in [
+        SemanticSourceTargetKind::Module,
+        SemanticSourceTargetKind::Model,
+        SemanticSourceTargetKind::Field,
+    ] {
+        let mut type_info = checked.clone();
+        assert!(
+            type_info
+                .references
+                .resolved_identities
+                .values()
+                .any(|identity| identity.kind == missing)
+        );
         type_info
             .references
             .resolved_identities
-            .values()
-            .any(|identity| identity.kind == SemanticSourceTargetKind::Module)
-    );
-    type_info
-        .references
-        .resolved_identities
-        .retain(|_, identity| identity.kind != SemanticSourceTargetKind::Module);
-    let module = build_body_ir_module_v0_with_executable_context(&program, &module_path, &type_info, &[provider]);
-    let body = body_named(&module, "main")?;
-    assert!(
-        !body.block.stmts.iter().any(|statement| matches!(
-            &statement.kind,
-            bir::StatementKind::Assign {
-                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), _),
-                ..
-            }
-        )),
-        "{}",
-        body.render_snapshot()
-    );
+            .retain(|_, identity| identity.kind != missing);
+        let module = build_body_ir_module_v0_with_executable_context(
+            &program,
+            &module_path,
+            &type_info,
+            std::slice::from_ref(&provider),
+        );
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), _),
+                    ..
+                }
+            )),
+            "{missing:?}: {}",
+            body.render_snapshot()
+        );
+    }
     Ok(())
 }
 
