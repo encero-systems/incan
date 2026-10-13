@@ -18,6 +18,35 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Mixed fixed and rest unpacking preserves the complete original fixture's byte-identical legacy output.
+#[test]
+fn fixed_unpack_with_rest_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("fixed-unpack-with-rest")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/fixed_call_unpack.incn"
+        ),
+    )
+}
+
+/// One generic trait slot cannot select the first of several checked SDK implementations for the same owner.
+#[test]
+fn sdk_numeric_trait_dispatch_refuses_ambiguous_instantiations() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "sdk-numeric-trait-instantiations",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/lowering_expressions/stdlib_trait_dispatch_across_package.incn"
+        ),
+        &[],
+        b"5\n2\n772\n513\n",
+        "unsupported Body IR trait method at several instantiations for one receiver",
+    )
+}
+
 /// An acknowledged region assigns a checked call result to its enclosing local with frozen legacy output.
 #[test]
 fn unsafe_region_assignment_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

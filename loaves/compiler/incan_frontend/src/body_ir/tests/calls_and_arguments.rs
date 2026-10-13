@@ -5,6 +5,25 @@
 
 use super::*;
 
+/// Fixed literal and tuple components retain their checked types before the callee's owned rest packs are built.
+#[test]
+fn fixed_unpack_beside_rest_parameters_retains_component_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/fixed_call_unpack.incn"
+        ),
+        &["m", "fixed_unpack_rest"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let snapshot = body.render_snapshot();
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{snapshot}"
+    );
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
 /// Constructor Partials cannot bypass predicates whose deferred validation operations have not been retained.
 #[test]
 fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), Box<dyn std::error::Error>> {
