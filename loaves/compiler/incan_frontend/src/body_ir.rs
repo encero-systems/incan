@@ -321,6 +321,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
     let constant_declarations = collect::collect_constants(program, type_info);
+    let library_constants = library_constants::collect(type_info);
     let published_constants = context
         .iter()
         .flat_map(|module| module.constant_declarations.iter())
@@ -330,6 +331,7 @@ fn build_body_ir_module_v0_with_provider_operations(
                 bir::Constant::FrozenAggregate(..) | bir::Constant::Int(_)
             )
         }))
+        .chain(library_constants.iter())
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
         .collect::<HashMap<_, _>>();
     let function_default_sources = collect_function_default_sources(program, type_info);
@@ -1979,6 +1981,7 @@ mod literals;
 
 mod calls;
 mod library_calls;
+mod library_constants;
 mod library_defaults;
 mod library_nominals;
 mod library_opaque_returns;

@@ -283,6 +283,32 @@ impl StdlibAstCache {
         Some(program)
     }
 
+    /// Load imports and one exact constant for Body IR retention. This additive accessor leaves legacy constant
+    /// evaluation unchanged; stale spans and foreign package owners never select a source declaration.
+    pub(crate) fn body_ir_constant_program(&mut self, identity: &CanonicalSymbolId) -> Option<ast::Program> {
+        if identity.kind != SemanticSourceTargetKind::Const {
+            return None;
+        }
+        let source_identity = self.callable_source_identity(identity)?;
+        let incan_semantics_core::SymbolOrigin::Module(path) = &source_identity.origin else {
+            return None;
+        };
+        let source = self.source_inputs.read_module(path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| match &declaration.node {
+            ast::Declaration::Import(_) => true,
+            ast::Declaration::Const(item) => {
+                item.name == identity.declaration_name
+                    && declaration.span.start == identity.declaration_span.start
+                    && declaration.span.end == identity.declaration_span.end
+            }
+            _ => false,
+        });
+        Some(program)
+    }
+
     /// Construct a legacy source cache; the checker binds genuine publication authority before using that context.
     pub fn new() -> Self {
         Self::default()
