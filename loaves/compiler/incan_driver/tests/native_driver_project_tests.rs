@@ -14119,6 +14119,25 @@ def main() -> None:
     )
 }
 
+/// An SDK timer's pending future resumes through the canonical executor and preserves deferred source effects.
+#[test]
+fn sdk_timer_suspension_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "sdk-timer-suspension",
+        r#"
+from std.async.time import sleep_ms
+async def wait() -> None:
+    println("waiting")
+    await sleep_ms(5)
+    println("resumed")
+async def main() -> None:
+    println("before")
+    await wait()
+    println("after")
+"#,
+    )
+}
+
 /// A list's contains method uses legacy membership comparisons through static defaults and retained local lists.
 #[test]
 fn list_contains_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -14261,5 +14280,57 @@ fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std:
         &fixture.sysroot,
         &fixture.formatting,
         &format!("{prefix}  held = partial counter.add(scale=1, step=2)\n  println(held())\n"),
+    )
+}
+
+/// Source futures, SDK spawning and an instantiated Awaitable bound preserve both original task-family programs.
+#[test]
+fn native_tasks_and_prelude_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source) in [
+        (
+            "native-task-prelude",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/std_async_prelude_surface.incn"
+            ),
+        ),
+        (
+            "native-awaitable-bound",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/awaitable_bound_join_handle.incn"
+            ),
+        ),
+    ] {
+        check_async_family_source(name, source)?;
+    }
+    Ok(())
+}
+
+/// A later pending race arm wins after its shorter timer, and the losing source body and callback stay cancelled.
+#[test]
+fn pending_source_race_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "pending-source-race",
+        r#"
+import std.async
+from std.async.time import sleep_ms
+async def slow() -> int:
+    println("slow starts")
+    await sleep_ms(80)
+    println("slow resumes")
+    return 1
+async def fast() -> int:
+    println("fast starts")
+    await sleep_ms(5)
+    return 2
+async def main() -> None:
+    winner = race for value:
+        await slow() =>
+            println("slow callback")
+            value
+        await fast() =>
+            println("fast callback")
+            value
+    println(winner)
+"#,
     )
 }

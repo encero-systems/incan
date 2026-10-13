@@ -533,3 +533,42 @@ fn foreign_task_paths_remain_opaque() {
         semantic_type_from_resolved(&ty)
     );
 }
+/// An SDK async call retains its executable crate target separately from the future's output carrier.
+#[test]
+fn retains_sdk_async_future_delegation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.async.time import sleep\nasync def wait() -> None:\n  await sleep(0.01)\n";
+    let module = build(source, &["m", "sdk_wait"])?;
+    let call = module
+        .stdlib_delegations
+        .iter()
+        .find(|call| call.canonical.declaration_name == "sleep")
+        .ok_or("SDK sleep must retain its executable delegation")?;
+    assert_eq!(
+        call.return_type,
+        IncanType::Generic {
+            base: "Awaitable".into(),
+            args: vec![semantic_type_from_resolved(&crate::symbols::ResolvedType::Unit)],
+        }
+    );
+    assert!(
+        call.rust_path().is_some(),
+        "SDK future construction needs its canonical crate item"
+    );
+    Ok(())
+}
+
+/// A native SDK generic argument uses its declaration's retained binder rather than an opaque Rust path.
+#[test]
+fn retains_native_task_binder() -> Result<(), Box<dyn std::error::Error>> {
+    let ty = crate::symbols::ResolvedType::RustPath("incan_std_async::task::JoinHandle<T>".into());
+    let ty = super::super::parameter_types::checked_semantic_type(&ty, &Default::default());
+    let ty = super::super::parameter_types::retain_parameter_type(ty, &["T".into()]);
+    assert_eq!(
+        ty,
+        IncanType::Generic {
+            base: "JoinHandle".into(),
+            args: vec![IncanType::TypeVar("T".into())]
+        }
+    );
+    Ok(())
+}
