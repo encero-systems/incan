@@ -251,11 +251,9 @@ def closure_value_type(ty: PlanType) -> bool:
 
 pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
     """
-    Admit the captures a by-value environment can hand to its lifted function on every call.
+    Admit captures according to the retained reusable or consuming environment contract.
 
-    Copy scalars, including every sized numeric carrier, are copied out of the environment. Owned text, list and model
-    snapshots move into the environment once, and each call forwards a clone, because a callable can run more than once.
-    Checking forbids changes to captured values and aliases of their storage, so these are read-only snapshots.
+    Reusable environments copy scalars and clone owned text, list, and model snapshots for every call. Checking forbids changes to captured values and aliases of their storage. A proven consuming environment instead transfers its canonical zip into the lifted body once.
     """
     if consumes_environment:
         match ty:
@@ -285,7 +283,7 @@ pub def closure_constructor(
     """
     Declare the constructor whose native body boxes one environment holding the captures in order.
 
-    Its plan body is only the validated contract the driver checks: one `ClosureBody` call returning the boxed object.
+    Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object.
     The driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
     """
     mut object_type = PlanType.Closure(signature)

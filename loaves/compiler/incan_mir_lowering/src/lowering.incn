@@ -1936,6 +1936,7 @@ def lower_closure(
         statements,
         result,
         signature,
+        consumes_environment,
         span,
     )?
     synthesize(builder, lifted)
@@ -1971,6 +1972,7 @@ def lift_closure(
     statements: &list[RustStatement],
     result: &RustOperand,
     signature: list[PlanType],
+    consumes_environment: bool,
     span: SourceSpan,
 ) -> Result[Function, str]:
     """
@@ -1996,6 +1998,7 @@ def lift_closure(
     for index in range(count):
         lifted_parameters.append(Parameter(name=f"__incan_argument_{index}", ty=arguments[index], span=span))
     mut lifted = lifted_frame(builder, name, arguments, signature[-1], span)
+    lifted.consuming_closure_frame = consumes_environment
     for index in range(len(captures)):
         destination = int(capture_locals[index].index()) + 1 + count
         captured = lifted.locals[destination].ty
@@ -2089,6 +2092,7 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
         statics=builder.statics,
         value_enums=builder.value_enums,
         local_offset=count,
+        consuming_closure_frame=false,
         generator_handle=-1,
         unions=builder.unions,
         type_parameters=builder.type_parameters,
@@ -2129,10 +2133,16 @@ def lower_generator_expression(
     """
     if target.projection != Projection.Whole:
         return Err("unsupported Body IR projected generator expression")
+    if builder.local_offset != 0 and (not builder.consuming_closure_frame or len(captures) != 0):
+        return Err("unsupported Body IR generator expression inside a lifted or deferred frame")
     if len(captures) != len(body.capture_locals):
         return Err("invalid Body IR generator expression capture layout")
     item_local = first_clause_item(body)?
     evaluated = value_operand(builder, source, span)?
+    if builder.local_offset != 0:
+        match operand_type(builder, evaluated)?:
+            PlanType.ZipIterator(_left, _right) => pass
+            _ => return Err("unsupported Body IR consuming closure generator source outside canonical zip")
     first = source_generator(builder, evaluated, span)?
     # The step's environment holds each capture by value, read once now, as legacy's `move` closure takes it.
     mut operands: list[Operand] = []
@@ -5929,6 +5939,7 @@ def lower_function(
         statics=module.static_declarations,
         value_enums=module.value_enum_declarations,
         local_offset=0,
+        consuming_closure_frame=false,
         generator_handle=-1,
         unions=selected_unions,
         instances=[],

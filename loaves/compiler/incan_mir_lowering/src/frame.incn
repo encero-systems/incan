@@ -81,6 +81,8 @@ pub model Builder:
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
     pub local_offset: int
+    # Only a closure with a retained consuming contract may transfer its zip into a capture-free generator step.
+    pub consuming_closure_frame: bool
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
     pub generator_handle: int
