@@ -69,6 +69,79 @@ fn source_owned_race_arm_rest_pack_stays_refused() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// The stdlib rusttype alias retains its native enum owner, ordered payloads and checked pattern arguments.
+#[test]
+fn sdk_timeout_outcome_retains_payloads() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"import std.async
+from std.async.time import TimeoutJoinOutcome
+def inspect(outcome: TimeoutJoinOutcome[int]) -> None:
+    match outcome:
+        TimeoutJoinOutcome.Completed(value) => println(value)
+        TimeoutJoinOutcome.JoinFailed(error) => println(error.message())
+        TimeoutJoinOutcome.TimedOut(handle) => pass
+"#;
+    let module = build(source, &["m", "deadline_outcome"])?;
+    let declaration = module
+        .enum_declarations
+        .iter()
+        .find(|item| item.name == "TimeoutJoinOutcome")
+        .ok_or("native outcome layout")?;
+    assert_eq!(declaration.type_parameters, ["T"]);
+    assert_eq!(
+        declaration
+            .variants
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Completed", "JoinFailed", "TimedOut"]
+    );
+    assert_eq!(declaration.variants[0].fields, [IncanType::TypeVar("T".into())]);
+    assert_eq!(
+        declaration.variants[1].fields,
+        [IncanType::Named("TaskJoinError".into())]
+    );
+    assert_eq!(
+        declaration.variants[2].fields,
+        [IncanType::Generic {
+            base: "JoinHandle".into(),
+            args: vec![IncanType::TypeVar("T".into())]
+        }]
+    );
+    let body = body_named(&module, "inspect")?;
+    for (name, expected) in [
+        ("value", IncanType::Primitive(IncanPrimitiveType::Int)),
+        ("error", IncanType::Named("TaskJoinError".into())),
+        (
+            "handle",
+            IncanType::Generic {
+                base: "JoinHandle".into(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            },
+        ),
+    ] {
+        let local = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .ok_or("payload local")?;
+        assert_eq!(local.ty, expected, "{name}");
+    }
+    Ok(())
+}
+
+/// An equal-spelled source enum never acquires the SDK's native payload contract.
+#[test]
+fn source_timeout_outcome_keeps_its_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum TimeoutJoinOutcome:\n  Own(int)\ndef inspect(value: TimeoutJoinOutcome) -> None:\n  match value:\n    TimeoutJoinOutcome.Own(number) => println(number)\n";
+    let module = build(source, &["m", "source_outcome"])?;
+    let [declaration] = module.enum_declarations.as_slice() else {
+        return Err("source layout".into());
+    };
+    assert!(matches!(declaration.canonical.origin, SymbolOrigin::Module(_)));
+    assert_eq!(declaration.variants[0].name, "Own");
+    Ok(())
+}
+
 /// The exact SDK FnOnce bridge retains a checked zero-argument callable's output in native task storage.
 #[test]
 fn sdk_blocking_callback_retains_output() -> Result<(), Box<dyn std::error::Error>> {

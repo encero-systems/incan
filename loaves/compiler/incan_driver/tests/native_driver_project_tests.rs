@@ -7674,6 +7674,42 @@ async def main() -> None:
 
 /// SDK task and deadline operations preserve expiry and durable task completion.
 #[test]
+fn sdk_timeout_outcome_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "sdk-timeout-outcome",
+        r#"import std.async
+from std.async.task import spawn
+from std.async.time import sleep_ms, timeout_join_ms, TimeoutJoinOutcome
+async def quick() -> str:
+    return "complete"
+async def pending() -> str:
+    await sleep_ms(80)
+    return "retained"
+async def failing() -> str:
+    panic("failed")
+    return "unreachable"
+async def main() -> None:
+    match await timeout_join_ms(1000, spawn(quick())):
+        TimeoutJoinOutcome.Completed(value) => println(value)
+        TimeoutJoinOutcome.JoinFailed(error) => println(error.message())
+        TimeoutJoinOutcome.TimedOut(handle) => handle.abort()
+    match await timeout_join_ms(1, spawn(pending())):
+        TimeoutJoinOutcome.Completed(value) => println(value)
+        TimeoutJoinOutcome.JoinFailed(error) => println(error.message())
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            match await handle:
+                Ok(value) => println(value)
+                Err(error) => println(error.message())
+    match await timeout_join_ms(1000, spawn(failing())):
+        TimeoutJoinOutcome.Completed(value) => println(value)
+        TimeoutJoinOutcome.JoinFailed(error) => println(error.is_panic())
+        TimeoutJoinOutcome.TimedOut(handle) => handle.abort()
+"#,
+    )
+}
+
+/// The full owned deadline fixture preserves both timeout errors and the returned live task handle.
+#[test]
 fn async_tasks_and_time_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_async_family_source(
         "async-tasks-and-time",
