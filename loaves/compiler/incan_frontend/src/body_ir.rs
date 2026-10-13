@@ -1873,6 +1873,7 @@ mod newtype_ingress;
 mod validation_errors;
 
 mod closures;
+mod local_partials;
 
 mod async_;
 
