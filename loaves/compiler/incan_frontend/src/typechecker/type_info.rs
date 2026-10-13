@@ -702,6 +702,10 @@ pub struct TraitArtifacts {
     /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no
     /// later stage re-resolves the written clause.
     pub adoption_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// Implicit arguments of bare source adoption clauses, retained only for Body IR by the clause's span. The
+    /// existing semantic instantiation rule supplies owner parameter witnesses; legacy's explicit-only snapshot stays
+    /// unchanged. Ambiguous or incomplete adoptions contribute no fact.
+    pub body_ir_adoption_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
 }
 
 impl TraitArtifacts {

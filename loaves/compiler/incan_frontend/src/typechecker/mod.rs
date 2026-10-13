@@ -3678,6 +3678,56 @@ impl TypeChecker {
         self.type_info.traits.adoption_type_args = recorded.into_iter().collect();
     }
 
+    /// Retain bare source adoptions' implicit arguments for Body IR without changing legacy's explicit snapshot.
+    /// Clauses pair with the checked owner's source-ordered adoption prefix, and repeated trait names stay unproven
+    /// rather than borrowing another clause's instantiation. The existing semantic helper owns positional mapping and
+    /// exact arity; no lowering consumer reconstructs it from parameter spellings.
+    fn record_body_ir_bare_adoption_arguments(&mut self, program: &Program) {
+        let mut recorded = HashMap::new();
+        for declaration in &program.declarations {
+            let (name, clauses) = match &declaration.node {
+                Declaration::Model(model) => (&model.name, &model.traits),
+                Declaration::Class(class) => (&class.name, &class.traits),
+                Declaration::Newtype(newtype) => (&newtype.name, &newtype.traits),
+                Declaration::Enum(value) => (&value.name, &value.traits),
+                _ => continue,
+            };
+            // ---- Declared owner parameter witnesses ----
+            let Some((parameters, adoptions)) = self.semantic_type_params_and_adoptions(name) else {
+                continue;
+            };
+            let owner_arguments: Vec<_> = parameters
+                .iter()
+                .map(|name| ResolvedType::TypeVar(name.clone()))
+                .collect();
+
+            // ---- Bare clauses at one checked instantiation ----
+            for (clause, adoption) in clauses.iter().zip(adoptions) {
+                if !clause.node.type_args.is_empty() || adoption.name != clause.node.name {
+                    continue;
+                }
+                if adoptions
+                    .iter()
+                    .filter(|candidate| self.trait_name_matches(&candidate.name, &adoption.name))
+                    .count()
+                    != 1
+                {
+                    continue;
+                }
+                let Some(arguments) = self.instantiated_trait_args_for_type(name, &owner_arguments, &adoption.name)
+                else {
+                    continue;
+                };
+                if !arguments.is_empty() {
+                    recorded.insert((clause.span.start, clause.span.end), arguments);
+                }
+            }
+        }
+
+        // ---- Body IR-only snapshot ----
+        self.type_info.traits.body_ir_adoption_type_args = recorded;
+    }
+
     /// Snapshot declaration metadata into [`TypeCheckInfo`] for backend lowering.
     ///
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
@@ -7228,6 +7278,7 @@ impl TypeChecker {
 
         self.record_trait_metadata_for_lowering(program);
         self.record_trait_adoption_arguments_for_lowering(program);
+        self.record_body_ir_bare_adoption_arguments(program);
         self.record_model_field_visibilities_for_lowering(program);
         self.record_class_layouts_for_lowering(program);
         self.record_body_ir_class_inheritance(program);
