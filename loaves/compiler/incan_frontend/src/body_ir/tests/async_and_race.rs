@@ -883,6 +883,44 @@ fn checked_task_list_iteration_keeps_closed_items() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// Owned list expressions move into iteration even when the checker has no named-list consumption record.
+#[test]
+fn temporary_lists_keep_consuming_iteration() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def made() -> list[int]:\n  return [1]\ndef main() -> None:\n  for value in made():\n    println(value)\n  for value in [2]:\n    println(value)\n  for value in [n for n in [3]]:\n    println(value)\n";
+    let module = build(source, &["m", "temporary_lists"])?;
+    let body = body_named(&module, "main")?;
+    for statement in &body.block.stmts {
+        let bir::StatementKind::Loop { body: loop_body, .. } = &statement.kind else {
+            continue;
+        };
+        let iterator = loop_body
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::IterNext {
+                    iterator: bir::Operand::Place(read),
+                    ..
+                } => read.place.local_id(),
+                _ => None,
+            })
+            .ok_or("loop iterator")?;
+        let fact = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                } if place.local_id() == Some(iterator) => Some(read.fact),
+                _ => None,
+            })
+            .ok_or("iterator materialization")?;
+        assert_eq!(fact, bir::OwnershipFact::Move);
+    }
+    Ok(())
+}
+
 /// A comprehension's checked binder never borrows its output type from an outer same-spelled task.
 #[test]
 fn task_comprehension_storage_respects_its_binder() -> Result<(), Box<dyn std::error::Error>> {
