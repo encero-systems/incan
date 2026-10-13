@@ -18,6 +18,24 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// A failing reader poll invokes its captured mapper with the retained nominal input and preserves legacy error bytes.
+#[test]
+fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let original = include_str!(
+        "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+    );
+    assert_eq!(original.matches("reader.chunks(16)").count(), 1);
+    let source = original.replace("reader.chunks(16)", "reader.chunks(0)");
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-reader-error-mapper")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        &source,
+    )
+}
+
 /// The complete SDK reader adapter preserves every chunk and completion byte through its captured error mapper.
 #[test]
 fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
