@@ -21,9 +21,14 @@ def main() -> None:
     task = launch(work)
 "#;
     let module = build(source, &["m", "blocking_callback"])?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     assert!(
-        module
-            .nominal_declarations
+        library_nominal_declarations(checker.type_info())
             .iter()
             .any(|declaration| declaration.name == "TaskJoinError")
     );
@@ -140,6 +145,9 @@ fn sdk_variadic_race_retains_list_signature() -> Result<(), Box<dyn std::error::
             }]
         }]
     );
+    let module = build(source, &["m", "race_rest_storage"])?;
+    let body = body_named(&module, "collect")?;
+    assert!(!body.locals.iter().any(|local| matches!(&local.ty, IncanType::Generic { base, args } if base == "List" && args.iter().any(|ty| matches!(ty, IncanType::Generic { base, args } if base == "RaceArm" && args.iter().any(|ty| matches!(ty, IncanType::TypeVar(_) | IncanType::RustInteropPath(_))))))));
     Ok(())
 }
 
