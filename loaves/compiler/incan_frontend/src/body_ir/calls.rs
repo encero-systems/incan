@@ -2142,7 +2142,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Materialize a consuming local, field or mutable-parameter carrier under its checked ownership facts, so later
     /// argument effects cannot change its read. A field cannot move out of its owner, so the retained value is a clone,
-    /// as legacy's consumed-receiver policy requires. Global reads retain their static access boundary instead.
+    /// as legacy's consumed-receiver policy requires. An enclosing local read inside a loop stays owned for the next
+    /// iteration even at its final textual occurrence. Global reads retain their static access boundary instead.
     fn lower_consumed_carrier_receiver(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
@@ -2158,6 +2159,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             if read.fact == bir::OwnershipFact::Borrow {
                 read.fact = bir::OwnershipFact::Clone;
+            }
+            if read.fact == bir::OwnershipFact::Move
+                && !self.loop_break_targets.is_empty()
+                && let Some(local) = read.place.local_id()
+                && self.locals[local.index()].scope != scope
+            {
+                read.fact = bir::OwnershipFact::Clone;
+                read.last_use = false;
+                self.moved_out.remove(&local);
             }
         }
         self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(receiver.span), out)
