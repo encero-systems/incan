@@ -104,9 +104,8 @@ fn complete_testing_helpers_retain_closed_targets() -> Result<(), Box<dyn std::e
 /// SDK method owner parameters retain the native task's closed output after nominal call facts are supplemented.
 #[test]
 fn sdk_tasks_keep_closed_native_channels() -> Result<(), Box<dyn std::error::Error>> {
-    let source = include_str!(
-        "../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn"
-    );
+    let source =
+        include_str!("../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn");
     let module = build(source, &["m", "closed_sdk_tasks"])?;
     let main = body_named(&module, "main")?;
     let locals = serde_json::to_string(&main.locals)?;
