@@ -133,6 +133,7 @@ fn synthetic_body() -> Body {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut module = BodyIrModule {
         decorated_bindings: Vec::new(),
+        entrypoint_effects: Vec::new(),
         constant_declarations: Vec::new(),
         type_alias_declarations: Vec::new(),
         module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],

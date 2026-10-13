@@ -61,6 +61,10 @@ pub struct BodyIrModule {
     /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
     #[serde(default)]
     pub decorated_bindings: Vec<DecoratedBinding>,
+    /// Setup effects of this module's selected entrypoint, evaluated before its source body. Dependency modules do
+    /// not lend their effects to a different entry module.
+    #[serde(default)]
+    pub entrypoint_effects: Vec<EntrypointEffect>,
     /// Checker-evaluated scalar and text constants, addressed by their declaring canonical identity.
     #[serde(default)]
     pub constant_declarations: Vec<ConstantDeclaration>,
@@ -112,6 +116,18 @@ pub struct BodyIrModule {
     pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// Observable setup retained by the checked frontend for the selected entry module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EntrypointEffect {
+    /// Print the retained text with a trailing newline before evaluating the entrypoint body.
+    PrintText {
+        /// Authoritative text retained at compilation, independent of the consumer's working directory.
+        text: String,
+        /// Import declaration that requires this setup output.
+        span: HirSourceSpan,
+    },
 }
 
 /// Canonical immutable value evaluated by the declaring compilation, with no runtime storage or initialization.
@@ -4811,6 +4827,7 @@ mod tests {
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
             decorated_bindings: Vec::new(),
+            entrypoint_effects: Vec::new(),
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),

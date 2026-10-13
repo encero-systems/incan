@@ -970,6 +970,7 @@ mod tests {
     fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
             decorated_bindings: Vec::new(),
+            entrypoint_effects: Vec::new(),
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             trait_declarations: Vec::new(),

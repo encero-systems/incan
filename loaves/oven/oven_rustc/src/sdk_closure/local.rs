@@ -475,9 +475,9 @@ fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
         files.extend(language_catalog_sources(&project)?);
         relative = Path::new("loaves/kernel/incan_lang").join(relative);
     }
-    if name == "incan_emit" {
+    if name == "incan_emit" || name == "incan_frontend" {
         files.push(emitter_text_source(&project)?);
-        relative = Path::new("loaves/compiler/incan_emit").join(relative);
+        relative = Path::new("loaves/compiler").join(&name).join(relative);
     }
     collect_local_sources(&source, &relative, &mut files)?;
     facet.insert(

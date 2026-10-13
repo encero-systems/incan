@@ -419,6 +419,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     let mut module = bir::BodyIrModule {
         decorated_bindings,
+        entrypoint_effects: entrypoint_effects::collect(program),
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
@@ -1894,6 +1895,7 @@ mod carrier_projection;
 mod collect;
 mod collection_context;
 mod decorated_bindings;
+mod entrypoint_effects;
 mod static_aliases;
 
 mod bodies;

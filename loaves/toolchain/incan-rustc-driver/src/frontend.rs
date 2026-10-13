@@ -385,6 +385,7 @@ fn join_published_module(owner: &mut BodyIrModule, module: BodyIrModule) {
 fn declaration_module(owner: String) -> BodyIrModule {
     BodyIrModule {
         decorated_bindings: Vec::new(),
+        entrypoint_effects: Vec::new(),
         constant_declarations: Vec::new(),
         type_alias_declarations: Vec::new(),
         enum_declarations: Vec::new(),
@@ -457,17 +458,6 @@ fn validate_declarations(
     program: &incan_frontend::ast::Program,
     type_info: &incan_frontend::typechecker::TypeCheckInfo,
 ) -> Result<(), String> {
-    // Legacy's `incan_ir::check_for_this_import` injects entrypoint output for this exact module import.
-    // Until Body IR carries that effect, accepting the declaration would silently erase observable behavior.
-    for declaration in &program.declarations {
-        if let incan_frontend::ast::Declaration::Import(import) = &declaration.node
-            && let incan_frontend::ast::ImportKind::Module(path) = &import.kind
-            && path.segments.len() == 1
-            && path.segments[0] == "this"
-        {
-            return Err("unsupported source import this entrypoint effect on the native route".to_owned());
-        }
-    }
     for declaration in &program.declarations {
         use incan_frontend::ast::Declaration;
         let kind = match &declaration.node {
