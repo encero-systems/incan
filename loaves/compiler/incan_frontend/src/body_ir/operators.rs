@@ -1,4 +1,4 @@
-//! Lowering for binary operators, including dispatch to a user-defined operator method.
+//! Lower binary operators and checked truthiness, length and operator hooks without rediscovering their dispatch.
 
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::numeric_values::common_lossless_integer_type;
@@ -28,6 +28,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let lhs_ty = self.resolve_ty(lhs.span);
         let rhs_ty = self.resolve_ty(rhs.span);
         let result_ty = self.resolve_ty(span);
+
+        // Legacy represents membership as a receiver-first method call, negating it for `not in`.
+        if let Some(dispatch) = self.type_info.resolved_operator_call(span)
+            && dispatch.kind == ResolvedOperatorKind::Contains
+        {
+            let method = dispatch.method.clone();
+            let value = self.lower_operator_dispatch(&method, rhs, &[lhs], result_ty.clone(), span, scope, out);
+            return if op == ast::BinaryOp::NotIn {
+                self.push_assign_temp(
+                    bir::Rvalue::UnaryOp(bir::UnOp::Not, value),
+                    result_ty,
+                    scope,
+                    hir_span_value,
+                    out,
+                )
+            } else {
+                value
+            };
+        }
 
         // A user-defined operator is a method call, not a primitive operation. The typechecker already resolved
         // which dunder this spelling dispatches to, so lowering follows that decision rather than falling through
@@ -210,10 +229,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Lower a unary or index expression checking resolved to a user-defined dunder method, if it is one.
+    /// Lower a unary, index, length or identifier truthiness expression through its checked source method.
     ///
     /// `~value` and `-value` call the operand's hook with no arguments; `base[index]` calls `__getitem__` on the base
-    /// with the index. Every other expression returns `None` and keeps its ordinary lowering.
+    /// with the index. Length uses its single checked receiver. Truthiness needs the separately retained receiver
+    /// identity and returns bool; other truthiness receiver shapes remain named unsupported. Every other expression
+    /// returns `None` and keeps its ordinary lowering.
     pub(super) fn lower_operator_hook_expr(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -224,6 +245,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let (method, kind) = (dispatch.method.clone(), dispatch.kind);
         let ty = self.resolve_ty(expr.span);
         match (&expr.node, kind) {
+            (ast::Expr::Ident(_), ResolvedOperatorKind::Truthiness)
+                if self
+                    .type_info
+                    .protocols
+                    .body_ir_truthiness_receivers
+                    .contains_key(&(expr.span.start, expr.span.end)) =>
+            {
+                let bool_ty = IncanType::Primitive(IncanPrimitiveType::Bool);
+                Some(self.lower_operator_dispatch(&method, expr, &[], bool_ty, expr.span, scope, out))
+            }
+            (_, ResolvedOperatorKind::Truthiness) => Some(self.unsupported_operand(
+                "truthiness receiver without a retained identifier value".to_string(),
+                scope,
+                hir_span(expr.span),
+                out,
+            )),
+            (ast::Expr::Call(_, type_args, args), ResolvedOperatorKind::Len) if type_args.is_empty() => {
+                let [ast::CallArg::Positional(receiver)] = args.as_slice() else {
+                    return Some(self.unsupported_operand(
+                        "length protocol call without one retained positional receiver".to_string(),
+                        scope,
+                        hir_span(expr.span),
+                        out,
+                    ));
+                };
+                Some(self.lower_operator_dispatch(&method, receiver, &[], ty, expr.span, scope, out))
+            }
             (ast::Expr::Unary(_, operand), ResolvedOperatorKind::Unary) => {
                 Some(self.lower_operator_dispatch(&method, operand, &[], ty, expr.span, scope, out))
             }

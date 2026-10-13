@@ -968,8 +968,11 @@ impl TypeChecker {
         Some(ret)
     }
 
-    /// Validate a boolean control-flow condition using RFC 068 structural `__bool__` when needed.
+    /// Validate a boolean control-flow condition using RFC 068 structural `__bool__` when needed. Preserve its
+    /// receiver's original value identity separately for Body IR; legacy keeps the synthetic method's reference.
     pub(in crate::typechecker) fn validate_truthiness_condition(&mut self, cond_ty: &ResolvedType, span: Span) {
+        let key = (span.start, span.end);
+        self.type_info.protocols.body_ir_truthiness_receivers.remove(&key);
         if self.types_compatible(cond_ty, &ResolvedType::Bool) || matches!(cond_ty, ResolvedType::Unknown) {
             return;
         }
@@ -980,6 +983,7 @@ impl TypeChecker {
         }
 
         if self.is_user_operator_receiver(cond_ty) {
+            let receiver_identity = self.type_info.resolved_identity(span).cloned();
             let method = "__bool__";
             let args: Vec<CallArg> = Vec::new();
             let arg_types: Vec<ResolvedType> = Vec::new();
@@ -991,6 +995,12 @@ impl TypeChecker {
                     }
                     self.type_info
                         .record_resolved_operator_call(span, method, ResolvedOperatorKind::Truthiness);
+                    if let Some(identity) = receiver_identity {
+                        self.type_info
+                            .protocols
+                            .body_ir_truthiness_receivers
+                            .insert(key, identity);
+                    }
                 }
                 None => self
                     .errors

@@ -1561,10 +1561,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// `None`, so the caller emits an explicit unsupported node instead of silently changing meaning through a
     /// spelling lookup. Checked union member reads carry an explicit payload projection while the local retains its
     /// storage type. Only a genuinely unproven reference may use the legacy `External` recovery local.
+    /// A synthetic truthiness call shares this span with its receiver, whose separate Body IR identity selects the
+    /// value here while the unchanged legacy reference still selects the method.
     fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
         if let Some(identity) = self
             .type_info
-            .resolved_identity(span)
+            .protocols
+            .body_ir_truthiness_receivers
+            .get(&(span.start, span.end))
+            .or_else(|| self.type_info.resolved_identity(span))
             .or_else(|| {
                 self.type_info
                     .calls

@@ -1757,6 +1757,9 @@ pub struct TestingArtifacts {
 pub struct ProtocolArtifacts {
     /// Independent checked hook calls for Body IR, separate from the legacy iteration record and written call facts.
     pub body_ir_iterations: HashMap<(usize, usize), BodyIrIterationHooksInfo>,
+    /// Receiver value identities retained only for Body IR before synthetic truthiness dispatch reuses their spans.
+    /// The legacy reference at that span still selects `__bool__`; this separate record never changes that table.
+    pub(crate) body_ir_truthiness_receivers: HashMap<(usize, usize), CanonicalSymbolId>,
     /// RFC 068: Custom `for` iteration protocol choices keyed by iterable expression span.
     ///
     /// Lowering consumes this so a structural `__iter__` / `__next__` pair can become an explicit loop that calls the
