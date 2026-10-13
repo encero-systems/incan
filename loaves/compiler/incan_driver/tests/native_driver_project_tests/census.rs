@@ -175,6 +175,44 @@ fn published_codec_reaches_carrier_and_shared_read_admission() -> Result<(), Box
     Ok(())
 }
 
+/// Public enum and storage publication reaches separate carrier and decorated-body boundaries without failure.
+#[test]
+fn published_enum_and_static_context_reaches_named_frontiers() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-enum-and-static-frontiers")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    for (area, name, expected) in [
+        (
+            "cli_dependencies",
+            "dependency_reexported_type_identity",
+            "unsupported Body IR ambiguous project nominal carrier Candidate",
+        ),
+        (
+            "emit_dependency_unions_and_surfaces",
+            "dependency_declaration_kinds",
+            "unsupported Body IR package executable representation: package `kinds` version 0.1.0 cannot satisfy the executable representation requirement: this package publishes no executable representation for `decorated`",
+        ),
+    ] {
+        let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
+            .into_iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing behavior fixture {area}/{name}"))?;
+        let scratch = root.join(name);
+        fs::create_dir_all(&scratch)?;
+        let (class, detail) = measure(
+            &fixture,
+            &scratch,
+            &graph.driver_binary("debug"),
+            &graph.sysroot,
+            &closure,
+            Duration::from_secs(180),
+        )?;
+        assert_eq!(class, "refused", "{area}/{name}: {detail}");
+        assert_eq!(detail, expected, "{area}/{name}");
+    }
+    Ok(())
+}
+
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
 fn bounded(
     command: &mut Command,
