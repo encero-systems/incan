@@ -12054,6 +12054,21 @@ def main() -> None:
     )
 }
 
+/// A decorated rest-parameter function receives owned positional and keyword packs through its initialized pointer.
+#[test]
+fn decorated_variadic_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-variadic-function")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/decorated_variadic_function.incn"
+        ),
+    )
+}
+
 /// Method replacements initialize once and preserve shared receiver calls and changed return types.
 #[test]
 fn decorated_shared_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -351,3 +351,54 @@ fn generic_factory_closure_keeps_parameter_placeholders() -> Result<(), Box<dyn 
     assert_eq!(**signature.1, IncanType::TypeVar("F".to_string()));
     Ok(())
 }
+
+/// Rest parameters retain their checked packed frame types and source roles on originals and replacement wrappers.
+#[test]
+fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/decorated_variadic_function.incn"
+    );
+    let module = build(source, &["m", "decorated_rest_parameters"])?;
+    let [binding] = module.decorated_bindings.as_slice() else {
+        return Err("expected one original rest-parameter function".into());
+    };
+    let original = &binding.original_body;
+    let wrapper = body_named(&module, "decorated_total")?;
+    for body in [original, wrapper] {
+        assert_eq!(body.params.len(), 4);
+        assert_eq!(
+            body.params[2].ty,
+            IncanType::Generic {
+                base: "List".to_string(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            }
+        );
+        assert_eq!(
+            body.params[3].ty,
+            IncanType::Generic {
+                base: "Dict".to_string(),
+                args: vec![
+                    IncanType::Primitive(IncanPrimitiveType::Str),
+                    IncanType::Primitive(IncanPrimitiveType::Str)
+                ],
+            }
+        );
+        let facts = serde_json::to_value(body)?;
+        assert_eq!(facts["params"][2]["kind"], "RestPositional");
+        assert_eq!(facts["params"][3]["kind"], "RestKeyword");
+    }
+    let main = body_named(&module, "main")?;
+    for statement in &main.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            args,
+            ..
+        } = &statement.kind
+            && target.name == "decorated_total"
+        {
+            assert_eq!(args.len(), 4);
+            assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(4));
+        }
+    }
+    Ok(())
+}
