@@ -750,7 +750,7 @@ fn retains_sdk_join_error_method_contract() -> Result<(), Box<dyn std::error::Er
 /// An inferred task binding keeps the checked native future output that closed its SDK spawn call.
 #[test]
 fn inferred_task_binding_retains_closed_output() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "import std.async\nfrom std.async.task import spawn\nasync def work() -> int:\n  return 1\nasync def main() -> None:\n  task = spawn(work())\n  task.abort()\n";
+    let source = "import std.async\nfrom std.rust import Send, Static\nfrom rust::incan_std_async::task import JoinHandle, RuntimeFuture, spawn as native_spawn\ndef launch[T with (Send, Static), F with RuntimeFuture[T]](future: F) -> JoinHandle[T]:\n  return native_spawn(future)\nasync def work() -> int:\n  return 1\nasync def main() -> None:\n  task = launch(work())\n  task.abort()\n";
     let module = build(source, &["m", "inferred_task"])?;
     let body = body_named(&module, "main")?;
     let task = body
