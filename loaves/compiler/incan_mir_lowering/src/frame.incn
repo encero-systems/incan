@@ -106,6 +106,8 @@ pub model Builder:
     pub loop_exit_blocks: list[list[int]] = []
     pub loop_exit_owners: list[list[list[int]]] = []
     pub display_functions: list[DisplayFunction] = []
+    # A lifted race callback admits its binding and lexical locals; other enclosing locals require captures.
+    pub forbidden_reads: list[int] = []
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

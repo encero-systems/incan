@@ -119,12 +119,19 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
 
 /// Preserve checked SDK ownership and exact argument types when the provider's signature uses native Rust spelling.
 fn project_path(path: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
+    let ty = project_resolved_path(path, facts)?;
+    Some(project_type(semantic_type_from_resolved(&ty), facts))
+}
+
+/// Share registry and source-ownership admission with private call inference, retaining the native argument spelling.
+/// Named carriers reject generic syntax, and consumer declarations cannot authorize an equal-spelled SDK carrier.
+pub(crate) fn project_resolved_path(path: &str, facts: &TypeCheckInfo) -> Option<crate::symbols::ResolvedType> {
     let id = surface_types::from_runtime_rust_path(path)?;
     let name = surface_types::as_str(id);
     // A source declaration may share a spelling, but never authorizes a native runtime path conversion.
     nominal(facts, name)?;
     if surface_types::info_for(id).kind == SurfaceTypeKind::Named {
-        return (!path.contains('<')).then(|| IncanType::Named(name.to_owned()));
+        return (!path.contains('<')).then(|| crate::symbols::ResolvedType::Named(name.to_owned()));
     }
     let (_, inner) = path.split_once('<')?;
     let inner = inner.strip_suffix('>')?;
@@ -134,9 +141,5 @@ fn project_path(path: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
     }
     let parser = crate::typechecker::TypeChecker::new();
     let argument = parser.resolved_type_from_rust_display(arguments[0]);
-    let argument = project_type(semantic_type_from_resolved(&argument), facts);
-    Some(IncanType::Generic {
-        base: name.to_owned(),
-        args: vec![argument],
-    })
+    Some(crate::symbols::ResolvedType::Generic(name.to_owned(), vec![argument]))
 }

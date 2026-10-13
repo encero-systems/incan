@@ -117,6 +117,7 @@ enum Scalar {
     FunctionItem(String, Vec<Scalar>),
     Closure(Vec<Scalar>),
     ClosureRef(Vec<Scalar>),
+    Future(Vec<Scalar>),
 }
 
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
@@ -176,6 +177,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::Future(outputs) => Scalar::Future(outputs.iter().map(scalar).collect()),
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorRef(left, right) => Scalar::ZipIteratorRef(tuple_leaf(left), tuple_leaf(right)),
@@ -383,6 +385,7 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
 /// Check the parameter-local convention and all nodes in one function.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
     span(&function.span)?;
+    validate_future_constructor(plan, function)?;
     if function.blocks.is_empty() || function.blocks[0].cleanup {
         return Err(invalid(
             function,
@@ -445,6 +448,64 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         }
         span(&block.terminator.span)?;
         terminator(plan, function, &block.terminator.kind, block.cleanup)?;
+    }
+    Ok(())
+}
+
+/// A boxing shim retains an exact parameter frame and a proven source coroutine or canonical native callee.
+fn validate_future_constructor(plan: &Plan, function: &Function) -> Result<(), PlanError> {
+    let Some(callee) = &function.future_callee else {
+        return Ok(());
+    };
+    let PlanType::Future(outputs) = &function.return_type else {
+        return Err(invalid(function, "unsupported future constructor return carrier"));
+    };
+    let [output] = outputs.as_slice() else {
+        return Err(invalid(function, "unsupported future constructor output arity"));
+    };
+    if function.is_async
+        || function.locals.len() != function.parameters.len() + 1
+        || function.blocks.len() != 1
+        || !function.blocks[0].statements.is_empty()
+        || !matches!(function.blocks[0].terminator.kind, TerminatorKind::Unreachable)
+    {
+        return Err(invalid(function, "unsupported future boxing constructor frame"));
+    }
+    match &callee.kind {
+        CalleeKind::Planned(name) => {
+            let target = plan
+                .functions
+                .iter()
+                .find(|target| target.name == *name)
+                .ok_or_else(|| invalid(function, "unsupported missing future source declaration"))?;
+            if !target.is_async
+                || target.return_type != *output
+                || target.parameters.len() != function.parameters.len()
+                || target
+                    .parameters
+                    .iter()
+                    .zip(&function.parameters)
+                    .any(|(target, parameter)| target.ty != parameter.ty)
+            {
+                return Err(invalid(
+                    function,
+                    "unsupported future source signature differs from its constructor",
+                ));
+            }
+        }
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
+            if path.split("::").count() < 2 || !path.split("::").all(identifier) {
+                return Err(invalid(function, "unsupported future native callee path"));
+            }
+            if let CalleeKind::Instantiated(_, arguments) = &callee.kind {
+                for argument in arguments {
+                    validate_model_type(plan, argument)?;
+                }
+            }
+        }
+        _ => {
+            return Err(invalid(function, "unsupported future constructor callee kind"));
+        }
     }
     Ok(())
 }
@@ -691,7 +752,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) | Scalar::ValidationError => {
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) | Scalar::ValidationError | Scalar::Future(_) => {
             true
         }
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
@@ -1052,6 +1113,9 @@ fn shared_reference(ty: &Scalar) -> bool {
 /// models, callables, and tuples of admitted types; formatting views stay internal. A function pointer's inputs also
 /// admit shared and exclusive model references retained by method decorators, as receiver frames do.
 fn source_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::Future(outputs) = ty {
+        return matches!(outputs.as_slice(), [output] if source_signature_type(output));
+    }
     if let Scalar::TupleMutRef(elements) = ty {
         return source_signature_type(&Scalar::Tuple(elements.clone()));
     }
@@ -1168,7 +1232,6 @@ fn callable_object_signature(signature: &[Scalar]) -> bool {
                         | Scalar::StringMutRef
                         | Scalar::ModelMutRef(_)
                         | Scalar::EnumMutRef(_)
-                        | Scalar::Model(_)
                         | Scalar::Enum(_)
                 )
         })
@@ -1605,6 +1668,41 @@ fn validate_generator_constructor(function: &Function, arguments: &[Operand]) ->
 /// Validate terminator values and every normal and unwinding successor.
 fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup: bool) -> Result<(), PlanError> {
     match value {
+        TerminatorKind::Await(future, destination, target, cancelled, action, drop_action) => {
+            if !function.is_async || cleanup {
+                return Err(invalid(function, "unsupported await outside a coroutine body"));
+            }
+            let future_type = place(plan, function, future)?;
+            match future_type {
+                Scalar::Future(outputs) => {
+                    let [output] = outputs.as_slice() else {
+                        return Err(invalid(function, "unsupported future output arity"));
+                    };
+                    require(
+                        function,
+                        place(plan, function, destination)?,
+                        output,
+                        "await destination",
+                    )?;
+                }
+                Scalar::Model(owner)
+                    if model(plan, owner)
+                        .is_some_and(|model| model.library_item == "incan_std_async::task::JoinHandle") =>
+                {
+                    // The SDK Future implementation supplies its exact join-result type; coroutine expansion checks it.
+                    place(plan, function, destination)?;
+                }
+                _ => {
+                    return Err(invalid(function, "unsupported await without an SDK future carrier"));
+                }
+            }
+            edge(function, *target, false)?;
+            edge(function, *cancelled, false)?;
+            unwind(function, action, false)?;
+            unwind(function, drop_action, false)
+        }
+        TerminatorKind::CoroutineDrop if function.is_async && !cleanup => Ok(()),
+        TerminatorKind::CoroutineDrop => Err(invalid(function, "unsupported coroutine drop outside a coroutine body")),
         TerminatorKind::Goto(target) => edge(function, *target, cleanup),
         TerminatorKind::SwitchBool(condition, false_target, true_target) => {
             require(
@@ -1756,6 +1854,21 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             for element in elements {
                 validate_model_type(plan, element)?;
             }
+        }
+        PlanType::Future(outputs) => {
+            let [output] = outputs.as_slice() else {
+                return Err(PlanError::Invalid {
+                    function: "future".into(),
+                    reason: "unsupported future output arity".into(),
+                });
+            };
+            if !source_signature_type(&scalar(output)) {
+                return Err(PlanError::Invalid {
+                    function: "future".into(),
+                    reason: "unsupported future output carrier".into(),
+                });
+            }
+            validate_model_type(plan, output)?;
         }
         PlanType::CallableArguments(inputs) => {
             let mut signature: Vec<_> = inputs.iter().map(scalar).collect();

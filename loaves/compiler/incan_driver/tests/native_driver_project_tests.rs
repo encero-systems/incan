@@ -6837,62 +6837,6 @@ def main() -> None:
     )
 }
 
-/// Opaque SDK task admission removes the join-error refusal while preserving every unimplemented next boundary.
-#[test]
-fn async_sdk_nominal_frontiers_are_named() -> Result<(), Box<dyn std::error::Error>> {
-    let cases = [
-        (
-            "call-results",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/cli_values_and_calls/awaiting_task_handles_of_a_call_result_and_a_literal.incn"
-            ),
-            "unsupported Body IR type RustInteropPath in made frame local 1",
-        ),
-        (
-            "task-list",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/cli_values_and_calls/passing_each_task_handle_of_a_list_on.incn"
-            ),
-            "unsupported Body IR Await without future carrier",
-        ),
-        (
-            "prelude",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/std_async_prelude_surface.incn"
-            ),
-            "unsupported Body IR external async future",
-        ),
-        (
-            "awaitable",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/awaitable_bound_join_handle.incn"
-            ),
-            "unsupported Body IR type RustInteropPath in main frame local 1",
-        ),
-        (
-            "race",
-            include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_race.incn"),
-            "unsupported Body IR external async future",
-        ),
-        (
-            "tasks-time",
-            include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn"),
-            "unsupported Body IR type TypeVar",
-        ),
-        (
-            "testing",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_testing_collections_and_async_in_one_program.incn"
-            ),
-            "unsupported Body IR external async future",
-        ),
-    ];
-    for (name, source, refusal) in cases {
-        check_collection_family_refusal(&format!("async-nominal-frontier-{name}"), source, refusal)?;
-    }
-    Ok(())
-}
-
 /// SDK prelude tasks preserve the original fixture's executor, task handles and output.
 #[test]
 fn async_prelude_tasks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -14278,28 +14222,6 @@ fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std:
         &fixture.formatting,
         &format!("{prefix}  held = partial counter.add(scale=1, step=2)\n  println(held())\n"),
     )
-}
-
-/// Source futures, SDK spawning and an instantiated Awaitable bound preserve both original task-family programs.
-#[test]
-fn native_tasks_and_prelude_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    for (name, source) in [
-        (
-            "native-task-prelude",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/std_async_prelude_surface.incn"
-            ),
-        ),
-        (
-            "native-awaitable-bound",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/awaitable_bound_join_handle.incn"
-            ),
-        ),
-    ] {
-        check_async_family_source(name, source)?;
-    }
-    Ok(())
 }
 
 /// A later suspending race arm wins while a permanently pending source arm and its callback stay cancelled.

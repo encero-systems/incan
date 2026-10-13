@@ -9,6 +9,15 @@ use rustc_middle::ty::{Ty, TyCtxt};
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::Future(arguments) => {
+            let [output] = arguments.as_slice() else {
+                return Err(PlanError::Unsupported {
+                    function: "future".into(),
+                    reason: "future output arity".into(),
+                });
+            };
+            enum_type(tcx, &crate::futures::alias_name(output))?
+        }
         PlanType::ZipIterator(left, right) => zip_type(tcx, left, right)?,
         PlanType::ZipIteratorRef(left, right) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)

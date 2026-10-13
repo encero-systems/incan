@@ -328,7 +328,16 @@ from lists import (
 )
 from assertions import lower_assertion
 from layout_types import collection_leaf
-from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
+from async_ import (
+    future_type,
+    validate_futures,
+    construct_future,
+    construct_boxed_future,
+    await_future,
+    async_entry,
+    evaluator_name,
+    is_future,
+)
 from defaults import (
     default_arguments,
     default_type,
@@ -476,6 +485,7 @@ def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
 
 pub def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
+    validate_callback_place(builder, value)?
     match union_projection(
         builder.nominals,
         builder.enums,
@@ -549,6 +559,10 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
             OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
             _ => return Ok(read_place(target, false, span))
     match place_type(builder.locals, target):
+        PlanType.Future(_output) =>
+            if fact != OwnershipFact.Move or target.projection != Projection.Whole:
+                return Err("unsupported Body IR future read without whole ownership transfer")
+            return Ok(read_place(target, true, span))
         PlanType.ClosureRef(_signature) =>
             match fact:
                 OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable-object ownership")
@@ -1164,7 +1178,7 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
                     return await_future(module, builder, future, output, span)
                 None => return Err("unsupported Body IR Await without destination")
         RustStatementKind.Race(destination=destination, arms=arms) =>
-            return lower_ready_race(module, builder, destination, arms, span)
+            return lower_native_race(module, builder, destination, arms, span)
         RustStatementKind.Yield(value=value) => return lower_yield(builder, value, span)
         RustStatementKind.Assert(kind=kind, message=message, may_panic=_panic) =>
             return lower_assertion(builder, kind, message, span)
@@ -1187,64 +1201,119 @@ def source_future_place(builder: Builder, awaited: &RustOperand, span: SourceSpa
         _ => return Err("unsupported Body IR Await constant")
 
 
-def lower_ready_race(
+def lower_native_race(
     module: &BodyIrModule,
     mut builder: Builder,
     destination: &Option[RustPlace],
     arms: list[RustRaceArm],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """
-    Preserve source-order ready ties, winner callbacks, and cancellation after the callback returns.
-
-    Every arm is lowered, including statically losing arms, so unsupported futures or callback statements still refuse.
-    The frontend already constructed every awaitable in source order before this statement.
-    """
-    target = ready_race_destination(builder, destination, span)?
+    """Run two owned native futures through the SDK's source-order race with planned winner callbacks."""
+    target = race_destination(builder, destination, span)?
     ty = place_type(builder.locals, target)
     if not numeric_carrier(ty) and ty != PlanType.Bool and ty != PlanType.Unit:
         return Err("unsupported Body IR Race owned result")
-    if len(arms) == 0:
-        return Err("unsupported Body IR Race without arms")
+    if len(arms) != 2:
+        return Err("unsupported Body IR native Race arm count")
     mut futures: list[Place] = []
+    mut inputs: list[PlanType] = []
+    mut callbacks: list[Operand] = []
     for arm in arms:
         futures.append(source_future_place(builder, arm.awaitable, span)?)
-    incoming = builder.owned
-    future_locals = [future.local for future in futures]
-    retained = [owner for owner in incoming if owner not in future_locals]
-    after = builder.new_block(span)
-    for index in range(len(arms)):
-        selected = builder.new_block(span)
-        next_arm = builder.new_block(span)
-        builder.finish(TerminatorKind.SwitchBool(literal(Constant.Bool(index == 0), span), next_arm, selected), span)
-        builder.current = selected
-        builder.owned = incoming
-        arm = arms[index]
-        binding = plan_place(int(arm.binding.index()) + 1 + builder.local_offset, span)
-        await_future(module, builder, futures[index], binding, span)?
-        lower_ready_race_callback(module, builder, arm.body)?
-        lower_local_assignment(module, builder, target, RustRvalue.Use(arm.result), span)?
-        # Legacy drops losing futures after the winning callback has produced the shared result.
-        for future in futures:
-            drop_owned(builder, future.local, span)
-        verify_branch_owners(true, builder.owned, retained)?
-        builder.finish(TerminatorKind.Goto(after), span)
-        builder.current = next_arm
-    builder.finish(TerminatorKind.Unreachable, span)
-    builder.current = after
-    builder.owned = retained
+        input = builder.locals[int(arm.binding.index()) + 1 + builder.local_offset].ty
+        inputs.append(input)
+        callbacks.append(race_callback(module, builder, arm, input, ty, span)?)
+    types = [inputs[0], inputs[1], ty, place_type(builder.locals, futures[0]), place_type(builder.locals, futures[1])]
+    parameters = [types[3], PlanType.FunctionPointer([inputs[0], ty]), types[4], PlanType.FunctionPointer(
+        [inputs[1], ty],
+    )]
+    future = temporary(builder, PlanType.Future([ty]), span)
+    construct_boxed_future(
+        builder,
+        CalleeKind.Instantiated("incan_native_runtime::race_pair", types),
+        parameters,
+        ty,
+        [read_place(futures[0], true, span), callbacks[0], read_place(futures[1], true, span), callbacks[1]],
+        future,
+        span,
+    )?
+    return await_future(module, builder, future, target, span)
+
+
+def race_callback(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    arm: &RustRaceArm,
+    input: PlanType,
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Lift an arm's explicit Body IR block; enclosing lexical values stay refused until captures are retained."""
+    name = f"__incan_race_callback_{builder.name}_{len(builder.synthesized)}"
+    mut lifted = lifted_frame(builder, name, [input], result, span)
+    binding = int(arm.binding.index()) + 2
+    for slot in range(len(lifted.scoped_locals)):
+        local = lifted.scoped_locals[slot][0]
+        scope = lifted.scoped_locals[slot][1]
+        if local != binding and not scope_within(lifted, scope, int(arm.body.scope.0)):
+            lifted.forbidden_reads.append(local)
+    bind_closure_input(lifted, binding, 1, input, input, span)?
+    lower_race_callback(module, lifted, arm.body)?
+    value = return_operand(lifted, arm.result, span)?
+    finish_return(lifted, value, span)?
+    for nested in lifted.synthesized:
+        synthesize(builder, nested)
+    adopt_lifted(builder, lifted)
+    synthesize(
+        builder,
+        Function(
+            name=name,
+            parameters=[Parameter(name="value", ty=input, span=span)],
+            return_type=result,
+            locals=lifted.locals,
+            blocks=lifted.blocks,
+            span=span,
+        ),
+    )
+    return Ok(step_pointer(builder, name, [input, result], span))
+
+
+def scope_within(builder: Builder, scope: int, root: int) -> bool:
+    """Use retained lexical ancestry to distinguish callback locals from unretained enclosing captures."""
+    mut current = scope
+    for _ in range(len(builder.scope_parents) + 1):
+        if current == root:
+            return true
+        mut parent = -1
+        for edge in builder.scope_parents:
+            if edge[0] == current:
+                parent = edge[1]
+        if parent < 0:
+            return false
+        current = parent
+    return false
+
+
+def validate_callback_place(builder: Builder, value: &RustPlace) -> Result[None, str]:
+    """Reject a lexical capture before any source read or write can enter an uninitialized callback frame."""
+    match value.local_id():
+        Some(local) =>
+            index = int(local.index()) + 1 + builder.local_offset
+            if index in builder.forbidden_reads:
+                return Err("unsupported Body IR Race callback capture")
+        None => pass
     return Ok(None)
 
 
-def ready_race_destination(builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
+def race_destination(builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """Require the frontend's shared race result slot before building any winner branch."""
     match destination:
         Some(place) => return scalar_place(builder, place, span)
         None => return Err("unsupported Body IR Race without destination")
 
 
-def lower_ready_race_callback(module: &BodyIrModule, mut builder: Builder, body: &RustBlock) -> Result[None, str]:
-    """Keep callback control transfers out of the enclosing body until the plan retains a callback boundary."""
+def lower_race_callback(module: &BodyIrModule, mut builder: Builder, body: &RustBlock) -> Result[None, str]:
+    """Lower straight-line winner callbacks; unretained control transfers and suspension remain refused."""
     for statement in body.stmts:
         match statement.kind:
             RustStatementKind.If(cond=_condition, then_block=_then, else_block=_else) =>
@@ -1260,13 +1329,13 @@ def lower_ready_race_callback(module: &BodyIrModule, mut builder: Builder, body:
             RustStatementKind.Await(destination=_destination, awaited=_awaited) =>
                 return Err("unsupported Body IR Race callback Await")
             RustStatementKind.Assign(place=_place, rvalue=rvalue) =>
-                validate_ready_race_assignment(rvalue)?
+                validate_race_assignment(rvalue)?
                 lower_statement(module, builder, statement)?
             _ => lower_statement(module, builder, statement)?
     return Ok(None)
 
 
-def validate_ready_race_assignment(value: &RustRvalue) -> Result[None, str]:
+def validate_race_assignment(value: &RustRvalue) -> Result[None, str]:
     """Require an assignment without nested arm blocks that could transfer control out of the callback."""
     match value:
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Race callback Match")
@@ -1602,7 +1671,7 @@ def lower_local_assignment(
         operation = negation_as_subtraction(operation, span)
         if is_checked_int_operation(operation):
             return lower_checked_int_assignment(builder, target, operation, span)
-    if is_nominal_type(place_type(builder.locals, target)):
+    if is_nominal_type(place_type(builder.locals, target)) or is_future(place_type(builder.locals, target)):
         replace_owned_destination(builder, target, operation, span)
         return Ok(None)
     builder.emit(plan_assign(target, operation, span))
@@ -3136,7 +3205,9 @@ pub def lower_callable_result(
             builder.locals[output.local].ty = result_type
             owned_closure = true
         _ => pass
-    if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type) or owned_closure:
+    if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type) or owned_closure or is_future(
+        result_type,
+    ):
         result = temporary(builder, result_type, span)
         terminate_call(builder, callee, operands, result, span)
         builder.owned.append(result.local)
@@ -3374,6 +3445,15 @@ def lower_delegated_call(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib delegation native identity")
         Some(path) =>
+            match result:
+                PlanType.Future(outputs) =>
+                    if len(outputs) != 1:
+                        return Err("unsupported Body IR SDK future output arity")
+                    mut callee = CalleeKind.External(path)
+                    if len(type_arguments) != 0:
+                        callee = CalleeKind.Instantiated(path, type_arguments)
+                    return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
+                _ => pass
             if len(type_arguments) == 0:
                 external_call(builder, path, parameters, result, operands, output, span)
                 return Ok(None)
@@ -5095,8 +5175,9 @@ pub def lower_program(
             functions.append(function)
             append_synthesized(functions, synthesized)?
             if body.is_async and function_name(context, body) == "main":
-                entry_function, entry_runtime = async_entry(function)
+                entry_function, entry_constructor, entry_runtime = async_entry(function)
                 functions.append(entry_function)
+                functions.append(entry_constructor)
                 merge_externals(externals, [entry_runtime])
             append_generator_constructor(functions, context, body, sources[index], files[index], intrinsics)?
             merge_externals(externals, runtime)
@@ -5115,11 +5196,10 @@ pub def lower_program(
         instances,
     )?
     _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
-    # Instances may add intrinsic declarations, so the intrinsic and future declarations join the plan last.
+    # Instances may add intrinsic declarations; validate coroutine captures after that set is complete.
     for declaration in intrinsics:
         enums.append(declaration)
-    for declaration in future_declarations(context, files[entry], intrinsics)?:
-        enums.append(declaration)
+    validate_futures(context, intrinsics)?
     return Ok(
         Plan(
             enums=enums,
@@ -5318,8 +5398,9 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
         functions.append(function)
         append_synthesized(functions, synthesized)?
         if body.is_async and function_name(module, body) == "main":
-            entry_function, entry_runtime = async_entry(function)
+            entry_function, entry_constructor, entry_runtime = async_entry(function)
             functions.append(entry_function)
+            functions.append(entry_constructor)
             merge_externals(externals, [entry_runtime])
         append_generator_constructor(functions, module, body, source, file, intrinsics)?
         merge_externals(externals, runtime)
@@ -5337,11 +5418,10 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
         instances,
     )?
     _ = lower_instances(module, instances, unions, [source], [file], owners, functions, externals, intrinsics)?
-    # Instances may add intrinsic declarations, so the intrinsic and future declarations join the plan last.
+    # Instances may add intrinsic declarations; validate coroutine captures after that set is complete.
     for declaration in intrinsics:
         enums.append(declaration)
-    for declaration in future_declarations(module, file, intrinsics)?:
-        enums.append(declaration)
+    validate_futures(module, intrinsics)?
     return Ok(
         Plan(
             enums=enums,
@@ -5610,7 +5690,9 @@ def lower_function(
         initialized = temporary(builder, PlanType.Unit, span)
         external_call(builder, "incan_native_runtime::initialize_panic_hook", [], PlanType.Unit, [], initialized, span)
     for index in range(len(parameters)):
-        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty):
+        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or is_future(
+            parameters[index].ty,
+        ):
             builder.owned.append(index + 1)
     for index in range(len(parameters)):
         validate_exact_float(builder, plan_place(index + 1, span), span)
@@ -5632,6 +5714,7 @@ def lower_function(
         locals=builder.locals,
         blocks=builder.blocks,
         span=span,
+        is_async=body.is_async,
     )
     if body.is_generator():
         match generator_shape(declared_type):
@@ -5901,6 +5984,7 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                     return Ok(read_place(text_place, true, span))
                 _ => return scalar_operand(builder, value, span)
         RustOperand.Place(read) =>
+            validate_callback_place(builder, read.place)?
             match read.place.global():
                 Some(global) => return read_static(builder, read.place, global, read.fact, span)
                 None => pass

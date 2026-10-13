@@ -84,7 +84,11 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
     });
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.
-        Some(function) if crate::closures::constructor(function).is_some() => {
+        Some(function)
+            if crate::closures::constructor(function).is_some()
+                || function.is_async
+                || function.future_callee.is_some() =>
+        {
             (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def)
         }
         Some(function) => match if crate::captured_generators::producer(function).is_some() {
@@ -97,6 +101,19 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
         },
         None => {
             let parent = tcx.parent(def.to_def_id());
+            let coroutine = plan.functions.iter().find(|function| {
+                function.is_async
+                    && tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
+                    && tcx
+                        .opt_item_name(parent)
+                        .is_some_and(|name| name.as_str() == function.name)
+            });
+            if let Some(function) = coroutine {
+                return match crate::coroutines::body(tcx, def, function) {
+                    Ok(body) => tcx.alloc_steal_mir(body),
+                    Err(error) => refuse(tcx, error),
+                };
+            }
             let constructor = plan.functions.iter().find(|function| {
                 tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
                     && tcx
@@ -148,6 +165,9 @@ impl rustc_driver::Callbacks for Callbacks {
         krate: &mut ast::Crate,
     ) -> rustc_driver::Compilation {
         let sources = Sources::new(compiler.sess.source_map());
+        for output in crate::futures::outputs(&self.plan) {
+            krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
+        }
         for value in &self.plan.enums {
             let span = match sources.span(&value.span) {
                 Ok(span) => span,
@@ -216,6 +236,19 @@ impl rustc_driver::Callbacks for Callbacks {
             })
         }) {
             roots.insert("incan_std_core");
+        }
+        for function in &self.plan.functions {
+            if let Some(callee) = &function.future_callee {
+                let path = match &callee.kind {
+                    crate::plan::CalleeKind::External(path) | crate::plan::CalleeKind::Instantiated(path, _) => {
+                        Some(path)
+                    }
+                    _ => None,
+                };
+                if let Some(root) = path.and_then(|path| path.split("::").next()) {
+                    roots.insert(root);
+                }
+            }
         }
         for root in roots {
             krate

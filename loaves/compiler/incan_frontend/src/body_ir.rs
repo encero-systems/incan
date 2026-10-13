@@ -1886,7 +1886,7 @@ mod library_calls;
 mod library_defaults;
 mod library_nominals;
 mod library_opaque_returns;
-mod runtime_nominals;
+pub(crate) mod runtime_nominals;
 mod stdlib_delegations;
 
 mod operators;

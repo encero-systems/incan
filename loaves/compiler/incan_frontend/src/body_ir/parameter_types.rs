@@ -240,6 +240,7 @@ fn ambiguous_runtime_name(name: &str, facts: &TypeCheckInfo) -> bool {
 pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> IncanType {
     match ty {
         IncanType::Named(name) if parameters.contains(&name) => IncanType::TypeVar(name),
+        IncanType::RustInteropPath(name) if parameters.contains(&name) => IncanType::TypeVar(name),
         IncanType::Generic { base, args } => IncanType::Generic {
             base,
             args: args

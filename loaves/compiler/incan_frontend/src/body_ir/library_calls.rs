@@ -60,7 +60,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             let (owner, receiver, params, result, names) = method_signature(&published, &path, cache)?;
             item.push(owner.clone());
             item.push(name.clone());
-            let ordinary = owned_parameters(&params)?;
+            let ordinary = owned_parameters(&params, &names)?;
             let defaults = library_defaults::method_defaults(&path, &owner, name, receiver.is_some(), &ordinary, cache);
             let mut parameters = receiver.into_iter().collect::<Vec<_>>();
             parameters.extend(ordinary);
@@ -81,25 +81,26 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
                 },
                 None => (cache.overload_function_info(&published)?, false),
             };
-            if function.is_async {
-                return None;
-            }
             // A free function compiles under its full canonical identity, which the consumer's checked identity is:
             // an overload's names its own declaration span, so each overload is its own crate item. A generic one
             // keeps its type parameters, which each call instantiates with its checked type arguments.
             item.push(encode_incan_symbol_identity(&published));
-            let parameters = owned_parameters(&function.params)?;
+            let parameters = owned_parameters(&function.params, &function.type_params)?;
             let defaults = if single {
                 library_defaults::function_defaults(&path, name, &parameters, cache)
             } else {
                 Vec::new()
             };
-            (
-                parameters,
-                semantic_type_from_resolved(&function.return_type),
-                function.type_params.clone(),
-                defaults,
-            )
+            let output = sdk_type(&function.return_type, &function.type_params);
+            let output = if function.is_async {
+                IncanType::Generic {
+                    base: "Awaitable".into(),
+                    args: vec![output],
+                }
+            } else {
+                output
+            };
+            (parameters, output, function.type_params.clone(), defaults)
         }
     };
     Some(bir::StdlibDelegation {
@@ -334,12 +335,24 @@ fn trait_method_signature(
     None
 }
 
-/// Keep only ordinary parameters, each passed owned as the SDK crate declares it.
-fn owned_parameters(params: &[CallableParam]) -> Option<Vec<IncanType>> {
+/// Keep only ordinary parameters, each passed owned as the SDK declares it, with native carriers and active binders.
+fn owned_parameters(params: &[CallableParam], binders: &[String]) -> Option<Vec<IncanType>> {
     params
         .iter()
-        .map(|param| (param.kind == ast::ParamKind::Normal).then(|| semantic_type_from_resolved(&param.ty)))
+        .map(|param| {
+            let ty = sdk_type(&param.ty, binders);
+            match param.kind {
+                ast::ParamKind::Normal => Some(ty),
+                _ => None,
+            }
+        })
         .collect()
+}
+
+/// Retain native SDK surface carriers and declaration-owned binders without consulting consumer source identities.
+fn sdk_type(ty: &crate::symbols::ResolvedType, binders: &[String]) -> IncanType {
+    let ty = super::runtime_nominals::project_type(semantic_type_from_resolved(ty), &TypeCheckInfo::default());
+    super::parameter_types::retain_parameter_type(ty, binders)
 }
 
 /// Name `Self` in a method result by its owner, as the compiled item's signature does.

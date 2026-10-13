@@ -16,7 +16,7 @@ fn block(value: i64) -> Result<mir::BasicBlock, PlanError> {
 }
 
 /// Preserve each explicit unwind choice; never infer owned-value cleanup in the adapter.
-fn unwind(value: &Unwind) -> Result<mir::UnwindAction, PlanError> {
+pub(crate) fn unwind(value: &Unwind) -> Result<mir::UnwindAction, PlanError> {
     Ok(match value {
         Unwind::Continue => mir::UnwindAction::Continue,
         Unwind::Cleanup(target) => mir::UnwindAction::Cleanup(block(*target)?),
@@ -76,6 +76,9 @@ pub fn terminator<'tcx>(
             unwind: unwind(action)?,
         },
         TerminatorKind::Return => mir::TerminatorKind::Return,
+        // Coroutine expansion supplies the poll loop after the frame receives its native resume arguments.
+        TerminatorKind::Await(..) => mir::TerminatorKind::Unreachable,
+        TerminatorKind::CoroutineDrop => mir::TerminatorKind::CoroutineDrop,
         TerminatorKind::Unreachable => mir::TerminatorKind::Unreachable,
         TerminatorKind::UnwindResume => mir::TerminatorKind::UnwindResume,
     };

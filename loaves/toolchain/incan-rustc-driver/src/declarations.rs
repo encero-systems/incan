@@ -56,6 +56,10 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         return ty;
     }
     let kind = match kind {
+        PlanType::Future(arguments) => {
+            let name = arguments.first().map(crate::futures::alias_name).unwrap_or_default();
+            ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
+        }
         PlanType::CallableArguments(inputs) => ast::TyKind::Tup(inputs.iter().map(|input| ty(input, span)).collect()),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
@@ -447,7 +451,14 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
         .collect();
     let output = ast::FnRetTy::Ty(ty(&function.return_type, span));
     let signature = ast::FnSig {
-        header: ast::FnHeader::default(),
+        header: ast::FnHeader {
+            coroutine_kind: function.is_async.then_some(ast::CoroutineKind::Async {
+                span,
+                closure_id: ast::DUMMY_NODE_ID,
+                return_impl_trait_id: ast::DUMMY_NODE_ID,
+            }),
+            ..ast::FnHeader::default()
+        },
         decl: Box::new(ast::FnDecl { inputs, output }),
         span,
     };
@@ -462,6 +473,7 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             body: Some(
                 crate::captured_generators::declaration_body(function, span)
                     .or_else(|| crate::closures::declaration_body(function, span))
+                    .or_else(|| crate::futures::declaration_body(function, span))
                     .unwrap_or_else(|| placeholder(span)),
             ),
             eii_impls: ThinVec::new(),
