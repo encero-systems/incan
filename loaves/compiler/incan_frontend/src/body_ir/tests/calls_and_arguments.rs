@@ -2845,3 +2845,37 @@ fn independent_isinstance_retains_residual_newtype() -> Result<(), Box<dyn std::
     );
     Ok(())
 }
+
+/// Non-returning branches and intervening calls do not grant a narrowed residual type to a later test.
+#[test]
+fn independent_isinstance_invalidates_unproven_paths() -> Result<(), Box<dyn std::error::Error>> {
+    for middle in [
+        "  if isinstance(value, str):\n    pass\n",
+        "  if isinstance(value, str):\n    return LocalPath(value)\n  observe()\n",
+    ] {
+        let source = format!(
+            "@derive(Clone)\ntype LocalPath = newtype str\n\ndef observe() -> None:\n  pass\n\ndef normalize(value: LocalPath | str) -> LocalPath:\n{middle}  if isinstance(value, LocalPath):\n    return value\n  return LocalPath(\"fallback\")\n"
+        );
+        let module = build(&source, &["m", "residual_invalidations"])?;
+        let body = body_named(&module, "normalize")?;
+        let tests: Vec<_> = body
+            .block
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::IsInstance { value_ty, .. },
+                    ..
+                } => Some(value_ty),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tests.len(), 2);
+        assert!(
+            matches!(tests[1], IncanType::Generic { base, .. } if base == "Union"),
+            "{}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}

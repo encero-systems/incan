@@ -57,6 +57,24 @@ fn callable_bound_parameter_retains_closure_representation() -> Result<(), Box<d
     Ok(())
 }
 
+/// A same-spelled application callable hook does not grant the standard callable object's storage contract.
+#[test]
+fn application_callable_hook_keeps_nominal_representation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Invoker:\n  def __call__(self, value: int) -> str: ...\n\ndef apply[Mapper with Invoker](mapper: Mapper, value: int) -> str:\n  return mapper(value)\n";
+    let module = build(source, &["m", "application_callable"])?;
+    let body = body_named(&module, "apply")?;
+    let facts = body
+        .callable_representation
+        .as_ref()
+        .ok_or("missing callable representation")?;
+    assert!(
+        facts.closure_holding_parameters.is_empty(),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Preserve the checker's `Fn` representation choices separately from the function-type call surface.
 #[test]
 fn callable_signatures_retain_closure_holding_parameters_and_returns() -> Result<(), Box<dyn std::error::Error>> {
