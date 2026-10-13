@@ -1197,7 +1197,9 @@ fn run_scheduled_execution_units(
     emit_progress: bool,
     output: TestOutputSink,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
-    if jobs <= 1 {
+    // A single compilation batch has no parallel work. Keep it on the owner thread, avoiding a worker allocation
+    // and its smaller default stack when compiling a large imported Incan module graph.
+    if jobs <= 1 || units.len() <= 1 {
         let mut completed = Vec::new();
         for unit in &units {
             let results = run_execution_unit(

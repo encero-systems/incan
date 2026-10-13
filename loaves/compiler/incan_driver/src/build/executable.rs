@@ -24,12 +24,21 @@ use incan_provider::FeatureSelection;
 #[derive(Default)]
 pub struct ExecutableBuildOwner {
     authority: ProjectSourceAuthorityDigester,
+    /// Exact target decisions retained with the existing input observer; never a second dependency resolver.
+    target_predicates: Option<RetainedTargetPredicates>,
     native_plans: std::collections::BTreeMap<PathBuf, super::native_loaf_plan::RetainedNativeLoafPlan>,
     /// Native test names retained after canonical executable admission; passing results are never retained.
     native_test_collections:
         std::collections::BTreeMap<PathBuf, std::sync::Arc<oven_rustc::native_test::OvenNativeTestCollection>>,
     /// Successfully published output receipt, reconciled independently of dependency selection.
     native_receipt: Option<RetainedOutputReceipt>,
+}
+
+/// One pure policy answer guarded by its full request and original compiler/engine file observations.
+struct RetainedTargetPredicates {
+    key: (String, String, String, Vec<String>),
+    inputs: ModelInputs,
+    decisions: Vec<bool>,
 }
 
 /// One canonical publication retained by the serial build owner under the existing metadata observations.
@@ -151,6 +160,63 @@ pub fn build_executable(
 }
 
 impl ExecutableBuildOwner {
+    /// Evaluate target conditions once per exact declaration, target, compiler and policy generation.
+    /// Unchanged requests retain the complete original cfg answer. Changed or unsupported observations recompute;
+    /// failures discard the prior answer, and no conditional requests need no engine or compiler probe.
+    pub fn target_predicates(
+        &mut self,
+        declaration: &str,
+        rustc: &Path,
+        target: &str,
+        conditions: &[String],
+    ) -> CliResult<Vec<bool>> {
+        if conditions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (engine, engine_digest) = super::native_runtime_inputs::bound_policy_engine()?;
+        let compiler = rustc
+            .canonicalize()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let key = (
+            declaration.to_owned(),
+            target.to_owned(),
+            format!("{}:{engine_digest}", compiler.display()),
+            conditions.to_vec(),
+        );
+        if let Some(retained) = &self.target_predicates
+            && retained.key == key
+            && retained.inputs.supports_retention()
+            && retained.inputs.current()
+        {
+            tracing::trace!(target: "incan::invocation", decision="retained_target_predicates", cfg_probes=0_u64, policy_exchanges=0_u64);
+            return Ok(retained.decisions.clone());
+        }
+        self.target_predicates = None;
+        let mut inputs = ModelInputs::default();
+        inputs.observe(&compiler);
+        inputs.observe(&engine);
+        // Bind verification after observation too, so a replacement between initial verification and observation
+        // cannot become the first retained generation.
+        let _ = super::native_runtime_inputs::bound_policy_engine()?;
+        let toolchain =
+            oven_rustc::rustc::rustc_identity(&compiler).map_err(|error| CliError::failure(error.to_string()))?;
+        let cfg = oven_rustc::rustc::rustc_cfg_snapshot(&compiler, Some(target))
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let decisions =
+            super::native_runtime_inputs::target_predicates(&engine, declaration, target, &toolchain, cfg, conditions)?;
+        if !inputs.current() {
+            return Err(CliError::failure("target policy inputs changed during evaluation"));
+        }
+        if inputs.supports_retention() {
+            self.target_predicates = Some(RetainedTargetPredicates {
+                key,
+                inputs,
+                decisions: decisions.clone(),
+            });
+        }
+        Ok(decisions)
+    }
+
     /// Run metadata-only checking through this serial owner using the single canonical driver pipeline.
     /// The request returns diagnostics and warning output, never a native artifact or execution permission.
     pub fn check(&mut self, request: &super::check::CheckRequest) -> CliResult<super::check::CheckOutput> {

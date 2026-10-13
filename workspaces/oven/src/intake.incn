@@ -1,5 +1,8 @@
 """Read local Loaf intent without selecting Rust versions or authorizing compilation."""
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from std import toml
 from std.toml import TomlValue, TomlKind
 from std.fs import Path
