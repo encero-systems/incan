@@ -4,14 +4,14 @@
 [incan]
 format = 2
 incan-version = "0.6.0-dev.6"
-deps-fingerprint = "sha256:8079323ba7feedfeb67048cd00a03d60bda6b587e999f13cf219d539ccf738b0"
+deps-fingerprint = "sha256:f3d7ca06e6adbfe9b2d5e0e5d8adc970bc915d41e9ca6cbf328c5c5b7938a25e"
 cargo-features = []
 cargo-no-default-features = false
 cargo-all-features = false
 
 [semantic.sdk]
 identity = "incan@0.6.0-dev.6"
-inventory_digest = "sha256:b3c88f53e155f9802189a9aebb3554c2ee8653378a6b446b4018186f61d1b08f"
+inventory_digest = "sha256:0d2f2a8fa477df456d05fcf87c501b799707d56395b2a4c4ebd9a034bdee9b45"
 profile = "default"
 
 [[semantic.sdk.components]]
@@ -74,7 +74,7 @@ required_sdk_components = []
 [semantic.packages.dependency_features]
 
 [[semantic.providers]]
-identity = "incan_stdlib_async@0.5.0#sha256:246f5f47b1eb8ef9674dc40da3fe1b56f78338ada11c166e437478afb83be957[]"
+identity = "incan_stdlib_async@0.5.0#sha256:42bf58990b5ee3b0a4395d838f03c084866ec9b6fa8d9388a3ddaa5c7ce05f01[]"
 participation = "enabled"
 namespace_claims = [["std", "async"], ["std", "async", "channel"], ["std", "async", "race"], ["std", "async", "sync"], ["std", "async", "task"], ["std", "async", "time"]]
 used_modules = []
@@ -82,7 +82,7 @@ implementation_facets = []
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_codecs@0.5.0#sha256:56e8a2c4d390a34e1aad1062e88e15040d6880cce9e1e3e749d5dda677741e6e[]"
+identity = "incan_stdlib_codecs@0.5.0#sha256:fed887cd6146964be97e2cbf15576bd98952cf3a225d9c384d52c8d296635f3e[]"
 participation = "used"
 namespace_claims = [["std", "checksum"], ["std", "encoding"], ["std", "encoding", "_shared"], ["std", "encoding", "base32"], ["std", "encoding", "base58"], ["std", "encoding", "base64"], ["std", "encoding", "base85"], ["std", "encoding", "bech32"], ["std", "encoding", "hex"]]
 used_modules = [["std", "encoding", "hex"]]
@@ -90,7 +90,7 @@ implementation_facets = ["rust_encoding"]
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_compression@0.5.0#sha256:a1744dcb6768a86f8a6faa352029d836bdb2020c1119fa6cf59234cc5a5b6ba4[]"
+identity = "incan_stdlib_compression@0.5.0#sha256:c6fc17ea79d847d220605053e8850a9c344a4235618bf43e1a38b0bcb63a78a3[]"
 participation = "enabled"
 namespace_claims = [["std", "compression"], ["std", "compression", "_auto"], ["std", "compression", "_core"], ["std", "compression", "bz2"], ["std", "compression", "deflate"], ["std", "compression", "gzip"], ["std", "compression", "lzma"], ["std", "compression", "snappy"], ["std", "compression", "snappy", "raw"], ["std", "compression", "zlib"], ["std", "compression", "zstd"]]
 used_modules = []
@@ -98,7 +98,7 @@ implementation_facets = []
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_core@0.6.0-dev.6#sha256:3c86bb4300c63c096d4d442f9d8e3e5857c603cb9c562832c12c81c304e010d1[]"
+identity = "incan_stdlib_core@0.6.0-dev.6#sha256:7ea2ff4420be73be71afd41b4f832c5882675cacd3eb5bd12dfa010e1b39b09d[]"
 participation = "used"
 namespace_claims = [["std", "derives", "collection"], ["std", "derives", "comparison"], ["std", "derives", "copying"], ["std", "derives", "string"], ["std", "features"], ["std", "prelude"], ["std", "reflection"], ["std", "registry"], ["std", "result"], ["std", "runtime"], ["std", "runtime", "host"], ["std", "runtime", "host", "clock"], ["std", "runtime", "host", "env"], ["std", "runtime", "host", "fs"], ["std", "runtime", "host", "http"], ["std", "runtime", "host", "model"], ["std", "runtime", "host", "process"], ["std", "runtime", "host", "tool"], ["std", "this"], ["std", "traits"], ["std", "traits", "callable"], ["std", "traits", "convert"], ["std", "traits", "error"], ["std", "traits", "indexing"], ["std", "traits", "ops"]]
 used_modules = [["std", "prelude"]]
@@ -106,7 +106,7 @@ implementation_facets = []
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_data@0.5.0#sha256:e5421968ecb861d44761f015d28ee21de490ffeabc407cdee40310d794403084[]"
+identity = "incan_stdlib_data@0.5.0#sha256:b80883260ebaddae7f1d1736028f26ebec8ec44389cc7831105f7e433cf2e953[]"
 participation = "used"
 namespace_claims = [["std", "collections"], ["std", "datetime"], ["std", "datetime", "civil"], ["std", "datetime", "civil", "intervals"], ["std", "datetime", "civil", "naive"], ["std", "datetime", "civil", "offset"], ["std", "datetime", "error"], ["std", "datetime", "runtime"], ["std", "graph"], ["std", "hash"], ["std", "hash", "_core"], ["std", "hash", "_hmac"], ["std", "hash", "_streaming"], ["std", "json"], ["std", "math"], ["std", "regex"], ["std", "regex", "_core"], ["std", "regex", "_replacement"], ["std", "regex", "types"], ["std", "serde"], ["std", "serde", "json"], ["std", "toml"], ["std", "uuid"]]
 used_modules = [["std", "collections"], ["std", "hash"], ["std", "json"]]
@@ -114,7 +114,7 @@ implementation_facets = ["rust_collections", "rust_hash", "rust_json"]
 backend_requirements = ["cargo-dependency:blake2", "cargo-dependency:blake3", "cargo-dependency:hmac", "cargo-dependency:incan_std_data", "cargo-dependency:md5", "cargo-dependency:serde", "cargo-dependency:sha1", "cargo-dependency:sha2", "cargo-dependency:sha3", "cargo-dependency:xxhash_rust"]
 
 [[semantic.providers]]
-identity = "incan_stdlib_interop@0.5.0#sha256:26cf19ff46bfc6023c5f876e279e9ecb8219c6141da432df096c38879a6fdc6b[]"
+identity = "incan_stdlib_interop@0.5.0#sha256:0d4af3fa385cbc3a4010bc36c1a06aae126c9c15c979d3859c11e5dea5f28c3c[]"
 participation = "enabled"
 namespace_claims = [["std", "interop"]]
 used_modules = []
@@ -122,7 +122,7 @@ implementation_facets = []
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_observability@0.5.0#sha256:9ce6a4ebe9fb0f79dbf7202964a90788cf71d295add0adb75ac9a6f48999ed22[]"
+identity = "incan_stdlib_observability@0.5.0#sha256:85b666e885f424b0a4a8637fd02270dde1e5b6597dd6bfff100108aca1aa653a[]"
 participation = "enabled"
 namespace_claims = [["std", "logging"], ["std", "telemetry"], ["std", "telemetry", "core"]]
 used_modules = []
@@ -130,7 +130,7 @@ implementation_facets = []
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_system@0.5.0#sha256:606fdd5972fa47fd2188de7e11659ae5eb749d0c0ec86e1f9f619992e44d237e[]"
+identity = "incan_stdlib_system@0.5.0#sha256:128f68c0cf13f5f07c40ddb9114486bfffa79d8f6c684970f19b5b459bb667fe[]"
 participation = "used"
 namespace_claims = [["std", "environ"], ["std", "fs"], ["std", "fs", "file"], ["std", "fs", "glob"], ["std", "fs", "locking"], ["std", "fs", "metadata"], ["std", "fs", "path"], ["std", "io"], ["std", "tempfile"]]
 used_modules = [["std", "fs"]]
@@ -138,7 +138,7 @@ implementation_facets = ["rust_fs"]
 backend_requirements = ["cargo-dependency:encoding_rs", "cargo-dependency:rustix"]
 
 [[semantic.providers]]
-identity = "incan_stdlib_testing@0.5.0#sha256:81db4b3170e0a820380fde87e94bdb28ac1fe3deb15ec1ad7041e99275dd5416[]"
+identity = "incan_stdlib_testing@0.5.0#sha256:e45fc02ef3b30ff10958edf2a940686861b21785e83990781bbdc1a5a3cdf9e3[]"
 participation = "enabled"
 namespace_claims = [["std", "testing"]]
 used_modules = []
@@ -146,7 +146,7 @@ implementation_facets = []
 backend_requirements = []
 
 [[semantic.providers]]
-identity = "incan_stdlib_web@0.5.0#sha256:5fca6b261c1c94dcf23d2a9750d67d5e1bf4da0aecfe0439cb350768f83deae4[]"
+identity = "incan_stdlib_web@0.5.0#sha256:92d9602e88c79a456b48d9f9e55e244b204fb6efb76d4da700552d4741050d3d[]"
 participation = "enabled"
 namespace_claims = [["std", "web"], ["std", "web", "app"], ["std", "web", "macros"], ["std", "web", "request"], ["std", "web", "response"], ["std", "web", "routing"]]
 used_modules = []
