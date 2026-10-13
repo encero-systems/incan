@@ -31,6 +31,7 @@ use std::collections::{HashMap, HashSet};
 use super::TypeChecker;
 
 mod args;
+mod body_ir_factories;
 mod body_ir_generics;
 mod builtins;
 mod constructors;

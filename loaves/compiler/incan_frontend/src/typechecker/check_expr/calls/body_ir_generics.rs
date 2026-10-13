@@ -272,7 +272,11 @@ impl TypeChecker {
 }
 
 /// Normalize checked tuple aliases and only the callee's declared named binders for structural unification.
-fn normalized(ty: &ResolvedType, binders: &[String], facts: &crate::typechecker::TypeCheckInfo) -> ResolvedType {
+pub(super) fn normalized(
+    ty: &ResolvedType,
+    binders: &[String],
+    facts: &crate::typechecker::TypeCheckInfo,
+) -> ResolvedType {
     match ty {
         ResolvedType::Named(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
         ResolvedType::RustPath(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
@@ -309,7 +313,7 @@ fn normalized(ty: &ResolvedType, binders: &[String], facts: &crate::typechecker:
 }
 
 /// A native fallback requires every structural leaf to be fixed; unresolved or caller-open types stay on the old path.
-fn concrete(ty: &ResolvedType) -> bool {
+pub(super) fn concrete(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::Unknown | ResolvedType::CallSiteInfer | ResolvedType::TypeVar(_) => false,
         ResolvedType::Generic(_, elements) | ResolvedType::Tuple(elements) => elements.iter().all(concrete),
