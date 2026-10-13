@@ -21,6 +21,12 @@ def main() -> None:
     task = launch(work)
 "#;
     let module = build(source, &["m", "blocking_callback"])?;
+    assert!(
+        module
+            .nominal_declarations
+            .iter()
+            .any(|declaration| declaration.name == "TaskJoinError")
+    );
     let body = body_named(&module, "main")?;
     let task = body
         .locals
@@ -53,6 +59,13 @@ def describe(value: int) -> str:
 def main() -> None:
     packaged = package(work(), describe)
 "#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    assert!(checker.type_info().calls.inferred_call_result_types.values().any(|ty| matches!(ty, crate::symbols::ResolvedType::Generic(name, outputs) if name == "RaceArm" && outputs == &[crate::symbols::ResolvedType::Str])));
     let module = build(source, &["m", "race_callback"])?;
     let body = body_named(&module, "main")?;
     let arm = body
