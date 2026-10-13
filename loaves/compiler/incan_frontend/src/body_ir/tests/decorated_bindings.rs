@@ -330,3 +330,24 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// A factory's nested closure signature retains its declared binder for later instance substitution.
+#[test]
+fn generic_factory_closure_keeps_parameter_placeholders() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/decorator_factory_on_function_and_method.incn"
+    );
+    let module = build(source, &["m", "factory_closure_parameters"])?;
+    let factory = body_named(&module, "preserve")?;
+    let signature = factory
+        .locals
+        .iter()
+        .find_map(|local| match &local.ty {
+            IncanType::Function { params, return_type } => Some((params, return_type)),
+            _ => None,
+        })
+        .ok_or("missing factory closure signature")?;
+    assert_eq!(signature.0[0].ty, IncanType::TypeVar("F".to_string()));
+    assert_eq!(**signature.1, IncanType::TypeVar("F".to_string()));
+    Ok(())
+}
