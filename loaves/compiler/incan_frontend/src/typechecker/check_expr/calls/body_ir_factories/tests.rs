@@ -10,6 +10,7 @@ use crate::{lexer, parser};
 /// A manifest's unqualified OrdinalKey bound closes only through the authenticated stdlib owner's declaration.
 #[test]
 fn published_factory_bound_uses_declaring_module() -> Result<(), Box<dyn std::error::Error>> {
+    // ---- Checked stdlib owner ----
     let tokens = lexer::lex("from std.collections import OrdinalMap\n").map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut checker = TypeChecker::new();
@@ -22,7 +23,8 @@ fn published_factory_bound_uses_declaring_module() -> Result<(), Box<dyn std::er
     };
     let method = owner.methods.get("from_keys").ok_or("missing static factory")?.clone();
     let identity = method.identity.clone().ok_or("missing factory identity")?;
-    // The native SDK manifest retains these bounds without their module/source-name fields.
+
+    // ---- Native SDK bounds without module/source-name fields ----
     for bounds in checker.nominal_type_param_bounds.values_mut() {
         for (_, requirements) in bounds {
             for bound in requirements {
@@ -31,6 +33,8 @@ fn published_factory_bound_uses_declaring_module() -> Result<(), Box<dyn std::er
             }
         }
     }
+
+    // ---- Checked factory constraints ----
     let argument_span = Span::new(1, 2);
     let call_span = Span::new(1, 3);
     checker.record_expr_type(
