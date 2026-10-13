@@ -18,36 +18,35 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
-/// A failing reader poll invokes its captured mapper with the retained nominal input and preserves legacy error bytes.
+/// The forced reader error pins the missing SDK chunks default and preserves the legacy mapper's error bytes.
 #[test]
 fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
     let original = include_str!(
         "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
     );
     assert_eq!(original.matches("reader.chunks(16)").count(), 1);
     let source = original.replace("reader.chunks(16)", "reader.chunks(0)");
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("sdk-reader-error-mapper")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "sdk_reader_error_mapper_chunks_default",
         &source,
+        &[],
+        b"read failed: chunk_size must be greater than zero\n",
+        "unsupported Body IR nonlocal or trait-object Method chunks",
     )
 }
 
-/// The complete SDK reader adapter preserves every chunk and completion byte through its captured error mapper.
+/// The complete original reader pins its missing SDK chunks default and preserves all legacy chunk and completion
+/// bytes.
 #[test]
 fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("original-sdk-reader")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "original_sdk_reader_chunks_default",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
         ),
+        &[],
+        b"16\n4\ndone\n",
+        "unsupported Body IR nonlocal or trait-object Method chunks",
     )
 }
 
@@ -221,20 +220,6 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
         ),
-    )
-}
-
-/// The original reader preserves its adapter interface refusal and unchanged legacy chunk output.
-#[test]
-fn original_sdk_reader_reaches_adapter_interface() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
-        "original_sdk_reader_adapter_interface",
-        include_str!(
-            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
-        ),
-        &[],
-        b"16\n4\ndone\n",
-        "unsupported Body IR type FallibleIterator[bytes, str]",
     )
 }
 
