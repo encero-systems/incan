@@ -18,6 +18,67 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// A newtype's declaration-owned Partial preserves preset defaults and explicit overrides.
+#[test]
+fn newtype_constructor_partial_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("newtype-constructor-partial")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "type UserId = newtype int\n\nuser = partial UserId(value=7)\n\ndef main() -> None:\n  println(user().0)\n  println(user(value=8).0)\n",
+    )
+}
+
+/// A local model, class, or newtype constructor partial keeps presets reusable and overridable.
+#[test]
+fn local_constructor_partials_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("local-constructor-partials")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Reader:
+    layer: str
+    path: str
+
+class Counter:
+    pub start: int
+    pub step: int
+
+type UserId = newtype int
+
+def main() -> None:
+    layer = "bronze"
+    make = partial Reader(layer=layer)
+    println(make(path="orders").layer)
+    println(make(path="orders", layer="silver").layer)
+    counter = partial Counter(step=2)
+    println(counter(start=1).step)
+    user = partial UserId(value=7)
+    println(user().0)
+    println(user(value=8).0)
+"#,
+    )
+}
+
+/// The complete constructor-preset fixture preserves local captures and declaration-owned aggregate defaults.
+#[test]
+fn constructor_presets_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constructor-presets-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn"
+        ),
+    )
+}
+
 /// A tuple's checked model and newtype layouts survive construction, return, list storage, and projected reads.
 #[test]
 fn nominal_tuple_elements_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

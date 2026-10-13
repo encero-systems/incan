@@ -5,6 +5,76 @@
 
 use super::*;
 
+/// A newtype Partial keeps its source parameter name while forwarding to the retained one-field layout.
+#[test]
+fn newtype_partial_retains_value_parameter_and_constructor() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "type UserId = newtype int\n\nuser = partial UserId(value=7)\n",
+        &["m", "newtype_partial"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("newtype declaration missing")?;
+    let body = body_named(&module, "user")?;
+    assert_eq!(
+        body.params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+        ["value"]
+    );
+    let target = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing retained newtype construction: {}", body.render_snapshot()))?;
+    assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+    assert_eq!(
+        target.canonical_field_layout.as_deref(),
+        Some(declaration.fields.as_slice())
+    );
+    Ok(())
+}
+
+/// A local constructor partial forwards checked fields as construction, with each preset evaluated once.
+#[test]
+fn local_constructor_partial_retains_constructing_closure() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Reader:\n  layer: str\n  path: str\n\ndef main() -> None:\n  layer = \"bronze\"\n  make = partial Reader(layer=layer)\n  reader = make(path=\"orders\")\n  println(reader.path)\n",
+        &["m", "local_constructor_partial"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing constructing closure: {}", body.render_snapshot()))?;
+    assert!(
+        closure.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), _),
+                ..
+            }
+        )),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// The exact builtin module import retains one entrypoint effect and the existing authoritative text asset.
 #[test]
 fn import_this_retains_entrypoint_text_effect() -> Result<(), Box<dyn std::error::Error>> {
