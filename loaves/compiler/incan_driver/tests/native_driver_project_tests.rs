@@ -12201,6 +12201,35 @@ fn stdlib_channel_errors_reach_sender_boundary() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// Original annotated OrdinalMap factories preserve lookup and serialization output exactly as legacy does.
+#[test]
+fn stdlib_ordinal_map_factories_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    for (name, source) in [
+        (
+            "ordinal-bytes",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/ordinal_map_bytes_round_trip.incn"
+            ),
+        ),
+        (
+            "ordinal-lookup",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/ordinal_map_str_lookup.incn"
+            ),
+        ),
+    ] {
+        corpus::check_builtin_source(
+            &fixture.driver_binary("debug"),
+            &fixture.scratch(name)?,
+            &fixture.sysroot,
+            &fixture.formatting,
+            source,
+        )?;
+    }
+    Ok(())
+}
+
 /// Require a named refusal at the same standalone boundary used by builtin parity tests.
 fn check_builtin_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
