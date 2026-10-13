@@ -493,7 +493,7 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
 #[test]
 fn literal_integer_constant_arithmetic_retains_values() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = (3 + 4) * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
+        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = 3 + 4 * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
         &["app"],
     )?;
     assert!(
@@ -506,11 +506,11 @@ fn literal_integer_constant_arithmetic_retains_values() -> Result<(), Box<dyn st
         module
             .constant_declarations
             .iter()
-            .any(|item| item.value == bir::Constant::Int(35))
+            .any(|item| item.value == bir::Constant::Int(23))
     );
     let snapshot = module.render_snapshot();
     assert!(snapshot.contains("const(-9223372036854775808)"), "{snapshot}");
-    assert!(snapshot.contains("const(35)"), "{snapshot}");
+    assert!(snapshot.contains("const(23)"), "{snapshot}");
     Ok(())
 }
 

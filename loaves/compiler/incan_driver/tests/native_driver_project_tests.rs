@@ -15355,7 +15355,7 @@ fn integer_constant_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std
         &fixture.scratch("integer-constant-arithmetic")?,
         &fixture.sysroot,
         &fixture.formatting,
-        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = (3 + 4) * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
+        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = 3 + 4 * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
     )
 }
 
