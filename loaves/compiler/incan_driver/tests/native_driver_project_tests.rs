@@ -165,6 +165,8 @@ fn consuming_zip_closure_rejects_repeated_invocation() -> Result<(), Box<dyn std
     let legacy = support::repo_command()
         .current_dir(&root)
         .env("INCAN_HOME", support::oven_fixture_home()?)
+        // An intentionally rejected build has no stored output; the enclosing native test binary still reuses.
+        .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
         .arg("build")
         .arg(&source)
         .arg(root.join("legacy"))
