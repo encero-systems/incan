@@ -17,14 +17,18 @@ pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &T
     )
 }
 
-/// Classify declaration binders before builtin storage projection so a same-spelled parameter keeps its own category.
+/// Classify declaration binders before SDK and builtin storage projection so a same-spelled parameter keeps its own
+/// category.
 pub(super) fn checked_parameter_type(
     ty: &crate::symbols::ResolvedType,
     facts: &TypeCheckInfo,
     parameters: &[String],
 ) -> IncanType {
     retain_checked_nominal_names(
-        retain_parameter_type(semantic_type_from_resolved(ty), parameters),
+        super::runtime_nominals::project_type(
+            retain_parameter_type(semantic_type_from_resolved(ty), parameters),
+            facts,
+        ),
         facts,
     )
 }

@@ -13415,48 +13415,43 @@ def main() -> None:
     )
 }
 
-/// Raw serde selections no longer refuse; trait-object storage and enum reads remain independently unsupported.
+/// Raw serde selections retain the bare protocol's storage refusal and the qualified fixture's complete recorded
+/// output. The output oracle is the original fixture metadata; frozen legacy serde cannot link in this SDK profile.
 #[test]
-fn raw_newtype_json_derives_reach_protocol_and_enum_read_refusals() -> Result<(), Box<dyn std::error::Error>> {
+fn raw_newtype_json_derives_preserve_protocol_refusal_and_qualified_output() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let closure = corpus::runtime_closure(&fixture.formatting)?;
-    for (name, source, expected) in [
-        (
-            "json-protocol-storage",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn"
-            ),
-            "unsupported Body IR nominal type Serialize",
+    let root = fixture.scratch("json-protocol-storage")?;
+    let input = root.join("main.incn");
+    fs::write(
+        &input,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn"
         ),
-        (
-            "json-enum-read",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/qualified_json_derives.incn"
-            ),
-            "unsupported Body IR ownership Borrow outside formatting",
+    )?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &input,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR nominal type Serialize"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    check_native_case(
+        "raw-newtype-json-qualified-original",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/qualified_json_derives.incn"
         ),
-    ] {
-        let root = fixture.scratch(name)?;
-        let input = root.join("main.incn");
-        fs::write(&input, source)?;
-        let binary = root.join("native");
-        let refused = corpus::source_command(
-            &fixture.driver_binary("debug"),
-            &input,
-            &binary,
-            &fixture.sysroot,
-            &closure,
-        )
-        .output()?;
-        assert!(!refused.status.success());
-        assert!(
-            String::from_utf8_lossy(&refused.stderr).contains(expected),
-            "{}",
-            String::from_utf8_lossy(&refused.stderr)
-        );
-        assert!(!binary.exists());
-    }
-    Ok(())
+        b"{\"value\":1}\n{\"value\":1}\n2\n{\"value\":3}\n\"Red\"\n4\n",
+    )
 }
 
 /// A checked primitive constraint accepts both conversion surfaces, evaluating their supplied values once.
