@@ -465,16 +465,42 @@ fn generic_rest_calls_refuse_unretained_pack_elements() -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Bounded rest binding refuses spread and omitted fixed inputs before recording partial argument effects.
+/// Checked tuple spreads preserve the established pack binding, while unretained omitted inputs remain refused.
 #[test]
-fn rest_calls_refuse_spreads_and_omitted_defaults() -> Result<(), Box<dyn std::error::Error>> {
-    for (arguments, refusal) in [("1, *(2, 3)", "unretained spread"), ("", "omitted ordinary argument")] {
-        let source = format!(
-            "def total(a: int = 1, *xs: int) -> int:\n    return a\n\ndef main() -> None:\n    println(total({arguments}))\n"
-        );
-        let module = build(&source, &["m", "bounded_rest"])?;
-        assert!(body_named(&module, "main")?.render_snapshot().contains(refusal));
-    }
+fn rest_calls_preserve_checked_spreads_and_refuse_unretained_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let prefix = "def total(a: int = 1, *xs: int) -> int:\n    return a\n\ndef main() -> None:\n";
+    let module = build(
+        &format!("{prefix}    println(total(1, *(2, 3)))\n"),
+        &["m", "checked_rest_spread"],
+    )?;
+    let main = body_named(&module, "main")?;
+    let snapshot = main.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let target = named_targets(&main.block.stmts)
+        .into_iter()
+        .find(|target| target.name == "total")
+        .ok_or("missing total call")?;
+    let bir::ArgumentBinding::Resolved {
+        arguments,
+        defaulted_slots,
+    } = &target.binding
+    else {
+        return Err("checked rest spread must retain its declared slots".into());
+    };
+    assert_eq!(
+        arguments.iter().map(|argument| argument.slot).collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert!(defaulted_slots.is_empty());
+    let module = build(
+        &format!("{prefix}    println(total())\n"),
+        &["m", "omitted_rest_default"],
+    )?;
+    assert!(
+        body_named(&module, "main")?
+            .render_snapshot()
+            .contains("omitted ordinary argument")
+    );
     Ok(())
 }
 

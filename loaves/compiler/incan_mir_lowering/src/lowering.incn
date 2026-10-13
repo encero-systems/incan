@@ -5797,7 +5797,7 @@ def producer_return_type(
         return Ok(declared)
     for parameter in body.params:
         capture = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
-        if parameter_storage_type(capture, parameter.mutable) != capture:
+        if packed_input(capture, parameter.kind, parameter.mutable)? != capture:
             return Err("unsupported Body IR borrowed generator parameter")
         match capture:
             PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")

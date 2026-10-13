@@ -2,7 +2,7 @@
 
 from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
-from nominal_instances import closed_arguments
+from nominal_frames import closed_arguments
 
 
 pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:

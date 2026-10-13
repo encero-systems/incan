@@ -23,12 +23,14 @@ fn rest_destinations(callee: &str, slots: &[DeclaredSlot], args: &[ast::CallArg]
     let ordinary: Vec<_> = slots
         .iter()
         .enumerate()
-        .filter_map(|(index, slot)| (!slot.is_rest).then_some(index))
+        .filter_map(|(index, slot)| (slot.kind == IncanCallableParamKind::Normal).then_some(index))
         .collect();
     let positional_rest = slots
         .iter()
-        .position(|slot| slot.kind == ast::ParamKind::RestPositional);
-    let keyword_rest = slots.iter().position(|slot| slot.kind == ast::ParamKind::RestKeyword);
+        .position(|slot| slot.kind == IncanCallableParamKind::RestPositional);
+    let keyword_rest = slots
+        .iter()
+        .position(|slot| slot.kind == IncanCallableParamKind::RestKeyword);
     let mut positional = 0;
     args.iter()
         .map(|arg| {
@@ -75,7 +77,7 @@ impl BodyBuilder<'_, '_> {
     /// The existing kernel vocabulary represents the result without unresolved arity: one list or dictionary
     /// operand fills each rest slot, including an empty aggregate. Spreads and duplicate keyword overwrite order
     /// remain on those aggregates. No legacy checker fact or callable surface is rewritten.
-    pub(super) fn bind_rest_args(
+    pub(super) fn bind_general_rest_args(
         &mut self,
         callee: &str,
         slots: &[DeclaredSlot],
@@ -132,7 +134,7 @@ impl BodyBuilder<'_, '_> {
                 operand = self.owned_parameter_operand(expr, operand);
                 operand = self.push_assign_temp(bir::Rvalue::Use(operand), operand_ty, scope, hir_span(expr.span), out);
             }
-            if !slots[slot].is_rest {
+            if slots[slot].kind == IncanCallableParamKind::Normal {
                 let operand = if slots[slot].is_mut {
                     self.borrow_for_mut_parameter(operand)
                 } else {
@@ -165,16 +167,21 @@ impl BodyBuilder<'_, '_> {
         let mut arguments = Vec::new();
         let mut defaulted_slots = Vec::new();
         for (slot, declaration) in slots.iter().enumerate() {
-            let supplied = if declaration.is_rest {
+            let supplied = if declaration.kind != IncanCallableParamKind::Normal {
                 let rvalue = match declaration.kind {
-                    ast::ParamKind::RestPositional => {
+                    IncanCallableParamKind::RestPositional => {
                         bir::Rvalue::Aggregate(bir::AggregateKind::List, std::mem::take(&mut sequences[slot]))
                     }
-                    ast::ParamKind::RestKeyword => bir::Rvalue::Dict(std::mem::take(&mut mappings[slot])),
-                    ast::ParamKind::Normal => return Err("invalid Body IR rest declaration kind".to_string()),
+                    IncanCallableParamKind::RestKeyword => bir::Rvalue::Dict(std::mem::take(&mut mappings[slot])),
+                    IncanCallableParamKind::Normal => return Err("invalid Body IR rest declaration kind".to_string()),
                 };
                 self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
-                let ty = parameter_storage_type(declaration.ty.clone(), declaration.kind);
+                let source_kind = match declaration.kind {
+                    IncanCallableParamKind::Normal => ast::ParamKind::Normal,
+                    IncanCallableParamKind::RestPositional => ast::ParamKind::RestPositional,
+                    IncanCallableParamKind::RestKeyword => ast::ParamKind::RestKeyword,
+                };
+                let ty = parameter_storage_type(declaration.ty.clone(), source_kind);
                 Some((
                     self.push_assign_temp(rvalue, ty, scope, hir_span(span), out),
                     args.len() + slot,

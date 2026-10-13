@@ -1,7 +1,7 @@
 //! Checked tuple spread components and their single source evaluation at the call binding boundary.
 
 use super::args::{DeclaredSlot, expand_shaped_spread, fixed_elements, plan_declared_args};
-use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span};
+use super::{BodyBuilder, IncanCallableParamKind, IncanType, TypeCheckInfo, ast, bir, hir_span};
 use crate::typechecker::FixedUnpackPlan;
 use std::collections::HashMap;
 
@@ -121,7 +121,7 @@ impl BodyBuilder<'_, '_> {
     ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
         let shaped = self.shaped_arguments(args)?;
         let arguments: Vec<_> = shaped.iter().map(|entry| entry.argument.clone()).collect();
-        if slots.iter().any(|slot| slot.is_rest) {
+        if slots.iter().any(|slot| slot.kind != IncanCallableParamKind::Normal) {
             let values = self.lower_shaped_arguments(&shaped, scope, out);
             return self.bind_prepared_rest_args(callee, slots, &arguments, Some(values), scope, out);
         }

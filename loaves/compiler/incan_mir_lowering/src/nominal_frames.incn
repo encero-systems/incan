@@ -89,6 +89,14 @@ def schedule_statement(
                         _ => pass
                 _ => pass
         StatementKind.Loop(body=nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+        StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) => schedule_block(
+            module,
+            nested,
+            names,
+            arguments,
+            pending,
+            ancestors,
+        )?
         StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
             schedule_block(module, then_body, names, arguments, pending, ancestors)?
             match else_body:

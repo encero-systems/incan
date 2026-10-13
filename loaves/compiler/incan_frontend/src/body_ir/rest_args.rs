@@ -81,7 +81,8 @@ fn plan<'a>(
 
 impl BodyBuilder<'_, '_> {
     /// Freeze supplied values in written order, then materialize exactly one owned pack per declared rest role.
-    /// Spreads, omitted ordinary defaults and non-scalar ordinary passing remain named refusals until proven.
+    /// Checked spreads and ordinary borrowed inputs retain the existing generalized planner; open or mutable pack
+    /// elements remain refused.
     pub(super) fn bind_rest_args(
         &mut self,
         callee: &str,
@@ -90,6 +91,27 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
+        if parameters
+            .iter()
+            .filter(|parameter| parameter.kind != IncanCallableParamKind::Normal)
+            .any(|parameter| parameter.is_mut || !matches!(parameter.ty, IncanType::Primitive(_)))
+        {
+            return Err(format!("{callee}: rest call with an unretained concrete pack element"));
+        }
+        if arguments.iter().any(|argument| {
+            matches!(
+                argument,
+                ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_)
+            )
+        }) || parameters
+            .iter()
+            .filter(|parameter| parameter.kind == IncanCallableParamKind::Normal)
+            .any(|parameter| {
+                parameter.is_mut || parameter.is_partial_preset || !matches!(parameter.ty, IncanType::Primitive(_))
+            })
+        {
+            return self.bind_general_rest_args(callee, parameters, arguments, scope, out);
+        }
         let planned = plan(parameters, arguments).map_err(|description| format!("{callee}: {description}"))?;
         let span = self.scope_span(scope);
         let mut fixed = vec![None; parameters.len()];

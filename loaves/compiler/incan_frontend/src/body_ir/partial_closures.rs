@@ -178,6 +178,7 @@ impl BodyBuilder<'_, '_> {
             };
             frame.parameters.push(bir::CallableParam {
                 local,
+                kind: super::parameter_types::source_parameter_kind(parameter.kind),
                 name: name.clone(),
                 ty,
                 span: source.map_or(span, |source| hir_span(source.param_span)),

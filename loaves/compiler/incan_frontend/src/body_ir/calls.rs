@@ -403,9 +403,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 None => vec![arg.clone()],
             })
             .collect();
-        if slots.iter().any(|slot| slot.is_rest) {
-            return self.bind_rest_args(callee, &slots, &expanded, scope, out);
-        }
         let planned = plan_declared_args(callee, &slots, &expanded)?;
         let (operands, binding) = self
             .lower_planned_args(
@@ -823,8 +820,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                                 name: None,
                                 has_default: false,
                                 is_partial_preset: false,
-                                is_rest: false,
-                                kind: ast::ParamKind::Normal,
+                                kind: IncanCallableParamKind::Normal,
                                 ty,
                                 is_mut: false,
                             })
