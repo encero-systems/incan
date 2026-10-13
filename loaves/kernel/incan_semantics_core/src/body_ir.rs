@@ -463,6 +463,9 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
             [root, module, name] if root == "axum" && module == "extract" && name == "Query" => {
                 "incan_stdlib_web::web::request::Query"
             }
+            [root, module, name] if root == "axum" && module == "extract" && name == "Path" => {
+                "incan_stdlib_web::web::request::Path"
+            }
             [root, module, name] if root == "axum" && module == "response" && name == "Html" => {
                 "incan_stdlib_web::web::response::Html"
             }
@@ -513,8 +516,8 @@ pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     native_carrier_nominal(identity)
 }
 
-/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque; Json/Query retain their
-/// public tuple payload and binder, while Html retains its fixed String specialization. Derive facts match the
+/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque; Json/Query/Path retain
+/// their public tuple payload and binder, while Html retains its fixed String specialization. Derive facts match the
 /// runtime implementations; field/constructor operations additionally require checker-owned use-site facts.
 pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
     if !matches!(

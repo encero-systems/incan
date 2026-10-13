@@ -374,7 +374,7 @@ impl StdlibAstCache {
     pub(crate) fn native_web_identity(&mut self, surface: SurfaceTypeId) -> Option<CanonicalSymbolId> {
         let module = match surface {
             SurfaceTypeId::Json | SurfaceTypeId::Html => "response",
-            SurfaceTypeId::Query => "request",
+            SurfaceTypeId::Query | SurfaceTypeId::Path => "request",
             _ => return None,
         };
         let name = surface_types::as_str(surface);
