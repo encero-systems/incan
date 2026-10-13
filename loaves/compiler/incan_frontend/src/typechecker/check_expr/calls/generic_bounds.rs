@@ -246,7 +246,7 @@ impl TypeChecker {
         }
 
         if explicit_type_args.is_empty() && self.errors.len() == errors_before_call {
-            self.retain_body_ir_call_arguments(info, args, &type_bindings, call_span);
+            self.retain_body_ir_call_arguments(info, args, &type_bindings, call_span, callee_identity.as_ref());
         }
         substitute_resolved_type(&info.return_type, &type_bindings)
     }

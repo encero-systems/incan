@@ -96,7 +96,10 @@ impl TypeChecker {
 
     /// Recognize only an unshadowed intrinsic constructor with one ordinary payload argument. A same-spelled user
     /// binding and a generic or unpacked call provide no constructor witness for retaining open payload parts.
-    fn literal_carrier_constructor(&self, value: &Spanned<Expr>) -> Option<ConstructorId> {
+    pub(in crate::typechecker::check_expr) fn literal_carrier_constructor(
+        &self,
+        value: &Spanned<Expr>,
+    ) -> Option<ConstructorId> {
         let (name, args) = match &value.node {
             Expr::Call(callee, type_args, args) if type_args.is_empty() => {
                 let Expr::Ident(name) = &callee.node else {
