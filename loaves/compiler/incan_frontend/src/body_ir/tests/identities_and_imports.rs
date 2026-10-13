@@ -6,13 +6,18 @@
 
 use super::*;
 
-/// The imported alias carrier and stored field are known; method selection still lacks a checked target.
+/// The imported alias carrier and stored field keep their declaring owner while method selection retains its checked
+/// target.
 #[test]
 fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), Box<dyn std::error::Error>> {
     let provider_source =
         "pub model Account:\n  pub type_ [alias=\"type\"]: str\n  def get_type(self) -> str:\n    return self.type\n";
     let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"y\")\n";
     let provider = build(provider_source, &["db", "schema"])?;
+    let expected = body_named(&provider, "get_type")?
+        .canonical
+        .clone()
+        .ok_or("provider method identity missing")?;
     let factory = build_with_published_imports(
         factory_source,
         &["store", "json_store"],
@@ -30,12 +35,6 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
         &[provider, factory],
     )?;
     let body = body_named(&module, "main")?;
-    let unknown = body
-        .locals
-        .iter()
-        .filter(|local| local.ty == IncanType::Unknown)
-        .map(|local| (local.span, source.get(local.span.start..local.span.end)))
-        .collect::<Vec<_>>();
     let methods = body
         .block
         .stmts
@@ -48,11 +47,13 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(unknown.len(), 1, "{unknown:#?}");
-    assert_eq!(unknown[0].1, Some("make_aliased().get_type()"));
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{body:#?}"
+    );
     assert_eq!(methods.len(), 1);
     assert_eq!(methods[0].name, "get_type");
-    assert!(methods[0].canonical.is_none());
+    assert_eq!(methods[0].canonical.as_ref(), Some(&expected));
     assert!(
         body.locals
             .iter()
@@ -62,6 +63,64 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
         body.locals
             .iter()
             .any(|local| local.ty == IncanType::Named("Account".to_owned()))
+    );
+    Ok(())
+}
+
+/// A method after a provider's private alias return retains the providing model's exact method and result carrier.
+#[test]
+fn imported_alias_return_retains_method_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+    );
+    let factory_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+    );
+    let consumer_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+    );
+    let provider = build(provider_source, &["db", "schema"])?;
+    let expected = body_named(&provider, "get_type")?
+        .canonical
+        .clone()
+        .ok_or("provider method identity missing")?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        &[provider.clone()],
+    )?;
+    let module = build_with_published_imports(
+        consumer_source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let method = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("imported alias method call missing")?;
+    assert_eq!(method.canonical.as_ref(), Some(&expected), "{body:#?}");
+    assert!(
+        matches!(&method.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.is_empty() && defaulted_slots.is_empty()),
+        "{method:#?}"
+    );
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        body.render_snapshot()
     );
     Ok(())
 }

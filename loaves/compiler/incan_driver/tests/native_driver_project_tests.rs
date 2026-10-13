@@ -35,6 +35,32 @@ fn sdk_index_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )
 }
 
+/// An aliased return's method and aliased fields preserve all three original multi-module legacy outputs.
+#[test]
+fn imported_alias_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported-alias-method",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+        ),
+        &[
+            (
+                "db/schema.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+                ),
+            ),
+            (
+                "store/json_store.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+                ),
+            ),
+        ],
+        b"x\ny\nz\n",
+    )
+}
+
 /// Shared callable aliases retain their borrowed environment for the duration of the receiving invocation.
 #[test]
 fn borrowed_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -10235,7 +10261,7 @@ fn check_project_modules_refusal_case(
 /// Compare a program of several modules in the minimal project layout, pinning its output.
 ///
 /// `modules` names further source files beside `src/main.incn`, each with its text, as a multi-module behavior
-/// fixture lays them out.
+/// fixture lays them out. Nested module paths create their parent directories before either route runs.
 fn check_project_modules_case(
     name: &str,
     text: &str,
@@ -10248,7 +10274,9 @@ fn check_project_modules_case(
     fs::write(&main, text)?;
     let source = main.parent().ok_or("project main has no source directory")?;
     for (file, module) in modules {
-        fs::write(source.join(file), module)?;
+        let path = source.join(file);
+        fs::create_dir_all(path.parent().ok_or("module path has no parent")?)?;
+        fs::write(path, module)?;
     }
     let native = root.join("native");
     let mut closure = corpus::runtime_closure(&fixture.formatting)?;
