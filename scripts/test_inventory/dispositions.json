@@ -6536,6 +6536,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/body_ir_factories/tests.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only static factory facts retain authenticated published owner bound provenance without changing legacy tables.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
