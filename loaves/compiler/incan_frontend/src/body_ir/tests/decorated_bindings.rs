@@ -476,7 +476,7 @@ fn rest_calls_preserve_checked_spreads_and_refuse_unretained_defaults() -> Resul
     let main = body_named(&module, "main")?;
     let snapshot = main.render_snapshot();
     assert!(!snapshot.contains("unsupported("), "{snapshot}");
-    let target = named_targets(&main.block.stmts)
+    let target = named_targets(&module, "main")
         .into_iter()
         .find(|target| target.name == "total")
         .ok_or("missing total call")?;
