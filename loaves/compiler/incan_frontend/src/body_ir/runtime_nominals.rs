@@ -13,7 +13,12 @@ use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 /// A source declaration with the same spelling remains source-owned; opaque records never authorize field access.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
     let mut names = BTreeSet::new();
-    for ty in type_info.expressions.expr_types.values() {
+    for ty in type_info
+        .expressions
+        .expr_types
+        .values()
+        .chain(type_info.calls.inferred_call_result_types.values())
+    {
         super::library_calls::named_leaves(&project_type(semantic_type_from_resolved(ty), type_info), &mut names);
     }
     for binding in type_info.declarations.function_bindings.values() {
@@ -27,6 +32,10 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
                 &mut names,
             );
         }
+    }
+    // An SDK handle's Future output contains the SDK join error even when legacy leaves an inferred await open.
+    if names.contains("JoinHandle") && nominal(type_info, "JoinHandle").is_some() {
+        names.insert("TaskJoinError".to_owned());
     }
     names.into_iter().filter_map(|name| nominal(type_info, &name)).collect()
 }
@@ -56,7 +65,7 @@ pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .collect()
 }
 
-/// Recognize SDK task storage whose executable call result must survive an inferred consumer binding.
+/// Recognize SDK task and race storage whose executable call result must survive an inferred consumer binding.
 /// This does not infer an output or admit an equal-spelled source type; it reuses the guarded registry ownership.
 pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> bool {
     if let IncanType::Generic { base, args } = ty
@@ -69,8 +78,12 @@ pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> boo
         IncanType::Named(owner) | IncanType::Generic { base: owner, .. } => owner,
         _ => return false,
     };
-    surface_types::from_str(owner).is_some_and(|id| surface_types::category(id) == SurfaceTypeCategory::AsyncTask)
-        && nominal(facts, owner).is_some()
+    surface_types::from_str(owner).is_some_and(|id| {
+        matches!(
+            surface_types::category(id),
+            SurfaceTypeCategory::AsyncTask | SurfaceTypeCategory::AsyncRace
+        )
+    }) && nominal(facts, owner).is_some()
 }
 
 /// Bind only a registry-owned SDK task receiver to its published native method signature.

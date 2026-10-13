@@ -42,7 +42,15 @@ impl TypeChecker {
             .map(|(name, ty)| (name.clone(), normalized(ty, &names, &self.type_info)))
             .collect();
         let mut native_binders = HashSet::new();
-        for (expression, parameter) in Self::arguments_with_parameters(&info.params, args) {
+        let rest = info
+            .params
+            .iter()
+            .find(|parameter| parameter.kind == crate::ast::ParamKind::RestPositional);
+        for ((expression, parameter), argument) in Self::arguments_with_parameters(&info.params, args)
+            .into_iter()
+            .zip(args)
+        {
+            let parameter = parameter.or_else(|| matches!(argument, CallArg::Positional(_)).then_some(rest).flatten());
             let Some(parameter) = parameter else {
                 return;
             };
@@ -53,6 +61,7 @@ impl TypeChecker {
                 .body_ir_constructor_types
                 .get(&key)
                 .or_else(|| self.type_info.calls.inferred_constructor_types.get(&key))
+                .or_else(|| self.type_info.calls.inferred_call_result_types.get(&key))
                 .or_else(|| self.type_info.expr_type(expression.span))
             else {
                 return;
@@ -72,7 +81,7 @@ impl TypeChecker {
             }
             self.infer_type_param_bindings(&expected, &actual, &mut bindings);
         }
-        self.retain_body_ir_future_outputs(info, &names, &mut bindings);
+        self.retain_body_ir_runtime_outputs(info, &names, &mut bindings);
         let arguments: Option<Vec<_>> = names
             .iter()
             .map(|name| bindings.get(name).filter(|ty| concrete(ty)).cloned())
@@ -83,13 +92,13 @@ impl TypeChecker {
                 .body_ir_call_type_arguments
                 .insert((span.start, span.end), arguments);
             let result = substitute_resolved_type(&normalized(&info.return_type, &names, &self.type_info), &bindings);
-            let future_bridge = info
+            let runtime_bridge = info
                 .type_param_bound_details
                 .values()
                 .flatten()
-                .any(|bound| self.body_ir_runtime_future_bound(bound));
+                .any(|bound| self.body_ir_runtime_bridge_bound(bound));
             let runtime_result = matches!(&info.return_type, ResolvedType::RustPath(path) if crate::body_ir::runtime_nominals::project_resolved_path(path, &self.type_info).is_some());
-            if concrete(&result) && (future_bridge || runtime_result) {
+            if concrete(&result) && (runtime_bridge || runtime_result || info.is_async) {
                 self.type_info
                     .calls
                     .inferred_call_result_types
@@ -129,9 +138,9 @@ impl TypeChecker {
         }
     }
 
-    /// Close only the exact SDK RuntimeFuture bridge's output from already checked future carriers in a cloned binding
-    /// set.
-    fn retain_body_ir_future_outputs(
+    /// Close exact SDK future/callback outputs from checked carriers in a cloned binding set. Ordinary checking and
+    /// native metadata still enforce trait bounds; foreign and source-owned equal spellings publish no bridge fact.
+    fn retain_body_ir_runtime_outputs(
         &self,
         info: &FunctionInfo,
         names: &[String],
@@ -145,32 +154,63 @@ impl TypeChecker {
                 continue;
             };
             for bound in bounds {
-                if !self.body_ir_runtime_future_bound(bound) || bound.type_args.len() != 1 {
-                    continue;
-                }
-                let Some(output) = self.await_output_type_from_type(&actual) else {
+                let Some(outputs) = self.body_ir_runtime_bridge_arguments(bound, &actual) else {
                     continue;
                 };
-                if !concrete(&output) {
+                if bound.type_args.len() != outputs.len() || !outputs.iter().all(concrete) {
                     continue;
                 }
-                self.infer_type_param_bindings(
-                    &normalized(&bound.type_args[0], names, &self.type_info),
-                    &output,
-                    bindings,
-                );
+                for (parameter, output) in bound.type_args.iter().zip(outputs) {
+                    self.infer_type_param_bindings(&normalized(parameter, names, &self.type_info), &output, bindings);
+                }
             }
         }
     }
 
-    /// Match the bridge by its resolved Rust owner, keeping equal-spelled application traits out of native inference.
-    fn body_ir_runtime_future_bound(&self, bound: &TypeBoundInfo) -> bool {
-        const OWNER: &str = "incan_std_async::task::RuntimeFuture";
-        if bound.name.trim_start_matches("::") == OWNER {
+    /// Read only the exact SDK bridge's associated arguments from an already checked future or callable shape.
+    fn body_ir_runtime_bridge_arguments(
+        &self,
+        bound: &TypeBoundInfo,
+        actual: &ResolvedType,
+    ) -> Option<Vec<ResolvedType>> {
+        if self.body_ir_runtime_bound_owner(bound, "incan_std_async::task::RuntimeFuture") {
+            return self.await_output_type_from_type(actual).map(|output| vec![output]);
+        }
+        let ResolvedType::Function(parameters, output) = actual else {
+            return None;
+        };
+        if parameters.is_empty() && self.body_ir_runtime_bound_owner(bound, "incan_std_async::task::RuntimeFnOnce") {
+            return Some(vec![output.as_ref().clone()]);
+        }
+        if let [parameter] = parameters.as_slice()
+            && parameter.kind == crate::ast::ParamKind::Normal
+            && !parameter.is_mut
+            && self.body_ir_runtime_bound_owner(bound, "incan_std_async::race::RuntimeRaceCallback")
+        {
+            return Some(vec![parameter.ty.clone(), output.as_ref().clone()]);
+        }
+        None
+    }
+
+    /// Identify the SDK-owned associated-output contracts independently of any call's actual arguments.
+    fn body_ir_runtime_bridge_bound(&self, bound: &TypeBoundInfo) -> bool {
+        [
+            "incan_std_async::task::RuntimeFuture",
+            "incan_std_async::task::RuntimeFnOnce",
+            "incan_std_async::race::RuntimeRaceCallback",
+        ]
+        .iter()
+        .any(|owner| self.body_ir_runtime_bound_owner(bound, owner))
+    }
+
+    /// Match a resolved native owner or an explicit Rust import, so an equal-spelled source import cannot authorize it.
+    fn body_ir_runtime_bound_owner(&self, bound: &TypeBoundInfo, owner: &str) -> bool {
+        if bound.name.trim_start_matches("::") == owner {
             return true;
         }
         self.import_binding_path(&bound.name)
-            .is_some_and(|path| path.join("::").trim_start_matches("rust::") == OWNER)
+            .and_then(|path| path.strip_prefix(&["rust".to_owned()]))
+            .is_some_and(|path| path.join("::") == owner)
     }
 }
 

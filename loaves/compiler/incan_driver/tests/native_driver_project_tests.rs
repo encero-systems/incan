@@ -7519,7 +7519,6 @@ fn async_task_call_results_output_matches_legacy() -> Result<(), Box<dyn std::er
     )
 }
 
-/// SDK task and deadline operations preserve expiry and durable task completion.
 /// A native blocking task preserves its checked callable output and real join result.
 #[test]
 fn sdk_blocking_task_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

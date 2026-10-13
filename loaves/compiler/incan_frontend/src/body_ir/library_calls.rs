@@ -428,7 +428,8 @@ fn native_trait_item(
     Some((item, arguments))
 }
 
-/// Keep only ordinary parameters, each passed owned as the SDK declares it, with native carriers and active binders.
+/// Retain owned SDK parameters and positional rest slots, whose compiled ABI is a single list of the element type.
+/// Keyword rest remains refused; argument packing is owned by the existing checked ArgumentBinding.
 fn owned_parameters(params: &[CallableParam], binders: &[String]) -> Option<Vec<IncanType>> {
     params
         .iter()
@@ -436,6 +437,10 @@ fn owned_parameters(params: &[CallableParam], binders: &[String]) -> Option<Vec<
             let ty = sdk_type(&param.ty, binders);
             match param.kind {
                 ast::ParamKind::Normal => Some(ty),
+                ast::ParamKind::RestPositional => Some(IncanType::Generic {
+                    base: "List".to_owned(),
+                    args: vec![ty],
+                }),
                 _ => None,
             }
         })

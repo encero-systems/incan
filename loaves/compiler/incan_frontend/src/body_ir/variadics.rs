@@ -181,7 +181,15 @@ impl BodyBuilder<'_, '_> {
                     IncanCallableParamKind::RestPositional => ast::ParamKind::RestPositional,
                     IncanCallableParamKind::RestKeyword => ast::ParamKind::RestKeyword,
                 };
-                let ty = parameter_storage_type(declaration.ty.clone(), source_kind);
+                let checked = parameter_storage_type(declaration.ty.clone(), source_kind);
+                // A rest list owns the already evaluated SDK carriers, whose checked call outputs may be more
+                // concrete than the legacy slot template. Preserve only homogeneous matching runtime storage.
+                let ty = match &rvalue {
+                    bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => {
+                        self.retained_list_type(&checked, elements)
+                    }
+                    _ => checked,
+                };
                 Some((
                     self.push_assign_temp(rvalue, ty, scope, hir_span(span), out),
                     args.len() + slot,

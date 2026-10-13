@@ -205,7 +205,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         if assignment.ty.is_none()
-            && let Some(returned) = self.published_expression_type(&assignment.value)
+            && let Some(returned) = self
+                .type_info
+                .calls
+                .inferred_call_result_types
+                .get(&(assignment.value.span.start, assignment.value.span.end))
+                .map(|ty| self.checked_type(ty))
+                .or_else(|| self.published_expression_type(&assignment.value))
         {
             ty = returned;
         }
