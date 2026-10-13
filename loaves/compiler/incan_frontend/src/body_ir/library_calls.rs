@@ -25,6 +25,7 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .references
         .resolved_identities
         .values()
+        .chain(type_info.traits.provider_slot_identities.values())
         .filter(|identity| {
             super::library_nominals::sdk_identity(identity).is_some()
                 && matches!(

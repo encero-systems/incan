@@ -176,7 +176,14 @@ from project import project_context
 from nominal_instances import specialize_nominals, instance_arguments
 from enum_instances import specialize_enums
 from display_methods import display_functions
-from traits import method_index, owner_method_index, receiver_fills_slot, specialize_traits, validate_static_receiver
+from traits import (
+    method_index,
+    owner_method_index,
+    receiver_fills_slot,
+    receiver_fills_retained_slot,
+    specialize_traits,
+    validate_static_receiver,
+)
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type, element_prefix_type
@@ -2787,7 +2794,7 @@ def lower_method_call(
     # A retained source implementation takes priority over the SDK trait's crate-call record. SDK-owned receivers
     # otherwise call the method in the crate that compiled it.
     for delegation in module.stdlib_delegations:
-        if receiver_fills_slot(
+        if receiver_fills_retained_slot(
             module,
             target,
             builder.locals[builder.local_offset:],

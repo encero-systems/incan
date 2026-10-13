@@ -209,6 +209,31 @@ pub def receiver_fills_slot(
         Err(_error) => return false
 
 
+pub def receiver_fills_retained_slot(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> bool:
+    """Prefer an adopter's checked implementation only when its executable body is retained in this program."""
+    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+        Err(_error) => return false
+        Ok(owner) =>
+            match owner_identity(module, owner):
+                Err(_error) => return false
+                Ok(identity) =>
+                    for implementation in module.trait_implementations:
+                        if implementation.owner != identity or Some(implementation.method) != target.canonical:
+                            continue
+                        for body in module.bodies:
+                            if body.canonical == Some(implementation.implementation):
+                                return true
+                    return false
+
+
 pub def method_index(
     module: &BodyIrModule,
     target: &MethodTarget,
