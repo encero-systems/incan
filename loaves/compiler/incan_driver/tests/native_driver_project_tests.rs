@@ -15505,6 +15505,37 @@ fn math_constants_and_functions_output_match_legacy() -> Result<(), Box<dyn std:
     )
 }
 
+/// Computed-static admission leaves the original unwrap-or fixture at its separate intrinsic carrier boundary.
+#[test]
+fn static_unwrap_or_original_keeps_intrinsic_carrier_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("static-unwrap-or-original")?;
+    let source = root.join("probe.incn");
+    fs::write(
+        &source,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn"
+        ),
+    )?;
+    let binary = root.join("refused");
+    let output = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting)?,
+    )
+    .output()?;
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("unsupported Body IR intrinsic carrier receiver"),
+        "{diagnostic}"
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
 /// A factory method on an imported static initializes a callable replacement with legacy byte parity.
 #[test]
 fn imported_static_decorator_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
