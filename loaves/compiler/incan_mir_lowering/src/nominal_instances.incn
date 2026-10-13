@@ -154,8 +154,8 @@ def collect_generic_nominal_type(
 
 
 def require_newtype_arguments(declaration: &NominalDeclaration, arguments: list[RustType]) -> Result[None, str]:
-    """Keep generic newtype layouts inside the concrete payload profile whose conditional derives are admitted."""
-    if declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
+    """Restrict authored newtype payloads to proved conditional derives; native carriers keep their SDK-owned layout and derives."""
+    if declaration.native_item != "" or declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
         return Ok(None)
     if len(declaration.type_parameters) != 1 or len(declaration.field_types) != 1:
         return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
