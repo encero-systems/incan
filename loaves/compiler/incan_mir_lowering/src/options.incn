@@ -148,6 +148,12 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
     """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
+    for delegation in module.stdlib_delegations:
+        if len(delegation.type_parameters) != 0:
+            continue
+        for parameter in delegation.parameters:
+            retain_carrier(module, declarations, parameter, file)?
+        retain_carrier(module, declarations, delegation.return_type, file)?
     for declaration in module.nominal_declarations:
         for ty in declaration.field_types:
             retain_carrier(module, declarations, ty, file)?
