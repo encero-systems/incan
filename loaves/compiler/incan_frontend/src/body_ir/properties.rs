@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use super::args::fixed_elements;
 use super::{
-    AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId, IncanType,
-    SemanticSourceTargetKind, ast, bir, hir_span, parameter_types,
+    AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId,
+    IncanCallableParamKind, IncanType, SemanticSourceTargetKind, ast, bir, hir_span, parameter_types,
 };
 
 /// Build one concrete immutable getter body from its checked signature and exact implicit receiver provenance.
@@ -77,6 +77,7 @@ pub(super) fn lower_getter_body(
         named_type_identities: facts.type_info.declarations.named_type_identities.clone(),
         params: vec![bir::CallableParam {
             local: receiver,
+            kind: IncanCallableParamKind::Normal,
             name: "self".into(),
             ty: receiver_ty.clone(),
             span,
