@@ -308,6 +308,35 @@ def main() -> None:
     )
 }
 
+/// The original bounded-input fixture reaches the still-unproven method identity after its trait input is represented.
+#[test]
+fn trait_value_bound_method_frontier_is_pinned() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("trait-value-bound-frontier")?;
+    let source = root.join("main.incn");
+    fs::write(
+        &source,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/type_parameter_values_where_a_bound_makes_them_the_expected_type.incn"
+        ),
+    )?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting)?,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        diagnostic.contains("unsupported Body IR Method without canonical identity"),
+        "{diagnostic}"
+    );
+    Ok(())
+}
+
 /// Literal and checked tuple spreads bind fixed function, rest, keyword and method parameters with legacy output.
 #[test]
 fn fixed_call_spreads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
