@@ -86,6 +86,38 @@ fn absent_testing_channel_retains_unit_call_argument() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// Every testing helper's executable target retains the type arguments its checked actual values determine.
+#[test]
+fn complete_testing_helpers_retain_closed_targets() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn"
+    );
+    let module = build(source, &["m", "closed_testing_fixture"])?;
+    let targets = named_targets(&module, "main");
+    for target in targets {
+        let arguments = serde_json::to_string(&target.type_args)?;
+        assert!(!arguments.contains("\"TypeVar\""), "{target:?}");
+    }
+    Ok(())
+}
+
+/// SDK method owner parameters retain the native task's closed output after nominal call facts are supplemented.
+#[test]
+fn sdk_tasks_keep_closed_native_channels() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn"
+    );
+    let module = build(source, &["m", "closed_sdk_tasks"])?;
+    let main = body_named(&module, "main")?;
+    let locals = serde_json::to_string(&main.locals)?;
+    assert!(
+        !locals.contains("\"RustInteropPath\":\"T\""),
+        "{}",
+        main.render_snapshot()
+    );
+    Ok(())
+}
+
 /// The generic trait-returning original preserves the adopter's concrete result carrier at every call.
 #[test]
 fn complete_generic_trait_return_retain_closed_locals() -> Result<(), Box<dyn std::error::Error>> {
