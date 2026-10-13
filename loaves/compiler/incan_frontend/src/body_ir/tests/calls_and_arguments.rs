@@ -5,6 +5,29 @@
 
 use super::*;
 
+/// Constructor Partials cannot bypass predicates whose deferred validation operations have not been retained.
+#[test]
+fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source, body) in [
+        (
+            "declared",
+            "type Positive = newtype int[gt=0]\n\nmake = partial Positive(value=0)\n",
+            "make",
+        ),
+        (
+            "local",
+            "type Positive = newtype int[gt=0]\n\ndef main() -> None:\n    make = partial Positive(value=0)\n",
+            "main",
+        ),
+    ] {
+        let module = build(source, &["m", name])?;
+        let snapshot = body_named(&module, body)?.render_snapshot();
+        assert!(snapshot.contains("unsupported("), "{snapshot}");
+        assert!(!snapshot.contains("constructor(Positive)"), "{snapshot}");
+    }
+    Ok(())
+}
+
 /// A newtype Partial keeps its source parameter name while forwarding to the retained one-field layout.
 #[test]
 fn newtype_partial_retains_value_parameter_and_constructor() -> Result<(), Box<dyn std::error::Error>> {
