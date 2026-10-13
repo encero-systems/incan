@@ -421,6 +421,7 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
     let runtime_type_conflicts = std::collections::BTreeSet::new();
     let lowering_facts = BodyIrLoweringFacts {
         local_enum_declarations: &local_enum_declarations,
+        published_methods: &[],
         published_callable_returns: &published_callable_returns,
         published_constants: &published_constants,
         type_info: &type_info,

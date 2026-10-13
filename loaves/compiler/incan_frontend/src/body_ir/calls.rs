@@ -1813,6 +1813,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // open, but the guarded SDK contract supplies an empty ordinary parameter list for binding.
             .or_else(|| native_member.as_ref().map(|_| Vec::new()));
 
+        let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
+        let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
+
         // The receiver is read before the arguments, matching source evaluation order: `recv.m(f())` observes the
         // receiver place first. Method receivers are treated as borrowed rather than moved/cloned, mirroring how the
         // existing Rust-emission backend's ownership planner treats most method receivers
@@ -1850,7 +1853,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
         let checked = native_member.as_ref().map_or_else(
-            || self.method_call_result_type(span),
+            || {
+                retained_method.as_ref().map_or_else(
+                    || self.method_call_result_type(span),
+                    |method| method.return_type.clone(),
+                )
+            },
             |member| member.return_type.clone(),
         );
         let ty = match retained_binding {
@@ -1884,21 +1892,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one
                 // the program's implementation records and the SDK's published bodies carry.
-                canonical: native_member.map(|member| member.canonical).or_else(|| {
-                    self.type_info
-                        .traits
-                        .provider_slot_identities
-                        .get(&(span.start, span.end))
-                        .or_else(|| self.type_info.resolved_identity(span))
-                        .or_else(|| {
-                            self.type_info
-                                .traits
-                                .self_method_identities
-                                .get(&(span.start, span.end))
-                        })
-                        .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
-                        .cloned()
-                }),
+                canonical: native_member
+                    .map(|member| member.canonical)
+                    .or_else(|| {
+                        self.type_info
+                            .traits
+                            .provider_slot_identities
+                            .get(&(span.start, span.end))
+                            .or_else(|| self.type_info.resolved_identity(span))
+                            .or_else(|| {
+                                self.type_info
+                                    .traits
+                                    .self_method_identities
+                                    .get(&(span.start, span.end))
+                            })
+                            .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
+                            .cloned()
+                    })
+                    .or_else(|| retained_method.map(|method| method.canonical)),
                 type_args: resolved_type_args,
                 binding,
             }),

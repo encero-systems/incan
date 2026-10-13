@@ -367,8 +367,10 @@ fn build_body_ir_module_v0_with_provider_operations(
     }
     let published_callable_returns = collect::collect_published_callable_returns(context);
     let runtime_type_conflicts = parameter_types::runtime_name_conflicts(context);
+    let published_methods = published_methods::collect(context);
     let lowering_facts = BodyIrLoweringFacts {
         local_enum_declarations: &local_enum_declarations,
+        published_methods: &published_methods,
         published_callable_returns: &published_callable_returns,
         published_constants: &published_constants,
         type_info,
@@ -543,6 +545,8 @@ type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 struct BodyIrLoweringFacts<'type_info, 'source> {
     /// Checked local and published payload layouts indexed by their exact declaring identity.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
+    /// Canonical provider-owned immutable method signatures available at the checked consumer boundary.
+    published_methods: &'source [published_methods::PublishedMethod],
     /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
@@ -993,6 +997,9 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 struct BodyBuilder<'type_info, 'source> {
     /// The same retained layouts used to close constructor destinations and pattern payload facts.
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
+    /// Provider-owned method records; the Incan consumer receives their selected identity rather than names to
+    /// resolve.
+    published_methods: &'source [published_methods::PublishedMethod],
     /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
@@ -1101,6 +1108,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn new(lowering_facts: &BodyIrLoweringFacts<'type_info, 'source>, owner_return_type: IncanType) -> Self {
         Self {
             local_enum_declarations: lowering_facts.local_enum_declarations,
+            published_methods: lowering_facts.published_methods,
             published_callable_returns: lowering_facts.published_callable_returns,
             type_info: lowering_facts.type_info,
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
@@ -1958,6 +1966,7 @@ mod collect;
 mod collection_context;
 mod decorated_bindings;
 mod entrypoint_effects;
+mod published_methods;
 mod representation_facts;
 mod static_aliases;
 
