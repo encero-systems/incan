@@ -34,6 +34,12 @@ from layout_types import native_source_type as retained_source_type
 pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
     """Retain each union shape once across checked frame and declaration types."""
     mut unions: list[RustType] = []
+    for delegation in module.stdlib_delegations:
+        if len(delegation.type_parameters) != 0:
+            continue
+        for parameter in delegation.parameters:
+            retain_union(unions, parameter)
+        retain_union(unions, delegation.return_type)
     for body in module.bodies:
         retain_union(unions, body.return_type)
         for local in body.locals:
@@ -135,6 +141,7 @@ def legacy_spelling(ty: PlanType) -> Result[str, str]:
         PlanType.Bool => return Ok("bool")
         PlanType.String => return Ok("String")
         PlanType.FrozenStr => return Ok("FrozenStr")
+        PlanType.U8 => return Ok("u8")
         PlanType.Model(_index, name) => return Ok(name)
         PlanType.Enum(_index, name) => return Ok(name)
         PlanType.List(leaf, depth) => return list_spelling(leaf, depth)
