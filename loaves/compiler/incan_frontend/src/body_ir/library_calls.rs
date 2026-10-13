@@ -38,12 +38,21 @@ struct MethodSignature {
 
 /// Collect a crate-call record for every stdlib function and model or class method one module resolves, including
 /// declared type parameters. Nongeneric newtype methods keep their existing admission.
+/// Checked iteration hooks contribute their own identities after written call-site facts have been restored.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
     let identities = type_info
         .references
         .resolved_identities
         .values()
         .chain(type_info.traits.provider_slot_identities.values())
+        .chain(
+            type_info
+                .protocols
+                .body_ir_iterations
+                .values()
+                .flat_map(|hooks| [&hooks.iter, &hooks.next])
+                .filter_map(|hook| hook.canonical.as_ref()),
+        )
         .filter(|identity| {
             super::library_nominals::sdk_identity(identity).is_some()
                 && matches!(
