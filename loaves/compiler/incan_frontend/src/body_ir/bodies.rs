@@ -23,8 +23,9 @@ pub(super) fn lower_owner_member_bodies(
 }
 
 /// Lower every non-abstract method in `methods` (owned by the declaration named `owner_name`) into one
-/// [`bir::Body`] each, skipping abstract methods (`body: None`). `receiver_ty` is the typechecker-equivalent type
-/// for a declared receiver: a concrete nominal type for models, classes, newtypes, and enums, or
+/// [`bir::Body`] each, skipping abstract methods (`body: None`) and documented value-returning trait placeholders.
+/// Unit no-ops and real default bodies remain executable. `receiver_ty` is the typechecker-equivalent type for a
+/// declared receiver: a concrete nominal type for models, classes, newtypes, and enums, or
 /// [`IncanType::SelfType`] for trait defaults.
 ///
 /// Exactly five declaration kinds carry a `methods` field -- model, class, trait, newtype, and enum (see

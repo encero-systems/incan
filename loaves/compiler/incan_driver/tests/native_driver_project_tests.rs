@@ -448,15 +448,14 @@ fn returned_callable_fixture_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
-/// A function pointer field alone reaches the adapter's named refusal before any executable body is admitted.
+/// An unused closed function pointer field validates its declaration and preserves the complete legacy output.
 #[test]
-fn unexecuted_callable_model_fields_are_named_refused() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
+fn unexecuted_function_pointer_model_fields_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
         "unexecuted-callable-model-field",
         "model Op:\n    step: (int) -> int\n\ndef main() -> None:\n    println(42)\n",
         &[],
         b"42\n",
-        "unsupported callable model field declaration",
     )
 }
 

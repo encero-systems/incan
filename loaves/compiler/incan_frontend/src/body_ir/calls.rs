@@ -8,17 +8,6 @@ use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelpe
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
 
-/// Keep written constructor expressions aligned with their checked slots; an unpack never names one field.
-fn constructor_argument_expressions(args: &[ast::CallArg]) -> Result<Vec<&ast::Spanned<ast::Expr>>, &'static str> {
-    args.iter()
-        .map(|argument| match argument {
-            ast::CallArg::Positional(expression) | ast::CallArg::Named(_, expression) => Ok(expression),
-            ast::CallArg::PositionalUnpack(_) => Err("a positional argument spread"),
-            ast::CallArg::KeywordUnpack(_) => Err("a keyword argument spread"),
-        })
-        .collect()
-}
-
 /// Put a fully bound two-slot call's single-value arguments in declared slot order.
 ///
 /// `None` unless each slot is supplied exactly once by one written value and nothing is left to a default.
@@ -625,9 +614,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.lower_newtype_ingress(expr, coercion, scope, out)
     }
 
-    /// Refuse a supplied computation that would precede an observable omitted default. A declaration-owned,
-    /// statement-free copy constant has no source effect to reorder; absent or unproven defaults remain conservative.
-    /// The canonical declaring frame supplies this evidence, never an initializer reconstructed from source names.
+    /// Refuse a supplied computation that would precede an observable omitted default. Canonically matched local
+    /// literal defaults and declaration-owned, statement-free copy constants have no source effect to reorder.
+    /// The checked local source or declaring frame supplies this evidence; absent or unproven defaults stay refused.
     fn construction_interleaves_default_effects(
         &self,
         canonical: Option<&CanonicalSymbolId>,
@@ -638,12 +627,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if supplied_slots.windows(2).any(|pair| pair[0] > pair[1]) {
             return false;
         }
-        let declaration = canonical
-            .and_then(|identity| {
-                self.local_nominal_declarations
-                    .values()
-                    .find(|value| &value.canonical == identity)
-            });
+        let declaration = canonical.and_then(|identity| {
+            self.local_nominal_declarations
+                .values()
+                .find(|value| &value.canonical == identity)
+        });
         let defaults = declaration.and_then(|declaration| declaration.field_default_body.as_deref());
         let local_source = self
             .local_nominal_declarations
@@ -748,14 +736,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        let single_field = self.single_field_checked_ingress(
-            canonical.as_ref(),
-            &planned,
-            field_count,
-            scope,
-            hir_span_value,
-            out,
-        );
+        let single_field =
+            self.single_field_checked_ingress(canonical.as_ref(), &planned, field_count, scope, hir_span_value, out);
         let lowered = match single_field {
             Some(value) => Ok((vec![value], bir::ArgumentBinding::resolved_positional(1))),
             None => self.lower_planned_args(&planned, field_count, &[], &[], scope, out),
