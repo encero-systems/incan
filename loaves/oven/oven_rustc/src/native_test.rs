@@ -45,6 +45,29 @@ pub struct OvenNativeTestCollection {
 }
 
 impl OvenNativeTestCollection {
+    /// Reconcile names retained by a serial owner after the canonical native producer has admitted the executable.
+    /// Only the inventory survives: selection, deadlines, runtime data and outcomes are evaluated on each request.
+    /// Changed executable observations or invocation context use the original supervised collection path.
+    pub fn reconcile(
+        previous: Option<Arc<Self>>,
+        executable: &Path,
+        environment: &BTreeMap<String, String>,
+        working_directory: &Path,
+        timeout: Option<Duration>,
+    ) -> Result<Arc<Self>, OvenNativeTestError> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_test_collection").entered();
+        if let Some(previous) = previous
+            && previous.matches(executable, environment, Some(working_directory))
+        {
+            tracing::trace!(target: "incan::invocation", decision = "retained", inventory_processes = 0_u64);
+            return Ok(previous);
+        }
+        let collection = inventory_native_tests_for_collection(executable, environment, working_directory, timeout)?;
+        tracing::trace!(target: "incan::invocation", decision = "collected", inventory_processes = 2_u64);
+        Ok(Arc::new(collection))
+    }
+
     /// Borrow the actual complete inventory without granting callers permission to forge collected names.
     pub fn inventory(&self) -> &OvenNativeTestInventory {
         &self.inventory

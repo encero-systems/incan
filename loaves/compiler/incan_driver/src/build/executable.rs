@@ -25,6 +25,9 @@ use incan_provider::FeatureSelection;
 pub struct ExecutableBuildOwner {
     authority: ProjectSourceAuthorityDigester,
     native_plans: std::collections::BTreeMap<PathBuf, super::native_loaf_plan::RetainedNativeLoafPlan>,
+    /// Native test names retained after canonical executable admission; passing results are never retained.
+    native_test_collections:
+        std::collections::BTreeMap<PathBuf, std::sync::Arc<oven_rustc::native_test::OvenNativeTestCollection>>,
     /// Successfully published output receipt, reconciled independently of dependency selection.
     native_receipt: Option<RetainedOutputReceipt>,
 }
@@ -236,6 +239,32 @@ impl ExecutableBuildOwner {
         }
         self.authority
             .compilation_session(root, entry, features, sdk_profile, purpose)
+    }
+
+    /// Retain the existing supervised collection for an already admitted native libtest executable.
+    /// Callers must run canonical native preparation first, preserving its dependency leases during execution.
+    /// Reconciliation failures discard the previous names, and each request still executes fresh selected tests.
+    pub fn native_test_collection(
+        &mut self,
+        executable: &Path,
+        environment: &std::collections::BTreeMap<String, String>,
+        working_directory: &Path,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<
+        std::sync::Arc<oven_rustc::native_test::OvenNativeTestCollection>,
+        oven_rustc::native_test::OvenNativeTestError,
+    > {
+        let previous = self.native_test_collections.remove(executable);
+        let collection = oven_rustc::native_test::OvenNativeTestCollection::reconcile(
+            previous,
+            executable,
+            environment,
+            working_directory,
+            timeout,
+        )?;
+        self.native_test_collections
+            .insert(executable.to_path_buf(), std::sync::Arc::clone(&collection));
+        Ok(collection)
     }
 
     /// Share ordinary native preparation between builds and Rust tests in the same serial owner.

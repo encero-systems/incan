@@ -181,3 +181,83 @@ fn collection_refuses_executable_changes_during_listing() -> TestResult {
     ));
     Ok(())
 }
+
+/// Separate owner requests reuse one collection but continue to observe fresh test outcomes.
+#[test]
+fn owner_reconciliation_retains_names_and_executes_fresh_results() -> TestResult {
+    let fixture = Fixture::new()?;
+    let collect = |previous| {
+        OvenNativeTestCollection::reconcile(
+            previous,
+            &fixture.executable,
+            &fixture.environment,
+            &fixture.root,
+            Some(Duration::from_secs(5)),
+        )
+    };
+    let first = collect(None)?;
+    let second = collect(Some(std::sync::Arc::clone(&first)))?;
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+    assert_eq!(fixture.listings()?, 2);
+    assert!(
+        run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&second))?.success
+    );
+    fs::write(fixture.root.join("fail"), "fresh data")?;
+    let third = collect(Some(second))?;
+    assert!(
+        !run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&third))?.success
+    );
+    assert_eq!(fixture.listings()?, 2);
+    assert_eq!(fs::read(fixture.root.join("executions"))?, b"xx");
+    Ok(())
+}
+
+/// Replacement and same-size executable edits invalidate names, even with restored modification time.
+#[test]
+fn owner_reconciliation_observes_executable_edits_and_replacement() -> TestResult {
+    let fixture = Fixture::new()?;
+    let collect = |previous| {
+        OvenNativeTestCollection::reconcile(
+            previous,
+            &fixture.executable,
+            &fixture.environment,
+            &fixture.root,
+            Some(Duration::from_secs(5)),
+        )
+    };
+    let first = collect(None)?;
+    let before = fs::metadata(&fixture.executable)?;
+    write_harness(&fixture.executable, "modified")?;
+    fs::File::options()
+        .write(true)
+        .open(&fixture.executable)?
+        .set_times(fs::FileTimes::new().set_modified(before.modified()?))?;
+    let edited = collect(Some(first))?;
+    assert_eq!(edited.inventory().names, ["modified"]);
+    let replacement = fixture.root.join("replacement");
+    write_harness(&replacement, "replaced")?;
+    fs::rename(replacement, &fixture.executable)?;
+    let replaced = collect(Some(edited))?;
+    assert_eq!(replaced.inventory().names, ["replaced"]);
+    assert_eq!(fixture.listings()?, 6);
+    Ok(())
+}
+
+/// Invocation context changes recollect both inventories, and a missing executable cannot reuse names.
+#[test]
+fn owner_reconciliation_observes_context_and_missing_executable() -> TestResult {
+    let fixture = Fixture::new()?;
+    let first =
+        OvenNativeTestCollection::reconcile(None, &fixture.executable, &fixture.environment, &fixture.root, None)?;
+    let mut environment = fixture.environment.clone();
+    environment.insert("CHANGED_CONTEXT".into(), "yes".into());
+    let second =
+        OvenNativeTestCollection::reconcile(Some(first), &fixture.executable, &environment, &fixture.root, None)?;
+    let other = fixture.root.join("other");
+    fs::create_dir(&other)?;
+    let third = OvenNativeTestCollection::reconcile(Some(second), &fixture.executable, &environment, &other, None)?;
+    assert_eq!(fixture.listings()?, 6);
+    fs::remove_file(&fixture.executable)?;
+    assert!(OvenNativeTestCollection::reconcile(Some(third), &fixture.executable, &environment, &other, None).is_err());
+    Ok(())
+}
