@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn indirect_iterator_capture_keeps_consumption_unproven() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "def pairs() -> Iterator[tuple[int, int]]:\n  return zip([4], [5])\n\ndef main() -> None:\n  values = pairs()\n  capture: () -> list[int] = () => (left + right for left, right in values).collect()\n  println(capture()[0])\n",
+        "def pairs() -> Iterator[(int, int)]:\n  return zip([4], [5])\n\ndef main() -> None:\n  values = pairs()\n  capture: () -> list[int] = () => (left + right for left, right in values).collect()\n  println(capture()[0])\n",
         &["indirect_iterator_capture"],
     )?;
     let body = body_named(&module, "main")?;
