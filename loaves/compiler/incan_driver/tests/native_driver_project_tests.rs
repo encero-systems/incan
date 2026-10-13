@@ -212,6 +212,23 @@ fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std:
     )
 }
 
+/// A captured callable passed by generic SDK value keeps its environment and the original reader's legacy output.
+#[test]
+fn sdk_generic_callable_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-generic-callable-value")?,
+        &fixture.sysroot,
+        &closure,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+    )
+}
+
 /// Pin a removed adapter refusal's next stage and compare the unedited fixture with its live legacy oracle.
 fn check_sdk_adapter_fixture(
     name: &str,
