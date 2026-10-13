@@ -25,7 +25,6 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .references
         .resolved_identities
         .values()
-        .chain(type_info.traits.provider_slot_identities.values())
         .filter(|identity| {
             super::library_nominals::sdk_identity(identity).is_some()
                 && matches!(
@@ -240,8 +239,7 @@ pub(super) fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
 /// receiver parameter, ordinary parameters, result and owner binders. A static method has no receiver parameter.
 ///
 /// The stdlib source records each method under its source module; rebased onto the consumer's package origin it must
-/// equal the checked identity exactly, and the owner type must itself be a declaration that SDK package owns. A
-/// same-name overload is selected by that complete identity, never by the cache's single-method projection.
+/// equal the checked identity exactly, and the owner type must itself be a declaration that SDK package owns.
 fn method_signature(
     identity: &CanonicalSymbolId,
     path: &[String],
@@ -256,26 +254,21 @@ fn method_signature(
         rebased
     };
     for (owner, info) in cache.list_types(path) {
-        let (methods, overloads, names) = match &info {
-            TypeInfo::Model(model) => (&model.methods, &model.method_overloads, &model.type_params),
-            TypeInfo::Class(class) => (&class.methods, &class.method_overloads, &class.type_params),
+        let (methods, names) = match &info {
+            TypeInfo::Model(model) => (&model.methods, &model.type_params),
+            TypeInfo::Class(class) => (&class.methods, &class.type_params),
             // A rusttype's methods belong to the Rust type it names, not to an item the SDK crate compiled.
             TypeInfo::Newtype(newtype) if !newtype.is_rusttype && newtype.type_params.is_empty() => {
-                (&newtype.methods, &newtype.method_overloads, &newtype.type_params)
+                (&newtype.methods, &newtype.type_params)
             }
             _ => continue,
         };
-        let selected =
-            |method: &&crate::symbols::MethodInfo| method.identity.as_ref().map(rebased).as_ref() == Some(identity);
-        let Some(method) = overloads
-            .get(&identity.declaration_name)
-            .into_iter()
-            .flat_map(|methods| methods.iter())
-            .find(selected)
-            .or_else(|| methods.get(&identity.declaration_name).filter(selected))
-        else {
+        let Some(method) = methods.get(&identity.declaration_name) else {
             continue;
         };
+        if method.identity.as_ref().map(rebased).as_ref() != Some(identity) {
+            continue;
+        }
         let owner_identity = rebased(&cache.lookup_identity(path, &owner)?);
         cache.callable_source_identity(&owner_identity)?;
         if method.is_async || !method.has_body || !method.type_params.is_empty() || method.trait_target.is_some() {
