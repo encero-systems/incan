@@ -6,10 +6,11 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 #[cfg(not(test))]
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -368,18 +369,38 @@ fn read_disk_cache(root: &Path) -> Result<Option<DiskCacheEnvelope>, RustMetadat
     read_json_cache(&legacy_disk_cache_path(root))
 }
 
-/// Atomically write one cache envelope to disk.
+/// Process-local sequence combined with the process identity gives each concurrent cache publisher its own staging
+/// file.
+static CACHE_PUBLICATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Atomically replace a cache envelope from an exclusively created sibling file.
+/// Concurrent writers may replace whole snapshots, but cannot truncate or rename each other's temporary output.
 fn write_json_cache(path: &Path, envelope: &DiskCacheEnvelope) -> Result<(), RustMetadataError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let tmp_path = path.with_extension("tmp");
     let payload = serde_json::to_vec_pretty(envelope).map_err(|err| RustMetadataError::LoadWorkspace {
         path: path.to_path_buf(),
         message: format!("failed to serialize rust-inspect disk cache: {err}"),
     })?;
-    fs::write(&tmp_path, payload)?;
-    fs::rename(tmp_path, path)?;
+    let (mut staged, tmp_path) = loop {
+        let sequence = CACHE_PUBLICATION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = path.with_extension(format!("{}-{sequence}.tmp", std::process::id()));
+        match fs::OpenOptions::new().create_new(true).write(true).open(&candidate) {
+            Ok(file) => break (file, candidate),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    };
+    let result: std::io::Result<()> = (|| {
+        staged.write_all(&payload)?;
+        drop(staged);
+        fs::rename(&tmp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result?;
     Ok(())
 }
 

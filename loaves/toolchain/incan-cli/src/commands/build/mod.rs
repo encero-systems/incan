@@ -675,11 +675,14 @@ mod tests {
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::InspectorConfig;
 
-    /// Copy a source tree into an isolated component fixture without following symlinks.
+    /// Copy authored component inputs without following symlinks or carrying generated build/cache directories.
     fn copy_source_tree(from: &Path, to: &Path) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(to)?;
         for entry in fs::read_dir(from)? {
             let entry = entry?;
+            if matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+                continue;
+            }
             let source = entry.path();
             let destination = to.join(entry.file_name());
             if entry.file_type()?.is_dir() {
@@ -699,10 +702,12 @@ mod tests {
         const ENTRY: &str = "INCAN_TEST_1976_STDLIB_SOURCE_ENTRY";
         if env::var_os(CHILD).is_some() {
             let entry = env::var(ENTRY)?;
-            crate::commands::diagnostics::check_path(
+            let report = incan_driver::build::check::check_path_report_with_selections(
                 Path::new(&entry),
-                crate::commands::diagnostics::DiagnosticOutputFormat::Text,
+                &FeatureSelection::default(),
+                None,
             )?;
+            assert!(report.ok(), "async component source check failed: {report:?}");
             return Ok(());
         }
 
@@ -788,13 +793,13 @@ mod tests {
         fs::create_dir_all(root.join("src"))?;
         fs::create_dir_all(dependency.join("src"))?;
         fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\n",
+            root.join("loaf.toml"),
+            "[project]\nname='root'\nversion='0.1.0'\n[rust]\nname='root'\ntype='lib'\nedition='2021'\n[dependencies]\nsource-dep={path='../source-dep'}\n",
         )?;
         fs::write(root.join("src/lib.rs"), "pub fn keep() {}\n")?;
         fs::write(
-            dependency.join("Cargo.toml"),
-            "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n",
+            dependency.join("loaf.toml"),
+            "[project]\nname='source-dep'\nversion='0.1.0'\n[rust]\nname='source_dep'\ntype='lib'\nedition='2021'\n",
         )?;
         fs::write(
             dependency.join("src/lib.rs"),
@@ -809,8 +814,41 @@ impl ChildId {
 "#,
         )?;
 
+        // Both the root lookup and the dependency-local complete extraction use the existing direct source loader.
+        // These authored fixtures have only local path edges and no registry closure to resolve.
+        for manifest_dir in [&root, &dependency] {
+            rust_inspect::write_oven_inspection_source_authority(manifest_dir, Vec::new())?;
+            fs::write(manifest_dir.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
+        }
+        assert!(!root.join("Cargo.toml").exists());
+        assert!(!dependency.join("Cargo.toml").exists());
+
         let query_path = "source_dep::ChildId".to_string();
         let inspector = Inspector::new(InspectorConfig::new(root.clone()));
+        // Reproduce a persisted partial prewarm record explicitly: complete Oven extraction now eagerly includes
+        // methods, but ABI publication must also upgrade records left by the source-only metadata path.
+        inspector.cache().insert_test_item(
+            &root,
+            incan_lang::interop::RustItemMetadata {
+                canonical_path: query_path.clone(),
+                definition_path: Some(query_path.clone()),
+                visibility: incan_lang::interop::RustVisibility::Public,
+                kind: incan_lang::interop::RustItemKind::Type(incan_lang::interop::RustTypeInfo {
+                    type_params: Vec::new(),
+                    type_param_defaults: Vec::new(),
+                    mutable_reference_type_params: Vec::new(),
+                    expanded_derive_traits: Vec::new(),
+                    has_const_params: false,
+                    alias_target: None,
+                    metadata_completeness: incan_lang::interop::RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+                    methods: Vec::new(),
+                    implemented_traits: Vec::new(),
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )?;
+        inspector.cache().persist_manifest_dir(&root)?;
         inspector.prewarm([query_path.clone()], &|_| ())?;
         let prewarmed = inspector.get(&query_path)?;
         let incan_lang::interop::RustItemKind::Type(prewarmed_type) = &prewarmed.metadata.kind else {
@@ -818,7 +856,7 @@ impl ChildId {
         };
         assert!(
             !prewarmed_type.metadata_completeness.has_methods(),
-            "the regression requires the fast prewarm route to persist partial source metadata"
+            "the regression requires prewarm to reuse the persisted partial metadata"
         );
 
         let query_paths = vec![query_path.clone()];

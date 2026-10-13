@@ -2927,3 +2927,49 @@ pub mod qualified_shadow {
     );
     Ok(())
 }
+
+/// Concurrent snapshots must each publish a complete envelope without sharing a temporary filename.
+#[test]
+fn concurrent_disk_cache_publication_preserves_complete_envelopes() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let barrier = std::sync::Barrier::new(16);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..16)
+            .map(|worker| {
+                let root = root.path();
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let envelope = DiskCacheEnvelope {
+                        cache_format: DISK_CACHE_FORMAT,
+                        inspector_version: worker.to_string(),
+                        workspace_fingerprint: worker.to_string().repeat(65_536),
+                        items: HashMap::new(),
+                        complete_items: HashSet::new(),
+                        misses: HashMap::new(),
+                    };
+                    barrier.wait();
+                    write_disk_cache(root, &envelope).map_err(|error| error.to_string())
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| "cache writer panicked".to_string())
+                    .and_then(|result| result)
+            })
+            .collect::<Vec<_>>()
+    });
+    for result in results {
+        result?;
+    }
+    let envelope = read_disk_cache(root.path())?.ok_or("concurrent publication left no valid envelope")?;
+    assert_eq!(
+        envelope.workspace_fingerprint,
+        envelope.inspector_version.repeat(65_536)
+    );
+    assert_eq!(fs::read_dir(root.path())?.count(), 1, "temporary files must not remain");
+    Ok(())
+}
