@@ -214,6 +214,7 @@ from value_enums import (
     value_enum_from_value_owner,
 )
 from unions import (
+    require_native_union_signature,
     native_source_type,
     collect_unions,
     retain_body_unions,
@@ -2888,11 +2889,13 @@ def lower_library_method(
     mut ordinary_types: list[PlanType] = []
     for index in range(1, len(delegation.parameters)):
         parameter: RustType = substitute(delegation.parameters[index], names, closed)?
+        _ = require_native_union_signature(parameter, builder.intrinsics)?
         ordinary_types.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
         )
     parameters.extend(ordinary_types)
     returned: RustType = substitute(delegation.return_type, names, closed)?
+    _ = require_native_union_signature(returned, builder.intrinsics)?
     result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
@@ -3445,10 +3448,12 @@ def lower_delegated_call(
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
         instantiated: RustType = substitute(parameter, names, closed)?
+        _ = require_native_union_signature(instantiated, builder.intrinsics)?
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
     returned: RustType = substitute(delegation.return_type, names, closed)?
+    _ = require_native_union_signature(returned, builder.intrinsics)?
     result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     mut type_arguments: list[PlanType] = []
     for argument in closed:

@@ -4,6 +4,36 @@ use super::*;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_semantics_core::SymbolOrigin;
 
+/// A checked SDK signature and its semantic payloads alone cannot authorize an anonymous native enum alias.
+#[test]
+fn sdk_union_signature_requires_a_selected_artifact() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.fs import Path\n\ndef compare(first: Path, target: Path | str) -> None:\n    first.samefile(target)\n";
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    let path = vec!["m".to_owned(), "unadmitted_union".to_owned()];
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut module = build_body_ir_module_v0(&program, &path, checker.type_info());
+    module.stdlib_delegations = library_call_delegations(checker.type_info());
+    module
+        .nominal_declarations
+        .extend(library_nominal_declarations(checker.type_info()));
+    assert!(
+        module
+            .stdlib_delegations
+            .iter()
+            .flat_map(|call| &call.parameters)
+            .any(|ty| { matches!(ty, IncanType::Generic { base, .. } if base == "Union") }),
+        "the negative must actually request an SDK union"
+    );
+    let declarations = library_native_union_declarations(&ProviderPlan::default(), &[module])?;
+    assert!(declarations.is_empty(), "semantic shape must not mint native ownership");
+    Ok(())
+}
+
 /// Older serialized modules omit native union facts and must load with an empty inventory, never inferred ownership.
 #[test]
 fn native_union_inventory_defaults_for_older_modules() -> Result<(), Box<dyn std::error::Error>> {

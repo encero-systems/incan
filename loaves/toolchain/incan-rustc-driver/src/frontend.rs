@@ -148,6 +148,11 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     for module in libraries {
         carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
     }
+    let native_unions = incan_frontend::body_ir::library_native_union_declarations(&session.provider_plan, &bodies)?;
+    bodies
+        .get_mut(entry)
+        .ok_or("selected Body IR entry is missing")?
+        .native_union_declarations = native_unions;
     Ok(CheckedProgram {
         modules: bodies,
         sources,
@@ -390,6 +395,7 @@ fn declaration_module(owner: String) -> BodyIrModule {
         type_alias_declarations: Vec::new(),
         enum_declarations: Vec::new(),
         stdlib_delegations: Vec::new(),
+        native_union_declarations: Vec::new(),
         static_declarations: Vec::new(),
         module_id: incan_semantics_core::CompilerNodeId::module(owner),
         nominal_declarations: Vec::new(),

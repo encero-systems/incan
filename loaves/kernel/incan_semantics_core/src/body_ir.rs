@@ -78,8 +78,13 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
-    /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed
-    /// initialization.
+    /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
+    ///
+    /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
+    /// without this representation remains source-owned; a consumer must never infer SDK ownership from its hash.
+    #[serde(default)]
+    pub native_union_declarations: Vec<NativeUnionDeclaration>,
+    /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed initialization.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
@@ -191,6 +196,17 @@ pub enum StaticInitializer {
     /// Any other checked initializer, as a body with no parameters that returns the storage carrier. A consumer runs
     /// it at most once per program, at the point legacy's static initialization would.
     Computed(Box<Body>),
+}
+
+/// One producer-owned anonymous union whose physical representation was admitted by the frontend provider plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeUnionDeclaration {
+    /// Consumer semantic type whose nominal leaves have already been matched to the admitted artifact.
+    pub ty: IncanType,
+    /// Exact qualified Rust item selected from the admitted producer's final emitted table.
+    pub rust_item: String,
+    /// Payload types in producer variant order; lowering must preserve this order even if local names differ.
+    pub members: Vec<IncanType>,
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
@@ -4963,6 +4979,7 @@ mod tests {
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),

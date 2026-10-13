@@ -177,6 +177,27 @@ def union_name(members: list[PlanType]) -> Result[str, str]:
     return Ok("__IncanUnion" + suffix)
 
 
+pub def require_native_union_signature(ty: &RustType, intrinsics: list[EnumDeclaration]) -> Result[None, str]:
+    """Require a retained SDK union owner before passing a semantic union across an external call boundary."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            for argument in arguments:
+                _ = require_native_union_signature(argument, intrinsics)?
+            if str(base) != "Union":
+                return Ok(None)
+            for declaration in intrinsics:
+                if declaration.source_type == str(ty) and declaration.library_item != "":
+                    return Ok(None)
+            return Err("unsupported Body IR stdlib union without admitted native representation")
+        RustType.Tuple(elements) =>
+            for element in elements:
+                _ = require_native_union_signature(element, intrinsics)?
+        RustType.Ref(inner) => return require_native_union_signature(inner, intrinsics)
+        RustType.RefMut(inner) => return require_native_union_signature(inner, intrinsics)
+        _ => pass
+    return Ok(None)
+
+
 pub def lower_union_declaration(
     module: &BodyIrModule,
     ty: &RustType,
@@ -186,21 +207,44 @@ pub def lower_union_declaration(
     """
     Construct a normalized union only after its nested payload layouts have been retained.
 
-    Like legacy, it derives only Clone, and its Debug prints the held member rather than a variant name.
+    A source-owned union derives only Clone and prints the held member through Debug. An admitted SDK alias uses its
+    owner's existing implementations; emitting another Debug implementation for that foreign enum would be illegal.
     """
-    members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
+    mut members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
+    mut native_item = ""
+    mut name = union_name(members)?
+    mut derives = ["Clone"]
+    for declaration in module.native_union_declarations:
+        if declaration.ty != ty.clone():
+            continue
+        mut ordered: list[PlanType] = []
+        for member in declaration.members:
+            ordered.append(
+                retained_source_type(module.nominal_declarations, module.enum_declarations, [], member, intrinsics)?,
+            )
+        if len(ordered) != len(members):
+            return Err("unsupported Body IR admitted union payload mismatch")
+        for member in ordered:
+            if member not in members:
+                return Err("unsupported Body IR admitted union payload mismatch")
+        members = ordered
+        native_item = str(declaration.rust_item)
+        segments = native_item.split("::")
+        name = segments[len(segments) - 1]
+        derives = []
     mut variants: list[EnumVariant] = []
     for index in range(len(members)):
         variants.append(EnumVariant(name=f"V{index}", fields=[members[index]]))
     return Ok(
         EnumDeclaration(
-            name=union_name(members)?,
+            name=name,
             public=true,
             variants=variants,
-            derives=["Clone"],
+            derives=derives,
+            library_item=native_item,
             span=SourceSpan(file=file, line=1, column=1),
             source_type=str(ty),
-            member_debug=true,
+            member_debug=native_item == "",
         ),
     )
 

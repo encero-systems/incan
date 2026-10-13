@@ -20,6 +20,7 @@ pub def project_context(
     context.static_declarations.clear()
     context.decorated_bindings.clear()
     context.stdlib_delegations.clear()
+    context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
     for module in modules:
         specialized = specialize_project_traits(module, modules)?
@@ -63,4 +64,7 @@ pub def project_context(
         for index in range(len(module.stdlib_delegations)):
             declaration = module.stdlib_delegations[index].clone()
             context.stdlib_delegations.push(declaration.clone())
+        for index in range(len(module.native_union_declarations)):
+            declaration = module.native_union_declarations[index].clone()
+            context.native_union_declarations.push(declaration.clone())
     return Ok((context, checked))

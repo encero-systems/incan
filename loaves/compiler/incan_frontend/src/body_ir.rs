@@ -205,6 +205,16 @@ pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbol
     identities.into_iter().collect()
 }
 
+/// Project exact SDK union owner and payload records after source modules and their selected SDK layouts are joined.
+///
+/// Only the provider plan's admitted emitted-definition table grants a native alias; semantic shape or a plausible hash alone never establishes ownership. Missing or unsupported records remain absent for fail-closed lowering.
+pub fn library_native_union_declarations(
+    plan: &ProviderPlan,
+    modules: &[bir::BodyIrModule],
+) -> Result<Vec<bir::NativeUnionDeclaration>, String> {
+    library_unions::collect(plan, modules)
+}
+
 /// A type leaf whose retained canonical identity must survive Result-side settlement.
 enum RetainedTypeLeaf {
     /// A source or package nominal binding.
@@ -445,6 +455,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         ),
         enum_declarations,
         stdlib_delegations: stdlib_delegations::collect(type_info),
+        native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
         nominal_declarations,
@@ -1900,6 +1911,7 @@ mod library_calls;
 mod library_defaults;
 mod library_nominals;
 mod library_opaque_returns;
+mod library_unions;
 pub(crate) mod runtime_nominals;
 mod stdlib_delegations;
 
