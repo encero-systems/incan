@@ -6000,6 +6000,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/closed_callback_types.rs": {
+      "disposition": "keep",
+      "notes": "Checked callback return contracts and original fixture local types retained for direct-route execution without modifying legacy inference.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
