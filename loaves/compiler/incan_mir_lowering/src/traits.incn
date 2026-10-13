@@ -284,7 +284,7 @@ pub def owner_method_index(
         match receiver_mode(body.locals[0].origin):
             Some(_mutable) => return Ok(index)
             None => return Err("unsupported Body IR Method without receiver")
-    return Err("unsupported Body IR nonlocal or trait-object Method")
+    return Err(f"unsupported Body IR nonlocal or trait-object Method {target.name}")
 
 
 def owner_identity(module: &BodyIrModule, owner: PlanType) -> Result[CanonicalSymbolId, str]:
