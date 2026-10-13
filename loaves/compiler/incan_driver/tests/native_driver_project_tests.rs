@@ -6518,6 +6518,21 @@ fn declaration_case_outputs(
 /// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
 /// SDK prelude tasks preserve the original fixture's executor, task handles and output.
 /// SDK runtime task types keep their native storage in ordinary unused signatures.
+/// A checked native SDK task type keeps its concrete type argument through Body IR projection.
+#[test]
+fn async_native_task_path_signature_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-native-task-path",
+        r#"from rust::incan_std_async::task import JoinHandle as NativeHandle
+def handle(value: NativeHandle[int]) -> None:
+    pass
+def main() -> None:
+    println("native SDK signature")
+"#,
+    )
+}
+
+/// SDK runtime task types keep their native storage in ordinary unused signatures.
 #[test]
 fn async_runtime_nominal_signatures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_async_family_source(

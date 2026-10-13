@@ -463,3 +463,44 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
         "no suspension point may be emitted for a keyword that is not `await`: {out:?}"
     );
 }
+/// SDK provider native spellings retain the same task carrier and argument widths as source annotations.
+#[test]
+fn native_task_paths_retain_sdk_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let facts = TypeCheckInfo::default();
+    let actual = super::super::parameter_types::checked_semantic_type(
+        &crate::symbols::ResolvedType::RustPath("incan_std_async::task::JoinHandle<i64>".to_owned()),
+        &facts,
+    );
+    assert_eq!(
+        actual,
+        IncanType::Generic {
+            base: "JoinHandle".to_owned(),
+            args: vec![IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int)]
+        }
+    );
+    let sized = super::super::parameter_types::checked_semantic_type(
+        &crate::symbols::ResolvedType::RustPath("incan_std_async::task::JoinHandle<i32>".to_owned()),
+        &facts,
+    );
+    assert_eq!(
+        sized,
+        IncanType::Generic {
+            base: "JoinHandle".to_owned(),
+            args: vec![IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Numeric(
+                incan_lang::lang::types::numerics::NumericTypeId::I32
+            ))]
+        }
+    );
+    Ok(())
+}
+
+/// An arbitrary same-tail Rust type never receives SDK ownership or a known runtime layout.
+#[test]
+fn foreign_task_paths_remain_opaque() {
+    let facts = TypeCheckInfo::default();
+    let ty = crate::symbols::ResolvedType::RustPath("foreign::task::JoinHandle<i64>".to_owned());
+    assert_eq!(
+        super::super::parameter_types::checked_semantic_type(&ty, &facts),
+        semantic_type_from_resolved(&ty)
+    );
+}
