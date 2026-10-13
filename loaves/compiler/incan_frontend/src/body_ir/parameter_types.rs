@@ -11,7 +11,10 @@ use super::{
 /// Only checker-minted canonical bindings authorize this projection. Project assembly still refuses equal carrier
 /// names from distinct owners, so this does not choose between conflicting declarations.
 pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> IncanType {
-    retain_checked_nominal_names(semantic_type_from_resolved(ty), facts)
+    retain_checked_nominal_names(
+        super::runtime_nominals::project_type(semantic_type_from_resolved(ty), facts),
+        facts,
+    )
 }
 
 /// Classify declaration binders before builtin storage projection so a same-spelled parameter keeps its own category.

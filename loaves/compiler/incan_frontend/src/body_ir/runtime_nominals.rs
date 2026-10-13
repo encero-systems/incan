@@ -13,12 +13,18 @@ use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
     let mut names = BTreeSet::new();
     for ty in type_info.expressions.expr_types.values() {
-        super::library_calls::named_leaves(&semantic_type_from_resolved(ty), &mut names);
+        super::library_calls::named_leaves(&project_type(semantic_type_from_resolved(ty), type_info), &mut names);
     }
     for binding in type_info.declarations.function_bindings.values() {
-        super::library_calls::named_leaves(&semantic_type_from_resolved(&binding.return_type), &mut names);
+        super::library_calls::named_leaves(
+            &project_type(semantic_type_from_resolved(&binding.return_type), type_info),
+            &mut names,
+        );
         for parameter in &binding.params {
-            super::library_calls::named_leaves(&semantic_type_from_resolved(&parameter.ty), &mut names);
+            super::library_calls::named_leaves(
+                &project_type(semantic_type_from_resolved(&parameter.ty), type_info),
+                &mut names,
+            );
         }
     }
     names.into_iter().filter_map(|name| nominal(type_info, &name)).collect()
@@ -90,5 +96,46 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         named_type_identities: Default::default(),
         type_parameter_count: type_parameters.len(),
         type_parameters,
+    })
+}
+
+/// Project only registry-owned native Rust paths onto the same SDK carrier that source annotations name.
+/// Argument splitting uses the existing Rust interop parser; unregistered paths and unsupported arguments retain their
+/// refusal.
+pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
+    match ty {
+        IncanType::RustInteropPath(path) => project_path(&path, facts).unwrap_or(IncanType::RustInteropPath(path)),
+        IncanType::Generic { base, args } => IncanType::Generic {
+            base,
+            args: args.into_iter().map(|arg| project_type(arg, facts)).collect(),
+        },
+        IncanType::Tuple(items) => IncanType::Tuple(items.into_iter().map(|item| project_type(item, facts)).collect()),
+        IncanType::Ref(inner) => IncanType::Ref(Box::new(project_type(*inner, facts))),
+        IncanType::RefMut(inner) => IncanType::RefMut(Box::new(project_type(*inner, facts))),
+        other => other,
+    }
+}
+
+/// Preserve checked SDK ownership and exact argument types when the provider's signature uses native Rust spelling.
+fn project_path(path: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
+    let id = surface_types::from_runtime_rust_path(path)?;
+    let name = surface_types::as_str(id);
+    // A source declaration may share a spelling, but never authorizes a native runtime path conversion.
+    nominal(facts, name)?;
+    if surface_types::info_for(id).kind == SurfaceTypeKind::Named {
+        return (!path.contains('<')).then(|| IncanType::Named(name.to_owned()));
+    }
+    let (_, inner) = path.split_once('<')?;
+    let inner = inner.strip_suffix('>')?;
+    let arguments = incan_lang::interop::split_top_level_rust_args(inner);
+    if arguments.len() != 1 {
+        return None;
+    }
+    let parser = crate::typechecker::TypeChecker::new();
+    let argument = parser.resolved_type_from_rust_display(arguments[0]);
+    let argument = project_type(semantic_type_from_resolved(&argument), facts);
+    Some(IncanType::Generic {
+        base: name.to_owned(),
+        args: vec![argument],
     })
 }
