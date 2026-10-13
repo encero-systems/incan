@@ -67,6 +67,57 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
     Ok(())
 }
 
+/// A function reached through aliased or ordinary module bindings retains a function-item read, not an unknown field.
+#[test]
+fn module_function_values_retain_checked_callable_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub def calculate(value: int) -> int:\n  return value * 2\n";
+    let source = "import provider as p\nimport provider\n\ndef apply(f: (int) -> int, value: int) -> int:\n  return f(value)\n\ndef main() -> None:\n  first = p.calculate\n  println(first(2))\n  println(apply(p.calculate, 3))\n  second = provider.calculate\n  println(second(4))\n";
+    let provider = build(provider_source, &["provider"])?;
+    let expected = body_named(&provider, "calculate")?
+        .canonical
+        .clone()
+        .ok_or("provider function identity missing")?;
+    let module = build_with_published_imports(
+        source,
+        &["consumer"],
+        &[("provider", &["provider"], provider_source)],
+        &[provider],
+    )?;
+    let body = body_named(&module, "main")?;
+    let items: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } if body.function_item => Some(body),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(items.len(), 3, "{}", body.render_snapshot());
+    for item in items {
+        let [statement] = item.stmts.as_slice() else {
+            return Err("function item must forward one selected call".into());
+        };
+        let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+        else {
+            return Err("function item lacks a canonical named target".into());
+        };
+        assert_eq!(target.canonical.as_ref(), Some(&expected), "{target:#?}");
+    }
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A method after a provider's private alias return retains the providing model's exact method and result carrier.
 #[test]
 fn imported_alias_return_retains_method_selection() -> Result<(), Box<dyn std::error::Error>> {

@@ -64,6 +64,20 @@ fn sdk_index_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )
 }
 
+/// Aliased and ordinary module function values keep canonical invocation and callable-argument legacy bytes.
+#[test]
+fn module_function_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "module-function-value",
+        "import provider as p\nimport provider\n\ndef apply(f: (int) -> int, value: int) -> int:\n  return f(value)\n\ndef main() -> None:\n  first = p.calculate\n  println(first(2))\n  println(apply(p.calculate, 3))\n  second = provider.calculate\n  println(second(4))\n",
+        &[(
+            "provider.incn",
+            "pub def calculate(value: int) -> int:\n  return value * 2\n",
+        )],
+        b"4\n6\n8\n",
+    )
+}
+
 /// An aliased return's method and aliased fields preserve all three original multi-module legacy outputs.
 #[test]
 fn imported_alias_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
