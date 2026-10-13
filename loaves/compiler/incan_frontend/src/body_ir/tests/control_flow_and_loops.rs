@@ -5,6 +5,59 @@
 
 use super::*;
 
+/// An unsafe region retains its source receipt and exact nested operations before any consumer admits it.
+#[test]
+fn unsafe_region_retains_acknowledgment_receipt_and_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def probe(value: int) -> int:\n  return value\n\ndef touch(value: int) -> int:\n  mut total = 0\n  unsafe:\n    total = probe(value)\n  return total\n",
+        &["m", "unsafe_receipt"],
+    )?;
+    let body = body_named(&module, "touch")?;
+    let value = serde_json::to_value(body)?;
+    let statements = value["block"]["stmts"].as_array().ok_or("missing body statements")?;
+    let statement = statements
+        .iter()
+        .find(|statement| statement["kind"].get("UnsafeRegion").is_some())
+        .ok_or("missing unsafe acknowledgment region")?;
+    let region = &statement["kind"]["UnsafeRegion"];
+    assert_eq!(region["acknowledgment"]["receipt"]["kind"], "Statement");
+    assert_eq!(region["acknowledgment"]["span"], statement["span"]);
+    assert_eq!(region["acknowledgment"]["scope"], value["block"]["scope"]);
+    assert_eq!(region["body"]["scope"], value["block"]["scope"]);
+    assert!(
+        region["body"]["stmts"]
+            .as_array()
+            .is_some_and(|operations| operations.len() >= 2)
+    );
+    Ok(())
+}
+
+/// A declaration inside an acknowledged region remains in the enclosing Incan scope, as legacy flattening requires.
+#[test]
+fn unsafe_region_keeps_enclosing_scope_and_later_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  unsafe:\n    value = \"retained\"\n  println(value)\n",
+        &["m", "unsafe_scope"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert_eq!(body.scopes.len(), 1);
+    assert!(body.locals.iter().any(|local| local.name.as_deref() == Some("value")));
+    let value = serde_json::to_value(body)?;
+    assert!(
+        value["block"]["stmts"].as_array().is_some_and(|statements| statements
+            .iter()
+            .any(|statement| statement["kind"].get("UnsafeRegion").is_some())),
+        "{}",
+        body.render_snapshot()
+    );
+    assert!(
+        !body.render_snapshot().contains("unsupported"),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 #[test]
 fn lowers_if_while_and_for_into_normalized_control_flow() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def run(n: int) -> int:\n  mut total = 0\n  for i in 0..n:\n    if i > 2:\n      total = total + i\n  while total > 100:\n    total = total - 1\n  return total\n";

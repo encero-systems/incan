@@ -18,6 +18,63 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// An acknowledged region assigns a checked call result to its enclosing local with frozen legacy output.
+#[test]
+fn unsafe_region_assignment_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("unsafe-region-assignment")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/execution_scalars_and_bodies/parity_unsafe_region_assigns_a_call_result.incn"
+        ),
+    )
+}
+
+/// The two historical sibling fixtures now deliberately admit their acknowledged bodies and keep legacy output.
+#[test]
+fn unsafe_sibling_bodies_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    for (name, source) in [
+        (
+            "unsafe-sibling-receipt",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/execution_calls_types_and_modules/cli_refuses_an_unsupported_sibling_without_a_receipt.incn"
+            ),
+        ),
+        (
+            "unsafe-sibling-span",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/execution_calls_types_and_modules/refuses_an_unsupported_sibling_body_at_its_original_span.incn"
+            ),
+        ),
+    ] {
+        corpus::check_builtin_source(
+            &fixture.driver_binary("debug"),
+            &fixture.scratch(name)?,
+            &fixture.sysroot,
+            &fixture.formatting,
+            source,
+        )?;
+    }
+    Ok(())
+}
+
+/// A value declared inside an acknowledged region remains usable afterward without introducing an Incan scope.
+#[test]
+fn unsafe_region_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("unsafe-region-binding")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n  unsafe:\n    value = \"retained\"\n  println(value)\n",
+    )
+}
+
 /// A newtype's declaration-owned Partial preserves preset defaults and explicit overrides.
 #[test]
 fn newtype_constructor_partial_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
