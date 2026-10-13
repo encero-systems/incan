@@ -30,7 +30,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             }
         }
-        let ty = self.resolve_ty(span);
+        let ty = self.retained_list_type(&self.resolve_ty(span), &elements);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(bir::AggregateKind::List, elements),

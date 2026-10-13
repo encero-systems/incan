@@ -1,6 +1,6 @@
 """Concrete standard Option and Result layouts shared with native enum operations."""
 
-from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, generic
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -8,7 +8,11 @@ from rust::incan_semantics_core::body_ir import (
     ResultVariantKind,
     Constant as RustConstant,
     StaticInitializer,
+    Block as RustBlock,
+    StatementKind as RustStatementKind,
+    Operand as RustOperand,
 )
+from lists import taking_iterator_locals
 from pub::incan_mir_plan import (
     BinaryOp,
     CalleeKind,
@@ -187,6 +191,63 @@ pub def retain_body_carriers(
         match retain_carrier(module, declarations, body.locals[index].ty, file):
             Ok(_value) => pass
             Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
+    retain_iteration_poll_carriers(module, declarations, body, body.block, taking_iterator_locals(body.block), file)?
+    return Ok(None)
+
+
+def retain_iteration_poll_carriers(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    body: &Body,
+    block: &RustBlock,
+    taking: list[int],
+    file: str,
+) -> Result[None, str]:
+    """Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering."""
+    for statement in block.stmts:
+        retain_iteration_poll_statement(module, declarations, body, statement.kind, taking, file)?
+    return Ok(None)
+
+
+def retain_iteration_poll_statement(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    body: &Body,
+    kind: &RustStatementKind,
+    taking: list[int],
+    file: str,
+) -> Result[None, str]:
+    """Read one canonical statement through its explicit borrowed enum type, including nested consuming loops."""
+    match kind:
+        RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=_protocol) =>
+            match iterator:
+                RustOperand.Place(read) =>
+                    match read.place.local_id():
+                        Some(local) =>
+                            index = int(local.index()) + 1
+                            if index in taking:
+                                match destination.local_id():
+                                    Some(item) =>
+                                        ty = body.locals[int(item.index())].ty
+                                        output = generic("Option", [ty])
+                                        retain_carrier(module, declarations, output, file)?
+                                    None => return Err("unsupported Body IR consuming iteration global item")
+                        None => pass
+                _ => pass
+        RustStatementKind.Loop(body=child) => retain_iteration_poll_carriers(
+            module,
+            declarations,
+            body,
+            child,
+            taking,
+            file,
+        )?
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            retain_iteration_poll_carriers(module, declarations, body, then_body, taking, file)?
+            match else_body:
+                Some(child) => retain_iteration_poll_carriers(module, declarations, body, child, taking, file)?
+                None => pass
+        _ => pass
     return Ok(None)
 
 

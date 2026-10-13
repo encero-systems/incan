@@ -99,6 +99,8 @@ enum Scalar {
     List(Leaf, i64),
     ListRef(Leaf, i64),
     ListMutRef(Leaf, i64),
+    ListIntoIter(Leaf, i64),
+    ListIntoIterMutRef(Leaf, i64),
     Set(Leaf),
     SetRef(Leaf),
     SetMutRef(Leaf),
@@ -196,6 +198,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::List(leaf, depth) => Scalar::List(Leaf::of(leaf), *depth),
         PlanType::ListRef(leaf, depth) => Scalar::ListRef(Leaf::of(leaf), *depth),
         PlanType::ListMutRef(leaf, depth) => Scalar::ListMutRef(Leaf::of(leaf), *depth),
+        PlanType::ListIntoIter(leaf, depth) => Scalar::ListIntoIter(Leaf::of(leaf), *depth),
+        PlanType::ListIntoIterMutRef(leaf, depth) => Scalar::ListIntoIterMutRef(Leaf::of(leaf), *depth),
         PlanType::Set(leaf) => Scalar::Set(Leaf::of(leaf)),
         PlanType::SetRef(leaf) => Scalar::SetRef(Leaf::of(leaf)),
         PlanType::SetMutRef(leaf) => Scalar::SetMutRef(Leaf::of(leaf)),
@@ -629,6 +633,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                     Scalar::ZipIterator(left, right)
                 }
                 Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
+                Scalar::ListIntoIterMutRef(leaf, depth) => Scalar::ListIntoIter(leaf, depth),
                 Scalar::StringMutRef => Scalar::String,
                 Scalar::EnumMutRef(owner) => Scalar::Enum(owner),
                 Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
@@ -720,6 +725,8 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                         | Scalar::ZipIteratorMutRef(_, _)
                         | Scalar::Generator(_, _)
                         | Scalar::GeneratorMutRef(_, _)
+                        | Scalar::ListIntoIter(_, _)
+                        | Scalar::ListIntoIterMutRef(_, _)
                         | Scalar::GeneratorYield(_, _)
                         | Scalar::StringArray(_)
                         | Scalar::Model(_)
@@ -1030,6 +1037,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
                 Ok(Scalar::TupleMutRef(elements))
             }
             Scalar::Generator(leaf, depth) => Ok(Scalar::GeneratorMutRef(leaf, depth)),
+            Scalar::ListIntoIter(leaf, depth) => Ok(Scalar::ListIntoIterMutRef(leaf, depth)),
             Scalar::Model(index) => {
                 if matches!(local(function, value.local)?, Scalar::ModelRef(_)) {
                     return Err(invalid(function, "cannot mutably reborrow a shared receiver"));
@@ -1187,13 +1195,16 @@ fn source_signature_type(ty: &Scalar) -> bool {
 }
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases, and
-/// the exclusive model and enum references a checked element reborrow returns.
+/// the exclusive model and enum references a checked element reborrow returns. Concrete owned list iterators and
+/// their polling references cross only these native trait-call boundaries.
 fn external_signature_type(ty: &Scalar) -> bool {
     source_signature_type(ty)
         || matches!(
             ty,
             Scalar::ZipIteratorRef(_, _)
                 | Scalar::ValidationErrorRef
+                | Scalar::ListIntoIter(_, _)
+                | Scalar::ListIntoIterMutRef(_, _)
                 | Scalar::StringRef
                 | Scalar::StrRef
                 | Scalar::StaticText
@@ -1396,7 +1407,13 @@ fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result
         {
             Err(invalid(function, "formatting array length must be nonnegative"))
         }
-        Scalar::List(_, depth) | Scalar::ListRef(_, depth) | Scalar::ListMutRef(_, depth) if depth < 1 => {
+        Scalar::List(_, depth)
+        | Scalar::ListRef(_, depth)
+        | Scalar::ListMutRef(_, depth)
+        | Scalar::ListIntoIter(_, depth)
+        | Scalar::ListIntoIterMutRef(_, depth)
+            if depth < 1 =>
+        {
             Err(invalid(function, "list depth must be positive"))
         }
         _ => Ok(()),
@@ -1889,6 +1906,8 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         PlanType::List(leaf, _)
         | PlanType::ListRef(leaf, _)
         | PlanType::ListMutRef(leaf, _)
+        | PlanType::ListIntoIter(leaf, _)
+        | PlanType::ListIntoIterMutRef(leaf, _)
         | PlanType::Set(leaf)
         | PlanType::SetRef(leaf)
         | PlanType::SetMutRef(leaf)

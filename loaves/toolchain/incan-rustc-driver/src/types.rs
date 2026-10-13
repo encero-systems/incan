@@ -71,6 +71,10 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ModelMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::List(leaf, depth) => list_type(tcx, leaf, *depth)?,
+        PlanType::ListIntoIter(leaf, depth) => list_into_iter_type(tcx, leaf, *depth)?,
+        PlanType::ListIntoIterMutRef(leaf, depth) => {
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_into_iter_type(tcx, leaf, *depth)?)
+        }
         PlanType::ListRef(leaf, depth) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?),
         PlanType::ListMutRef(leaf, depth) => {
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
@@ -434,6 +438,49 @@ fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<
         );
     }
     Ok(element)
+}
+
+/// Resolve the standard owned Vec iterator, preserving the immediate list element and default allocator.
+fn list_into_iter_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
+    if depth < 1 {
+        return Err(PlanError::Invalid {
+            function: "list iterator".into(),
+            reason: "unsupported nonpositive list depth".into(),
+        });
+    }
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "alloc")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("alloc".into()))?;
+    for segment in ["vec", "IntoIter"] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee("alloc::vec::IntoIter".into()))?;
+    }
+    let element = if depth == 1 {
+        collection_leaf_type(tcx, leaf)?
+    } else {
+        list_type(tcx, leaf, depth - 1)?
+    };
+    Ok(Ty::new_adt(
+        tcx,
+        tcx.adt_def(definition),
+        rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, _| {
+            if parameter.index == 0 {
+                element.into()
+            } else {
+                tcx.type_of(parameter.def_id)
+                    .instantiate_identity()
+                    .skip_normalization()
+                    .into()
+            }
+        }),
+    ))
 }
 
 /// Resolve the named sized carrier retained in an overflow pair.

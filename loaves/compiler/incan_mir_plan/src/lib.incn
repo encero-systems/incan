@@ -165,6 +165,9 @@ pub enum PlanType:
     List(ListLeaf, int)
     ListRef(ListLeaf, int)
     ListMutRef(ListLeaf, int)
+    # Concrete Vec::IntoIter owns the checked list's items; its mutable view polls without Clone.
+    ListIntoIter(ListLeaf, int)
+    ListIntoIterMutRef(ListLeaf, int)
     Set(ListLeaf)
     SetRef(ListLeaf)
     SetMutRef(ListLeaf)

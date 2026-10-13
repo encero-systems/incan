@@ -64,9 +64,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
-        let scrutinee_ty = self.resolve_ty(subject.span);
-        let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
         let scrutinee_place = self.lower_expr_to_place(subject, scope, out);
+        let scrutinee_ty = if scrutinee_place.projection.is_empty() {
+            scrutinee_place
+                .local_id()
+                .and_then(|local| self.locals.get(local.index()))
+                .map_or_else(|| self.resolve_ty(subject.span), |local| local.ty.clone())
+        } else {
+            self.resolve_ty(subject.span)
+        };
+        let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
         // Always read as `Borrow` -- see `bir::Rvalue::Match::scrutinee`'s own docs for why the overall scrutinee
         // read must not risk an unconditional move while individual pattern bindings below compute their own,
         // more precise facts against projected places rooted at this same scrutinee.

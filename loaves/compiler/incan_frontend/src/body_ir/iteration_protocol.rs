@@ -11,6 +11,8 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 impl BodyBuilder<'_, '_> {
     /// Materialize an iterator once and retain the initializer's statement index after evaluating the source.
     /// Builtin in-place iteration can change that initializer's borrow without touching an earlier source call.
+    /// Checked item-taking sources and whole temporary lists move into their iterator; custom hooks retain their
+    /// declared receiver mode and report no builtin consumption.
     pub(super) fn initialize_general_iterator(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
@@ -19,7 +21,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
-    ) -> Result<(bir::LocalId, usize), String> {
+    ) -> Result<(bir::LocalId, usize, bool), String> {
         let iterable = self.lower_expr_to_place(expression, scope, out);
         let initializer = out.len();
         if custom {
@@ -35,20 +37,31 @@ impl BodyBuilder<'_, '_> {
                 bir::Operand::Place(read) => read
                     .place
                     .local_id()
-                    .map(|local| (local, initializer))
+                    .map(|local| (local, initializer, false))
                     .ok_or_else(|| "iteration initializer without a local result".into()),
                 _ => Err("iteration initializer without a place result".into()),
             };
         }
-        let iterator = self.new_temp(self.resolve_ty(expression.span), scope, span);
+        let iterator_ty = self.retained_expression_type(expression);
+        let taking =
+            self.type_info.for_loop_takes_items(protocol_span) || self.temporary_list_iterable(&iterable, &iterator_ty);
+        let iterator = self.new_temp(iterator_ty, scope, span);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: bir::Place::from_local(iterator),
-                rvalue: bir::Rvalue::Use(bir::Operand::place(iterable, bir::OwnershipFact::Borrow, false)),
+                rvalue: bir::Rvalue::Use(bir::Operand::place(
+                    iterable,
+                    if taking {
+                        bir::OwnershipFact::Move
+                    } else {
+                        bir::OwnershipFact::Borrow
+                    },
+                    taking,
+                )),
             },
             span,
         });
-        Ok((iterator, initializer))
+        Ok((iterator, initializer, taking))
     }
 
     /// Emit one retained hook through the ordinary checked argument planner and canonical call contract.

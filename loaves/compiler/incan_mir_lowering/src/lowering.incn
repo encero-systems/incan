@@ -145,6 +145,7 @@ from classes import (
 )
 from ranges import range_aggregate, builtin_range_bounds
 from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
+from owned_lists import is_owned_list_iterator, initialize_owned_list_iterator, owned_list_next
 from generators import (
     generator_shape,
     generator_constructor,
@@ -327,6 +328,7 @@ from lists import (
     require_list_shape,
     list_element,
     list_iterator_locals,
+    taking_iterator_locals,
     is_list,
     is_owned_list,
     is_builtin_iteration,
@@ -1592,6 +1594,14 @@ def lower_local_assignment(
                         )
         _ => pass
     match builder.locals[target.local].ty:
+        PlanType.ListIntoIter(_leaf, _depth) =>
+            match value:
+                RustRvalue.Use(RustOperand.Place(read)) =>
+                    if read.fact != OwnershipFact.Move:
+                        return Err("unsupported Body IR consuming iterator without retained taking")
+                    source = scalar_place(builder, read.place, span)?
+                    return initialize_owned_list_iterator(builder, target, source, span)
+                _ => return Err("unsupported Body IR consuming iterator initialization")
         PlanType.ZipIteratorMutRef(_left, _right) =>
             match value:
                 RustRvalue.Use(RustOperand.Place(read)) =>
@@ -2522,6 +2532,14 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     if len(ends) != 0:
         builder.owned = join_branch_owners(builder, after, ends, owners, span)?
     builder.current = after
+    # Exhaustion and break share this exit; drop the iterator once, including any unvisited items.
+    for statement in body.stmts:
+        match statement.kind:
+            RustStatementKind.IterNext(destination=_item, iterator=RustOperand.Place(read), protocol=_protocol) =>
+                receiver = scalar_place(builder, read.place, span)?
+                if is_owned_list_iterator(place_type(builder.locals, receiver)):
+                    drop_owned(builder, receiver.local, span)
+            _ => pass
     # A loop nothing leaves (`loop:` or `while true:` without `break`) never falls through to what follows it.
     builder.closed[after] = not exits_to(builder.blocks, header, after)
     return Ok(None)
@@ -5884,6 +5902,7 @@ def frame_locals(
 ) -> Result[list[Local], str]:
     """The frame's locals: the return slot first, then Body IR's locals in `LocalId` order."""
     iterators = list_iterator_locals(body.block)
+    taking = taking_iterator_locals(body.block)
     pairs = pair_generator_locals(body)
     mut locals = [Local(ty=return_type, span=span)]
     for local in body.locals:
@@ -5898,7 +5917,12 @@ def frame_locals(
         index = int(local.id.index()) + 1
         if index in pairs:
             ty = pair_generator_type(ty)
-        if index in iterators:
+        if index in taking:
+            match list_shape(ty):
+                Some((leaf, depth)) =>
+                    ty = PlanType.ListIntoIter(leaf, depth)
+                None => return Err("unsupported Body IR consuming iteration outside an owned list")
+        elif index in iterators:
             match ty:
                 PlanType.FrozenCollection(_name, _elements) =>
                     ty = frozen_list_snapshot_type(ty)?
@@ -7416,6 +7440,14 @@ def list_next(
     """Poll a retained builtin collection cursor, branching to the loop exit on exhaustion."""
     if not is_builtin_iteration(protocol) or len(builder.loops) == 0:
         return Err("unsupported Body IR non-builtin list IterNext")
+    match iterator:
+        RustOperand.Place(read) =>
+            candidate = scalar_place(builder, read.place, span)?
+            if is_owned_list_iterator(place_type(builder.locals, candidate)):
+                if read.fact != OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR consuming iterator poll ownership")
+                return owned_list_next(builder, candidate, scalar_place(builder, destination, span)?, span)
+        _ => pass
     receiver = operand_list_place(builder, iterator, span)?
     match zip_shape(place_type(builder.locals, receiver)):
         Some(_shape) =>

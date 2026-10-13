@@ -7,6 +7,8 @@ from rust::incan_semantics_core::body_ir import (
     StatementKind as RustStatementKind,
     Operand as RustOperand,
     IterProtocol,
+    Rvalue as RustRvalue,
+    OwnershipFact,
 )
 
 
@@ -148,3 +150,30 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
         PlanType.EnumMutRef(_owner, _name) => return true
         PlanType.TupleMutRef(_elements) => return true
         _ => return false
+
+
+pub def taking_iterator_locals(block: &RustBlock) -> list[int]:
+    """Read checked consuming materializations, keeping ordinary value moves out of iterator storage."""
+    iterators = list_iterator_locals(block)
+    mut result: list[int] = []
+    for statement in block.stmts:
+        match statement.kind:
+            RustStatementKind.Assign(place=destination, rvalue=value) =>
+                match value:
+                    RustRvalue.Use(RustOperand.Place(read)) =>
+                        if read.fact == OwnershipFact.Move:
+                            match destination.local_id():
+                                Some(local) =>
+                                    index = int(local.index()) + 1
+                                    if index in iterators:
+                                        result.append(index)
+                                None => pass
+                    _ => pass
+            RustStatementKind.Loop(body=body) => result.extend(taking_iterator_locals(body))
+            RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+                result.extend(taking_iterator_locals(then_body))
+                match else_body:
+                    Some(body) => result.extend(taking_iterator_locals(body))
+                    None => pass
+            _ => pass
+    return result

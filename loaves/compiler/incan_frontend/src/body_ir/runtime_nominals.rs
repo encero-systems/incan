@@ -59,6 +59,12 @@ pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
 /// Recognize SDK task storage whose executable call result must survive an inferred consumer binding.
 /// This does not infer an output or admit an equal-spelled source type; it reuses the guarded registry ownership.
 pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> bool {
+    if let IncanType::Generic { base, args } = ty
+        && base == "List"
+        && args.len() == 1
+    {
+        return retains_task_storage(facts, &args[0]);
+    }
     let owner = match ty {
         IncanType::Named(owner) | IncanType::Generic { base: owner, .. } => owner,
         _ => return false,

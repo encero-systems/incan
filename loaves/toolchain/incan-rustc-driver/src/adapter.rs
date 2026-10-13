@@ -293,15 +293,21 @@ impl rustc_driver::Callbacks for Callbacks {
             if let Err(error) = callees::verify_bounds(tcx, def, args) {
                 refuse(tcx, error);
             }
-            let signature =
-                tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate(tcx, args).skip_normalization());
+            // Associated outputs such as IntoIterator::IntoIter and Iterator::Item require the concrete Self impl.
+            let signature = tcx.normalize_erasing_regions(
+                rustc_middle::ty::TypingEnv::fully_monomorphized(),
+                tcx.fn_sig(def)
+                    .instantiate(tcx, args)
+                    .map(|signature| tcx.instantiate_bound_regions_with_erased(signature)),
+            );
             let parameters: Vec<_> = external
                 .parameters
                 .iter()
-                .map(|ty| native_type_or_refuse(tcx, ty))
+                .map(|ty| tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, ty)))
                 .collect();
             if signature.inputs() != parameters
-                || signature.output() != native_type_or_refuse(tcx, &external.return_type)
+                || signature.output()
+                    != tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type))
                 || signature.c_variadic()
                 || signature.safety().is_unsafe()
             {

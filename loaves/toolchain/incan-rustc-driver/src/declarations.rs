@@ -134,6 +134,14 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 },
             },
         ),
+        PlanType::ListIntoIter(leaf, depth) => list_iterator_signature_type(leaf, *depth, span),
+        PlanType::ListIntoIterMutRef(leaf, depth) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::ListIntoIter(leaf.clone(), *depth), span),
+                mutbl: ast::Mutability::Mut,
+            },
+        ),
         PlanType::Set(leaf) => return hashed_type("HashSet", &[leaf], span),
         PlanType::Dict(key, value) => return hashed_type("HashMap", &[key, value], span),
         PlanType::SetRef(leaf) | PlanType::SetMutRef(leaf) => ast::TyKind::Ref(
@@ -312,6 +320,25 @@ fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span) -> Box<as
         tokens: None,
         kind: ast::TyKind::Path(None, path),
     })
+}
+
+/// Declare the standard consuming iterator's immediate item type; positive nesting depth is validated before AST
+/// construction.
+fn list_iterator_signature_type(leaf: &ListLeaf, depth: i64, span: Span) -> ast::TyKind {
+    let element = if depth == 1 {
+        list_leaf_type(leaf.clone())
+    } else {
+        PlanType::List(leaf.clone(), depth - 1)
+    };
+    let mut path = ast::Path::from_ident(ident("std", span));
+    path.segments.push(ast::PathSegment::from_ident(ident("vec", span)));
+    let mut segment = ast::PathSegment::from_ident(ident("IntoIter", span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&element, span)))],
+    })));
+    path.segments.push(segment);
+    ast::TyKind::Path(None, path)
 }
 
 /// Declare the runtime generator's canonical type without creating an alternative wrapper layout.

@@ -537,7 +537,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        let iter_ty = self.resolve_ty(for_stmt.iter.span);
+        let iter_ty = self.retained_expression_type(&for_stmt.iter);
         let item_ty = self.for_item_type(&for_stmt.pattern, &iter_ty);
         if let Some(reason) = unsupported_for_pattern(&for_stmt.pattern.node, &item_ty) {
             self.push_unsupported_stmt(reason, span, out);
@@ -603,8 +603,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// carries its item type, so it supplies the recovery fallback only when the checker has no fact. That type
     /// fallback never grants aggregate-layout authority; [`Self::range_loop_source`] separately requires local
     /// materialization provenance before field projection.
-    fn for_item_type(&self, pattern: &ast::Spanned<ast::Pattern>, iter_ty: &IncanType) -> IncanType {
+    pub(super) fn for_item_type(&self, pattern: &ast::Spanned<ast::Pattern>, iter_ty: &IncanType) -> IncanType {
         let checked = self.resolve_ty(pattern.span);
+        if let Some([element]) = collection_member_types(iter_ty, CollectionTypeId::List) {
+            return self.refine_task_storage(&checked, element);
+        }
         if !matches!(checked, IncanType::Unknown) {
             return checked;
         }
@@ -1239,6 +1242,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// unwrap. An ordinary Result-valued iterable still goes through normal expression propagation. Hook receivers
     /// use their checked modes; a builtin loop that changes an item in place borrows the actual initializer
     /// exclusively, preserving legacy's `iter_mut` behavior even when evaluating the iterable emitted other statements.
+    /// Checker-selected item-taking loops and whole temporary lists move their builtin iterable, as legacy's
+    /// `into_iter` does. Other builtin sources remain borrowed, and consuming iterators are polled exclusively without
+    /// changing their initialization into an in-place item borrow.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_general_iteration(
         &mut self,
@@ -1284,7 +1290,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         // ---- Materialize the iterable exactly once ----
-        let (iterator_local, iterator_init) = match self.initialize_general_iterator(
+        let (iterator_local, iterator_init, taking) = match self.initialize_general_iterator(
             effective_iter_expr,
             iter_expr.span,
             protocol.is_some(),
@@ -1337,7 +1343,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.loop_break_targets.pop();
         self.loop_continue_actions.pop();
         // A builtin loop whose body changes its item in place iterates the list exclusively, as legacy's `iter_mut`.
-        if protocol.is_none() && self.body_changes_item_in_place(&body_stmts, pattern_local) {
+        if protocol.is_none() && !taking && self.body_changes_item_in_place(&body_stmts, pattern_local) {
             borrow_iterable_exclusively(&mut out[iterator_init]);
         }
 
@@ -1350,6 +1356,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
+    }
+
+    /// A materialized list expression owns its items, as legacy iterates a call result, literal, or comprehension
+    /// directly by value. Named places and projections require the checker's explicit consumption decision.
+    fn temporary_list_iterable(&self, place: &bir::Place, ty: &IncanType) -> bool {
+        collection_member_types(ty, CollectionTypeId::List).is_some()
+            && place.projection.is_empty()
+            && place
+                .local_id()
+                .and_then(|local| self.locals.get(local.index()))
+                .is_some_and(|local| local.name.is_none())
     }
 
     /// Select only a canonically checked direct enumeration of a list; a stored enumeration remains its own value.

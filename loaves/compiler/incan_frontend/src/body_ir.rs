@@ -1250,6 +1250,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn leaves_type_open(&self, ty: &IncanType) -> bool {
         match ty {
             IncanType::Unknown | IncanType::Infer => true,
+            // An imported native type has a qualified owner. The SDK's unresolved bare T is a placeholder,
+            // and must yield to the closed checked carrier that contains it rather than masquerade as a type.
+            IncanType::RustInteropPath(name) if name == "T" => !self.type_parameters.contains(name),
             IncanType::TypeVar(name) => !self.type_parameters.contains(name),
             IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
                 args.iter().any(|arg| self.leaves_type_open(arg))
@@ -1937,6 +1940,7 @@ mod library_nominals;
 mod library_opaque_returns;
 mod library_unions;
 pub(crate) mod runtime_nominals;
+mod runtime_storage;
 mod stdlib_delegations;
 
 mod operators;
