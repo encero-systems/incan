@@ -18,6 +18,35 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Copied opaque results retain their concrete owner before a later hidden trait input dispatches its default.
+#[test]
+fn ordered_trait_return_passes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("ordered-trait-return-passes")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Named:
+    def label(self) -> int:
+        return 3
+
+model Item with Named:
+    number: int
+
+def make() -> Named:
+    return Item(number=7)
+
+def consume(value: Named) -> int:
+    return value.label()
+
+def main() -> None:
+    held = make()
+    println(consume(held))
+"#,
+    )
+}
+
 /// The original SDK iterator advances to its published body boundary while its unchanged legacy oracle executes.
 #[test]
 fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

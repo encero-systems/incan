@@ -43,6 +43,7 @@ mod protocol_hooks;
 mod provider_plans;
 mod raises_assertions;
 mod result_callbacks;
+mod return_pass_order;
 mod returned_callables;
 mod static_storage;
 mod task_handles;

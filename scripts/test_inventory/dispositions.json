@@ -6224,6 +6224,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/return_pass_order.rs": {
+      "disposition": "keep",
+      "notes": "Checked model identity and source trait annotations survive ordered Body IR carrier refinement.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs": {
       "disposition": "keep",
       "notes": "Checked callable expression values and evaluation order retained in Body IR; frontend-only contract coverage.",
