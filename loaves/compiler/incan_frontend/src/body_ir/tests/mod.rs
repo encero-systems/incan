@@ -53,6 +53,7 @@ mod return_pass_order;
 mod returned_callables;
 mod sdk_factory_defaults;
 mod sdk_iterator_dispatch;
+mod sdk_ordinal_dispatch;
 mod static_storage;
 mod task_handles;
 mod text_codecs;
