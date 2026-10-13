@@ -6,6 +6,34 @@ use super::library_call;
 use crate::symbols::TypeInfo;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 
+/// Generic adapter slots retain their declaring native trait and ordered Self, trait, and method binders.
+#[test]
+fn sdk_adapter_slots_retain_generic_native_signatures() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let path = source_path(&["derives", "collection"]);
+    let declaration = cache
+        .lookup_trait(&path, "FallibleIterator")
+        .ok_or("missing iterator trait")?;
+    for (name, parameters) in [
+        ("take", vec!["Self", "T", "E"]),
+        ("map", vec!["Self", "T", "E", "U", "MapFn"]),
+        ("map_err", vec!["Self", "T", "E", "F", "ErrorMap"]),
+    ] {
+        let method = declaration.methods.get(name).ok_or("missing adapter method")?;
+        let identity = method.identity.clone().ok_or("missing adapter identity")?;
+        let call = library_call(&identity, &mut cache).ok_or_else(|| format!("missing {name} signature"))?;
+        assert_eq!(call.type_parameters, parameters);
+        assert_eq!(
+            call.rust_path(),
+            Some(format!(
+                "incan_stdlib_core::derives::collection::FallibleIterator::{name}"
+            ))
+        );
+        assert_eq!(call.canonical, identity);
+    }
+    Ok(())
+}
+
 /// Each explicit Index implementation retains its complete native Self, key, and result instantiation.
 #[test]
 fn sdk_index_implementations_retain_native_arguments() -> Result<(), Box<dyn std::error::Error>> {

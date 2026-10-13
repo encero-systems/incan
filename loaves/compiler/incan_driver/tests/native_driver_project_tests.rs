@@ -18,6 +18,57 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// The original take adapter preserves exhaustion and nonpositive limits byte-for-byte with legacy.
+#[test]
+fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_sdk_adapter_fixture(
+        "sdk-fallible-take",
+        include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"),
+    )
+}
+
+/// Mapping and filtering callable models preserve the complete original collection adapter pipeline.
+#[test]
+fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_sdk_adapter_fixture(
+        "sdk-collection-adapters",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
+        ),
+    )?;
+    check_sdk_adapter_fixture(
+        "sdk-collection-adapters-imported-clone",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
+        ),
+    )
+}
+
+/// The original reader adapter retains the captured error mapper and fallible polling semantics.
+#[test]
+fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_sdk_adapter_fixture(
+        "sdk-fallible-error-adapter",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+    )
+}
+
+/// Compare one unedited fixture through the SDK native closure and the live legacy build.
+fn check_sdk_adapter_fixture(name: &str, source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch(name)?,
+        &fixture.sysroot,
+        &closure,
+        source,
+    )
+}
+
 /// Copied opaque results retain their concrete owner before a later hidden trait input dispatches its default.
 #[test]
 fn ordered_trait_return_passes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
