@@ -41,10 +41,10 @@ impl BodyBuilder<'_, '_> {
                 _ => true,
             })
         {
-            return Some(self.unsupported_operand(
+            return Some(self.unsupported_codec_call(
                 "builtin codec observable expressions".to_owned(),
+                span,
                 scope,
-                hir_span(span),
                 out,
             ));
         }
@@ -116,6 +116,20 @@ impl BodyBuilder<'_, '_> {
             false,
             out,
         ))
+    }
+
+    /// Preserve a checked codec result carrier while refusing execution. An Unknown temporary would preempt the
+    /// construct's named refusal during local layout allocation, even though the checker already resolved the call.
+    fn unsupported_codec_call(
+        &mut self,
+        description: String,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let temp = self.new_temp(self.method_call_result_type(span), scope, hir_span(span));
+        self.push_unsupported_stmt(description, hir_span(span), out);
+        bir::Operand::place(bir::Place::from_local(temp), bir::OwnershipFact::Unknown, true)
     }
 
     /// Admit only reads, literals, parentheses and checked codec chains. Legacy's dynamic guards evaluate labels
