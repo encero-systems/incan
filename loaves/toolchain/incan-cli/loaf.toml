@@ -54,5 +54,6 @@ path = "src/main.rs"
 
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
+incan_test_support = { loaf = "incan_test_support", path = "../../compiler/incan_test_support" }
 incan_driver = { features = ["test_support"] }
 oven-cli = { default-features = false }

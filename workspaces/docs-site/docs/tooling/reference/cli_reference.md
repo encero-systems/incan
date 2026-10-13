@@ -622,7 +622,7 @@ Runs both Incan and Rust tests by default. The language flags are mutually exclu
 | Rust roots | Conventional `src/lib.rs`, `src/main.rs`, declared `[[rust.bin]]` paths and direct `tests/*.rs` roots. A mixed Loaf's `[rust.source].root` owns its `src/` directory. Nested modules belong to their crate root. |
 | Rust collection | Prepare the receipt-bound native harness and query its libtest inventory. `--list` may compile a Rust harness, but runs no test bodies. |
 | Rust selection | Stable IDs contain the source path and exact libtest name. `-k` selects those IDs; excluded cases never execute. `#[ignore]` cases remain skipped. |
-| Rust preparation | Uses authored `loaf.toml` dependencies and prebuilt Loaves. A sibling `.loaf.toml` can supply an integration root's declaration. Roots requiring unsupported build-script facts or dependency feature forwarding are refused. |
+| Rust preparation | Resolves requested package features against the authored `loaf.toml`, then applies `[envs.test.dependencies]` and uses prebuilt Loaves. Making an optional dependency mandatory for tests preserves its authored `dep:` feature edges. A sibling `.loaf.toml` can supply an integration root's declaration. Roots requiring unsupported build-script facts or dependency feature forwarding are refused. |
 | Scheduling | Selected Rust cases execute separately. Compatible Incan cases retain shared harnesses for their existing fixture lifetimes. `--jobs`, failure handling and reports are common. |
 | Result | A failed selected test or preparation error fails the command. Passing outcomes are never cached. JSON retains `incan.test.v1`; JUnit combines selected cases from both languages. |
 
