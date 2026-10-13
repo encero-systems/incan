@@ -27,6 +27,12 @@ fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::E
         b"3\n1 2 3\n0\n0\n",
         "unsupported native instantiation of `incan_stdlib_core::derives::TakeFallibleIterator`",
     )?;
+    check_sdk_adapter_fixture(
+        "sdk-native-take-opaque-return",
+        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcdefg\").chunks(2)\n    match source.take(2).collect():\n        Ok(items) => println(len(items))\n        Err(error) => println(error.detail)\n",
+        b"2\n",
+        "opaque SDK trait return ABI differs from its concrete carrier",
+    )?;
     let fixture = driver_fixture()?;
     let mut closure = corpus::runtime_closure(&fixture.formatting)?;
     closure.extend_with(&sdk_closure(fixture)?)?;
@@ -35,7 +41,7 @@ fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::E
         &fixture.scratch("sdk-native-take")?,
         &fixture.sysroot,
         &closure,
-        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcdefg\").chunks(2)\n    match source.take(2).collect():\n        Ok(items) => println(len(items))\n        Err(error) => println(error.detail)\n",
+        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcdefg\").chunks(2)\n    copy = source.__iter__()\n    println(copy.chunk_size)\n",
     )
 }
 
