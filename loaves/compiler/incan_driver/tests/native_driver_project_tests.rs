@@ -15919,3 +15919,16 @@ fn closed_callback_constructor_output_matches_legacy() -> Result<(), Box<dyn std
         "def passed() -> Result[int, str]:\n    return Ok(2)\n\ndef failed() -> Result[int, str]:\n    return Err(\"x\")\n\ndef main() -> None:\n    println(passed().and_then((x) => Ok(x * 2)).unwrap_or(0))\n    println(failed().or_else((message) => Ok(len(message))).unwrap_or(0))\n",
     )
 }
+
+/// A noncapturing function value stored in a model field retains its validated native signature.
+#[test]
+fn function_value_model_field_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("function-value-model-field")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model Op:\n    step: (int) -> int\n\ndef double(value: int) -> int:\n    return value * 2\n\ndef main() -> None:\n    op = Op(step=double)\n    step = op.step\n    println(step(4))\n",
+    )
+}
