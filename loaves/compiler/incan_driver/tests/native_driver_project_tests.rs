@@ -14348,6 +14348,33 @@ def main() -> None:
     )
 }
 
+/// Aborting a permanently pending task retains the SDK handle and the real join-error method ABI.
+#[test]
+fn cancelled_sdk_task_error_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "cancelled-sdk-task-error",
+        r#"
+import std.async
+from std.async.task import spawn
+from std.async.time import sleep_ms
+async def pending() -> int:
+    while true:
+        await sleep_ms(1)
+    return 1
+async def main() -> None:
+    task = spawn(pending())
+    task.abort()
+    match await task:
+        Ok(_value) => println("unexpected completion")
+        Err(error) =>
+            println(error.is_cancelled())
+            println(error.is_panic())
+            message: str = error.message()
+            println(len(message) > 0)
+"#,
+    )
+}
+
 /// Defaults that read module-owned statics retain their declaring module across calls from a different module.
 #[test]
 fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

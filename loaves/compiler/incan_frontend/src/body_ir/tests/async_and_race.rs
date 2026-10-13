@@ -701,3 +701,69 @@ fn mixed_runtime_future_arguments_stay_open() -> Result<(), Box<dyn std::error::
     );
     Ok(())
 }
+
+/// A runtime-owned join error retains its shared receiver and owned message result without inventing fields.
+#[test]
+fn retains_sdk_join_error_method_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.async.task import TaskJoinError\ndef describe(error: TaskJoinError) -> str:\n  return error.message()\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let calls = library_call_delegations(checker.type_info());
+    let call = calls
+        .iter()
+        .find(|call| call.rust_path().as_deref() == Some("incan_std_async::task::TaskJoinError::message"))
+        .ok_or_else(|| format!("SDK message contract: {calls:?}"))?;
+    assert_eq!(
+        call.parameters,
+        vec![IncanType::Ref(Box::new(IncanType::Named("TaskJoinError".into())))]
+    );
+    assert_eq!(call.return_type, IncanType::Primitive(IncanPrimitiveType::Str));
+    let module = build(source, &["m", "sdk_error_method"])?;
+    let body = body_named(&module, "describe")?;
+    let (target, destination) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                destination: Some(destination),
+                callee: bir::Callee::Method(target),
+                ..
+            } if target.name == "message" => Some((target, destination)),
+            _ => None,
+        })
+        .ok_or("message call")?;
+    assert_eq!(target.canonical.as_ref(), Some(&call.canonical));
+    let local = destination.local_id().ok_or("message destination")?;
+    assert_eq!(
+        body.locals[local.index()].ty,
+        IncanType::Primitive(IncanPrimitiveType::Str)
+    );
+    Ok(())
+}
+
+/// Source and foreign equal-spelled errors do not acquire the SDK's native method records.
+#[test]
+fn non_sdk_join_error_methods_keep_their_owner() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "model TaskJoinError:\n  def message(self) -> int:\n    return 7\ndef describe(error: TaskJoinError) -> int:\n  return error.message()\n",
+        "from rust::foreign_tasks::task import TaskJoinError\ndef describe(error: TaskJoinError) -> str:\n  return error.message()\n",
+    ] {
+        let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        assert!(
+            !library_call_delegations(checker.type_info())
+                .iter()
+                .any(|call| call.rust_path().as_deref() == Some("incan_std_async::task::TaskJoinError::message"))
+        );
+    }
+    Ok(())
+}
