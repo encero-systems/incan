@@ -12,7 +12,7 @@ from frame import (
     external_call,
     track_rvalue_moves,
     value_type,
-    text_literal,
+    drop_owned,
 )
 from model_values import nominal_place
 from options import carrier_layout, carrier_payload_value, assign_carrier, variant_condition, replace_owned_destination
@@ -69,6 +69,7 @@ pub def lower_reflection(
                                     mut fields: list[int] = []
                                     for slot in slots:
                                         fields.append(int(slot.clone()))
+                                    validate_reflection_fields(builder, owner, receiver, fields, string, target, span)?
                                     match destination:
                                         None => return Err("unsupported Body IR discarded reflection result")
                                         Some(place) =>
@@ -104,10 +105,48 @@ def reflected_field(builder: Builder, owner: int, source: Place, slot: int, span
     return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
 
 
+def scalar_reflection_type(ty: PlanType) -> bool:
+    """Admit supported scalar Display carriers; other scalar variants retain a named frontier."""
+    return ty == PlanType.String or ty == PlanType.Int or ty == PlanType.Float or ty == PlanType.Bool
+
+
+def validate_reflection_fields(
+    builder: Builder,
+    owner: int,
+    receiver: Place,
+    fields: list[int],
+    string: bool,
+    target: &MethodTarget,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Prove generated ownership and the whole generic capability before lowering a single lookup."""
+    if not string:
+        match target.canonical:
+            Some(identity) =>
+                declaration = builder.nominals[owner].canonical
+                if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant:
+                    return Err("unsupported Body IR reflection generated owner mismatch")
+            None => return Err("unsupported Body IR reflection generated owner")
+        return Ok(None)
+    if "FieldInfo" not in builder.nominals[owner].derives:
+        return Err("unsupported Body IR generic reflection without field metadata")
+    for slot in fields:
+        field = reflected_field(builder, owner, receiver, slot, span)?
+        ty = place_type(builder.locals, field)
+        if scalar_reflection_type(ty):
+            continue
+        _index, layout = carrier_layout(builder, ty)?
+        if layout.carrier != "Option" or len(layout.variants[1].fields) != 1 or not scalar_reflection_type(
+            layout.variants[1].fields[0],
+        ):
+            return Err("unsupported Body IR generic reflection field capability")
+    return Ok(None)
+
+
 def scalar_string(mut builder: Builder, field: Place, span: SourceSpan) -> Result[Operand, str]:
     """Use Rust Display for an eligible scalar, cloning owned text before transferring it to the formatter."""
     ty = place_type(builder.locals, field)
-    if ty != PlanType.String and ty != PlanType.Int and ty != PlanType.Float and ty != PlanType.Bool:
+    if not scalar_reflection_type(ty):
         return Err("unsupported Body IR generic field reflection scalar")
     value = carrier_payload_value(builder, field, span)?
     output = display_plan_value(builder, value, span, true)?
@@ -243,7 +282,10 @@ def reflect_value(
             yes = builder.new_block(span)
             no = builder.new_block(span)
             condition = temporary(builder, PlanType.Bool, span)
-            literal = text_literal(name, span)
+            text = owned_literal(builder, name, span)
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(text), span))
+            literal = read_place(reference, false, span)
             external_call(
                 builder,
                 "incan_native_runtime::equal_text",
@@ -253,6 +295,7 @@ def reflect_value(
                 condition,
                 span,
             )
+            drop_owned(builder, text.local, span)
             builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), no, yes), span)
             builder.current = yes
             field = reflected_field(builder, owner, receiver, slot, span)?
