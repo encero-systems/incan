@@ -7520,6 +7520,47 @@ fn async_task_call_results_output_matches_legacy() -> Result<(), Box<dyn std::er
 }
 
 /// SDK task and deadline operations preserve expiry and durable task completion.
+/// A native blocking task preserves its checked callable output and real join result.
+#[test]
+fn sdk_blocking_task_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "sdk-blocking-task-output",
+        r#"import std.async
+from std.async.task import spawn_blocking
+def work() -> int:
+    return 2
+async def main() -> None:
+    match await spawn_blocking(work):
+        Ok(value) => println(value)
+        Err(error) => println(error.message())
+"#,
+    )
+}
+
+/// Packaged SDK race callbacks preserve distinct input/output types, suspension and source-order cancellation.
+#[test]
+fn sdk_packaged_race_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "sdk-packaged-race-output",
+        r#"import std.async
+from std.async.race import arm, race
+from std.async.time import sleep_ms
+async def slow() -> int:
+    while true:
+        await sleep_ms(1)
+    return 1
+async def fast() -> int:
+    await sleep_ms(5)
+    return 2
+def describe(value: int) -> str:
+    return f"winner {value}"
+async def main() -> None:
+    println(await race(arm(slow(), describe), arm(fast(), describe)))
+"#,
+    )
+}
+
+/// SDK task and deadline operations preserve expiry and durable task completion.
 #[test]
 fn async_tasks_and_time_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_async_family_source(
