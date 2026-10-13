@@ -604,6 +604,7 @@ fn retain_inherited_layout(
     }
     retained.fields = layout.fields.iter().map(|field| field.name.clone()).collect();
     retained.field_identities = facts.field_identities.clone();
+    retained.field_aliases = layout.fields.iter().map(|field| field.alias.clone()).collect();
     retained.field_types = layout
         .fields
         .iter()

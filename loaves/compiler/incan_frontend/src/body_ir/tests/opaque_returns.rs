@@ -48,6 +48,27 @@ fn local_fallible_iterator_retains_self_carrier() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// An explicit trait return remains opaque even when the receiver came from a proven concrete producer.
+#[test]
+fn explicit_trait_return_does_not_grant_self_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read:\n    def as_read(self) -> Read:\n        return self\n\nmodel Reading with Read:\n    value: int\n\ndef producer() -> Read:\n    return Reading(value=7)\n\ndef main() -> None:\n    erased = producer().as_read()\n    pass\n",
+        &["m", "explicit_trait_return"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Reading".into()))
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Read".into()))
+    );
+    Ok(())
+}
+
 /// A trait parameter has no concrete producer proof, even when the current module declares only one adopter.
 #[test]
 fn unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,6 +1,6 @@
 //! Retain the concrete ABI of local opaque trait returns without changing legacy typecheck facts.
 
-use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, bir};
+use super::{CanonicalSymbolId, IncanType, ResolvedType, SemanticSourceTargetKind, TypeCheckInfo, bir};
 
 /// One source function whose checked trait contract has a single proven nominal carrier.
 struct Carrier {
@@ -15,11 +15,11 @@ struct Carrier {
 /// Only nongeneric source functions with straight-line, unprojected nominal returns qualify. The checked source
 /// establishes the trait obligation; this pass retains the already checked value type legacy uses for `impl Trait`.
 /// It never resolves imported traits, selects an adopter by spelling, or creates a trait-object layout.
-pub(super) fn retain(module: &mut bir::BodyIrModule) {
+pub(super) fn retain(module: &mut bir::BodyIrModule, type_info: &TypeCheckInfo) {
     let carriers = module
         .bodies
         .iter()
-        .filter_map(|body| carrier(module, body))
+        .filter_map(|body| carrier(module, body, type_info))
         .collect::<Vec<_>>();
     for body in &mut module.bodies {
         if let Some(selected) = carriers
@@ -33,7 +33,7 @@ pub(super) fn retain(module: &mut bir::BodyIrModule) {
 }
 
 /// Prove one local trait-returning function's carrier from its checked return places, not from its interface name.
-fn carrier(module: &bir::BodyIrModule, body: &bir::Body) -> Option<Carrier> {
+fn carrier(module: &bir::BodyIrModule, body: &bir::Body, type_info: &TypeCheckInfo) -> Option<Carrier> {
     let function = body.canonical.as_ref()?;
     if function.kind != SemanticSourceTargetKind::Function || !body.type_parameters.is_empty() {
         return None;
@@ -62,22 +62,32 @@ fn carrier(module: &bir::BodyIrModule, body: &bir::Body) -> Option<Carrier> {
         function: function.clone(),
         declared: body.return_type.clone(),
         concrete,
-        self_results: self_returning_methods(module, trait_owner),
+        self_results: self_returning_methods(module, trait_owner, type_info),
     })
 }
 
-/// Read the local trait's physical default signatures whose checked result is exactly Self.
-fn self_returning_methods(module: &bir::BodyIrModule, owner: &CanonicalSymbolId) -> Vec<CanonicalSymbolId> {
+/// Read the local trait's physical defaults whose checked declaration result is exactly Self, even after its body
+/// return type has closed Self to the owner frame. Returning the trait explicitly grants no Self-carrier relation.
+fn self_returning_methods(
+    module: &bir::BodyIrModule,
+    owner: &CanonicalSymbolId,
+    type_info: &TypeCheckInfo,
+) -> Vec<CanonicalSymbolId> {
     module
         .bodies
         .iter()
         .filter_map(|body| {
             let identity = body.canonical.as_ref()?;
+            let binding = type_info
+                .declarations
+                .method_bindings_by_span
+                .get(&(identity.declaration_span.start, identity.declaration_span.end))?;
             (identity.kind == SemanticSourceTargetKind::Method
                 && identity.origin == owner.origin
                 && owner.declaration_span.start <= identity.declaration_span.start
                 && identity.declaration_span.end <= owner.declaration_span.end
-                && body.return_type == IncanType::SelfType
+                && binding.identity.as_ref() == Some(identity)
+                && binding.return_type == ResolvedType::SelfType
                 && body.params.len() == 1
                 && body.type_parameters.is_empty())
             .then(|| identity.clone())

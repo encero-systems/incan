@@ -426,7 +426,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         value_enum_declarations,
         bodies,
     };
-    opaque_returns::retain(&mut module);
+    opaque_returns::retain(&mut module, type_info);
     library_opaque_returns::retain(&mut module, type_info);
     module
 }

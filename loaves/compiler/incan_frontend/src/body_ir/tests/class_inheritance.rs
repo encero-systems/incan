@@ -33,6 +33,8 @@ fn inherited_class_fields_keep_their_declaring_identities() -> Result<(), Box<dy
     assert_eq!(child.field_identities[0], base.field_identities[0]);
     assert_eq!(leaf.field_identities[0], base.field_identities[0]);
     assert_eq!(leaf.field_identities[1], child.field_identities[1]);
+    assert_eq!(child.field_aliases.len(), child.fields.len());
+    assert_eq!(leaf.field_aliases.len(), leaf.fields.len());
     assert!(module.is_well_formed_nominal_declaration(base));
     assert!(module.is_well_formed_nominal_declaration(child));
     assert!(module.is_well_formed_nominal_declaration(leaf));
