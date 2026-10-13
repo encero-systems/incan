@@ -50,6 +50,7 @@ mod raises_assertions;
 mod result_callbacks;
 mod return_pass_order;
 mod returned_callables;
+mod sdk_iterator_dispatch;
 mod static_storage;
 mod task_handles;
 mod text_codecs;

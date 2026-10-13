@@ -6280,6 +6280,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK iteration hook identities retain native declarations independently of written call facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
       "disposition": "keep",
       "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
