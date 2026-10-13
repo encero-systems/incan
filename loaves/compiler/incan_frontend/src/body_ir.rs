@@ -478,10 +478,11 @@ fn build_body_ir_module_v0_with_provider_operations(
         value_enum_declarations,
         bodies,
     };
-    opaque_returns::retain(&mut module, type_info);
     library_opaque_returns::retain(&mut module, type_info);
+    // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
     trait_values::retain_inputs(&mut module, program, type_info, context);
     trait_returns::retain_returns(&mut module, program, type_info, context);
+    opaque_returns::retain(&mut module, type_info);
     module
 }
 
