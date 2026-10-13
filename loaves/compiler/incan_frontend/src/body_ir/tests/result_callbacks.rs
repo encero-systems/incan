@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// A constructor rebind with a missing legacy payload remains refused even after Body IR retains its local carrier.
+#[test]
+fn untyped_result_rebinding_keeps_legacy_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def passed() -> Result[int, str]:\n    return Ok(2)\n\ndef main() -> None:\n    mut r = passed().and_then((x) => Ok(x * 2))\n    r = Err(\"no\")\n    println(r.unwrap_or(0))\n",
+        &["m", "untyped_result_rebind"],
+    )?;
+    assert!(
+        module
+            .render_snapshot()
+            .contains("Result constructor rebinding without a legacy-retained payload"),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A rebind uses the retained local Result channels for a constructor that leaves one side open.
 #[test]
 fn rebinding_result_channels_preserves_the_local_carrier() -> Result<(), Box<dyn std::error::Error>> {

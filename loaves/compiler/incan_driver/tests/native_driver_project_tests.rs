@@ -162,7 +162,7 @@ fn capturing_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Result constructor rebindings keep the inferred local carrier and repeated receiver use.
+/// Explicitly typed Result constructor rebindings keep their local carrier and repeated receiver use.
 #[test]
 fn rebound_result_channels_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -176,7 +176,7 @@ def passed() -> Result[int, str]:
     return Ok(2)
 
 def main() -> None:
-    mut r = passed().and_then((x) => Ok(x * 2))
+    mut r: Result[int, str] = passed().and_then((x) => Ok(x * 2))
     r = Err("no")
     println(r.unwrap_or(0))
     r = Ok(3)
@@ -199,6 +199,36 @@ fn callable_bound_closure_and_model_output_matches_legacy() -> Result<(), Box<dy
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/callable_bound_closure_and_model.incn"
         ),
     )
+}
+
+/// Preserve the legacy build boundary for a constructor rebind whose unannotated success payload is missing.
+#[test]
+fn untyped_result_rebinding_retains_legacy_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("untyped-result-rebinding")?;
+    let source = root.join("probe.incn");
+    fs::write(
+        &source,
+        "def passed() -> Result[int, str]:\n    return Ok(2)\n\ndef main() -> None:\n    mut r = passed().and_then((x) => Ok(x * 2))\n    r = Err(\"no\")\n    println(r.unwrap_or(0))\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains(
+            "unsupported Body IR Unsupported: Result constructor rebinding without a legacy-retained payload"
+        ),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
 }
 
 /// Constructor-returning callbacks keep the call's settled success and error channels.
