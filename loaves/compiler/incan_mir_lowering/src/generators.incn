@@ -92,7 +92,7 @@ pub def is_generator_reference(ty: PlanType) -> bool:
 
 
 pub def generator_element(leaf: ListLeaf, depth: int) -> PlanType:
-    """Recover the generator's exact yielded type; depth zero is a primitive element."""
+    """Recover the generator's exact yielded type; depth zero is its immediate retained leaf."""
     if depth == 0:
         return leaf_type(leaf)
     return PlanType.List(leaf, depth)

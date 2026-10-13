@@ -16,6 +16,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
+        // ---- Checked terminal and canonical owner ----
         if name != "sum" || !arguments.is_empty() || !type_arguments.is_empty() {
             return None;
         }
@@ -57,21 +58,14 @@ impl BodyBuilder<'_, '_> {
         if identity.kind != super::SemanticSourceTargetKind::Newtype {
             return None;
         }
+
+        // ---- Complete local layout and hook selection ----
         let accepted = self.type_info.body_ir_iterator_sum_items.get(&(span.start, span.end));
-        let hook_matches = match (
+        let hook_matches = sum_hook_matches(
+            identity,
             facts.checked_constructor.as_deref(),
             facts.checked_constructor_identity.as_ref(),
-        ) {
-            (None, None) => true,
-            (Some(name), Some(hook)) => {
-                hook.declaration_name == name
-                    && hook.kind == super::SemanticSourceTargetKind::Method
-                    && hook.origin == identity.origin
-                    && identity.declaration_span.start <= hook.declaration_span.start
-                    && hook.declaration_span.end <= identity.declaration_span.end
-            }
-            _ => false,
-        };
+        );
         let source_iterator = self
             .type_info
             .declarations
@@ -104,6 +98,8 @@ impl BodyBuilder<'_, '_> {
                 out,
             ));
         }
+
+        // ---- Owned consumption and final reconstruction ----
         let (total, iterator) = self.newtype_sum_loop(receiver, &declaration, &target, scope, source_span, out);
         let result = self.finish_newtype_sum(
             owner,
@@ -191,6 +187,7 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> (bir::Operand, bir::LocalId) {
+        // ---- Owned iterator and primitive accumulator ----
         let source = self.lower_expr_to_operand(receiver, scope, out);
         let iterator = self.new_temp(self.resolve_ty(receiver.span), scope, span);
         out.push(bir::Statement {
@@ -209,6 +206,8 @@ impl BodyBuilder<'_, '_> {
             },
             span,
         });
+
+        // ---- Canonical payload polling ----
         let loop_scope = self.new_scope(Some(scope), span);
         let item = self.new_temp(target.clone(), loop_scope, span);
         let mut place = bir::Place::from_local(item);
@@ -243,6 +242,8 @@ impl BodyBuilder<'_, '_> {
                 span,
             },
         ];
+
+        // ---- Retained consumer loop ----
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
                 body: bir::Block {
@@ -253,5 +254,21 @@ impl BodyBuilder<'_, '_> {
             span,
         });
         (self.temp_operand(accumulator, &integer), iterator)
+    }
+}
+
+/// Require the selected hook's complete local owner provenance; a partially retained hook cannot authorize
+/// reconstruction.
+fn sum_hook_matches(owner: &CanonicalSymbolId, name: Option<&str>, hook: Option<&CanonicalSymbolId>) -> bool {
+    match (name, hook) {
+        (None, None) => true,
+        (Some(name), Some(hook)) => {
+            hook.declaration_name == name
+                && hook.kind == super::SemanticSourceTargetKind::Method
+                && hook.origin == owner.origin
+                && owner.declaration_span.start <= hook.declaration_span.start
+                && hook.declaration_span.end <= owner.declaration_span.end
+        }
+        _ => false,
     }
 }
