@@ -13947,8 +13947,7 @@ fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std:
     assert!(!refused.status.success());
     let diagnostic = String::from_utf8_lossy(&refused.stderr);
     assert!(
-        diagnostic
-            .contains("unsupported Body IR default: partial target add declares a default Body IR could not source"),
+        diagnostic.contains("unsupported Body IR partial parameter default"),
         "{diagnostic}"
     );
     assert!(!output.exists());
