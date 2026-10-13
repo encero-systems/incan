@@ -125,6 +125,52 @@ fn imported_alias_return_retains_method_selection() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// A same-spelled owner from another module cannot supply the missing alias receiver's method.
+#[test]
+fn imported_alias_method_rejects_a_different_provider_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+    );
+    let factory_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+    );
+    let consumer_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+    );
+    let provider = build(provider_source, &["db", "schema"])?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        &[provider],
+    )?;
+    let wrong_owner = build(provider_source, &["other"])?;
+    let module = build_with_published_imports(
+        consumer_source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[wrong_owner, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let method = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("alias method call missing")?;
+    assert!(method.canonical.is_none(), "{method:#?}");
+    Ok(())
+}
+
 /// A user model with a builtin wrapper spelling keeps the field identity its providing module published.
 #[test]
 fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std::error::Error>> {

@@ -12,13 +12,13 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4105 | 264 | 431 |
+| keep | 4106 | 264 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
 | **unclassified** | 2 | 1 | 0 |
-| **Total** | **9078** | **721** | **1494** |
+| **Total** | **9079** | **721** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1834,7 +1834,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2433 tests in 140 files: keep 2418, unaffected 13, unclassified 2)
+### `loaves/compiler/incan_frontend` (2434 tests in 140 files: keep 2419, unaffected 13, unclassified 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1851,7 +1851,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/derived_display.rs` | 2 | 79 | 79 | keep | - | - | - | #1337 | checker 1, parser 1 | Exact checked enum Display selections remain separate from automatic Debug and Clone. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/for_patterns.rs` | 16 | 482 | 482 | keep | - | - | - | #1561 | replacement 3, checker 6, parser 7 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/frozen_collections.rs` | 1 | 18 | 18 | keep | - | - | - | #1337 | - | Body IR-only static frozen data retention and canonical constant versus local shadowing coverage. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs` | 28 | 1521 | 1521 | keep | - | - | - | #1561 | replacement 18, checker 18, parser 18 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs` | 29 | 1567 | 1567 | keep | - | - | - | #1561 | replacement 19, checker 19, parser 19 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs` | 15 | 571 | 571 | keep | - | - | - | #1561 | text 1, replacement 5, checker 5, parser 5 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/iteration_protocol.rs` | 4 | 192 | 192 | keep | - | - | - | #1337 | checker 1, parser 1 | Canonical iteration hook targets, checked polling and temporary-call fact preservation; frontend contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs` | 15 | 426 | 426 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Body IR-only SDK type identity and nested declaration retention on the direct route. |
