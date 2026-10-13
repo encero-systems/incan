@@ -12,6 +12,9 @@ mod dev7_carrier_admission;
 #[path = "native_driver_project_tests/ordinary_rust_dependencies.rs"]
 mod ordinary_rust_dependencies;
 
+#[path = "native_driver_project_tests/sweep_nominals.rs"]
+mod sweep_nominals;
+
 use incan_test_support as support;
 use std::fs;
 use std::path::{Path, PathBuf};

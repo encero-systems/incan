@@ -31,6 +31,7 @@ mod iteration_protocol;
 mod library_types;
 mod method_partials;
 mod methods_and_defaults;
+mod module_carriers;
 mod native_carriers;
 mod newtype_constraints;
 mod newtype_fields;

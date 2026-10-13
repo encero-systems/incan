@@ -822,6 +822,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_nominals.rs": {
+      "disposition": "keep",
+      "notes": "Same-spelled declarations retain canonical storage owners across checked imports, defaults and facades; live legacy parity and Body IR contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
       "disposition": "keep",
       "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
@@ -6125,6 +6133,14 @@
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/module_carriers.rs": {
+      "disposition": "keep",
+      "notes": "Same-spelled declarations retain canonical storage owners across checked imports, defaults and facades; live legacy parity and Body IR contracts.",
+      "owner": 1337,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
