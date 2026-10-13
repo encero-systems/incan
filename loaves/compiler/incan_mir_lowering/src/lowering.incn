@@ -380,7 +380,6 @@ from closures import (
     callable_signature,
     function_pointer_storage,
     parameter_representation,
-    local_representation,
     return_representation,
     closure_arguments,
     closure_capture_type,
@@ -6168,7 +6167,6 @@ def frame_locals(
             None =>
                 ty = body_frame_type(module, body, local, intrinsics)?
         index = int(local.id.index()) + 1
-        ty = local_representation(body, index - 1, ty)
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:

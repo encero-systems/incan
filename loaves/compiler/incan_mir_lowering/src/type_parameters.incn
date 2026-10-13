@@ -100,12 +100,12 @@ def retain_owned_callable_storage(original: &Body, slots: list[int]) -> Result[B
         None => return Err("unsupported Body IR generic callable without representation facts")
         Some(representation) =>
             mut retained = representation.clone()
+            # The checked hook marks environment capability, not a borrowed ABI for an original generic value.
+            # Owned selection is carried by the local marker; ordinary function parameters keep their shared marker.
             for local in original.locals:
                 match local.ty:
                     RustType.TypeVar(name) =>
                         if str(name) in names:
-                            if has_local(retained.closure_holding_parameters, local.id):
-                                return Err("unsupported Body IR generic callable with borrowed parameter facts")
                             if not has_local(retained.closure_holding_locals, local.id):
                                 retained.closure_holding_locals.push(local.id)
                     _ => pass

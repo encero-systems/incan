@@ -173,7 +173,7 @@ pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
 
 
 pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> Result[PlanType, str]:
-    """A closure-holding parameter receives a shared callable object, never a function pointer."""
+    """A selected generic value owns its environment; an ordinary environment-capable function parameter borrows it."""
     match ty:
         PlanType.FunctionPointer(signature) =>
             match body.callable_representation:
@@ -188,20 +188,6 @@ pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> R
                 None => pass
         _ => pass
     return Ok(ty)
-
-
-pub def local_representation(body: &RustBody, local: int, ty: PlanType) -> PlanType:
-    """Keep an instance's owned generic aliases at the environment-carrying ABI retained with their source local."""
-    match ty:
-        PlanType.FunctionPointer(signature) =>
-            match body.callable_representation:
-                Some(representation) =>
-                    for held in representation.closure_holding_locals:
-                        if int(held.index()) == local:
-                            return PlanType.Closure(signature)
-                None => pass
-        _ => pass
-    return ty
 
 
 pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType, str]:
