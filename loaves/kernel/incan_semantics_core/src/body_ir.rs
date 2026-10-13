@@ -362,6 +362,10 @@ pub struct NominalDeclaration {
     /// Checked local class parent and nearest source method implementations; absent for noninherited carriers.
     #[serde(default)]
     pub class_inheritance: Option<ClassInheritance>,
+    /// Fixed runtime arguments for a nongeneric source surface, such as Html's String specialization. Generic
+    /// surfaces retain their checked instance arguments instead; ordinary source/SDK layouts carry none.
+    #[serde(default)]
+    pub native_type_arguments: Vec<IncanType>,
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
     /// RFC 120 identity minted by the checker for this declaration.
@@ -421,6 +425,27 @@ pub struct NominalDeclaration {
 /// This direct-route bridge does not alter source resolution or legacy emission. A user declaration, including one
 /// with the same name, never selects a foreign item; ordinary SDK layouts keep their compiled source item.
 pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
+    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin {
+        if identity.namespace != crate::SymbolNamespace::OrdinaryLexical
+            || identity.kind != crate::SemanticSourceTargetKind::RustItem
+            || identity.scope_discriminant.is_some()
+            || identity.declaration_span != crate::HirSourceSpan::new(0, 0)
+            || path.last() != Some(&identity.declaration_name)
+        {
+            return None;
+        }
+        let item = match path.as_slice() {
+            [root, name] if root == "axum" && name == "Json" => "incan_stdlib_web::web::response::Json",
+            [root, module, name] if root == "axum" && module == "extract" && name == "Query" => {
+                "incan_stdlib_web::web::request::Query"
+            }
+            [root, module, name] if root == "axum" && module == "response" && name == "Html" => {
+                "incan_stdlib_web::web::response::Html"
+            }
+            _ => return None,
+        };
+        return Some(item.to_owned());
+    }
     if identity.origin == crate::SymbolOrigin::Builtin
         && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
         && identity.kind == crate::SemanticSourceTargetKind::Builtin
@@ -440,11 +465,16 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
 }
 
-/// Physical direct-route declaration scope of a retained native builtin, or the existing source/package scope.
+/// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
 /// This is a layout transport coordinate, not a replacement semantic identity or a change to legacy resolution.
 pub fn native_nominal_module(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.origin == crate::SymbolOrigin::Builtin && native_nominal_item(identity).is_some() {
         return Some("builtin::native::ValidationError".to_owned());
+    }
+    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin
+        && native_nominal_item(identity).is_some()
+    {
+        return Some(format!("native::rust::{}", path.join("::")));
     }
     crate::canonical_module_identity(identity)
 }
@@ -456,31 +486,71 @@ pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     if identity.origin != crate::SymbolOrigin::Builtin {
         return None;
     }
+    native_carrier_nominal(identity)
+}
+
+/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque; Json/Query retain their
+/// public tuple payload and binder, while Html retains its fixed String specialization. Derive facts match the
+/// runtime implementations; field/constructor operations additionally require checker-owned use-site facts.
+pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
+    if !matches!(
+        identity.origin,
+        crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
+    ) {
+        return None;
+    }
     let native_item = native_nominal_item(identity)?;
     let module = native_nominal_module(identity)?;
+    let mut fields = Vec::new();
+    let mut field_identities = Vec::new();
+    let mut field_types = Vec::new();
+    let mut type_parameters = Vec::new();
+    let mut native_type_arguments = Vec::new();
+    let mut derives = vec!["Debug".to_owned(), "Clone".to_owned()];
+    if identity.origin == crate::SymbolOrigin::Builtin {
+        derives.extend(["PartialEq".to_owned(), "Eq".to_owned()]);
+    } else {
+        fields.push("0".to_owned());
+        field_identities.push(CanonicalSymbolId {
+            namespace: crate::SymbolNamespace::Member,
+            origin: identity.origin.clone(),
+            declaration_name: "0".to_owned(),
+            kind: crate::SemanticSourceTargetKind::Field,
+            scope_discriminant: None,
+            declaration_span: crate::HirSourceSpan::new(0, 0),
+        });
+        if identity.declaration_name == "Html" {
+            let string = IncanType::Primitive(crate::IncanPrimitiveType::Str);
+            field_types.push(string.clone());
+            native_type_arguments.push(string);
+        } else {
+            type_parameters.push("T".to_owned());
+            field_types.push(IncanType::TypeVar("T".to_owned()));
+        }
+    }
+    let field_public = vec![true; fields.len()];
+    let type_parameter_count = type_parameters.len();
     Some(NominalDeclaration {
         native_item,
         class_inheritance: None,
+        native_type_arguments,
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical: identity.clone(),
         name: identity.declaration_name.clone(),
-        fields: Vec::new(),
-        field_identities: Vec::new(),
-        field_types: Vec::new(),
-        field_public: Vec::new(),
+        fields,
+        field_identities,
+        field_types,
+        field_public,
         field_aliases: Vec::new(),
         public: true,
         has_field_defaults: false,
         field_default_body: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
-        derives: ["Debug", "Clone", "PartialEq", "Eq"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+        derives,
         named_type_identities: Default::default(),
-        type_parameters: Vec::new(),
-        type_parameter_count: 0,
+        type_parameters,
+        type_parameter_count,
     })
 }
 

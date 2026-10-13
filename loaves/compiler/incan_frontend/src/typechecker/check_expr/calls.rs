@@ -451,6 +451,7 @@ impl TypeChecker {
                                 return self.check_json_query_constructor_call(tid, args, span);
                             }
                             if matches!(tid, SurfaceTypeId::Html) {
+                                self.record_body_ir_html_constructor(args, span);
                                 // The value is typed by the binding the call spells, so `Page(...)` under
                                 // `from std.web import Html as Page` is a `Page`, as its annotations are.
                                 return ResolvedType::Named(name.clone());
@@ -700,6 +701,7 @@ impl TypeChecker {
                     return self.check_json_query_constructor_call(tid, args, span);
                 }
                 if matches!(tid, SurfaceTypeId::Html) {
+                    self.record_body_ir_html_constructor(args, span);
                     return ResolvedType::Named(name.clone());
                 }
             }
@@ -738,6 +740,7 @@ impl TypeChecker {
                         return self.check_json_query_constructor_call(tid, args, span);
                     }
                     if matches!(tid, SurfaceTypeId::Html) {
+                        self.record_body_ir_html_constructor(args, span);
                         return ResolvedType::Named(name.clone());
                     }
                 }

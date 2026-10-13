@@ -7326,10 +7326,11 @@ impl TypeChecker {
     }
 
     /// Retain active native builtin owners once for opaque nominal storage and checked runtime operations, without
-    /// changing legacy lookup. The kernel whitelist validates the entire identity; source shadows and unrelated
-    /// builtins yield nothing.
-    fn checked_native_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
-        self.symbols
+    /// changing legacy lookup. Web placeholders use their checked surface binding and original Rust re-export;
+    /// the kernel whitelist validates identities and source shadows yield nothing.
+    fn checked_native_nominal_type_identities(&mut self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = self
+            .symbols
             .all_symbols()
             .iter()
             .enumerate()
@@ -7338,10 +7339,21 @@ impl TypeChecker {
                     return None;
                 }
                 let identity = self.symbols.identity_of(id)?;
-                incan_semantics_core::body_ir::native_builtin_nominal(identity)?;
+                if identity.origin != incan_semantics_core::SymbolOrigin::Builtin {
+                    return None;
+                }
+                incan_semantics_core::body_ir::native_carrier_nominal(identity)?;
                 Some((symbol.name.clone(), identity.clone()))
             })
-            .collect()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for (name, (surface, symbol)) in &self.surface_type_import_bindings {
+            if self.symbols.lookup(name) == Some(*symbol)
+                && let Some(identity) = self.stdlib_cache.native_web_identity(*surface)
+            {
+                identities.insert(name.clone(), identity);
+            }
+        }
+        identities
     }
 
     /// Retain active module-scope nominal bindings from both source modules and admitted packages.

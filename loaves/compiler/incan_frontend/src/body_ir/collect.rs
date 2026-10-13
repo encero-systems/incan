@@ -497,6 +497,7 @@ pub(super) fn collect_local_nominal_declarations(
             let retained = bir::NominalDeclaration {
                 native_item: String::new(),
                 class_inheritance: None,
+                native_type_arguments: Vec::new(),
                 direct_declaration_id: CompilerNodeId::declaration_span(
                     module_identity,
                     declaration.span.start,
@@ -664,6 +665,7 @@ fn collect_plain_newtype(
     Some(bir::NominalDeclaration {
         native_item: String::new(),
         class_inheritance: None,
+        native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),
         field_identities: vec![canonical.clone()],
         canonical,
