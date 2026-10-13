@@ -3372,6 +3372,10 @@ pub struct MethodTarget {
     /// Source methods and older publications carry None, so a spelling alone never grants reflection behavior.
     #[serde(default)]
     pub reflection: Option<ReflectionOperation>,
+    /// Exact SDK trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
+    /// Older publications and calls without checked trait dispatch retain None and grant no generic SDK dispatch.
+    #[serde(default)]
+    pub sdk_trait: Option<StdlibTraitCall>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -3396,6 +3400,7 @@ impl MethodTarget {
             name: name.into(),
             intrinsic_carrier: None,
             reflection: None,
+            sdk_trait: None,
             canonical: None,
             type_args: Vec::new(),
             binding: ArgumentBinding::UnresolvedPositional,
@@ -3411,6 +3416,17 @@ impl MethodTarget {
             self.binding.render_snapshot()
         )
     }
+}
+
+/// A checked SDK trait slot, separate from the method's own type arguments and the concrete receiver frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StdlibTraitCall {
+    /// Declaring SDK trait identity, authenticated against the exact method declaration.
+    pub trait_identity: CanonicalSymbolId,
+    /// Compiled SDK item path for that declaration, never inferred by the lowering from a method spelling.
+    pub native_item: String,
+    /// Checked trait instantiation in declaration order; Self is supplied by the retained receiver layout.
+    pub type_arguments: Vec<IncanType>,
 }
 
 /// Checked reflection operation and its receiver-dependent result contract, retained before generic substitution.

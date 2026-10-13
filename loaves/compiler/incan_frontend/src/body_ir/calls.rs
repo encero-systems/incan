@@ -1371,6 +1371,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     name: method,
                     intrinsic_carrier: None,
                     reflection: None,
+                    sdk_trait: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -2061,6 +2062,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 name: name.to_string(),
                 intrinsic_carrier,
                 reflection: self.checked_reflection_operation(span),
+                sdk_trait: self.type_info.resolved_identity(span).and_then(|identity| {
+                    super::library_calls::trait_dispatch(
+                        identity,
+                        self.type_info.resolved_method_call(span).map(|call| &call.dispatch),
+                    )
+                }),
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one
                 // the program's implementation records and the SDK's published bodies carry.
                 canonical: native_member

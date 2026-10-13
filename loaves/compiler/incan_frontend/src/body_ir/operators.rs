@@ -216,6 +216,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 name: method.to_string(),
                 intrinsic_carrier: None,
                 reflection: None,
+                sdk_trait: None,
                 canonical,
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(arguments.len()),

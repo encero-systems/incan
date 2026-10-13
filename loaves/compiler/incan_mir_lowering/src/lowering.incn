@@ -3089,7 +3089,7 @@ def lower_library_method(
     An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
     The receiver closes owner placeholders, and the recorded native arguments select the exact compiled trait item.
     """
-    if len(target.type_args) != 0:
+    if len(target.type_args) != 0 and target.sdk_trait == None:
         return Err("unsupported Body IR type arguments on a stdlib method")
     if len(delegation.parameters) == 0 or len(arguments) == 0:
         return Err("unsupported Body IR stdlib method without a receiver")
@@ -3098,7 +3098,7 @@ def lower_library_method(
     for name in delegation.type_parameters:
         names.append(str(name))
     reference = library_receiver(module, builder, receiver_type, arguments[0], span)?
-    closed = library_receiver_arguments(module, builder, reference, names)?
+    closed = library_method_arguments(module, builder, delegation, target, reference, names)?
     mut parameters = [place_type(builder.locals, reference)]
     mut ordinary_types: list[PlanType] = []
     for index in range(1, len(delegation.parameters)):
@@ -3108,9 +3108,7 @@ def lower_library_method(
             native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
         )
     parameters.extend(ordinary_types)
-    returned: RustType = substitute(delegation.return_type, names, closed)?
-    _ = require_native_union_signature(returned, builder.intrinsics)?
-    result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
+    result = library_method_result(builder, delegation, target, destination, names, closed, span)?
     ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
@@ -3146,6 +3144,47 @@ def lower_library_method(
                 )
             external_call(builder, path, parameters, result, operands, output, span)
             return Ok(None)
+
+
+def library_method_arguments(
+    module: &BodyIrModule,
+    builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &MethodTarget,
+    reference: Place,
+    names: list[str],
+) -> Result[list[RustType], str]:
+    """Close a checked SDK trait slot in native Self, trait, and method argument order; inherent calls retain owner binders."""
+    match target.sdk_trait:
+        None => return library_receiver_arguments(module, builder, reference, names)
+        Some(selected) =>
+            if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
+                return Err("unsupported Body IR SDK trait item differs from its delegation")
+            mut closed = library_receiver_arguments(module, builder, reference, ["Self"])?
+            closed.extend(checked_type_arguments(builder, selected.type_arguments.clone())?)
+            closed.extend(checked_type_arguments(builder, target.type_args.clone())?)
+            if len(closed) != len(names):
+                return Err("unsupported Body IR SDK trait method type argument arity")
+            return Ok(closed)
+
+
+def library_method_result(
+    builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &MethodTarget,
+    destination: &Option[RustPlace],
+    names: list[str],
+    closed: list[RustType],
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Use the frontend-retained concrete SDK factory result, with native metadata still checking the exact return carrier."""
+    if target.sdk_trait != None:
+        match destination:
+            Some(place) => return Ok(place_type(builder.locals, scalar_place(builder, place, span)?))
+            None => pass
+    returned: RustType = substitute(delegation.return_type, names, closed)?
+    _ = require_native_union_signature(returned, builder.intrinsics)?
+    return native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)
 
 
 def library_receiver_arguments(
