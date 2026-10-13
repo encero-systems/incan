@@ -5213,9 +5213,9 @@ pub def lower_program(
                 entry_function, entry_constructor, entry_runtime = async_entry(function)
                 functions.append(entry_function)
                 functions.append(entry_constructor)
-                merge_externals(externals, [entry_runtime])
+                _ = merge_externals(externals, [entry_runtime])?
             append_generator_constructor(functions, context, body, sources[index], files[index], intrinsics)?
-            merge_externals(externals, runtime)
+            _ = merge_externals(externals, runtime)?
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
@@ -5291,7 +5291,7 @@ def lower_computed_statics(
                         return Err("unsupported Body IR original callable name collision")
                 functions.append(original_function)
                 append_synthesized(functions, original_synthesized)?
-                merge_externals(externals, original_runtime)
+                _ = merge_externals(externals, original_runtime)?
                 instances.extend(original_pending)
         match declaration.initial:
             RustStaticInitializer.Computed(body) =>
@@ -5327,10 +5327,10 @@ def lower_computed_statics(
                 if key not in keys:
                     keys.append(key)
                     functions.append(module_initializer(module.static_declarations, key, initializer.span))
-                    merge_externals(externals, module_initialization_externals(initializer.span))
+                    _ = merge_externals(externals, module_initialization_externals(initializer.span))?
                 functions.append(initializer)
                 append_synthesized(functions, synthesized)?
-                merge_externals(externals, runtime)
+                _ = merge_externals(externals, runtime)?
                 instances.extend(pending)
             _ => pass
     return Ok(cells)
@@ -5392,7 +5392,9 @@ def body_refusals(
                     instances.extend(pending)
                     functions.append(function)
                     functions.extend(synthesized)
-                    merge_externals(externals, runtime)
+                    match merge_externals(externals, runtime):
+                        Ok(_) => pass
+                        Err(error) => refusals.append(f"{body.name}: {error}")
                 Err(error) => refusals.append(f"{body.name}: {error}")
     mut owners: list[str] = []
     for module in checked:
@@ -5436,9 +5438,9 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
             entry_function, entry_constructor, entry_runtime = async_entry(function)
             functions.append(entry_function)
             functions.append(entry_constructor)
-            merge_externals(externals, [entry_runtime])
+            _ = merge_externals(externals, [entry_runtime])?
         append_generator_constructor(functions, module, body, source, file, intrinsics)?
-        merge_externals(externals, runtime)
+        _ = merge_externals(externals, runtime)?
         instances.extend(pending)
     owners = [str(module.module_id.path())]
     statics = lower_computed_statics(
@@ -5542,7 +5544,7 @@ def lower_instances(
         retain_instance(functions, function)?
         append_synthesized(functions, synthesized)?
         completed.append(instance)
-        merge_externals(externals, runtime)
+        _ = merge_externals(externals, runtime)?
         instances.extend(pending)
     return Ok(None)
 # =====================================================================================================================
@@ -5581,15 +5583,18 @@ def append_synthesized(mut functions: list[Function], additions: list[Function])
     return Ok(None)
 
 
-def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> None:
-    """Add each runtime function the plan does not declare yet; one declaration per path and generic instantiation."""
+def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> Result[None, str]:
+    """Retain one exact signature per native path and generic instantiation; conflicting checked overloads stay refused."""
     for external in additions:
         mut found = false
         for retained in externals:
             if retained.path == external.path and retained.type_arguments == external.type_arguments:
+                if retained.parameters != external.parameters or retained.return_type != external.return_type:
+                    return Err("unsupported Body IR conflicting native call signatures")
                 found = true
         if not found:
             externals.append(external)
+    return Ok(None)
 
 
 def entry_result(module: &BodyIrModule, ty: PlanType, intrinsics: list[EnumDeclaration]) -> bool:
