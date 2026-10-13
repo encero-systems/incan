@@ -109,7 +109,10 @@ fn unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Er
         &["m", "unknown_opaque"],
     )?;
     let body = body_named(&module, "identity")?;
-    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Read"));
+    assert!(
+        matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Read"),
+        "{body:#?}"
+    );
     Ok(())
 }
 

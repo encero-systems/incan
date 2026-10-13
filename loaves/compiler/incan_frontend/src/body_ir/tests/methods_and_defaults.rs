@@ -35,8 +35,23 @@ fn trait_value_return_retains_concrete_carrier() -> Result<(), Box<dyn std::erro
         body_named(&module, "main")?
             .locals
             .iter()
-            .all(|local| local.ty != IncanType::Named("Named".to_owned()))
+            .all(|local| local.ty != IncanType::Named("Named".to_owned())),
+        "{}",
+        module.render_snapshot()
     );
+    Ok(())
+}
+
+/// An earlier concrete return witness must retain its model identity beside the declared trait's identity.
+#[test]
+fn concrete_return_witness_keeps_nominal_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel Item with Named:\n  number: int\n\ndef make() -> Named:\n  return Item(number=3)\n\ndef main() -> None:\n  value = make()\n  println(7)\n",
+        &["concrete_return_identity"],
+    )?;
+    let body = body_named(&module, "make")?;
+    let identity = body.named_type_identities.get("Item").ok_or("missing model identity")?;
+    assert_eq!(identity.kind, SemanticSourceTargetKind::Model, "{body:#?}");
     Ok(())
 }
 
