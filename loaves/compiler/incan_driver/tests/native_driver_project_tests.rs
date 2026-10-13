@@ -39,8 +39,8 @@ def pair() -> tuple[Item, Token]:
 
 def main() -> None:
     values = [pair()]
-    println(values[0].0.name)
-    println((values[0].1).0)
+    println(values[0][0].name)
+    println(values[0][1].0)
 "#,
     )
 }
