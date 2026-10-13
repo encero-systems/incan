@@ -136,6 +136,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        // ---- Construction-time captures and deferred parameters ----
         let span = hir_span(expr_span);
         let mut frame = self.partial_captures(partial, &target, span, scope, out);
         let (checked_params, result) = match self.resolve_ty(expr_span) {
@@ -143,6 +144,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             _ => (Vec::new(), target.result.clone()),
         };
         let params = self.partial_parameters(&target, &checked_params, &mut frame, span);
+
+        // ---- Forward through the checked target and borrowed receiver ----
         let mut arguments = Vec::with_capacity(params.len() + usize::from(frame.receiver.is_some()));
         if let Some(receiver) = frame.receiver {
             arguments.push(bir::Operand::place(
@@ -171,6 +174,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             &mut statements,
         );
+
+        // ---- Restore enclosing bindings before assigning the completed closure ----
         for (name, previous) in frame.saved.into_iter().rev() {
             match previous {
                 Some(local) => {
@@ -209,17 +214,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> PartialFrame {
+        // ---- Snapshot values before later expressions can mutate their source places ----
         let mut values = Vec::with_capacity(partial.args.len() + usize::from(target.receiver.is_some()));
         if let Some(receiver) = target.receiver {
-            let ty = self.resolve_ty(receiver.span);
-            let operand = self.lower_expr_to_operand(receiver, scope, out);
+            let (ty, operand) = self.snapshot_partial_value(receiver, scope, out);
             values.push((None, ty, operand));
         }
         for arg in &partial.args {
-            let ty = self.resolve_ty(arg.value.span);
-            let operand = self.lower_expr_to_operand(&arg.value, scope, out);
+            let (ty, operand) = self.snapshot_partial_value(&arg.value, scope, out);
             values.push((Some(arg.name.clone()), ty, operand));
         }
+
+        // ---- Bind deferred captures after every source expression has been evaluated ----
         let mut frame = PartialFrame {
             scope: self.new_scope(Some(scope), span),
             operands: Vec::with_capacity(values.len()),
@@ -247,6 +253,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         }
         frame
+    }
+
+    /// Materialize a checked value immediately, so later presets cannot change a retained place before it is read.
+    ///
+    /// The enclosing scope owns this temporary until the closure consumes it. This preserves the source read's
+    /// checked Clone/Move/Borrow contract and introduces no synthetic name visible to subsequent source expressions.
+    fn snapshot_partial_value(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> (IncanType, bir::Operand) {
+        let ty = self.resolve_ty(expression.span);
+        let value = self.lower_expr_to_operand(expression, scope, out);
+        let snapshot = self.push_assign_temp(
+            bir::Rvalue::Use(value),
+            ty.clone(),
+            scope,
+            hir_span(expression.span),
+            out,
+        );
+        (ty, snapshot)
     }
 
     /// Retain full declared slots with overrideable preset defaults and refuse unavailable method source defaults.

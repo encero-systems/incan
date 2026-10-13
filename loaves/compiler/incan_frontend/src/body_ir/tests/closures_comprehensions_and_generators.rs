@@ -663,13 +663,19 @@ fn lowers_a_partial_callable_into_a_forwarding_closure() -> Result<(), Box<dyn s
         return Err("the partial preset must retain its capture local".into());
     };
     assert_eq!(closure_body.capture_locals, vec![*capture]);
-    assert!(matches!(
-        captured_operands.first(),
-        Some(bir::Operand::Place(bir::PlaceOperand {
-            fact: bir::OwnershipFact::Clone,
-            ..
-        }))
-    ));
+    let Some(bir::Operand::Place(captured)) = captured_operands.first() else {
+        return Err("partial preset snapshot missing".into());
+    };
+    assert_eq!(captured.fact, bir::OwnershipFact::Move);
+    let snapshot_local = captured.place.local_id().ok_or("preset snapshot local missing")?;
+    assert_eq!(make.locals[snapshot_local.index()].origin, bir::LocalOrigin::Temporary);
+    assert!(make.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Assign {
+            place,
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(bir::PlaceOperand { fact: bir::OwnershipFact::Clone, .. })),
+        } if place.local_id() == Some(snapshot_local)
+    )), "the source preset must be cloned before its snapshot is moved into the closure: {snapshot}");
     let bir::CallableParamDefault::Source(content_type_default) = &content_type.default else {
         return Err("the unpresetted checked default must remain a deferred source computation".into());
     };
