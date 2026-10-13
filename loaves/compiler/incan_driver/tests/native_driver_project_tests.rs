@@ -147,16 +147,15 @@ fn explicit_regex_factory_output_matches_legacy() -> Result<(), Box<dyn std::err
     )
 }
 
-/// The complete original regex fixture preserves constructor flags, omitted arguments and invalid-pattern behavior.
+/// The original regex source reaches the library-owned default binding boundary after factory selection.
 #[test]
-fn original_regex_constructor_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("original-regex-constructor")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+fn original_regex_constructor_reaches_default_binding() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "original_regex_constructor_defaults",
         include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_regex.incn"),
+        &[],
+        b"true false\nrefused\n",
+        "unsupported Body IR defaulted or incomplete ArgumentBinding",
     )
 }
 
