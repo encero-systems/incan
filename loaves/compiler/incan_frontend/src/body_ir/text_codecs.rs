@@ -1,7 +1,7 @@
 //! Retain the selected builtin codec's ordered arguments and registry-owned constant defaults.
 
 use super::args::{DeclaredSlot, plan_declared_args};
-use super::{BodyBuilder, ast, bir, hir_span};
+use super::{BodyBuilder, IncanCallableParamKind, IncanPrimitiveType, IncanType, ast, bir, hir_span};
 use incan_lang::lang::text_codecs::{DecodeErrorsPolicy, UTF8_ENCODING_LABEL};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
@@ -62,7 +62,8 @@ impl BodyBuilder<'_, '_> {
                 name: Some((*name).to_owned()),
                 has_default: true,
                 is_partial_preset: false,
-                is_rest: false,
+                kind: IncanCallableParamKind::Normal,
+                ty: IncanType::Primitive(IncanPrimitiveType::Str),
                 is_mut: false,
             })
             .collect::<Vec<_>>();
@@ -72,7 +73,7 @@ impl BodyBuilder<'_, '_> {
         };
         let place = self.lower_expr_to_place(receiver, scope, out);
         let receiver = bir::Operand::place(place, bir::OwnershipFact::Borrow, false);
-        let (supplied, binding) = match self.lower_planned_args(&planned, slots.len(), &[], scope, out) {
+        let (supplied, binding) = match self.lower_planned_args(&planned, slots.len(), &[], &[], scope, out) {
             Ok(bound) => bound,
             Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
         };
@@ -105,6 +106,7 @@ impl BodyBuilder<'_, '_> {
             bir::Callee::Method(bir::MethodTarget {
                 name: identity.declaration_name.rsplit('.').next()?.to_owned(),
                 intrinsic_carrier: None,
+                reflection: None,
                 canonical: Some(identity),
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(defaults.len()),
