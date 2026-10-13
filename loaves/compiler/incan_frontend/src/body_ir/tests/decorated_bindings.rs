@@ -414,20 +414,20 @@ fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// Positional postcard parameter records require a new representation version, not a JSON-only default.
+/// The combined parameter roles, acknowledgment statements and native union fields reject older positional layouts
+/// before decoding.
 #[test]
-fn rest_parameter_wire_shape_refuses_version_nine() -> Result<(), Box<dyn std::error::Error>> {
+fn combined_body_ir_shape_refuses_older_wire_versions() -> Result<(), Box<dyn std::error::Error>> {
     use incan_semantics_core::executable_representation::{
         EXECUTABLE_REPRESENTATION_VERSION, ExecutableRepresentationError, decode_module,
     };
-    assert_eq!(EXECUTABLE_REPRESENTATION_VERSION, 10);
-    assert!(matches!(
-        decode_module(&[9]),
-        Err(ExecutableRepresentationError::UnsupportedVersion {
-            found: 9,
-            supported: 10
-        })
-    ));
+    assert_eq!(EXECUTABLE_REPRESENTATION_VERSION, 11);
+    for version in [9, 10] {
+        assert!(matches!(
+            decode_module(&[version]),
+            Err(ExecutableRepresentationError::UnsupportedVersion { found, supported: 11 }) if found == u32::from(version)
+        ));
+    }
     Ok(())
 }
 

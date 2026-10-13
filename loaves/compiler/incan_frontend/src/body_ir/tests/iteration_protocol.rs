@@ -153,17 +153,25 @@ fn transient_call_snapshot_preserves_body_ir_only_facts() -> Result<(), Box<dyn 
     let span = Span::new(start, start + text.len());
     let key = (span.start, span.end);
     let source = info.expr_type(span).ok_or("missing checked call result")?.clone();
+    let method = info
+        .protocols
+        .body_ir_iterations
+        .values()
+        .find_map(|hooks| hooks.iter.canonical.clone())
+        .ok_or("missing checked iterator method")?;
 
     // ---- Executable facts kept apart from legacy ----
     info.calls.body_ir_constructor_types.insert(key, source.clone());
     info.calls.body_ir_call_type_arguments.insert(key, vec![source.clone()]);
     info.calls.body_ir_call_result_types.insert(key, source.clone());
+    info.calls.body_ir_self_result_methods.insert(key, method.clone());
 
     // ---- Temporary hook resolution ----
     let original = info.take_call_site_facts(span);
     assert!(!info.calls.body_ir_constructor_types.contains_key(&key));
     assert!(!info.calls.body_ir_call_type_arguments.contains_key(&key));
     assert!(!info.calls.body_ir_call_result_types.contains_key(&key));
+    assert!(!info.calls.body_ir_self_result_methods.contains_key(&key));
     info.calls.body_ir_constructor_types.insert(key, ResolvedType::Unknown);
     info.calls.body_ir_call_type_arguments.insert(key, Vec::new());
     info.calls.body_ir_call_result_types.insert(key, ResolvedType::Unknown);
@@ -176,5 +184,8 @@ fn transient_call_snapshot_preserves_body_ir_only_facts() -> Result<(), Box<dyn 
         Some(std::slice::from_ref(&source))
     );
     assert_eq!(info.calls.body_ir_call_result_types.get(&key), Some(&source));
+    assert_eq!(info.calls.body_ir_self_result_methods.get(&key), Some(&method));
+    info.clear_body_ir_call_site_facts(span);
+    assert!(!info.calls.body_ir_self_result_methods.contains_key(&key));
     Ok(())
 }
