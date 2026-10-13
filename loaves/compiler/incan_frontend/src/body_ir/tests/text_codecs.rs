@@ -3,6 +3,37 @@
 use super::*;
 use incan_semantics_core::SymbolOrigin;
 
+/// A codec function's Result constructor retains the exact admitted builtin error identity.
+#[test]
+fn codec_result_construction_retains_validation_error_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def read() -> Result[str, ValidationError]:\n    return Ok(\"ok\")\n",
+        &["m", "codec_result"],
+    )?;
+    let body = body_named(&module, "read")?;
+    let variant = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::ResultVariant(variant),
+                ..
+            } => Some(variant),
+            _ => None,
+        })
+        .ok_or("missing Result construction")?;
+    assert!(variant.has_complete_canonical_types(), "{}", body.render_snapshot());
+    let mut forged = variant.clone();
+    let identity = forged
+        .canonical_types
+        .get_mut(&vec![1])
+        .ok_or("missing error identity")?;
+    identity.declaration_span = incan_semantics_core::HirSourceSpan::new(1, 2);
+    assert!(!forged.has_complete_canonical_types());
+    Ok(())
+}
+
 /// Frozen codecs keep the same builtin identity and complete constant slots as mutable text and bytes.
 #[test]
 fn frozen_codec_calls_retain_complete_slots() -> Result<(), Box<dyn std::error::Error>> {
