@@ -380,6 +380,50 @@ def main() -> None:
     )
 }
 
+/// Every original opaque/supertrait return fixture reaches its next dispatch or instantiation boundary.
+#[test]
+fn trait_value_return_frontiers_are_pinned() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    for (case, source, boundary) in [
+        (
+            "typed-receivers",
+            include_str!("../../incan_test_support/fixtures/behavior/lowering_expressions/trait_typed_receivers.incn"),
+            "unsupported Body IR type argument arity on display",
+        ),
+        (
+            "supertrait-assignability",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/trait_supertrait_assignability.incn"
+            ),
+            "unsupported Body IR nonlocal or trait-object Method",
+        ),
+        (
+            "supertraits",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/trait_supertraits.incn"
+            ),
+            "unsupported Body IR nonlocal or trait-object Method",
+        ),
+    ] {
+        let root = fixture.scratch(case)?;
+        let source_path = root.join("main.incn");
+        fs::write(&source_path, source)?;
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source_path,
+            &root.join("native"),
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        let diagnostic = String::from_utf8_lossy(&refused.stderr);
+        assert!(diagnostic.contains(boundary), "{case}: {diagnostic}");
+    }
+    Ok(())
+}
+
 /// Trait-typed inputs retain legacy's independent concrete generic carriers and declaration-slot binding.
 #[test]
 fn trait_value_input_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
