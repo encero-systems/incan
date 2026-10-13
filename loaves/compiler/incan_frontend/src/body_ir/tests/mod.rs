@@ -17,6 +17,7 @@ mod calls_and_arguments;
 mod channel_errors;
 mod class_inheritance;
 mod closed_callback_types;
+mod closed_sdk_rest;
 mod closures_comprehensions_and_generators;
 mod control_flow_and_loops;
 mod decorated_bindings;
