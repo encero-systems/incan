@@ -18,6 +18,23 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// The original SDK FallibleIterator model executes both the checked loop hooks and its temporary collect default.
+#[test]
+fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-fallible-iterator")?,
+        &fixture.sysroot,
+        &closure,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
+        ),
+    )
+}
+
 /// A model's function-pointer field retains its borrowed list input and stays callable after the field is copied.
 #[test]
 fn model_function_pointer_list_input_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

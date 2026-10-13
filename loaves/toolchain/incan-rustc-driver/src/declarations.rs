@@ -854,6 +854,8 @@ fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
 fn function_pointer_tokens(pointer: &ast::FnPtrTy, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
+
+    // ---- Signature inputs ----
     let mut parameters = Vec::new();
     for parameter in &pointer.decl.inputs {
         parameters.extend(type_tokens(&parameter.ty));
@@ -868,6 +870,8 @@ fn function_pointer_tokens(pointer: &ast::FnPtrTy, span: Span) -> Vec<ast::token
             AttrTokenStream::new(parameters),
         ),
     ];
+
+    // ---- Signature output ----
     if let ast::FnRetTy::Ty(output) = &pointer.decl.output {
         tokens.push(AttrTokenTree::Token(
             Token::new(TokenKind::RArrow, span),
