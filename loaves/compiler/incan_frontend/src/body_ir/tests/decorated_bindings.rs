@@ -401,7 +401,7 @@ fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::err
             assert_eq!(args.len(), 4);
             assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(4));
             for (index, base) in [(2, "List"), (3, "Dict")] {
-                let bir::ArgumentElement::Fixed(bir::Operand::Place(read)) = &args[index] else {
+                let bir::ArgumentElement::One(bir::Operand::Place(read)) = &args[index] else {
                     return Err("rest argument must select its owned pack local".into());
                 };
                 assert!(matches!(&main.locals[read.place.local.index()].ty,
