@@ -12,12 +12,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4080 | 262 | 431 |
+| keep | 4081 | 263 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **unclassified** | 1 | 1 | 0 |
 | **Total** | **9052** | **719** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
@@ -1834,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2419 tests in 138 files: keep 2405, unaffected 13, unclassified 1)
+### `loaves/compiler/incan_frontend` (2419 tests in 138 files: keep 2406, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1869,7 +1868,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/properties.rs` | 4 | 131 | 131 | keep | - | - | - | #1337 | - | Checked computed getter bodies, canonical calls and immutable receiver frames retained for direct-route execution; original control relocated from methods_and_defaults.rs and frontend identity contracts preserved. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/provider_plans.rs` | 14 | 627 | 627 | keep | - | - | - | #1561 | replacement 13, checker 13, parser 13 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/raises_assertions.rs` | 1 | 77 | 77 | keep | - | - | - | #1337 | - | Deferred assertion calls retain checked function items and runtime error identities; frontend-only contract coverage. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs` | 1 | 39 | 39 | **unclassified** | - | - | - | - | - | no row in dispositions.json |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs` | 1 | 39 | 39 | keep | - | - | - | #1337 | - | Checked callable expression values and evaluation order retained in Body IR; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs` | 5 | 179 | 179 | keep | - | - | - | #1337 | - | Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/compiler_stack.rs` | 3 | 113 | 41 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/contract_metadata.rs` | 5 | 517 | 89 | keep | - | - | - | #1561 | parser 2, formatter 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
