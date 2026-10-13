@@ -143,7 +143,11 @@ fn generic_callable_arguments_retain_owned_storage() -> Result<(), Box<dyn std::
         .callable_representation
         .as_ref()
         .ok_or("missing generic callable representations")?;
-    assert!(generic_facts.closure_holding_parameters.contains(&generic.params[0].local));
+    assert!(
+        generic_facts
+            .closure_holding_parameters
+            .contains(&generic.params[0].local)
+    );
     assert!(!generic.params[0].mutable);
     for target in [capturing, item] {
         assert!(
