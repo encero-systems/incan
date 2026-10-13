@@ -864,8 +864,7 @@ impl ChildId {
             "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,
@@ -938,8 +937,7 @@ impl ChildId {
             "pub def doubled(value: int) -> int:\n    return value * 2\n",
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         IncanLock::new(
             incan_lang::version::INCAN_VERSION,
@@ -1035,8 +1033,7 @@ pub def answer() -> int:
 "#,
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,
@@ -1161,8 +1158,7 @@ pub def normalize(value: str) -> str:
 "#,
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,

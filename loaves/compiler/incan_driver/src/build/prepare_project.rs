@@ -438,8 +438,7 @@ mod tests {
             "def main() -> None:\n    println(\"ok\")\n",
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,
