@@ -40,26 +40,24 @@ fn reported_refusals(scratch: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Generic publication reaches the next owned boundary, without replacing it by a guessed implementation.
+/// Generic publication executes complete public closures and preserves named refusals for other unfinished boundaries.
 #[test]
 fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dyn std::error::Error>> {
     let graph = driver_fixture()?;
     let root = graph.scratch("published-generic-next-stages")?;
     let closure = corpus::runtime_closure(&graph.formatting)?;
-    for (area, name, expected) in [
-        (
-            "cli_dependencies",
-            "compiled_generic_bounds",
-            "unsupported Body IR package executable representation: package `incan_stdlib_core` is not a resolved dependency of this compilation",
-        ),
+    for (area, name, expected_class, expected) in [
+        ("cli_dependencies", "compiled_generic_bounds", "pass", ""),
         (
             "codegen_dependencies",
             "implied_generic_supertrait_adoption",
+            "refused",
             "unsupported Body IR type Catalog[int]",
         ),
         (
             "lowering_dependencies",
             "provider_nominal_types_and_unions_issue892",
+            "refused",
             "unsupported Body IR ambiguous project nominal carrier Widget",
         ),
     ] {
@@ -77,9 +75,36 @@ fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dy
             &closure,
             Duration::from_secs(180),
         )?;
-        assert_eq!(class, "refused", "{area}/{name}: {detail}");
+        assert_eq!(class, expected_class, "{area}/{name}: {detail}");
         assert_eq!(detail, expected, "{area}/{name}");
     }
+    Ok(())
+}
+
+/// A resolved SDK closure reaches the separate trait-valued iterator carrier, with no invalid-body driver failure.
+#[test]
+fn published_fallible_iterator_reaches_carrier_admission() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-fallible-carrier-next-stage")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let name = "fallible_iterator_chain_without_trait_import";
+    let fixture = fixtures::discover(&support::fixtures_dir().join("behavior/cli_dependencies"))?
+        .into_iter()
+        .find(|fixture| fixture.name == name)
+        .ok_or("missing published fallible iterator fixture")?;
+    let (class, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(class, "refused", "{detail}");
+    assert_eq!(
+        detail,
+        "unsupported Body IR type FallibleIterator[int, str] in main frame local 4"
+    );
     Ok(())
 }
 
