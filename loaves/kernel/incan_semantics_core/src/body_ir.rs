@@ -1923,7 +1923,9 @@ pub struct ResultVariant {
 }
 
 impl ResultVariant {
-    /// Require exactly one declaration identity for every named payload-type leaf before execution.
+    /// Require exactly one declaration identity for every named payload-type leaf before execution. The exact
+    /// builtin ValidationError identity uses the same admitted runtime carrier boundary as nominal declarations;
+    /// arbitrary builtin names and malformed identities confer no executable layout.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
         fn paths(
@@ -1958,17 +1960,17 @@ impl ResultVariant {
                         return crate::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(builtin);
                     }
                     identity.scope_discriminant.is_none()
-                        && matches!(
+                        && ((matches!(
                             identity.kind,
                             crate::SemanticSourceTargetKind::Model
                                 | crate::SemanticSourceTargetKind::Class
                                 | crate::SemanticSourceTargetKind::Enum
                                 | crate::SemanticSourceTargetKind::Newtype
-                        )
-                        && matches!(
+                        ) && matches!(
                             identity.origin,
                             crate::SymbolOrigin::Module(_) | crate::SymbolOrigin::Package { .. }
-                        )
+                        )) || (identity.origin == crate::SymbolOrigin::Builtin
+                            && native_nominal_item(identity).is_some()))
                 })
             })
     }
