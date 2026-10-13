@@ -404,7 +404,8 @@ fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::err
                 let bir::ArgumentElement::One(bir::Operand::Place(read)) = &args[index] else {
                     return Err("rest argument must select its owned pack local".into());
                 };
-                assert!(matches!(&main.locals[read.place.local.index()].ty,
+                let local = read.place.local_id().ok_or("rest pack must be frame-local")?;
+                assert!(matches!(&main.locals[local.index()].ty,
                     IncanType::Generic { base: actual, .. } if actual == base));
             }
         }
