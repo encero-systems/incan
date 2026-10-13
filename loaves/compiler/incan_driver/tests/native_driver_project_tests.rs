@@ -16094,6 +16094,20 @@ fn constant_abs_sum_original_keeps_error_type_argument_refusal() -> Result<(), B
 }
 
 /// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
+/// Preset flags are attached when the environment is constructed; initial frame storage must not freeze another mask.
+#[test]
+fn method_partial_default_masks_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("method-partial-default-masks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model Labeler:\n  value: str\n  def label(self, left: str, right: str) -> str:\n    return left + self.value + right\n\ndef main() -> None:\n  labeler = Labeler(value=\"center\")\n  held = partial labeler.label(right=\"!\")\n  println(held(\"a\"))\n  println(held(\"b\", right=\"?\"))\n",
+    )
+}
+
+/// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
 #[test]
 fn method_partial_of_a_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
