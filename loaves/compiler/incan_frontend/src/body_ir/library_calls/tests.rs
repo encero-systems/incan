@@ -28,7 +28,10 @@ fn sdk_method_overload_retains_selected_signature() -> Result<(), Box<dyn std::e
     let identity = published(source, "incan_stdlib_system", &["io"]);
     let call = library_call(&identity, &mut cache).ok_or("missing selected byte read delegation")?;
     assert_eq!(call.canonical, identity);
-    assert_eq!(call.parameters[1], super::IncanType::Int);
+    assert_eq!(
+        call.parameters[1],
+        super::semantic_type_from_resolved(&crate::symbols::ResolvedType::Int)
+    );
     assert_eq!(
         call.return_type,
         super::semantic_type_from_resolved(&method.return_type)
