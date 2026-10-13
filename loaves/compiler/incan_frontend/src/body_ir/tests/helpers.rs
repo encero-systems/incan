@@ -106,5 +106,77 @@ pub(super) fn body_named<'a>(
 
 /// Source lines for the shared stand-in refusal, indented to sit inside an enclosing block.
 pub(super) fn stand_in_refusal_stmt(indent: &str) -> String {
-    format!("{indent}unsafe:\n{indent}  pass\n")
+    format!("{indent}...\n")
+}
+
+/// Replace an explicit test marker with an undesugared vocab item after normal source checking.
+///
+/// This tests refusal nesting at the AST-to-Body IR boundary without reserving a valid language construct as a gap.
+pub(super) fn build_with_stand_in_refusal(
+    source: &str,
+    module_path: &[&str],
+) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path: Vec<String> = module_path.iter().map(|part| part.to_string()).collect();
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    for declaration in &mut program.declarations {
+        if let ast::Declaration::Function(function) = &mut declaration.node {
+            inject_stand_in_refusal(&mut function.body, source);
+        }
+    }
+    Ok(build_body_ir_module_v0(&program, &path, checker.type_info()))
+}
+
+/// Inject only explicit ellipsis markers, retaining the containing control-flow shape and original source span.
+fn inject_stand_in_refusal(statements: &mut [ast::Spanned<ast::Statement>], source: &str) {
+    for statement in statements {
+        if matches!(statement.node, ast::Statement::Pass)
+            && source.get(statement.span.start..statement.span.end) == Some("...")
+        {
+            statement.node = ast::Statement::VocabExpressionItem(ast::VocabExpressionItemStmt {
+                expr: ast::Spanned::new(ast::Expr::Literal(ast::Literal::Bool(true)), statement.span),
+                alias: None,
+                modifiers: Vec::new(),
+            });
+            continue;
+        }
+        match &mut statement.node {
+            ast::Statement::If(branch) => {
+                inject_stand_in_refusal(&mut branch.then_body, source);
+                for (_, body) in &mut branch.elif_branches {
+                    inject_stand_in_refusal(body, source);
+                }
+                if let Some(body) = &mut branch.else_body {
+                    inject_stand_in_refusal(body, source);
+                }
+            }
+            ast::Statement::Loop(region) => inject_stand_in_refusal(&mut region.body, source),
+            ast::Statement::Unsafe(region) => inject_stand_in_refusal(&mut region.body, source),
+            ast::Statement::Expr(expression) => match &mut expression.node {
+                ast::Expr::Match(_, arms) => {
+                    for arm in arms {
+                        if let ast::MatchBody::Block(body) = &mut arm.node.body {
+                            inject_stand_in_refusal(body, source);
+                        }
+                    }
+                }
+                ast::Expr::Surface(surface) => {
+                    if let ast::SurfaceExprPayload::RaceFor(race) = &mut surface.payload {
+                        for arm in &mut race.arms {
+                            if let ast::RaceForBody::Block(body) = &mut arm.body {
+                                inject_stand_in_refusal(body, source);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
 }

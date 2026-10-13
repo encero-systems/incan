@@ -365,14 +365,12 @@ fn an_unsupported_construct_in_a_race_arm_does_not_collapse_the_whole_race() -> 
     // The issue's explicit requirement: a construct Body IR cannot represent keeps its own node *inside* a
     // represented race, so a consumer loses only that construct rather than the entire expression.
     //
-    // The arm takes its block form so it can hold the shared by-design stand-in refusal. Its previous stand-in was
-    // collection membership, which #1246 represented -- see STAND_IN_REFUSAL_LABEL for why a gap is never a safe
-    // choice here.
+    // An injected undesugared vocab item exercises this boundary without freezing a valid language construct as a gap.
     let source = format!(
         "{ASYNC_PRELUDE}async def f() -> bool:\n  race for value:\n    await fast() => value == 1\n    await slow() =>\n{}      value == 2\n",
         stand_in_refusal_stmt("      ")
     );
-    let module = build(&source, &["m", "race_partial"])?;
+    let module = build_with_stand_in_refusal(&source, &["m", "race_partial"])?;
     let rendered = body_named(&module, "f")?.render_snapshot();
 
     assert!(

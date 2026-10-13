@@ -545,34 +545,20 @@ fn nested_or_deferred_range_uses_do_not_authorize_an_outer_range_projection() ->
 /// The indentation `render_block` gives a statement nested one block below a body's top-level statements.
 ///
 /// A body renders its own block at depth 1, so a top-level statement carries two spaces and anything inside that
-/// statement's nested block carries four. Tests that care about *where* a statement landed compare against this rather
-/// than merely finding the text somewhere in the body, which would also pass if the statement had escaped into the
-/// enclosing block. The label fragment every by-design refusal used as a test stand-in renders with.
-///
-/// Tests that need *some* refusal in a given position -- to prove a refusal stays nested inside the construct
-/// containing it, say -- must not reach for whichever construct happens to be unrepresentable that week. Four have
-/// now gone vacuous exactly that way: `value ** 2` (#1160), a byte-string literal (#1165), a callable default
-/// (#1240), and collection membership (#1246, twice over). Each was a *gap*, and #1101 exists to close gaps, so
-/// every such choice decays the moment its owning sibling lands.
-///
-/// `unsafe:` is categorically different. It is refused because Body IR v0 cannot carry the acknowledgment a
-/// consumer would need to admit the region deliberately -- a stated disposition, not pending work. Reversing it
-/// means designing the acknowledgment fact first, so it will not quietly become representable underneath a test.
-///
-/// If [`the_shared_stand_in_refusal_is_still_refused_by_design`] ever fails, every test below that uses this has
-/// gone vacuous: pick another *by-design* refusal, update these two items, and do not substitute a gap.
-const STAND_IN_REFUSAL_LABEL: &str = "`unsafe:` acknowledgment region";
+/// statement's nested block carries four. The shared stand-in is an undesugared vocab item injected after checking;
+/// its refusal is a caller input-contract violation, independent of valid language constructs gaining representation.
+const STAND_IN_REFUSAL_LABEL: &str = "Body IR input-contract violation";
 
+/// The injected stand-in must still exercise the caller-contract refusal before nesting assertions rely on it.
 #[test]
 fn the_shared_stand_in_refusal_is_still_refused_by_design() -> Result<(), Box<dyn std::error::Error>> {
     let source = format!("def f() -> int:\n{}  return 1\n", stand_in_refusal_stmt("  "));
-    let rendered = rendered_f(&source, "stand_in_guard")?;
+    let module = build_with_stand_in_refusal(&source, &["m", "stand_in_guard"])?;
+    let rendered = body_named(&module, "f")?.render_snapshot();
 
     assert!(
         rendered.contains(STAND_IN_REFUSAL_LABEL),
-        "the shared stand-in refusal is no longer refused, so every test using it now asserts nothing. Pick \
-         another refusal that is refused *by design* rather than merely unimplemented, and update \
-         STAND_IN_REFUSAL_LABEL and stand_in_refusal_stmt together: {rendered}"
+        "the injected input-contract violation must stay refused: {rendered}"
     );
     Ok(())
 }
@@ -714,12 +700,7 @@ fn nested_statement_loops_each_get_their_own_loop_block() -> Result<(), Box<dyn 
 
 #[test]
 fn an_unsupported_statement_inside_a_statement_loop_keeps_its_own_refusal() -> Result<(), Box<dyn std::error::Error>> {
-    // The loop must not swallow a construct it happens to contain: a consumer loses only that statement, not the
-    // whole loop. The original stand-in was collection membership, chosen because #1160 deliberately left it
-    // refused, and with the explicit note that "a stand-in that later becomes representable turns its test
-    // vacuous" -- which is exactly what #1246 then did to it. Both this test and
-    // `an_unsupported_construct_in_a_race_arm_does_not_collapse_the_whole_race` now share one by-design refusal
-    // instead, so the next representation cannot quietly hollow them out. See STAND_IN_REFUSAL_LABEL.
+    // A caller-contract violation stays inside the loop; it must not collapse or escape its containing construct.
     let source = format!(
         concat!(
             "def scan(values: list[int]) -> int:\n",
@@ -733,7 +714,7 @@ fn an_unsupported_statement_inside_a_statement_loop_keeps_its_own_refusal() -> R
         ),
         stand_in_refusal_stmt("    ")
     );
-    let module = build(&source, &["m", "loop_stmt_partial"])?;
+    let module = build_with_stand_in_refusal(&source, &["m", "loop_stmt_partial"])?;
     let snapshot = body_named(&module, "scan")?.render_snapshot();
 
     assert!(

@@ -1,7 +1,7 @@
 //! The Body IR input contract (#1166) and explicit refusals: unsupported constructs lower to a placeholder rather than
-//! panicking, undesugared vocab items and scoped-DSL symbols are caller contract violations, the `unsafe:` boundary
-//! refuses by name, soft-keyword surface statements stay unmodeled constructs, and feature-gated bodies lower only when
-//! their feature is active.
+//! panicking, undesugared vocab items and scoped-DSL symbols are caller contract violations, source `unsafe:` regions
+//! retain acknowledgment receipts, soft-keyword surface statements stay unmodeled constructs, and feature-gated bodies
+//! lower only when their feature is active.
 
 use super::*;
 
@@ -185,10 +185,7 @@ fn an_undesugared_scoped_dsl_symbol_call_is_refused_as_a_caller_contract_violati
 }
 
 #[test]
-fn an_unsafe_region_refuses_under_a_named_permanent_boundary() -> Result<(), Box<dyn std::error::Error>> {
-    // #1162's second half. The refusal is a decided disposition, not a missing dispatch arm: an `unsafe:` region
-    // introduces no Incan scope, so inlining its statements would be trivial -- and would erase the
-    // acknowledgment the region exists to record.
+fn an_unsafe_region_keeps_its_acknowledgment_boundary() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
         "def probe(x: int) -> int:\n",
         "  return x\n",
@@ -203,18 +200,19 @@ fn an_unsafe_region_refuses_under_a_named_permanent_boundary() -> Result<(), Box
     let snapshot = body_named(&module, "touch")?.render_snapshot();
 
     assert!(
-        snapshot.contains("unsupported(`unsafe:` acknowledgment region:"),
-        "the refusal must name the construct rather than reading as a generic placeholder: {snapshot}"
+        snapshot.contains("unsafe acknowledgment="),
+        "the region must retain its receipt rather than being silently flattened: {snapshot}"
     );
     assert!(
-        snapshot.contains("refused by design") && snapshot.contains("#1162"),
-        "the refusal must state that it is a decided boundary and name its owner: {snapshot}"
+        !snapshot.contains("unsupported("),
+        "the acknowledged region has no unsupported operations: {snapshot}"
     );
-    // The region's own statements must not quietly become statements of the enclosing block, which is the
-    // silent-execution outcome the refusal exists to prevent.
+    // Nested operations remain under the acknowledgment boundary until a consumer deliberately admits them.
     assert!(
-        !snapshot.contains("probe"),
-        "an acknowledged region's statements must not be inlined into the enclosing block: {snapshot}"
+        snapshot
+            .lines()
+            .any(|line| line.starts_with("    ") && line.contains("probe")),
+        "acknowledged calls must remain nested under their region: {snapshot}"
     );
     Ok(())
 }
@@ -366,7 +364,7 @@ fn a_body_reports_a_representation_gap_nested_anywhere_in_it() -> Result<(), Box
         "def run(n: int) -> int:\n  match n:\n    1 => return 1\n    _ =>\n      if n > 2:\n{}      return 0\n\ndef clean(n: int) -> int:\n  return n + 1\n",
         stand_in_refusal_stmt("        ")
     );
-    let module = build(&source, &["m", "representation_gaps"])?;
+    let module = build_with_stand_in_refusal(&source, &["m", "representation_gaps"])?;
     let run = body_named(&module, "run")?;
     assert!(
         run.first_representation_gap().is_some(),
