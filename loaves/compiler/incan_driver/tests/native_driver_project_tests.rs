@@ -10752,6 +10752,19 @@ def main() -> None:
     )
 }
 
+/// SDK-owned UUID comparisons retain their declared Eq and Ord capabilities while leaving execution to the SDK.
+#[test]
+fn stdlib_uuid_comparison_capabilities_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-uuid-comparison-capabilities")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.uuid import UUID\n\ndef main() -> None:\n    first = UUID.from_int(1u128)\n    same = UUID.from_int(1u128)\n    later = UUID.from_int(2u128)\n    println(first == same)\n    println(first != later)\n    println(first < later)\n    println(later >= first)\n",
+    )
+}
+
 /// Frozen byte literals keep static storage, exact unsigned bytes, copyable parameters, and legacy length behavior.
 #[test]
 fn stdlib_frozen_bytes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

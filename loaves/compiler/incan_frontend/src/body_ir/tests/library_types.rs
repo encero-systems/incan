@@ -4,6 +4,36 @@ use super::*;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_semantics_core::SymbolOrigin;
 
+/// The SDK's declared Eq and Ord retain the native comparison capabilities that the shared derive registry implies.
+#[test]
+fn stdlib_uuid_retains_implied_comparison_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let identity = cache
+        .lookup_identity(&["std".to_owned(), "uuid".to_owned()], "UUID")
+        .ok_or("missing UUID identity")?;
+    let mut facts = TypeCheckInfo::default();
+    facts
+        .declarations
+        .named_type_identities
+        .insert("UUID".to_owned(), identity);
+    let layouts = library_nominal_declarations(&facts);
+    let uuid = layouts
+        .iter()
+        .find(|layout| layout.name == "UUID")
+        .ok_or("missing SDK UUID layout")?;
+    assert!(
+        uuid.derives.iter().any(|name| name == "PartialEq"),
+        "{:?}",
+        uuid.derives
+    );
+    assert!(
+        uuid.derives.iter().any(|name| name == "PartialOrd"),
+        "{:?}",
+        uuid.derives
+    );
+    Ok(())
+}
+
 /// The SDK's error layout names its Codec field type in its own module, independently of consumer bindings.
 #[test]
 fn stdlib_layout_fields_retain_nested_type_identities() -> Result<(), Box<dyn std::error::Error>> {
