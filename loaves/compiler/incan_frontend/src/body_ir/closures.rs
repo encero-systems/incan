@@ -201,6 +201,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A method receiver and each preset are evaluated once before any deferred-frame binding is introduced.
     /// Forwarding borrows the captured receiver, retains named overrideable presets, and preserves source defaults
     /// only when their declaration-owned computations are available.
+    /// Independently checked module/function identities select the existing capture-free module forwarding path,
+    /// without treating a namespace as a value receiver.
     pub(super) fn lower_partial(
         &mut self,
         partial: &ast::PartialExpr,
@@ -208,17 +210,30 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        if self
-            .type_info
-            .resolved_identity(partial.target.span)
-            .is_some_and(|identity| {
-                matches!(
-                    identity.kind,
-                    SemanticSourceTargetKind::Model
-                        | SemanticSourceTargetKind::Class
-                        | SemanticSourceTargetKind::Newtype
-                )
-            })
+        let module_function = match &partial.target.node {
+            ast::Expr::Field(receiver, _) => {
+                self.type_info
+                    .resolved_identity(receiver.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+                    && self
+                        .type_info
+                        .resolved_identity(partial.target.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            }
+            _ => false,
+        };
+        if module_function
+            || self
+                .type_info
+                .resolved_identity(partial.target.span)
+                .is_some_and(|identity| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Newtype
+                    )
+                })
         {
             return self.lower_local_partial(partial, expr_span, scope, out);
         }
