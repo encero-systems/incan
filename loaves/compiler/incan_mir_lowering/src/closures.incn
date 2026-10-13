@@ -207,8 +207,8 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
 pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
     """
     Pack scalar/text inputs, owned models and enums, shared collection views and the exclusive borrows `mut`
-    parameters take with their exact checked call representations. Results may also own a list, set or dictionary, transferred from the lifted function
-    to its caller under the same checked layout.
+    parameters take with their exact checked call representations. Results may own a list, set, dictionary, model,
+    newtype or enum, transferred from the lifted function to its caller under the same retained layout.
     """
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
@@ -232,11 +232,11 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                         "unsupported Body IR closure input outside scalars, text, models, collection views and borrows",
                     )
         elements.append(input)
-    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]) and not owned_model_result(
+    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]) and not owned_nominal_result(
         signature[-1],
     ):
         return Err(
-            "unsupported Body IR closure result outside scalars, owned text, collections and retained model values",
+            "unsupported Body IR closure result outside scalars, owned text, collections and retained nominal values",
         )
     return Ok(elements)
 
@@ -249,10 +249,11 @@ def owned_nominal_input(ty: PlanType) -> bool:
         _ => return false
 
 
-def owned_model_result(ty: PlanType) -> bool:
-    """Admit a checked model or newtype result through the existing owned return path; other result layouts stay refused."""
+def owned_nominal_result(ty: PlanType) -> bool:
+    """Admit a retained model, newtype or enum through the owned return path; borrowed and unretained layouts stay refused."""
     match ty:
         PlanType.Model(_index, _name) => return true
+        PlanType.Enum(_index, _name) => return true
         _ => return false
 
 
