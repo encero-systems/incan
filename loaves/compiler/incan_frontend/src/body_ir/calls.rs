@@ -586,6 +586,48 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.lower_newtype_ingress(expr, coercion, scope, out)
     }
 
+    /// Refuse a supplied computation that would precede an observable omitted default. A declaration-owned,
+    /// statement-free copy constant has no source effect to reorder; absent or unproven defaults remain conservative.
+    /// The canonical declaring frame supplies this evidence, never an initializer reconstructed from source names.
+    fn construction_interleaves_default_effects(
+        &self,
+        canonical: Option<&CanonicalSymbolId>,
+        owner: &str,
+        supplied_slots: &[usize],
+        planned: &[(usize, &ast::Spanned<ast::Expr>)],
+    ) -> bool {
+        if supplied_slots.windows(2).any(|pair| pair[0] > pair[1]) {
+            return false;
+        }
+        let declaration = canonical
+            .and_then(|identity| {
+                self.local_nominal_declarations
+                    .values()
+                    .find(|value| &value.canonical == identity)
+            });
+        let defaults = declaration.and_then(|declaration| declaration.field_default_body.as_deref());
+        let local_source = self
+            .local_nominal_declarations
+            .get(owner)
+            .filter(|source| Some(&source.canonical) == canonical);
+        planned.iter().any(|(slot, expression)| {
+            !matches!(expression.node, ast::Expr::Literal(_))
+                && (0..*slot).any(|prior| {
+                    !supplied_slots.contains(&prior)
+                        && !(local_source.is_some() && self.field_default_is_literal(owner, prior))
+                        && defaults
+                            .and_then(|frame| frame.params.get(prior))
+                            .is_none_or(|parameter| {
+                                !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
+                                    || !matches!(&parameter.default,
+                                    bir::CallableParamDefault::Source(computation)
+                                        if computation.stmts.is_empty()
+                                            && matches!(computation.result, bir::Operand::Constant(_)))
+                            })
+                })
+        })
+    }
+
     /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
     ///
     /// Models/classes bind named fields; a newtype binds its single positional argument to tuple slot zero. Lowering
@@ -657,18 +699,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         let planned: Vec<(usize, &ast::Spanned<ast::Expr>)> =
             argument_slots.iter().copied().zip(written_exprs).collect();
-        // Legacy stages reordered arguments, but otherwise evaluates fields in declaration order. The current
-        // aggregate boundary evaluates supplied operands before deferred defaults, so it cannot interleave an
-        // observable supplied expression after an omitted field whose default is itself observable. A default built
-        // only from literals evaluates to an equal value and does nothing else, so its place in the order is not
-        // observable. Preserve the remaining gap as a named refusal.
-        let reordered = argument_slots.windows(2).any(|pair| pair[0] > pair[1]);
-        if !reordered
-            && planned.iter().any(|(slot, expression)| {
-                (0..*slot).any(|prior| !argument_slots.contains(&prior) && !self.field_default_is_literal(name, prior))
-                    && !matches!(expression.node, ast::Expr::Literal(_))
-            })
-        {
+        let canonical = self.constructed_declaration_identity(callee_span, span);
+        // Supplied operands precede deferred defaults; only retained effect-free defaults may cross that boundary.
+        if self.construction_interleaves_default_effects(canonical.as_ref(), name, argument_slots, &planned) {
             return self.unsupported_operand(
                 format!("model field-default evaluation interleaved with supplied arguments on `{name}`"),
                 scope,
@@ -676,7 +709,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        let canonical = self.constructed_declaration_identity(callee_span, span);
         let single_field = self.single_field_checked_ingress(
             canonical.as_ref(),
             &planned,
