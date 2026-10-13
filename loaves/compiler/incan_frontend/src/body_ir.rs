@@ -916,6 +916,7 @@ pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
 
 /// Whether checking selected only derives the native route realizes for a source enum: Rust's builtin derives and
 /// serde's, which a value enum writes through its raw values as legacy does and any other enum derives.
+/// A normal enum's checked Display selection uses Incan's borrowed Debug formatting path, never a Rust derive.
 ///
 /// The enum predicates admit any bare `@derive(...)`; this checked selection decides which of those reach a plan.
 pub fn has_direct_native_enum_derives(value: &ast::EnumDecl, type_info: &TypeCheckInfo) -> bool {
@@ -925,19 +926,20 @@ pub fn has_direct_native_enum_derives(value: &ast::EnumDecl, type_info: &TypeChe
         .get(&value.name)
         .is_some_and(|names| {
             names.iter().all(|name| {
-                matches!(
-                    name.as_str(),
-                    "Debug"
-                        | "Clone"
-                        | "Copy"
-                        | "PartialEq"
-                        | "Eq"
-                        | "PartialOrd"
-                        | "Ord"
-                        | "Hash"
-                        | "serde::Serialize"
-                        | "serde::Deserialize"
-                )
+                (name == "Display" && value.value_type.is_none())
+                    || matches!(
+                        name.as_str(),
+                        "Debug"
+                            | "Clone"
+                            | "Copy"
+                            | "PartialEq"
+                            | "Eq"
+                            | "PartialOrd"
+                            | "Ord"
+                            | "Hash"
+                            | "serde::Serialize"
+                            | "serde::Deserialize"
+                    )
             })
         })
 }

@@ -151,7 +151,7 @@ fn factory(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<F
                         && slot.type_params.is_empty()
                         && semantic_type_from_resolved(&slot.return_type) == IncanType::SelfType
                 })
-                .filter_map(|slot| slot.identity.clone())
+                .filter_map(|slot| slot.identity.as_ref().and_then(super::library_nominals::sdk_identity))
                 .collect(),
         });
     }
@@ -275,6 +275,7 @@ fn receiver_type(
 }
 
 /// Keep a proven constructor carrier through its SDK trait's Self-returning slot without granting missing dispatch.
+/// Checked source and package identities normalize to the same SDK scope; the physical slot and span must still match.
 fn retain_self_result(
     destination: &bir::Place,
     target: &bir::MethodTarget,
@@ -299,7 +300,11 @@ fn retain_self_result(
     };
     if !locals.get(source).is_some_and(|local| local.ty == carrier.concrete)
         || !carrier.self_results.iter().any(|slot| {
-            slot.declaration_name == target.name && target.canonical.as_ref().is_none_or(|identity| identity == slot)
+            slot.declaration_name == target.name
+                && target
+                    .canonical
+                    .as_ref()
+                    .is_none_or(|identity| super::library_nominals::sdk_identity(identity).as_ref() == Some(slot))
         })
     {
         return false;
