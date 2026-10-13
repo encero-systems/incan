@@ -11697,6 +11697,21 @@ fn decorator_factory_binding_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
+/// One generic factory initializes distinct function and shared-method replacements before main exactly once.
+#[test]
+fn generic_decorator_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-decorator-factory")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/decorator_factory_on_function_and_method.incn"
+        ),
+    )
+}
+
 /// Method replacements initialize once and preserve shared receiver calls and changed return types.
 #[test]
 fn decorated_shared_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

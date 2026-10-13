@@ -254,3 +254,36 @@ fn decorator_factory_retains_the_initialized_replacement() -> Result<(), Box<dyn
     }
     Ok(())
 }
+
+/// A generic factory is instantiated independently at each checked function or method application.
+#[test]
+fn generic_decorator_factory_retains_closed_applications() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/decorator_factory_on_function_and_method.incn"
+    );
+    let module = build(source, &["m", "generic_decorator_factory"])?;
+    assert_eq!(module.decorated_bindings.len(), 2);
+    assert_eq!(module.static_declarations.len(), 2);
+    for storage in &module.static_declarations {
+        let bir::StaticInitializer::Computed(initializer) = &storage.initial else {
+            return Err("expected a once-initialized replacement".into());
+        };
+        let target = initializer
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                    ..
+                } if target.name == "preserve" => Some(target),
+                _ => None,
+            })
+            .ok_or("missing checked factory call")?;
+        assert_eq!(target.type_args.len(), 1, "{}", initializer.render_snapshot());
+        assert!(!format!("{:?}", target.type_args).contains("TypeVar"));
+        assert!(!format!("{:?}", initializer.locals).contains("TypeVar"));
+        assert!(module.is_well_formed_static_declaration(storage));
+    }
+    Ok(())
+}
