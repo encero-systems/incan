@@ -14798,6 +14798,68 @@ fn method_partial_source_default_is_a_named_refusal() -> Result<(), Box<dyn std:
     )
 }
 
+/// Consuming task iteration preserves continue and releases unvisited handles at break.
+#[test]
+fn task_list_break_and_continue_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "task-list-break-and-continue",
+        r#"
+import std.async
+from std.async.task import spawn, JoinHandle
+async def work(value: int) -> int:
+    return value
+async def wait_one(handle: JoinHandle[int]) -> int:
+    match await handle:
+        Ok(value) => return value
+        Err(_) => return 0
+async def main() -> None:
+    handles = [spawn(work(1)), spawn(work(2)), spawn(work(3))]
+    mut total = 0
+    for handle in handles:
+        value = await wait_one(handle)
+        if value == 1:
+            continue
+        total += value
+        break
+    println(total)
+"#,
+    )
+}
+
+/// Cancelling a suspended consuming loop drops its current future and remaining iterator through the coroutine cleanup.
+#[test]
+fn cancelled_task_list_owner_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "cancelled-task-list-owner",
+        r#"
+import std.async
+from std.async.task import spawn, JoinHandle, TaskJoinError
+from std.async.time import sleep_ms
+async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+    return await task
+async def pending() -> int:
+    while true:
+        await sleep_ms(1)
+    return 1
+async def consuming() -> int:
+    handles = [spawn(pending()), spawn(pending())]
+    println("entered")
+    for handle in handles:
+        match await handle:
+            Ok(_value) => pass
+            Err(_) => pass
+    return 0
+async def main() -> None:
+    task = spawn(consuming())
+    await sleep_ms(20)
+    task.abort()
+    match await wait_for[Result[int, TaskJoinError], JoinHandle[int]](task):
+        Ok(_value) => println(false)
+        Err(error) => println(error.is_cancelled())
+"#,
+    )
+}
+
 /// A later suspending race arm wins while a permanently pending source arm and its callback stay cancelled.
 #[test]
 fn pending_source_race_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
