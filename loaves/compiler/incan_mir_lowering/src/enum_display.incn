@@ -1,0 +1,58 @@
+"""Derived Display of an ordinary source enum uses its actual Debug implementation on a shared reference."""
+
+from rust::incan_semantics_core::body_ir import Operand as RustOperand
+from pub::incan_mir_plan import PlanType, Place, SourceSpan, RvalueKind, ExternalFunction, CalleeKind
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, place_type, read_place, terminate_call
+from lowering import scalar_place
+
+
+pub def display_enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """Admit only a whole source enum whose exact retained declaration derives Display."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.local_id():
+                None => return Ok(None)
+                Some(_local) => pass
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            match ty:
+                PlanType.Enum(owner, name) =>
+                    if owner < 0 or owner >= len(builder.enums):
+                        return Ok(None)
+                    if "Display" not in builder.enums[owner].derives:
+                        return Ok(None)
+                    return Ok(Some(borrowed_enum_debug(builder, place, ty, owner, name, span)?))
+                _ => pass
+        _ => pass
+    return Ok(None)
+
+
+def borrowed_enum_debug(
+    mut builder: Builder,
+    value: Place,
+    ty: PlanType,
+    owner: int,
+    name: str,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Call the existing generic Debug runtime without cloning or consuming the enum's payload."""
+    reference_type = PlanType.EnumRef(owner, name)
+    reference = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+    result = temporary(builder, PlanType.String, span)
+    path = "incan_native_runtime::debug_model"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[ty],
+            parameters=[reference_type],
+            return_type=PlanType.String,
+            span=span,
+        ),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, ty), [read_place(reference, false, span)], result, span)
+    builder.owned.append(result.local)
+    return Ok(result)

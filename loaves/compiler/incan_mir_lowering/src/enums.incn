@@ -182,7 +182,7 @@ pub def lower_enum_declarations(
 
     A source enum also takes the serde derives a serde-deriving declaration's fields require of it, as legacy
     propagates them. A value enum reached this way stays refused until propagated raw-value serialization has parity
-    evidence; explicitly selected value-enum serde keeps its proven raw-value form.
+    evidence; explicitly selected value-enum serde keeps its proven raw-value form. Source Display uses its checked Debug path rather than a native Rust derive.
     """
     reached = serde_propagation(module)?
     mut declarations: list[EnumDeclaration] = []
@@ -197,9 +197,12 @@ pub def lower_enum_declarations(
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
-        mut derives = with_serde_derives(declaration.derives, str(declaration.name), reached)
-        if item != "":
-            derives = []
+        selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
+        mut derives: list[str] = []
+        if item == "":
+            for derive in selected:
+                if derive != "Display":
+                    derives.append(str(derive))
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
         serialize, deserialize = reached
         adds_serialize = str(declaration.name) in serialize and "serde::Serialize" not in declaration.derives

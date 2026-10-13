@@ -203,6 +203,7 @@ from model_values import (
 )
 from enum_values import serialize_enum_operand
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
+from enum_display import display_enum_operand
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import (
     value_variant,
@@ -4713,6 +4714,9 @@ def display_value_operand(
     A value whose checked type is a type parameter displays as generic code displays it (see `display_plan_value`).
     """
     match display_model_operand(builder, value, span)?:
+        Some(text) => return Ok(text)
+        None => pass
+    match display_enum_operand(builder, value, span)?:
         Some(text) => return Ok(text)
         None => pass
     # Indexed collection reads come first: their places are not model places, so the carrier check below cannot map them.
