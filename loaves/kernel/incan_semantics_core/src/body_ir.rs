@@ -434,7 +434,8 @@ pub fn native_nominal_module(identity: &CanonicalSymbolId) -> Option<String> {
 }
 
 /// Exact opaque ABI declaration of the checked ValidationError builtin, retaining its runtime's four derived traits.
-/// Operations on its fields, constructors or display remain unadmitted; storage stays opaque through native frames.
+/// This layout record grants no field, constructor or display operations; those require explicit Body IR runtime
+/// operations. Storage remains opaque through native frames.
 pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
     if identity.origin != crate::SymbolOrigin::Builtin {
         return None;

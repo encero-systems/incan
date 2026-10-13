@@ -7325,8 +7325,9 @@ impl TypeChecker {
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
     }
 
-    /// Retain active native builtin owners in an independent direct-route table, without changing legacy lookup.
-    /// The kernel whitelist validates the entire identity; source shadows and unrelated builtins yield nothing.
+    /// Retain active native builtin owners once for opaque nominal storage and checked runtime operations, without
+    /// changing legacy lookup. The kernel whitelist validates the entire identity; source shadows and unrelated
+    /// builtins yield nothing.
     fn checked_native_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         self.symbols
             .all_symbols()

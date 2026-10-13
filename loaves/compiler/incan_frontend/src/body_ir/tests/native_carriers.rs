@@ -21,6 +21,18 @@ fn validation_error_retains_builtin_native_carrier() -> Result<(), Box<dyn std::
         .find(|owner| owner.name == "ValidationError")
         .ok_or("missing native error carrier")?;
     assert_eq!(error.canonical.origin, SymbolOrigin::Builtin);
+    assert_eq!(
+        checker
+            .type_info()
+            .declarations
+            .body_ir_native_type_identities
+            .get("ValidationError"),
+        Some(&error.canonical)
+    );
+    assert_eq!(
+        incan_semantics_core::RuntimeBuiltinType::from_identity(&error.canonical),
+        Some(incan_semantics_core::RuntimeBuiltinType::ValidationError)
+    );
     assert_eq!(error.native_item, "incan_std_core::validation::ValidationError");
     assert_eq!(error.derives, ["Debug", "Clone", "PartialEq", "Eq"]);
     assert!(

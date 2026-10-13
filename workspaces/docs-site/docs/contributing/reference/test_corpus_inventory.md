@@ -1854,7 +1854,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs` | 9 | 285 | 285 | keep | - | - | - | #1337 | checker 1, parser 1 | Body IR-only SDK type identity and nested declaration retention on the direct route. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs` | 1 | 62 | 62 | keep | - | - | - | #1337 | - | Checked method-partial frames and presets retained for direct-route execution; relocated from methods_and_defaults.rs. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 53 | 1736 | 1736 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/native_carriers.rs` | 2 | 54 | 54 | keep | - | - | - | #1337 | checker 1, parser 1 | Checked native stdlib ABI ownership and source-shadow controls retained in Body IR without legacy changes. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/native_carriers.rs` | 2 | 66 | 66 | keep | - | - | - | #1337 | checker 1, parser 1 | Checked native stdlib ABI ownership and source-shadow controls retained in Body IR without legacy changes. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_constraints.rs` | 5 | 127 | 127 | keep | - | - | - | #1337 | - | Checked constrained-primitive predicates and explicit/implicit construction sequencing retained in Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_hooks.rs` | 9 | 259 | 259 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Canonical source hook calls, own-owner raw construction, and ordered fail-fast coercion chains retained in Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_json.rs` | 1 | 31 | 31 | keep | - | - | - | #1337 | - | Checked serde capabilities on raw newtype layouts retained solely for the direct Body IR boundary. |
@@ -2596,7 +2596,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_semantics_core/src/authority.rs` | 9 | 344 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
-| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 5115 | 1101 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 5116 | 1101 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/closure_digest.rs` | 12 | 430 | 226 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/dependencies.rs` | 4 | 317 | 155 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/emitted_symbol.rs` | 7 | 559 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
