@@ -952,6 +952,7 @@ fn local_supertraits<'program>(
 /// Collect the local traits one adopter implements: each direct adoption at its checked arguments, then the local
 /// supertraits those reach.
 ///
+/// Bare clauses consume the separate checked Body IR witness; written clauses keep their existing explicit snapshot.
 /// A generic trait adopted without recorded arguments contributes nothing. A trait reached at two different
 /// instantiations is dropped entirely, because its slot identities cannot tell the implementations apart.
 fn adopted_local_traits<'program>(
@@ -969,9 +970,14 @@ fn adopted_local_traits<'program>(
         } else {
             match type_info
                 .traits
-                .adoption_type_args
+                .body_ir_adoption_type_args
                 .get(&(adoption.span.start, adoption.span.end))
-            {
+                .or_else(|| {
+                    type_info
+                        .traits
+                        .adoption_type_args
+                        .get(&(adoption.span.start, adoption.span.end))
+                }) {
                 Some(arguments) if arguments.len() == declaration.type_params.len() => arguments.clone(),
                 _ => continue,
             }
