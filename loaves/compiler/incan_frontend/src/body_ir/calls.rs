@@ -1953,6 +1953,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &planned,
             slots.len(),
             &slots.iter().map(|slot| slot.is_mut).collect::<Vec<_>>(),
+            &slots.iter().map(|slot| slot.ty.clone()).collect::<Vec<IncanType>>(),
             scope,
             out,
         ) {
