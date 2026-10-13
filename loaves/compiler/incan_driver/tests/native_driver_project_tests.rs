@@ -10955,6 +10955,21 @@ fn stdlib_uuid_comparison_capabilities_output_matches_legacy() -> Result<(), Box
     )
 }
 
+/// Runtime reflection keeps ordered static FieldInfo storage while iteration produces its owned metadata values.
+#[test]
+fn stdlib_frozen_metadata_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-frozen-metadata-iteration")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/reflection_omits_private_fields.incn"
+        ),
+    )
+}
+
 /// Frozen byte literals keep static storage, exact unsigned bytes, copyable parameters, and legacy length behavior.
 #[test]
 fn stdlib_frozen_bytes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
