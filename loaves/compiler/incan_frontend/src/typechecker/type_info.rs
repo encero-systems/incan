@@ -1536,10 +1536,6 @@ pub enum PartialProjectionTargetKind {
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
-    /// Body IR-only calls whose selected instance method declares an exact Self result, keyed by call span.
-    /// The retained canonical method prevents a speculative or subsequently replaced overload from authorizing
-    /// receiver-carrier propagation; legacy keeps its existing substituted expression result unchanged.
-    pub body_ir_self_result_methods: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Complete argument types for Body IR native instances, normalized from checked call relationships only.
     ///
     /// Concrete constructor carriers and ordinary checked arguments share this ordered fact. Legacy never reads this

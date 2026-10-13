@@ -441,7 +441,6 @@ fn build_body_ir_module_v0_with_provider_operations(
     opaque_returns::retain(&mut module, type_info);
     library_opaque_returns::retain(&mut module, type_info);
     trait_values::retain_inputs(&mut module, program, type_info, context);
-    trait_returns::retain_returns(&mut module, program, type_info, context);
     module
 }
 
@@ -1924,7 +1923,6 @@ mod opaque_returns;
 mod parameter_types;
 mod partial_closures;
 mod partials;
-mod trait_returns;
 mod trait_values;
 
 mod primitives;

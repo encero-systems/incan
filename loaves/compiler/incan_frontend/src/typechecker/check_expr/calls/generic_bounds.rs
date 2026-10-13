@@ -34,7 +34,6 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let identity = method_info.identity.clone();
-        let returns_receiver = method_info.receiver.is_some() && method_info.return_type == ResolvedType::SelfType;
         if let Some(identity) = identity.clone() {
             self.type_info.record_resolved_identity(call_site_span, identity);
         }
@@ -49,17 +48,6 @@ impl TypeChecker {
             receiver_ty,
             expected_return_ty,
         );
-        let site = (call_site_span.start, call_site_span.end);
-        self.type_info.calls.body_ir_self_result_methods.remove(&site);
-        if returns_receiver
-            && self.errors.len() == first_error
-            && let Some(identity) = &identity
-        {
-            self.type_info
-                .calls
-                .body_ir_self_result_methods
-                .insert(site, identity.clone());
-        }
         if let Some(identity) = identity {
             self.attach_related_declaration_to_new_errors(first_error, &identity);
         }
