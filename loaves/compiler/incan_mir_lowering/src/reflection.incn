@@ -1,0 +1,269 @@
+"""Checked generated field reflection over retained concrete storage, with legacy's typed and string contracts."""
+
+from rust::incan_semantics_core::body_ir import MethodTarget, ReflectionOperation, ArgumentElement, Place as RustPlace
+from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, FieldProjection, SourceSpan, TerminatorKind
+from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
+from frame import (
+    Builder,
+    temporary,
+    read_place,
+    place_type,
+    appended_field,
+    external_call,
+    track_rvalue_moves,
+    value_type,
+    text_literal,
+)
+from model_values import nominal_place
+from options import carrier_layout, carrier_payload_value, assign_carrier, variant_condition, replace_owned_destination
+from option_tests import is_union_carrier
+from unions import union_slot
+from layout_types import native_source_type
+from tuples import tuple_aggregate
+from lists import list_shape, list_element
+from builtins import list_call
+from text_plan import owned_literal
+from lowering import scalar_place, text_argument, display_plan_value, append_list_value
+
+
+pub def lower_reflection(
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Admit only a retained generated operation and an eligible checked nominal field policy."""
+    mut string = false
+    mut items = false
+    match target.reflection:
+        None => return Ok(false)
+        Some(operation) =>
+            match operation:
+                ReflectionOperation.TypedValue => pass
+                ReflectionOperation.TypedItems =>
+                    items = true
+                ReflectionOperation.StringValue =>
+                    string = true
+                ReflectionOperation.StringItems =>
+                    string = true
+                    items = true
+    if len(arguments) != 1 + int(not items) or len(target.type_args) != 0:
+        return Err("unsupported Body IR reflection argument contract")
+    match target.canonical:
+        None => return Err("unsupported Body IR reflection without generated identity")
+        Some(_identity) => pass
+    match arguments[0].as_one():
+        None => return Err("unsupported Body IR reflection receiver spread")
+        Some(value) =>
+            match nominal_place(builder, value, span)?:
+                None => return Err("unsupported Body IR reflection receiver storage")
+                Some(receiver) =>
+                    match place_type(builder.locals, receiver):
+                        PlanType.Model(owner, _name) =>
+                            match builder.nominals[owner].reflection_fields:
+                                None => return Err("unsupported Body IR reflection field policy")
+                                Some(slots) =>
+                                    if len(builder.nominals[owner].type_parameters) != 0:
+                                        return Err("unsupported Body IR reflection over generic fields")
+                                    mut fields: list[int] = []
+                                    for slot in slots:
+                                        fields.append(int(slot.clone()))
+                                    match destination:
+                                        None => return Err("unsupported Body IR discarded reflection result")
+                                        Some(place) =>
+                                            output = scalar_place(builder, place, span)?
+                                            if items:
+                                                reflect_items(builder, owner, receiver, fields, string, output, span)?
+                                            else:
+                                                reflect_value(
+                                                    builder,
+                                                    owner,
+                                                    receiver,
+                                                    fields,
+                                                    string,
+                                                    arguments,
+                                                    output,
+                                                    span,
+                                                )?
+                                            return Ok(true)
+                        _ => return Err("unsupported Body IR reflection receiver carrier")
+
+
+def reflected_field(builder: Builder, owner: int, source: Place, slot: int, span: SourceSpan) -> Result[Place, str]:
+    """Project only an in-range retained source field using its canonical declared type."""
+    if slot < 0 or slot >= len(builder.nominals[owner].fields):
+        return Err("unsupported Body IR reflection field slot")
+    ty = native_source_type(
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        builder.nominals[owner].field_types[slot],
+        builder.intrinsics,
+    )?
+    return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
+
+
+def scalar_string(mut builder: Builder, field: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Use Rust Display for an eligible scalar, cloning owned text before transferring it to the formatter."""
+    ty = place_type(builder.locals, field)
+    if ty != PlanType.String and ty != PlanType.Int and ty != PlanType.Float and ty != PlanType.Bool:
+        return Err("unsupported Body IR generic field reflection scalar")
+    value = carrier_payload_value(builder, field, span)?
+    output = display_plan_value(builder, value, span, true)?
+    return Ok(read_place(output, true, span))
+
+
+def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Stringify optional scalar fields as their contained Display value or literal None, never Option Debug."""
+    ty = place_type(builder.locals, field)
+    match ty:
+        PlanType.Enum(_owner, _name) =>
+            _index, layout = carrier_layout(builder, ty)?
+            if layout.carrier != "Option" or len(layout.variants[1].fields) != 1:
+                return Err("unsupported Body IR generic field reflection optional carrier")
+            output = temporary(builder, PlanType.String, span)
+            selected = builder.new_block(span)
+            missing = builder.new_block(span)
+            join = builder.new_block(span)
+            owners = builder.owned
+            condition = variant_condition(builder, field, 1, span)
+            builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
+            builder.current = selected
+            payload = appended_field(field, FieldProjection(slot=0, ty=layout.variants[1].fields[0], variant=1), span)?
+            value = scalar_string(builder, payload, span)?
+            replace_owned_destination(builder, output, RvalueKind.Use(value), span)
+            builder.finish(TerminatorKind.Goto(join), span)
+            builder.current = missing
+            builder.owned = owners
+            text = owned_literal(builder, "None", span)
+            replace_owned_destination(builder, output, RvalueKind.Use(read_place(text, true, span)), span)
+            retained = builder.owned
+            builder.finish(TerminatorKind.Goto(join), span)
+            builder.current = join
+            builder.owned = retained
+            return Ok(read_place(output, true, span))
+        _ => return scalar_string(builder, field, span)
+
+
+def field_value(
+    mut builder: Builder,
+    field: Place,
+    string: bool,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Clone a typed field and wrap its exact union member, or stringify under the checked generic contract."""
+    if string:
+        if expected != PlanType.String:
+            return Err("unsupported Body IR reflection string result contract")
+        return string_field(builder, field, span)
+    value = carrier_payload_value(builder, field, span)?
+    if value_type(builder, value)? == expected:
+        return Ok(value)
+    match expected:
+        PlanType.Enum(owner, _name) =>
+            if not is_union_carrier(builder, owner):
+                return Err("unsupported Body IR reflection typed overlay")
+            slot = union_slot(
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                owner,
+                value_type(builder, value)?,
+                builder.intrinsics,
+            )?
+            output = temporary(builder, expected, span)
+            replace_owned_destination(builder, output, RvalueKind.Enum(owner, slot, [value]), span)
+            return Ok(read_place(output, true, span))
+        _ => return Err("unsupported Body IR reflection field result contract")
+
+
+def reflect_items(
+    mut builder: Builder,
+    owner: int,
+    receiver: Place,
+    fields: list[int],
+    string: bool,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Build owned name/value tuples in retained source order, transferring tuple owners into the list."""
+    ty = place_type(builder.locals, output)
+    match list_shape(ty):
+        None => return Err("unsupported Body IR reflection items list")
+        Some((leaf, depth)) =>
+            element = list_element(leaf, depth)
+            match element:
+                PlanType.Tuple(elements) =>
+                    if len(elements) != 2:
+                        return Err("unsupported Body IR reflection items tuple")
+                    expected = tuple_element_type(elements[1])
+                    list_call(builder, "empty_list", element, [], ty, [], output, span)
+                    for slot in fields:
+                        field = reflected_field(builder, owner, receiver, slot, span)?
+                        value = field_value(builder, field, string, expected, span)?
+                        name = owned_literal(builder, str(builder.nominals[owner].fields[slot]), span)
+                        tuple = temporary(builder, element, span)
+                        operation = tuple_aggregate([read_place(name, true, span), value])
+                        track_rvalue_moves(builder, operation)
+                        builder.emit(plan_assign(tuple, operation, span))
+                        builder.owned.append(tuple.local)
+                        append_list_value(builder, output, read_place(tuple, true, span), leaf, depth, span)?
+                    return Ok(None)
+                _ => return Err("unsupported Body IR reflection items element")
+
+
+def reflect_value(
+    mut builder: Builder,
+    owner: int,
+    receiver: Place,
+    fields: list[int],
+    string: bool,
+    arguments: &list[ArgumentElement],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Compare names and aliases once, clone only a matched field, and construct checked Some or None results."""
+    index, layout = carrier_layout(builder, place_type(builder.locals, output))?
+    if layout.carrier != "Option" or len(layout.variants[1].fields) != 1:
+        return Err("unsupported Body IR reflection lookup result")
+    key = text_argument(builder, arguments, 1, span)?
+    join = builder.new_block(span)
+    owners = builder.owned
+    for slot in fields:
+        mut keys = [str(builder.nominals[owner].fields[slot])]
+        if len(builder.nominals[owner].field_aliases) == len(builder.nominals[owner].fields):
+            match builder.nominals[owner].field_aliases[slot]:
+                Some(alias) =>
+                    if str(alias) != keys[0]:
+                        keys.append(str(alias))
+                None => pass
+        for name in keys:
+            yes = builder.new_block(span)
+            no = builder.new_block(span)
+            condition = temporary(builder, PlanType.Bool, span)
+            literal = text_literal(name, span)
+            external_call(
+                builder,
+                "incan_native_runtime::equal_text",
+                [PlanType.StringRef, PlanType.StringRef],
+                PlanType.Bool,
+                [key, literal],
+                condition,
+                span,
+            )
+            builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), no, yes), span)
+            builder.current = yes
+            field = reflected_field(builder, owner, receiver, slot, span)?
+            value = field_value(builder, field, string, layout.variants[1].fields[0], span)?
+            assign_carrier(builder, output, index, 1, [value], span)
+            builder.finish(TerminatorKind.Goto(join), span)
+            builder.current = no
+            builder.owned = owners
+    assign_carrier(builder, output, index, 0, [], span)
+    retained = builder.owned
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.current = join
+    builder.owned = retained
+    return Ok(None)

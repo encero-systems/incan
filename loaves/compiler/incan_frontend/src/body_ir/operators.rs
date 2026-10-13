@@ -196,6 +196,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             bir::Callee::Method(bir::MethodTarget {
                 name: method.to_string(),
                 intrinsic_carrier: None,
+                reflection: None,
                 canonical,
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(arguments.len()),

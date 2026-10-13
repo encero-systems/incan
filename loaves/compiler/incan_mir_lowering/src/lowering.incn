@@ -201,6 +201,7 @@ from models import field_path, field_projection
 from newtype_hooks import lower_newtype_hook_result
 from validation_errors import lower_validation_error, display_validation_error
 from models import model_type, model_place, constructor_index, field_slot
+from reflection import lower_reflection
 from model_values import (
     debug_model_operand,
     display_model_operand,
@@ -2814,6 +2815,8 @@ def lower_method_call(
         None => return Err("unsupported Body IR Method without canonical identity")
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
+    if lower_reflection(builder, target, arguments, destination, span)?:
+        return Ok(None)
     if lower_standard_slot(module, builder, target, arguments, destination, span)?:
         return Ok(None)
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
@@ -4892,7 +4895,7 @@ def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpa
     return display_plan_value(builder, operand, span, false)
 
 
-def display_plan_value(
+pub def display_plan_value(
     mut builder: Builder,
     operand: Operand,
     span: SourceSpan,
@@ -6410,7 +6413,7 @@ def list_assignment(
     return Ok(None)
 
 
-def append_list_value(
+pub def append_list_value(
     mut builder: Builder,
     output: Place,
     value: Operand,

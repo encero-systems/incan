@@ -414,6 +414,10 @@ pub struct NominalDeclaration {
     /// aliased field by its alias, as legacy's `#[serde(rename)]` does. Older artifacts carry no aliases.
     #[serde(default)]
     pub field_aliases: Vec<Option<String>>,
+    /// Checked reflection-visible field slots in declaration order. None cannot authorize reflection; ordinary
+    /// private fields of a private model remain visible, while type-private fields are excluded.
+    #[serde(default)]
+    pub reflection_fields: Option<Vec<usize>>,
     /// Whether the source nominal declaration is public.
     pub public: bool,
     /// Whether any declared field has a default; missing executable default facts must refuse omitted fields.
@@ -569,6 +573,7 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         field_types,
         field_public,
         field_aliases: Vec::new(),
+        reflection_fields: None,
         public: true,
         has_field_defaults: false,
         field_default_body: None,
@@ -3352,6 +3357,10 @@ pub struct MethodTarget {
     /// Checked compiler-owned Option/Result receiver for intrinsic carrier methods; source methods retain no carrier.
     #[serde(default)]
     pub intrinsic_carrier: Option<String>,
+    /// Compiler-generated field reflection selected through the checker's generated-member ownership table.
+    /// Source methods and older publications carry None, so a spelling alone never grants reflection behavior.
+    #[serde(default)]
+    pub reflection: Option<ReflectionOperation>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -3375,6 +3384,7 @@ impl MethodTarget {
         Self {
             name: name.into(),
             intrinsic_carrier: None,
+            reflection: None,
             canonical: None,
             type_args: Vec::new(),
             binding: ArgumentBinding::UnresolvedPositional,
@@ -3390,6 +3400,19 @@ impl MethodTarget {
             self.binding.render_snapshot()
         )
     }
+}
+
+/// Checked reflection operation and its receiver-dependent result contract, retained before generic substitution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ReflectionOperation {
+    /// Lookup clones the concrete field into its checked typed overlay.
+    TypedValue,
+    /// Items clone concrete fields into checked typed tuples in declaration order.
+    TypedItems,
+    /// Lookup through a type parameter stringifies an eligible scalar field.
+    StringValue,
+    /// Items through a type parameter stringify eligible scalar fields in declaration order.
+    StringItems,
 }
 
 impl PartialEq<str> for MethodTarget {

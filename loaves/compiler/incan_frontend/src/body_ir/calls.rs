@@ -1231,6 +1231,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Callee::Method(bir::MethodTarget {
                     name: method,
                     intrinsic_carrier: None,
+                    reflection: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -1911,6 +1912,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     }
                     _ => None,
                 },
+                reflection: self.checked_reflection_operation(span),
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one
                 // the program's implementation records and the SDK's published bodies carry.
                 canonical: native_member
@@ -2054,6 +2056,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info
             .resolved_identity(span)
             .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Property)
+    }
+
+    /// Retain reflection only when the checked canonical member belongs to the compiler-generated owner table.
+    /// Generic-binder ownership selects string results before substitution; concrete ownership selects typed values.
+    fn checked_reflection_operation(&self, span: ast::Span) -> Option<bir::ReflectionOperation> {
+        let identity = self.type_info.resolved_identity(span)?;
+        let owner = self
+            .type_info
+            .calls
+            .compiler_generated_member_identities
+            .get(identity)?;
+        let generic = owner.kind == SemanticSourceTargetKind::GenericBinder;
+        match (identity.declaration_name.as_str(), generic) {
+            ("__field_value__", false) => Some(bir::ReflectionOperation::TypedValue),
+            ("__field_items__", false) => Some(bir::ReflectionOperation::TypedItems),
+            ("__field_value__", true) => Some(bir::ReflectionOperation::StringValue),
+            ("__field_items__", true) => Some(bir::ReflectionOperation::StringItems),
+            _ => None,
+        }
     }
 
     /// Retain a checked builtin list lookup's numeric element carrier even when its legacy signature table is absent.

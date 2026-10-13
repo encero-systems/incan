@@ -389,6 +389,10 @@ impl BodyIrModule {
             && declaration.fields.len() == declaration.field_types.len()
             && declaration.fields.len() == declaration.field_public.len()
             && (declaration.field_aliases.is_empty() || declaration.fields.len() == declaration.field_aliases.len())
+            && declaration.reflection_fields.as_ref().is_none_or(|slots| {
+                slots.iter().all(|slot| *slot < declaration.fields.len())
+                    && slots.windows(2).all(|pair| pair[0] < pair[1])
+            })
             && declaration.fields.iter().collect::<BTreeSet<_>>().len() == declaration.fields.len()
             && declaration.field_identities.iter().collect::<BTreeSet<_>>().len() == declaration.field_identities.len()
             && declaration
