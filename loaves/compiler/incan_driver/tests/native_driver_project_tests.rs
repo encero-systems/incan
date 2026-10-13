@@ -18,21 +18,50 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
-/// The original SDK FallibleIterator model executes both the checked loop hooks and its temporary collect default.
+/// The original SDK iterator advances to its published body boundary while its unchanged legacy oracle executes.
 #[test]
 fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let mut closure = corpus::runtime_closure(&fixture.formatting)?;
     closure.extend_with(&sdk_closure(fixture)?)?;
-    corpus::check_builtin_source_with_closure(
+    let source = include_str!(
+        "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
+    );
+    let root = fixture.scratch("sdk-fallible-iterator")?;
+    let main = root.join("main.incn");
+    fs::write(&main, source)?;
+    let native = root.join("native");
+    let output = corpus::source_command(
         &fixture.driver_binary("debug"),
-        &fixture.scratch("sdk-fallible-iterator")?,
+        &main,
+        &native,
         &fixture.sysroot,
         &closure,
-        include_str!(
-            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
-        ),
     )
+    .output()?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("unsupported Body IR body identity pub::incan_stdlib_core::derives::collection::__iter__"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!native.exists());
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .env("INCAN_HOME", support::oven_fixture_home()?)
+            .args(["build"])
+            .arg(&main)
+            .arg(&legacy)
+            .output()?,
+        "legacy SDK iterator compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/main")).output()?;
+    success(&expected, "legacy SDK iterator execution");
+    assert_eq!(expected.stdout, b"1\n2\nok\n2\n");
+    Ok(())
 }
 
 /// A model's function-pointer field retains its borrowed list input and stays callable after the field is copied.
@@ -3572,7 +3601,7 @@ fn fallible_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::e
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
         ),
-        "unsupported Body IR nonlocal or trait-object Method",
+        "unsupported Body IR body identity pub::incan_stdlib_core::derives::collection::__iter__",
     )
 }
 

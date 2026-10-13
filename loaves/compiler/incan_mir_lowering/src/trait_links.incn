@@ -58,8 +58,8 @@ pub def is_well_formed_module_implementation(module: &BodyIrModule, implementati
 
 
 def is_imported_slot_record(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
-    """A record of a trait without type arguments whose slot is filled as its own, for an adopter this module retains."""
-    if len(implementation.type_arguments) != 0 or not fills_its_slot(implementation):
+    """Require closed checked trait arguments and a canonical slot filling for a retained concrete adopter."""
+    if has_open_trait_arguments(implementation) or not fills_its_slot(implementation):
         return false
     return retains_owner(module, implementation.owner)
 
