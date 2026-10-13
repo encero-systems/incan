@@ -7283,7 +7283,7 @@ def frozen_dictionary_contains(
 
 
 def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
-    """Keep the owned read type distinct from frozen storage: static text becomes String at the read boundary."""
+    """Keep static text reads owned and nominal list elements exact; runtime instantiation still proves Clone and Static."""
     match ty:
         PlanType.FrozenCollection(name, elements) =>
             if name not in ["FrozenList", "FrozenSet", "FrozenDict"] or len(elements) == 0:
@@ -7294,6 +7294,12 @@ def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
                 if name != "FrozenList":
                     return Err("unsupported Body IR frozen byte set or dictionary snapshot")
                 return Ok(PlanType.List(ListLeaf.U8, 2))
+            match elements[0]:
+                PlanType.Model(_owner, _name) =>
+                    if name != "FrozenList":
+                        return Err("unsupported Body IR frozen nominal set or dictionary snapshot")
+                    return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
+                _ => pass
             if elements[0] not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Err("unsupported Body IR frozen collection snapshot with nonprimitive elements")
             return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
