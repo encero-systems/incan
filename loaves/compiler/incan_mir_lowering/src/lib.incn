@@ -50,6 +50,7 @@ pub from pub::incan_mir_plan import (
     UnaryOp,
     Unwind,
     scalar_example,
+    consuming_closure_example,
 )
 
 

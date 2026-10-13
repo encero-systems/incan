@@ -121,7 +121,38 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
-/// Legacy rejects reusing a consuming zip closure, and direct lowering must retain a named invocation refusal.
+/// A hand-filled Incan plan moves a non-Copy environment through native FnOnce invocation and returns its field.
+#[test]
+fn oven_driver_compiles_consuming_closure_plan() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("consuming-closure-plan")?;
+    let driver_source = support::repo_root().join("loaves/toolchain/incan-rustc-driver");
+    let runtime = root.join("runtime");
+    copy_tree(&driver_source.join("tests/fixtures/native_output"), &runtime)?;
+    let source = root.join("scalar.incn");
+    fs::copy(driver_source.join("tests/fixtures/scalar.incn"), &source)?;
+    bake(&runtime, &fixture.home)?;
+    let closure = runtime_plan(&runtime)?;
+    let executable = root.join("native");
+    let compiled = driver_command(&fixture.driver_binary("debug"))
+        .env_remove("RUSTC_BOOTSTRAP")
+        .arg(&source)
+        .arg("consuming_closure")
+        .arg(&executable)
+        .arg(&fixture.sysroot)
+        .arg(runtime.join("target/lib/oven/debug/libnative_output.rlib"))
+        .arg("consuming-closure")
+        .args(&closure.artifact_plan().dependency_search_paths)
+        .output()?;
+    success(&compiled, "native consuming closure plan compilation");
+    let executed = Command::new(executable).output()?;
+    success(&executed, "native consuming closure plan execution");
+    assert_eq!(executed.stdout, b"42\n");
+    assert!(executed.stderr.is_empty());
+    Ok(())
+}
+
+/// Legacy rejects reuse; direct lowering currently reaches the generator-owned source boundary first.
 #[test]
 fn consuming_zip_closure_rejects_repeated_invocation() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -158,24 +189,23 @@ fn consuming_zip_closure_rejects_repeated_invocation() -> Result<(), Box<dyn std
     assert!(!native.status.success());
     let diagnostic = String::from_utf8(native.stderr)?;
     assert!(
-        diagnostic.contains("unsupported Body IR consuming callable requires a moved last-use invocation"),
+        diagnostic.contains("unsupported Body IR generator expression source"),
         "{diagnostic}"
     );
     Ok(())
 }
 
-/// The complete original zip capture executes once with the same owned iterator and legacy output.
+/// The original advances past consuming capture admission to the generator source boundary, with live legacy parity.
 #[test]
 fn consuming_zip_closure_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("consuming-zip-closure")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "consuming_zip_generator_handoff",
         include_str!(
             "../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
         ),
+        &[],
+        b"9\n",
+        "unsupported Body IR generator expression source",
     )
 }
 
