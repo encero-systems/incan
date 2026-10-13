@@ -114,6 +114,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let ty = self.locals[local.index()].ty.clone();
             closure_params.push(bir::CallableParam {
                 local,
+                kind: parameter_types::source_parameter_kind(param.node.kind),
                 name: param.node.name.clone(),
                 ty,
                 span: hir_span(param.span),

@@ -38,6 +38,7 @@ pub(super) fn attach_nominal_field_defaults(
             builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
             params.push(bir::CallableParam {
                 local,
+                kind: IncanCallableParamKind::Normal,
                 name: field.node.name.clone(),
                 ty: ty.clone(),
                 span: hir_span(field.span),

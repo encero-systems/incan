@@ -49,7 +49,9 @@ use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
-use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType};
+use crate::{
+    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanCallableParamKind, IncanType,
+};
 
 // ============================================================================
 // Module / body containers
@@ -2009,6 +2011,10 @@ pub struct CallableParam {
     pub name: String,
     /// Fully resolved parameter type.
     pub ty: IncanType,
+    /// Checked source role. Rest parameters own their packed list or dictionary, while ordinary collection
+    /// parameters retain their normal borrowed passing convention. `ty` is the packed frame type for a rest role.
+    #[serde(default = "ordinary_callable_parameter_kind")]
+    pub kind: IncanCallableParamKind,
     /// Original parameter span, retained for argument-binding diagnostics.
     ///
     /// The syntax AST currently retains no receiver-token range, so a synthetic method `self` parameter uses the
@@ -2021,6 +2027,11 @@ pub struct CallableParam {
     /// [`OwnershipFact::MutBorrow`], and the callee neither owns nor drops the parameter, as the emitted route's
     /// `&mut T` parameter does. For a `Copy` type it is a mutable local copy, so callers still pass a copy.
     pub mutable: bool,
+}
+
+/// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
+fn ordinary_callable_parameter_kind() -> IncanCallableParamKind {
+    IncanCallableParamKind::Normal
 }
 
 impl CallableParam {
@@ -2884,10 +2895,9 @@ pub enum ArgumentBinding {
     /// a single value, a value written with a name, or a spread whose length is only known at runtime. Reading this
     /// as a positional argument vector is the mistake this variant exists to prevent.
     ///
-    /// This is the honest representation for a callee whose declared surface Body IR did not resolve — a builtin, a
-    /// compiler-synthesized collection-growth call, or a signature with a `*args`/`**kwargs` rest parameter — and
-    /// for any call carrying a spread, where a written argument does not correspond one-to-one with a declared
-    /// slot. Recording an identity slot map for those would assert a binding nobody checked.
+    /// A callee without a retained declared surface, or a call without a computed binding for its spread elements,
+    /// makes no slot claim. A rest-bearing call with explicitly retained physical packs uses [`Self::Resolved`]
+    /// instead: each owned pack occupies one declared slot.
     UnresolvedPositional,
     /// Arguments were resolved against the callee's declared parameters or the type's declared fields.
     Resolved {
@@ -4255,6 +4265,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    kind: IncanCallableParamKind::Normal,
                     local: local_x,
                     name: "x".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -4263,6 +4274,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    kind: IncanCallableParamKind::Normal,
                     local: local_y,
                     name: "y".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -4515,6 +4527,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
                 name: "suffix".to_string(),
                 ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -4534,6 +4547,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
             name: "limit".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -4552,6 +4566,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
             name: "method".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -4560,6 +4575,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
             name: "payload".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Bytes),
@@ -4799,6 +4815,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            kind: IncanCallableParamKind::Normal,
                             local: param_local,
                             name: "z".to_string(),
                             ty: IncanType::Primitive(IncanPrimitiveType::Int),

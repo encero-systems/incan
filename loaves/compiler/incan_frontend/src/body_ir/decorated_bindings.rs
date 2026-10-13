@@ -26,7 +26,7 @@ pub(super) fn supports_method(method: &ast::MethodDecl, owner: &str, type_info: 
         && original
             .iter()
             .zip(replacement)
-            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut)
+            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
         && method.decorators.iter().all(
             |decorator| match decorators::from_segments(&decorator.node.path.segments) {
                 Some(decorators::DecoratorId::RustExtern) => false,
@@ -123,7 +123,7 @@ pub(super) fn supports_function(
         && original
             .iter()
             .zip(replacement)
-            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut)
+            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
         && function.type_params.is_empty()
         && !function.is_async()
         && function.decorators.iter().all(
@@ -265,7 +265,10 @@ fn initializer(
         return original.clone();
     };
     for (parameter, ty) in parameters.iter_mut().zip(original_parameters) {
-        parameter.ty = ty.ty.clone();
+        if ty.kind == IncanCallableParamKind::Normal {
+            parameter.ty = ty.ty.clone();
+        }
+        parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
         parameter.local = builder.new_temp(parameter.ty.clone(), scope, hir_span(span));
     }
@@ -434,9 +437,12 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
         ) {
             continue;
         }
-        parameter.ty = ty.ty.clone();
+        if ty.kind == IncanCallableParamKind::Normal {
+            parameter.ty = ty.ty.clone();
+        }
+        parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
-        body.locals[parameter.local.index()].ty = ty.ty.clone();
+        body.locals[parameter.local.index()].ty = parameter.ty.clone();
     }
     let scope = body.block.scope;
     let callable = bir::LocalId(body.locals.len().try_into().ok()?);

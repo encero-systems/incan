@@ -30,7 +30,7 @@ use crate::body_ir::{
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 9;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 10;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -1166,6 +1166,7 @@ mod tests {
         let mut exported = body("exported", 1);
         exported.params.push(CallableParam {
             mutable: false,
+            kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
             name: "x".into(),
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -1535,6 +1536,7 @@ mod tests {
         ]);
         exported.params.push(CallableParam {
             mutable: false,
+            kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
             name: "product".into(),
             ty: IncanType::Named("First".into()),

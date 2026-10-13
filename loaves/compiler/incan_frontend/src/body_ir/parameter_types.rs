@@ -4,6 +4,16 @@ use super::{
     BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, decorated_bindings,
     semantic_type_from_resolved,
 };
+use incan_semantics_core::IncanCallableParamKind;
+
+/// Preserve the already checked source role independently from its element or packed carrier type.
+pub(super) fn source_parameter_kind(kind: ast::ParamKind) -> IncanCallableParamKind {
+    match kind {
+        ast::ParamKind::Normal => IncanCallableParamKind::Normal,
+        ast::ParamKind::RestPositional => IncanCallableParamKind::RestPositional,
+        ast::ParamKind::RestKeyword => IncanCallableParamKind::RestKeyword,
+    }
+}
 
 /// Project checked nominal spellings onto their declaring carrier names, without resolving source syntax again.
 ///
@@ -272,6 +282,15 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
 }
 
 impl BodyBuilder<'_, '_> {
+    /// Consume the checker's exact list/dictionary type for the declared rest binding, without wrapping its element
+    /// annotation again. Missing local facts stay Unknown and are refused before execution.
+    pub(super) fn checked_rest_parameter_type(&self, parameter: &ast::Spanned<ast::Param>) -> IncanType {
+        self.type_info
+            .resolved_write_type(parameter.span, &parameter.node.name)
+            .map(|ty| self.checked_type(ty))
+            .unwrap_or(IncanType::Unknown)
+    }
+
     /// Convert a checked type while retaining the active declaration's explicit placeholder bindings.
     pub(super) fn checked_type(&self, ty: &crate::symbols::ResolvedType) -> IncanType {
         let ty = checked_context_type(ty, self.type_info, &self.type_parameters, self.runtime_type_conflicts);

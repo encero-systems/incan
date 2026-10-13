@@ -184,6 +184,7 @@ fn partial_parameters(
             }
             bir::CallableParam {
                 local,
+                kind: incan_semantics_core::IncanCallableParamKind::Normal,
                 name,
                 ty,
                 span,

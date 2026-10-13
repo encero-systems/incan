@@ -32,11 +32,9 @@ pub(super) struct DeclaredSlot {
     pub(super) has_default: bool,
     /// Whether this slot holds a partial's construction-time preset, which positional binding skips.
     pub(super) is_partial_preset: bool,
-    /// Whether this slot needs rest packing before ordinary declared-slot binding.
-    pub(super) is_rest: bool,
-    /// Checked source parameter kind; only rest packing reads this distinction.
-    pub(super) kind: ast::ParamKind,
-    /// Checked annotation type, before a rest parameter's collection storage is materialized.
+    /// Checked source role; rest roles are packed separately from the fixed-slot planner.
+    pub(super) kind: IncanCallableParamKind,
+    /// Checked element type for a rest role, or the ordinary parameter type.
     pub(super) ty: IncanType,
     /// Whether the parameter is declared `mut`, so a non-`Copy` argument is borrowed mutably rather than copied
     /// (#2022).
@@ -49,12 +47,7 @@ impl DeclaredSlot {
             name: param.name.clone(),
             has_default: param.has_default,
             is_partial_preset: param.is_partial_preset,
-            is_rest: param.kind != IncanCallableParamKind::Normal,
-            kind: match param.kind {
-                IncanCallableParamKind::Normal => ast::ParamKind::Normal,
-                IncanCallableParamKind::RestPositional => ast::ParamKind::RestPositional,
-                IncanCallableParamKind::RestKeyword => ast::ParamKind::RestKeyword,
-            },
+            kind: param.kind,
             ty: param.ty.clone(),
             is_mut: param.is_mut,
         }
@@ -66,8 +59,7 @@ impl DeclaredSlot {
             name: param.name.clone(),
             has_default: param.has_default,
             is_partial_preset: param.is_partial_preset,
-            is_rest: param.kind != ast::ParamKind::Normal,
-            kind: param.kind,
+            kind: parameter_types::source_parameter_kind(param.kind),
             ty: semantic_type_from_resolved(&param.ty),
             is_mut: param.is_mut,
         }
@@ -164,7 +156,7 @@ pub(super) fn plan_declared_args<'a>(
     params: &[DeclaredSlot],
     args: &'a [ast::CallArg],
 ) -> Result<Vec<(usize, &'a ast::Spanned<ast::Expr>)>, String> {
-    if params.iter().any(|param| param.is_rest) {
+    if params.iter().any(|param| param.kind != IncanCallableParamKind::Normal) {
         return Err(format!("{callee} has a rest parameter"));
     }
     let positional_slots: Vec<usize> = params

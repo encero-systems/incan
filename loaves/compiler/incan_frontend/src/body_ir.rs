@@ -1049,6 +1049,8 @@ struct BodyBuilder<'type_info, 'source> {
     moved_out: HashSet<bir::LocalId>,
     /// `mut` parameters of non-`Copy` type: the callee borrows the caller's value (#2022), so it never drops one.
     pub(super) borrowed_parameters: HashSet<bir::LocalId>,
+    /// Rest parameters hold callee-owned packs, even though their checked storage types are collections.
+    pub(super) owned_rest_parameters: HashSet<bir::LocalId>,
     /// Locals whose current value was built by `lower_range_value` or copied from another such local. A checked
     /// `Range[T]` spelling alone is not a layout contract: parameters, call results, imports, and user
     /// declarations can use it without the four-field `AggregateKind::Range` representation. Only this
@@ -1120,6 +1122,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
             borrowed_parameters: HashSet::new(),
+            owned_rest_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),
             loop_break_targets: Vec::new(),
             loop_continue_actions: Vec::new(),
@@ -1705,10 +1708,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Identify caller-owned parameter storage, including shared collection bindings (RFC 129).
     ///
-    /// A list, set, or dictionary parameter never owns the caller's collection: its mutability selects the borrow kind,
-    /// not ownership. Reads that require an owned value therefore clone even at last use, and scope exit must not
-    /// drop it.
+    /// An ordinary list, set, or dictionary parameter borrows caller storage. A rest parameter owns its checked
+    /// pack instead, so last-use reads may move it and scope exit drops it.
     fn is_borrowed_parameter(&self, local: bir::LocalId) -> bool {
+        if self.owned_rest_parameters.contains(&local) {
+            return false;
+        }
         self.borrowed_parameters.contains(&local)
             || self.locals.get(local.index()).is_some_and(|decl| {
                 matches!(decl.origin, bir::LocalOrigin::Parameter)
@@ -1959,6 +1964,7 @@ mod args;
 mod fixed_spreads;
 mod numeric_destinations;
 mod variadics;
+mod rest_args;
 
 use bodies::*;
 use collect::*;

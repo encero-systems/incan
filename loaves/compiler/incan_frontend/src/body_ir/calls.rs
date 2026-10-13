@@ -371,9 +371,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Bind a call's arguments against a declared parameter surface, falling back to positional lowering when there
     /// is none to bind against.
     ///
-    /// Direct calls, methods and local callable values share this boundary. A resolved rest-bearing declaration
-    /// packs its written values and spreads into explicit list/dictionary operands, then records ordinary resolved
-    /// slots. A missing declaration makes no slot claim and retains the original spread-capable arguments.
+    /// A checked rest-bearing surface packs explicit values into owned list/dictionary operands in declaration
+    /// order, after evaluating written values in source order. Open pack elements, spreads, omitted defaults and
+    /// non-scalar ordinary passing stay refused by name. An absent declaration surface retains unresolved argument
+    /// elements instead; it must not claim a computed slot map.
     pub(super) fn bind_declared_args(
         &mut self,
         callee: &str,
@@ -388,6 +389,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         if fixed_spreads::has_checked_tuple_spread(self.type_info, args) {
             return self.bind_checked_tuple_spreads(callee, &slots, args, scope, out);
+        }
+        if slots.iter().any(|slot| slot.kind != IncanCallableParamKind::Normal) {
+            return self.bind_rest_args(callee, &slots, args, scope, out);
         }
         // A spread whose shape the typechecker proved is an ordinary fixed-arity call in disguise: `add(*(1, 2))`
         // really is `add(1, 2)`. Expanding it here means it binds through the same declaration-slot planner as any
@@ -1531,8 +1535,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             name: Some(slot.to_string()),
             has_default: false,
             is_partial_preset: false,
-            is_rest: false,
-            kind: ast::ParamKind::Normal,
+            kind: IncanCallableParamKind::Normal,
             ty: IncanType::Unknown,
             is_mut: false,
         }));

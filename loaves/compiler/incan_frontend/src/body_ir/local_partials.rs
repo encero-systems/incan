@@ -310,6 +310,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             };
             params.push(bir::CallableParam {
                 local,
+                kind: parameter_types::source_parameter_kind(param.kind),
                 name: name.clone(),
                 ty,
                 span: source.map_or(span, |source| hir_span(source.param_span)),

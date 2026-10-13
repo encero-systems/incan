@@ -246,6 +246,9 @@ pub(super) fn lower_function_body(
         if index == 0 && shared_replacement {
             ty = IncanType::Ref(Box::new(ty));
         }
+        if param.node.kind != ast::ParamKind::Normal {
+            ty = builder.checked_rest_parameter_type(param);
+        }
         let local = builder.declare_new_local(
             param.node.name.clone(),
             super::variadics::parameter_storage_type(ty, param.node.kind),
@@ -262,6 +265,7 @@ pub(super) fn lower_function_body(
         let ty = builder.locals[local.index()].ty.clone();
         params.push(bir::CallableParam {
             local,
+            kind: parameter_types::source_parameter_kind(param.node.kind),
             name: param.node.name.clone(),
             ty,
             span: hir_span(param.span),
@@ -273,6 +277,12 @@ pub(super) fn lower_function_body(
     builder
         .borrowed_parameters
         .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
+    builder.owned_rest_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.kind != IncanCallableParamKind::Normal)
+            .map(|param| param.local),
+    );
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -422,6 +432,7 @@ pub(super) fn lower_method_body(
         param_locals.push(self_local);
         params.push(bir::CallableParam {
             local: self_local,
+            kind: IncanCallableParamKind::Normal,
             name: "self".to_string(),
             ty: receiver_ty.clone(),
             span: hir_span(decl_span),
@@ -436,8 +447,11 @@ pub(super) fn lower_method_body(
             .and_then(|b| b.params.get(index))
             .map(|p| builder.checked_type(&p.ty))
             .unwrap_or(IncanType::Unknown);
-        let ty = close_self_type(ty, receiver_ty);
-        let ty = super::variadics::parameter_storage_type(ty, param.node.kind);
+        let ty = if param.node.kind != ast::ParamKind::Normal {
+            builder.checked_rest_parameter_type(param)
+        } else {
+            close_self_type(ty, receiver_ty)
+        };
         let local = builder.declare_new_local(
             param.node.name.clone(),
             ty,
@@ -454,6 +468,7 @@ pub(super) fn lower_method_body(
         let ty = builder.locals[local.index()].ty.clone();
         params.push(bir::CallableParam {
             local,
+            kind: parameter_types::source_parameter_kind(param.node.kind),
             name: param.node.name.clone(),
             ty,
             span: hir_span(param.span),
@@ -466,6 +481,12 @@ pub(super) fn lower_method_body(
         params
             .iter()
             .filter(|param| param.mutable && param.name != "self")
+            .map(|param| param.local),
+    );
+    builder.owned_rest_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.kind != IncanCallableParamKind::Normal)
             .map(|param| param.local),
     );
     let rebound = lowering_facts

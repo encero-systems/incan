@@ -1815,7 +1815,7 @@ fn an_overload_set_that_changes_arity_does_not_refuse_a_valid_call() -> Result<(
     Ok(())
 }
 
-/// Positional rest values are packed into one collection operand bound to the rest declaration slot.
+/// Explicit rest values form one owned list slot alongside each ordinary declared argument.
 #[test]
 fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def total(a: int, *xs: int) -> int:\n  return a\n\ndef use() -> int:\n  return total(1, 2, 3)\n";
@@ -1830,6 +1830,22 @@ fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(),
         !snapshot.contains("call fn:total unbound") && snapshot.contains("List[int]"),
         "the packed rest list fills one resolved declaration slot: {snapshot}"
     );
+    let body = body_named(&module, "use")?;
+    let (target, args) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "total" => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("missing rest call")?;
+    assert_eq!(args.len(), 2);
+    assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(2));
     Ok(())
 }
 

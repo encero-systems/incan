@@ -360,6 +360,7 @@ from computed_statics import (
     static_owner,
 )
 from closures import (
+    packed_input,
     validate_callable_representation,
     source_function_item,
     function_assignment,
@@ -3561,13 +3562,13 @@ def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCalla
 
     A list, set or dictionary parameter takes a shared or, when `mut`, an exclusive reference to the caller's storage;
     `mut` text, models and enums take an exclusive reference to the caller's value; a `mut` scalar is the callee's own
-    copy. A `mut` tuple borrows its complete layout; an iterator without retained exclusive storage stays refused.
+    copy. Rest parameters consume their checked owned packs. A `mut` tuple borrows its complete layout; an iterator without retained exclusive storage stays refused.
     """
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
     if parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
-    return Ok(parameter_storage_type(ty, parameter.mutable))
+    return packed_input(ty, parameter.kind, parameter.mutable)
 
 
 def lacks_exclusive_parameter(ty: PlanType) -> bool:
@@ -3652,8 +3653,8 @@ pub def call_argument_operand(
     match ty:
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         _ => pass
-    if owned and owned_collection(ty):
-        # An SDK crate takes its collection parameters by value; a borrowed argument is cloned, as legacy passes it.
+    if owned_collection(ty):
+        # The checked ABI distinguishes owned packs and SDK values from ordinary collection references.
         return value_operand(builder, value, span)
     if is_list(ty) or is_collection(ty):
         if is_mutable_list_reference(ty):
@@ -5708,6 +5709,11 @@ def lower_function(
                 builder.generator_handle = handle.local
                 builder.owned.append(handle.local)
             None => return Err("unsupported Body IR generator return type")
+    for index in range(len(parameters)):
+        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or owned_collection(
+            parameters[index].ty,
+        ) or is_future(parameters[index].ty):
+            builder.owned.append(index + 1)
     # Legacy initializes the module's computed statics on entry to each of its functions (RFC 052), in `main` before
     # it installs the panic hook.
     if enters_module_initialization(body):
@@ -5716,11 +5722,6 @@ def lower_function(
     if str(body.name) == "main":
         initialized = temporary(builder, PlanType.Unit, span)
         external_call(builder, "incan_native_runtime::initialize_panic_hook", [], PlanType.Unit, [], initialized, span)
-    for index in range(len(parameters)):
-        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or is_future(
-            parameters[index].ty,
-        ):
-            builder.owned.append(index + 1)
     for index in range(len(parameters)):
         validate_exact_float(builder, plan_place(index + 1, span), span)
     if function_name(module, body) == "main":
@@ -5856,7 +5857,7 @@ def frame_locals(
                     ty = list_parameter_type(ty, false)
         for parameter in body.params:
             if parameter.local == local.id:
-                ty = parameter_storage_type(parameter_representation(body, index - 1, ty)?, parameter.mutable)
+                ty = packed_input(parameter_representation(body, index - 1, ty)?, parameter.kind, parameter.mutable)?
         locals.append(Local(ty=ty, span=location(local.span, source, file)))
     return Ok(locals)
 
@@ -5904,7 +5905,7 @@ def frame_parameters(
         parameters.append(
             Parameter(
                 name=name,
-                ty=parameter_storage_type(ty, parameter.mutable),
+                ty=packed_input(ty, parameter.kind, parameter.mutable)?,
                 span=location(parameter.span, source, file),
             ),
         )

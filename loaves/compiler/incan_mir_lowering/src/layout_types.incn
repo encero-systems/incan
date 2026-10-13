@@ -12,7 +12,7 @@ from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElemen
 from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
-from closures import signature_input
+from closures import semantic_input
 from decls import library_enum_item
 
 
@@ -44,8 +44,8 @@ pub def native_source_type(
         RustType.Function(params=parameters, return_type=result) =>
             mut signature: list[PlanType] = []
             for parameter in parameters:
-                input = callable_parameter_type(nominals, enums, unions, parameter, intrinsics)?
-                signature.append(signature_input(input, parameter.is_mut))
+                input = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
+                signature.append(semantic_input(input, parameter.kind, parameter.is_mut)?)
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>

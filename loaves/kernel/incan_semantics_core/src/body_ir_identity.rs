@@ -26,12 +26,27 @@ fn decorated_parameter_matches(
     left: &crate::IncanCallableParam,
     right: &crate::body_ir::CallableParam,
 ) -> bool {
+    if left.kind != right.kind {
+        return false;
+    }
     match body.locals.get(right.local.index()).map(|local| &local.origin) {
         Some(LocalOrigin::Receiver { mutable }) => match (&left.ty, mutable) {
             (IncanType::Ref(inner), false) | (IncanType::RefMut(inner), true) => **inner == right.ty && !left.is_mut,
             _ => false,
         },
-        _ => left.ty == right.ty && left.is_mut == right.mutable,
+        _ => decorated_input_type_matches(left, &right.ty) && left.is_mut == right.mutable,
+    }
+}
+
+/// Require each retained rest frame to contain exactly the source signature's checked element type.
+fn decorated_input_type_matches(parameter: &crate::IncanCallableParam, packed: &IncanType) -> bool {
+    match parameter.kind {
+        crate::IncanCallableParamKind::Normal => parameter.ty == *packed,
+        crate::IncanCallableParamKind::RestPositional => matches!(packed,
+            IncanType::Generic { base, args } if base == "List" && args.as_slice() == [parameter.ty.clone()]),
+        crate::IncanCallableParamKind::RestKeyword => matches!(packed,
+            IncanType::Generic { base, args } if base == "Dict"
+                && args.as_slice() == [IncanType::Primitive(IncanPrimitiveType::Str), parameter.ty.clone()]),
     }
 }
 
