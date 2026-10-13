@@ -6,6 +6,40 @@ use super::library_call;
 use crate::symbols::TypeInfo;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 
+/// A selected inherent overload keeps its exact declaration instead of the cache's last same-named method.
+#[test]
+fn sdk_method_overload_retains_selected_signature() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let path = source_path(&["io"]);
+    let Some(TypeInfo::Class(class)) = cache.lookup_type(&path, "_BytesIO") else {
+        return Err("missing byte stream class".into());
+    };
+    let methods = class.method_overloads.get("read").ok_or("missing read overloads")?;
+    let method = methods
+        .iter()
+        .find(|method| {
+            method
+                .params
+                .first()
+                .is_some_and(|param| param.ty == crate::symbols::ResolvedType::Int)
+        })
+        .ok_or("missing byte read overload")?;
+    let source = method.identity.clone().ok_or("missing byte read identity")?;
+    let identity = published(source, "incan_stdlib_system", &["io"]);
+    let call = library_call(&identity, &mut cache).ok_or("missing selected byte read delegation")?;
+    assert_eq!(call.canonical, identity);
+    assert_eq!(call.parameters[1], super::IncanType::Int);
+    assert_eq!(
+        call.return_type,
+        super::semantic_type_from_resolved(&method.return_type)
+    );
+    assert_eq!(
+        call.rust_path().as_deref(),
+        Some("incan_stdlib_system::io::_BytesIO::read")
+    );
+    Ok(())
+}
+
 /// A Body IR provider-slot identity receives its own crate-call record while legacy keeps the source reference.
 #[test]
 fn provider_trait_slot_retains_matching_delegation() -> Result<(), Box<dyn std::error::Error>> {
