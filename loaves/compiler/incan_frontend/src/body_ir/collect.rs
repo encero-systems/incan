@@ -1327,11 +1327,9 @@ fn property_implementations(
 /// Each slot keeps the body that fills it: the adopter's own method, or the imported trait's default. A project or
 /// package trait's default lives in the module that declares the trait. A standard-library or compiled SDK protocol
 /// brings its own slots and those of its standard supertraits ([`adopted_slots`]): the adopter's own method fills one
-/// with or without type parameters, and the protocol's default fills one only when the protocol has none. That
-/// default's body comes from the SDK's published representation, or a call to it refuses where it is lowered. Imported
-/// supertraits of other traits and other modules' traits with type parameters get no record, so a call that needs one
-/// of those keeps refusing. The records are sorted by slot identity, so the module's Body IR does not depend on hash
-/// order.
+/// with or without type parameters. Defaults retain exact checked adoption arguments and resolve only through the
+/// declaring package's published executable representation; a missing body still refuses at its call. Generic
+/// supertrait instantiations without retained arguments remain excluded. Records are sorted by canonical slot identity.
 fn imported_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -1345,20 +1343,19 @@ fn imported_trait_implementations(
         if local_trait(program, name).is_some() {
             continue;
         }
-        // Another module's trait with type parameters would need its defaults instantiated, which Body IR does not do
-        // here; a protocol's own methods need no trait type arguments, and its defaults are taken only without them.
-        let generic =
-            !adoption.node.type_args.is_empty() || !type_info.traits.type_params.get(name).is_some_and(Vec::is_empty);
         for (trait_key, slot_name, method) in adopted_slots(type_info, name) {
             if implementations.iter().any(|existing| &existing.method == method) {
                 continue;
             }
             let protocol = type_info.traits.is_standard_slot(method);
-            if (generic && !protocol) || (!protocol && !is_executable_source_trait_slot(method)) {
+            if !protocol && !is_executable_source_trait_slot(method) {
                 continue;
             }
+            let Some(type_arguments) = imported_slot_arguments(type_info, adoption, trait_key) else {
+                continue;
+            };
             // A protocol whose behavior a Rust derive provides keeps the slots it leaves on that derive.
-            let defaults = !generic && !(protocol && derive_backed_protocol(type_info, trait_key, method));
+            let defaults = !(protocol && derive_backed_protocol(type_info, trait_key, method));
             if let Some(implementation) =
                 imported_slot_implementation(type_info, method, slot_name, methods, defaults, owner)
             {
@@ -1366,13 +1363,48 @@ fn imported_trait_implementations(
                     owner: owner.clone(),
                     method: method.clone(),
                     implementation,
-                    type_arguments: Vec::new(),
+                    type_arguments,
                 });
             }
         }
     }
     implementations.sort_by(|left, right| left.method.cmp(&right.method));
     implementations
+}
+
+/// Close a direct imported trait only from checked adoption arguments and its recorded declaration binders.
+/// Nongeneric inherited slots keep their empty frame; generic inherited slots lack a retained instantiation here.
+fn imported_slot_arguments(
+    type_info: &TypeCheckInfo,
+    adoption: &ast::Spanned<ast::TraitBound>,
+    trait_key: &str,
+) -> Option<Vec<bir::TraitTypeArgument>> {
+    let parameters = type_info.traits.type_params.get(trait_key)?;
+    if parameters.is_empty() {
+        return (trait_key != adoption.node.name || adoption.node.type_args.is_empty()).then(Vec::new);
+    }
+    if trait_key != adoption.node.name {
+        return None;
+    }
+    let key = (adoption.span.start, adoption.span.end);
+    let arguments = type_info
+        .traits
+        .body_ir_adoption_type_args
+        .get(&key)
+        .or_else(|| type_info.traits.adoption_type_args.get(&key))?;
+    if parameters.len() != arguments.len() {
+        return None;
+    }
+    Some(
+        parameters
+            .iter()
+            .zip(arguments)
+            .map(|(parameter, argument)| bir::TraitTypeArgument {
+                parameter: parameter.clone(),
+                argument: semantic_type_from_resolved(argument),
+            })
+            .collect(),
+    )
 }
 
 /// Whether the standard protocol a slot belongs to declares its behavior through a Rust derive (`@rust.derive`), as
