@@ -36,10 +36,33 @@ pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
 
 
 pub def list_iterator_locals(block: &RustBlock) -> list[int]:
-    """Read explicit builtin IterNext statements to select their native cursor storage."""
+    """Select borrowed builtin cursor storage, preserving an explicitly moved iterator as an owned terminal frame."""
+    mut result: list[int] = []
+    owned = moved_iterator_locals(block)
+    for statement in block.stmts:
+        for local in statement_iterator_locals(statement.kind):
+            if local not in owned:
+                result.append(local)
+    return result
+
+
+def moved_iterator_locals(block: &RustBlock) -> list[int]:
+    """Read explicit move initializers before choosing cursor aliases; ordinary loops retain borrowed initializers."""
     mut result: list[int] = []
     for statement in block.stmts:
-        result.extend(statement_iterator_locals(statement.kind))
+        match statement.kind:
+            RustStatementKind.Assign(place=place, rvalue=RustRvalue.Use(RustOperand.Place(read))) =>
+                if read.fact == OwnershipFact.Move:
+                    match place.local_id():
+                        Some(local) => result.append(int(local.index()) + 1)
+                        None => pass
+            RustStatementKind.Loop(body=body) => result.extend(moved_iterator_locals(body))
+            RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+                result.extend(moved_iterator_locals(then_body))
+                match else_body:
+                    Some(body) => result.extend(moved_iterator_locals(body))
+                    None => pass
+            _ => pass
     return result
 
 

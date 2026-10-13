@@ -25,12 +25,13 @@ pub def lower_newtype_sum_add(
             for index in range(2):
                 if argument_type(builder, arguments, index, span)? != PlanType.Int:
                     return Err("unsupported Body IR newtype sum addition operand")
+            operands = fixed_arguments(builder, arguments, span)?
             external_call(
                 builder,
                 "incan_native_runtime::add_newtype_sum",
                 [PlanType.Int, PlanType.Int],
                 PlanType.Int,
-                fixed_arguments(builder, arguments, span)?,
+                operands,
                 output,
                 span,
             )
@@ -58,13 +59,14 @@ pub def lower_newtype_sum_extract(
             if len(declaration.variants[1].fields) != 1 or argument_type(builder, arguments, 1, span)? != PlanType.String:
                 return Err("unsupported Body IR newtype sum extraction error or message")
             error = declaration.variants[1].fields[0]
+            operands = fixed_arguments(builder, arguments, span)?
             return instantiated_external_call(
                 builder,
                 "incan_native_runtime::checked_sum_result",
                 [target, error],
                 [input, PlanType.String],
                 target,
-                fixed_arguments(builder, arguments, span)?,
+                operands,
                 output,
                 span,
             )
