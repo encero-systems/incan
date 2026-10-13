@@ -399,6 +399,37 @@ def main() -> None:
     )
 }
 
+/// Distinct SDK trait implementations remain named refusals until their native trait instantiations are retained.
+#[test]
+fn sdk_trait_implementation_frontier_is_pinned() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("sdk-trait-implementation-frontier")?;
+    let source = root.join("main.incn");
+    fs::write(
+        &source,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/json_value_indexing.incn"
+        ),
+    )?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        diagnostic.contains("unsupported Body IR nonlocal or trait-object Method __getitem__"),
+        "{diagnostic}"
+    );
+    Ok(())
+}
+
 /// SDK receiver methods and returned error methods preserve legacy output at their selected declaration.
 #[test]
 fn sdk_reader_and_error_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

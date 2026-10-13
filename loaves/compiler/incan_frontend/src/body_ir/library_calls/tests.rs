@@ -44,6 +44,35 @@ fn sdk_method_overload_retains_selected_signature() -> Result<(), Box<dyn std::e
 }
 
 /// A Body IR provider-slot identity receives its own crate-call record while legacy keeps the source reference.
+///
+/// Explicit trait implementations have distinct native instantiations and cannot use an inherent method path.
+#[test]
+fn sdk_trait_implementations_require_trait_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let Some(TypeInfo::Newtype(value)) = cache.lookup_type(&source_path(&["json"]), "JsonValue") else {
+        return Err("missing JsonValue".into());
+    };
+    let methods = value
+        .method_overloads
+        .get("__getitem__")
+        .ok_or("missing indexing implementations")?;
+    assert_eq!(methods.len(), 2);
+    for method in methods {
+        assert!(method.trait_target.is_some());
+        let identity = published(
+            method.identity.clone().ok_or("missing indexing identity")?,
+            "incan_stdlib_data",
+            &["json"],
+        );
+        assert!(
+            library_call(&identity, &mut cache).is_none(),
+            "an inherent path cannot select this trait implementation: {identity:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A Body IR provider-slot identity receives its own crate-call record while legacy keeps the source reference.
 #[test]
 fn provider_trait_slot_retains_matching_delegation() -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = StdlibAstCache::new();
