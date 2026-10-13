@@ -15474,7 +15474,8 @@ fn imported_static_decorator_factory_output_matches_legacy() -> Result<(), Box<d
     )
 }
 
-/// A mutable static factory initializes once and preserves its receiver's state across replacement calls.
+/// A mutable static factory initializes once and preserves state across replacement calls and a shared static method
+/// read.
 #[test]
 fn static_decorator_factory_effects_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -15483,7 +15484,7 @@ fn static_decorator_factory_effects_output_match_legacy() -> Result<(), Box<dyn 
         &fixture.scratch("static-decorator-factory-effects")?,
         &fixture.sysroot,
         &fixture.formatting,
-        "model Registry:\n  hits: int\n  def add[F](mut self, label: str, amount: int) -> (F) -> F:\n    self.hits += amount\n    println(label)\n    return (func) => func\n\nstatic REGISTRY: Registry = Registry(hits=0)\n\n@REGISTRY.add(\"factory\", 1)\ndef increment(value: int) -> int:\n  return value + 1\n\ndef main() -> None:\n  println(increment(2))\n  println(increment(4))\n  println(REGISTRY.hits)\n",
+        "model Registry:\n  hits: int\n  def add[F](mut self, label: str, amount: int) -> (F) -> F:\n    self.hits += amount\n    println(label)\n    return (func) => func\n  def total(self) -> int:\n    return self.hits\n\nstatic REGISTRY: Registry = Registry(hits=0)\n\n@REGISTRY.add(\"factory\", 1)\ndef increment(value: int) -> int:\n  return value + 1\n\ndef main() -> None:\n  println(increment(2))\n  println(increment(4))\n  println(REGISTRY.hits)\n  println(REGISTRY.total())\n",
     )
 }
 
