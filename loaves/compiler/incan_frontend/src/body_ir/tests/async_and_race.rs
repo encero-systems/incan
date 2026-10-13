@@ -3,6 +3,7 @@
 //! keywords that are not `await`.
 
 use super::*;
+use incan_semantics_core::SymbolOrigin;
 
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
