@@ -1102,10 +1102,19 @@ fn build_execution_units(
     }
 }
 
-/// Return whether two planned units can share one generated worker-batch harness.
+/// Prepared Rust cases have no generated Incan harness or process-local Incan fixtures to coalesce.
+fn unit_contains_rust(unit: &ExecutionUnit) -> bool {
+    unit.file_paths
+        .iter()
+        .any(|path| path.extension().is_some_and(|extension| extension == "rs"))
+}
+
+/// Return whether two Incan units can share one generated worker-batch harness.
 fn units_share_worker_profile(left: &ExecutionUnit, right: &ExecutionUnit) -> bool {
     !left.serial
         && !right.serial
+        && !unit_contains_rust(left)
+        && !unit_contains_rust(right)
         && left.timeout == right.timeout
         && left.resources == right.resources
         && left.conftest_files_by_file.values().next() == right.conftest_files_by_file.values().next()
@@ -1125,7 +1134,7 @@ fn merge_execution_unit(target: &mut ExecutionUnit, source: ExecutionUnit) {
 fn coalesce_worker_batches(units: Vec<ExecutionUnit>, jobs: usize) -> Vec<ExecutionUnit> {
     let mut batches: Vec<ExecutionUnit> = Vec::new();
     for unit in units {
-        if unit.serial {
+        if unit.serial || unit_contains_rust(&unit) {
             batches.push(unit);
             continue;
         }
@@ -1157,12 +1166,14 @@ fn coalesce_worker_batches(units: Vec<ExecutionUnit>, jobs: usize) -> Vec<Execut
     batches
 }
 
-/// Return whether a candidate unit may start alongside the currently active units.
+/// Admit independent prepared Rust cases concurrently while excluding shared generated Incan outputs.
+/// Resource and serial constraints apply to both languages, regardless of whether their executable is already built.
 fn active_units_allow(active: &[ActiveUnit], candidate: &ExecutionUnit) -> bool {
-    if active
-        .iter()
-        .any(|unit| !unit.file_paths.is_disjoint(&candidate.file_paths))
-    {
+    if active.iter().any(|unit| {
+        unit.file_paths
+            .intersection(&candidate.file_paths)
+            .any(|path| path.extension().is_none_or(|extension| extension != "rs"))
+    }) {
         return false;
     }
     if candidate.serial {
@@ -1988,6 +1999,8 @@ pub(crate) fn execute_tests_with_owner(
 
 #[cfg(test)]
 mod tests {
+    mod scheduling;
+
     use super::*;
     use std::path::PathBuf;
 
@@ -2536,7 +2549,7 @@ mod tests {
 
         assert!(
             !active_units_allow(&active, &candidate),
-            "same source file units share a generated Cargo crate and must not overlap"
+            "same Incan source units share a generated harness and must not overlap"
         );
     }
 }
