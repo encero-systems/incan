@@ -61,6 +61,90 @@ fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// A consuming carrier read is materialized before a default can mutate the original mutable parameter.
+#[test]
+fn carrier_receiver_snapshot_precedes_default_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def reset(mut value: Option[str]) -> str:\n  value = Some(\"new\")\n  return \"fallback\"\n\ndef choose(mut value: Option[str]) -> str:\n  return value.unwrap_or(reset(value))\n",
+        &["app", "carrier_order"],
+    )?;
+    let body = body_named(&module, "choose")?;
+    let snapshot = body
+        .block
+        .stmts
+        .iter()
+        .enumerate()
+        .find_map(|(index, statement)| {
+            let bir::StatementKind::Assign { destination, value } = &statement.kind else {
+                return None;
+            };
+            let bir::Rvalue::Use(bir::Operand::Place(read)) = value else {
+                return None;
+            };
+            (read.fact == bir::OwnershipFact::Clone).then_some((index, destination))
+        })
+        .ok_or_else(|| format!("missing carrier snapshot: {}", body.render_snapshot()))?;
+    let default = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| {
+            matches!(
+                &statement.kind,
+                bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. }
+                    if target.name == "reset"
+            )
+        })
+        .ok_or("missing default call")?;
+    assert!(snapshot.0 < default, "{}", body.render_snapshot());
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "unwrap_or" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => Some(&read.place),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing consuming receiver")?;
+    assert_eq!(receiver, snapshot.1);
+    Ok(())
+}
+
+/// Static defaults are evaluated before reading lock-guarded storage, so Body IR preserves the global receiver.
+#[test]
+fn static_carrier_receiver_remains_after_default_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static VALUE: Option[str] = Some(\"old\")\n\ndef reset() -> str:\n  VALUE = Some(\"new\")\n  return \"fallback\"\n\ndef main() -> str:\n  return VALUE.unwrap_or(reset())\n",
+        &["app", "static_carrier_order"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "unwrap_or" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => read.place.global(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing delayed global receiver")?;
+    assert_eq!(receiver.identity.declaration_name, "VALUE");
+    Ok(())
+}
+
 /// Empty model field defaults retain the declaration's checked element type in their deferred frame.
 #[test]
 fn empty_model_field_defaults_retain_declared_elements() -> Result<(), Box<dyn std::error::Error>> {
