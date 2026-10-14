@@ -6174,10 +6174,14 @@ def frame_locals(
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:
-            match list_shape(ty):
-                Some((leaf, depth)) =>
+            # A checked move preserves an admitted generator or zip carrier's existing ownership. Only an owned
+            # list needs the consuming list cursor representation; borrowed or unsupported carriers cannot supply it.
+            match ty:
+                PlanType.List(leaf, depth) =>
                     ty = PlanType.ListIntoIter(leaf, depth)
-                None => return Err("unsupported Body IR consuming iteration outside an owned list")
+                PlanType.Generator(_leaf, _depth) => pass
+                PlanType.ZipIterator(_left, _right) => pass
+                _ => return Err("unsupported Body IR consuming iteration outside an owned list")
         elif index in iterators:
             match ty:
                 PlanType.FrozenCollection(_name, _elements) =>
