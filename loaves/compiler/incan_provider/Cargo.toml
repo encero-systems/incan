@@ -14,7 +14,7 @@ path = "src/lib.rs"
 # Mirrors the command line's defaults without `cli`, so `cargo test -p incan_provider` sees the stdlib semantics
 # packs; `incan-cli` selects features explicitly and never relies on these.
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["incan_frontend/rust_inspect", "rust_inspect/inspector"]
+rust_inspect = ["incan_frontend/rust_inspect"]
 std_testing = ["incan_frontend/std_testing"]
 std_async = ["incan_frontend/std_async"]
 std_decorators = ["incan_frontend/std_decorators"]
@@ -31,12 +31,16 @@ oven_model = { workspace = true }
 oven_rustc = { workspace = true }
 oven_cargo_compat = { workspace = true }
 oven_store = { workspace = true }
-rust_inspect = { workspace = true }
+# SDK publication writes and validates the inspection authorities (source graph, proc-macro coordinates) in every
+# build, so the inspector's format is a dependency of the provider itself, not of its `rust_inspect` feature.
+rust_inspect = { workspace = true, features = ["inspector"] }
+semver = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10.9"
 thiserror = { workspace = true }
 toml = "0.9"
+tracing = { workspace = true }
 wasmtime = { version = "36.0.17", default-features = false, features = ["cranelift", "runtime", "std"] }
 
 [dev-dependencies]

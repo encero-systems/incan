@@ -128,7 +128,7 @@ pub(crate) fn check_path_report_with_interop_target_selection(
 ) -> CliResult<DiagnosticReport> {
     let normalized_path = normalize_input_path(path)?;
     let compilation_session =
-        match CompilationSession::discover_with_selections(&normalized_path, feature_selection, sdk_profile_override) {
+        match CompilationSession::discover_for_check(&normalized_path, feature_selection, sdk_profile_override) {
             Ok(session) => session,
             Err(error) => {
                 let failure = CliDiagnosticFailure::single(
@@ -350,5 +350,452 @@ fn normalize_input_path(path: &Path) -> CliResult<PathBuf> {
         Ok(env::current_dir()
             .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
             .join(path))
+    }
+}
+
+#[cfg(test)]
+mod dev7_checked_provider_metadata_tests {
+    use super::*;
+    use incan_frontend::library_manifest_index::{LibraryArtifactKind, LibraryManifestIndexEntry};
+    use std::fs;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Write only authored inputs for a local package; checking must not require generated files.
+    fn write_package(root: &Path, manifest: &str, entry: &str, source: &str) -> TestResult {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("loaf.toml"), manifest)?;
+        fs::write(root.join("src").join(entry), source)?;
+        Ok(())
+    }
+
+    /// Read the command-local source authority without treating it as an executable artifact.
+    fn source_identity(entry: &Path, dependency: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let session = CompilationSession::discover_for_check(entry, &FeatureSelection::default(), None)?;
+        let Some(LibraryManifestIndexEntry::Loaded { manifest, metadata }) =
+            session.library_manifest_index.get(dependency)
+        else {
+            return Err(format!("checked provider `{dependency}` is missing").into());
+        };
+        assert_eq!(metadata.kind, LibraryArtifactKind::CheckedSource);
+        let record = session
+            .provider_plan
+            .records()
+            .find(|record| record.identity.name == manifest.name)
+            .ok_or("checked source provider record is missing")?;
+        assert!(record.artifact.is_none());
+        assert!(record.implementation_facets.is_empty());
+        assert!(manifest.contract_metadata.executable_representation.is_none());
+        Ok(record.identity.stable_key())
+    }
+
+    /// Reject any generated project or provider output in the fresh source-only tree.
+    fn assert_no_outputs(root: &Path) -> TestResult {
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                assert_ne!(entry.file_name(), "target", "check generated {}", path.display());
+                assert_no_outputs(&path)?;
+            } else {
+                assert_ne!(path.extension().and_then(|value| value.to_str()), Some("incnlib"));
+            }
+        }
+        Ok(())
+    }
+
+    /// A fresh local provider is checked successfully without receiving native execution authority.
+    #[test]
+    fn dev7_checked_provider_metadata_fresh_dependency() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\nversion='0.1.0'\n[dependencies]\nwidgets={path='deps/widgets'}\n",
+            "main.incn",
+            "from pub::widgets import answer\n\ndef main() -> None:\n    print(answer())\n",
+        )?;
+        write_package(
+            &root.join("deps/widgets"),
+            "[project]\nname='widgets'\nversion='0.1.0'\n",
+            "lib.incn",
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        source_identity(&entry, "widgets")?;
+        let error = CompilationSession::discover_for_oven(&entry, &FeatureSelection::default(), None)
+            .err()
+            .ok_or("execution accepted unbaked source")?;
+        assert!(error.to_string().contains("requires a baked package Loaf"), "{error}");
+        assert_no_outputs(root)
+    }
+
+    /// Check retains the published public boundary for unsupported defaults, trait bodies and inactive exports.
+    #[test]
+    fn dev7_checked_provider_metadata_existing_refusals() -> TestResult {
+        let cases = [
+            ("refused_adopter_relying_on_a_dependency_trait_default", "INCAN-T0001"),
+            ("refused_dependency_default_calling_a_builtin", "INCAN-T0001"),
+            ("refused_dependency_default_constructing_a_private_model", "INCAN-T0001"),
+            ("refused_feature_gated_export_of_dependency", "INCAN-I0103"),
+            ("refused_imported_partial_without_carried_default", "INCAN-T0001"),
+        ];
+        for (name, expected) in cases {
+            let scratch = tempfile::tempdir()?;
+            let root = scratch.path().join(name);
+            incan_test_support::cli_project::copy_fixture_directory(
+                &incan_test_support::fixtures_dir()
+                    .join("behavior/cli_dependencies")
+                    .join(name),
+                &root,
+            )?;
+            assert_no_outputs(&root)?;
+            let report =
+                check_path_report_with_selections(&root.join("src/main.incn"), &FeatureSelection::default(), None)?;
+            assert!(!report.ok(), "{name}: {report:?}");
+            let json = serde_json::to_value(&report)?;
+            let diagnostics = json["diagnostics"].as_array().ok_or("missing check diagnostics")?;
+            assert!(
+                diagnostics.iter().any(|diagnostic| diagnostic["code"] == expected),
+                "{name}: {report:?}"
+            );
+            assert!(
+                diagnostics.iter().all(|diagnostic| diagnostic["code"] != "INCAN-I0001"),
+                "{name}: {report:?}"
+            );
+            assert_no_outputs(&root)?;
+        }
+        Ok(())
+    }
+
+    /// A transitive source change and dependency-edge edit invalidate metadata; restoring inputs restores identity.
+    #[test]
+    fn dev7_checked_provider_metadata_source_graph_restoration() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        let middle = root.join("deps/middle");
+        let leaf = root.join("deps/leaf");
+        let middle_manifest = "[project]\nname='middle'\nversion='0.1.0'\n[dependencies]\nleaf={path='../leaf'}\n";
+        let leaf_source = "pub def answer() -> int:\n    return 42\n";
+        write_package(
+            root,
+            "[project]\nname='consumer'\nversion='0.1.0'\n[dependencies]\nmiddle={path='deps/middle'}\n",
+            "main.incn",
+            "from pub::middle import value\n\ndef main() -> None:\n    print(value())\n",
+        )?;
+        write_package(
+            &middle,
+            middle_manifest,
+            "lib.incn",
+            "from pub::leaf import answer\n\npub def value() -> int:\n    return answer()\n",
+        )?;
+        write_package(
+            &leaf,
+            "[project]\nname='leaf'\nversion='0.1.0'\n",
+            "lib.incn",
+            leaf_source,
+        )?;
+        let entry = root.join("src/main.incn");
+        let original = source_identity(&entry, "middle")?;
+        assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        fs::write(leaf.join("src/lib.incn"), leaf_source.replace("42", "43"))?;
+        assert_ne!(source_identity(&entry, "middle")?, original);
+        fs::write(leaf.join("src/lib.incn"), leaf_source)?;
+        assert_eq!(source_identity(&entry, "middle")?, original);
+        write_package(
+            &root.join("deps/other"),
+            "[project]\nname='other'\nversion='0.1.0'\n",
+            "lib.incn",
+            leaf_source,
+        )?;
+        fs::write(middle.join("loaf.toml"), middle_manifest.replace("../leaf", "../other"))?;
+        assert_ne!(source_identity(&entry, "middle")?, original);
+        fs::write(middle.join("loaf.toml"), middle_manifest)?;
+        assert_eq!(source_identity(&entry, "middle")?, original);
+        fs::write(
+            leaf.join("src/lib.incn"),
+            "pub def answer() -> str:\n    return \"changed\"\n",
+        )?;
+        assert!(!check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        fs::write(leaf.join("src/lib.incn"), leaf_source)?;
+        assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        assert_eq!(source_identity(&entry, "middle")?, original);
+        assert_no_outputs(root)
+    }
+
+    /// Selected features propagate through a middle package to its source dependency.
+    #[test]
+    fn dev7_checked_provider_metadata_transitive_features() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nmiddle={path='deps/middle',features=['alpha']}\n",
+            "main.incn",
+            "from pub::middle import value\n\ndef main() -> None:\n    print(value())\n",
+        )?;
+        write_package(
+            &root.join("deps/middle"),
+            "[project]\nname='middle'\n[project.features]\nalpha=['leaf/alpha']\n[dependencies]\nleaf={path='../leaf'}\n",
+            "lib.incn",
+            "from pub::leaf import answer\n\npub def value() -> int:\n    return answer()\n",
+        )?;
+        write_package(
+            &root.join("deps/leaf"),
+            "[project]\nname='leaf'\n[project.features]\nalpha=[]\n",
+            "lib.incn",
+            "when feature(\"alpha\"):\n    pub def answer() -> int:\n        return 42\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        source_identity(&entry, "middle")?;
+        assert_no_outputs(root)
+    }
+
+    /// Two consumers of one source dependency observe its unified additive feature instance.
+    #[test]
+    fn dev7_checked_provider_metadata_diamond_features() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nmiddle={path='deps/middle',features=['alpha']}\nright={path='deps/right',features=['beta']}\n",
+            "main.incn",
+            "from pub::middle import value\n\ndef main() -> None:\n    print(value())\n",
+        )?;
+        write_package(
+            &root.join("deps/middle"),
+            "[project]\nname='middle'\n[project.features]\nalpha=['leaf/alpha']\n[dependencies]\nleaf={path='../leaf'}\n",
+            "lib.incn",
+            "from pub::leaf import beta_value\n\npub def value() -> int:\n    return beta_value()\n",
+        )?;
+        write_package(
+            &root.join("deps/right"),
+            "[project]\nname='right'\n[project.features]\nbeta=['leaf/beta']\n[dependencies]\nleaf={path='../leaf'}\n",
+            "lib.incn",
+            "pub def value() -> int:\n    return 7\n",
+        )?;
+        write_package(
+            &root.join("deps/leaf"),
+            "[project]\nname='leaf'\n[project.features]\nalpha=[]\nbeta=[]\n",
+            "lib.incn",
+            "when feature(\"alpha\"):\n    pub def alpha_value() -> int:\n        return 41\n\nwhen feature(\"beta\"):\n    pub def beta_value() -> int:\n        return 42\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        source_identity(&entry, "middle")?;
+        assert_no_outputs(root)
+    }
+
+    /// Public model and newtype reexports retain their exact declaring source identity without exposing private edges.
+    #[test]
+    fn dev7_checked_provider_metadata_transitive_nominals() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        let consumer = "from pub::middle import Widget, Tag\n\ndef main() -> None:\n    item = Widget(value=42)\n    tag = Tag(7)\n    print(item.value)\n";
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nmiddle={path='deps/middle'}\n",
+            "main.incn",
+            consumer,
+        )?;
+        write_package(
+            &root.join("deps/middle"),
+            "[project]\nname='middle'\n[dependencies]\nleaf={path='../leaf'}\n",
+            "lib.incn",
+            "pub from pub::leaf import Widget, Tag\n",
+        )?;
+        write_package(
+            &root.join("deps/leaf"),
+            "[project]\nname='leaf'\n",
+            "lib.incn",
+            "pub model Widget:\n    pub value: int\n\npub newtype Tag = int\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        let identity = source_identity(&entry, "middle")?;
+        let session = CompilationSession::discover_for_check(&entry, &FeatureSelection::default(), None)?;
+        assert!(session.library_manifest_index.get("leaf").is_none());
+        fs::write(&entry, consumer.replace("pub::middle", "pub::leaf"))?;
+        assert!(!check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        fs::write(&entry, consumer.replace("pub::middle", "pub::middle::leaf"))?;
+        assert!(!check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        fs::write(&entry, consumer)?;
+        assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        assert_eq!(source_identity(&entry, "middle")?, identity);
+        assert_no_outputs(root)
+    }
+
+    /// A producer's direct model has semantic authority while its provider retains no execution artifact.
+    #[test]
+    fn dev7_checked_provider_metadata_direct_nominal() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nwidgets={path='deps/widgets'}\n",
+            "main.incn",
+            "from pub::widgets import Widget\n\ndef main() -> None:\n    item = Widget(value=42)\n    print(item.value)\n",
+        )?;
+        write_package(
+            &root.join("deps/widgets"),
+            "[project]\nname='widgets'\n",
+            "lib.incn",
+            "pub model Widget:\n    pub value: int\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        let identity = source_identity(&entry, "widgets")?;
+        let producer = root.join("deps/widgets/src/lib.incn");
+        fs::write(&producer, "pub model Widget:\n    value: int\n")?;
+        let private = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(!private.ok(), "private producer field was exposed");
+        assert!(private.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "INCAN-T0001"
+                && diagnostic.message.contains("Field 'value'")
+                && diagnostic.message.contains("private")
+        }));
+        fs::write(&producer, "pub model Widget:\n    pub value: int\n")?;
+        assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        assert_eq!(source_identity(&entry, "widgets")?, identity);
+        assert_no_outputs(root)
+    }
+
+    /// Two declared aliases share a source nominal owner while each retains its declared import route.
+    #[test]
+    fn dev7_checked_provider_metadata_dual_alias_nominal() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nfirst={path='deps/widgets'}\nsecond={path='deps/widgets'}\n",
+            "main.incn",
+            "from pub::first import Widget\nfrom pub::second import Widget as OtherWidget\n\ndef value(item: Widget) -> int:\n    return item.value\n\ndef main() -> None:\n    first = Widget(value=41)\n    second = OtherWidget(value=42)\n    print(value(first), value(second))\n",
+        )?;
+        write_package(
+            &root.join("deps/widgets"),
+            "[project]\nname='widgets'\n",
+            "lib.incn",
+            "pub model Widget:\n    pub value: int\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        assert_eq!(source_identity(&entry, "first")?, source_identity(&entry, "second")?);
+        let session = CompilationSession::discover_for_check(&entry, &FeatureSelection::default(), None)?;
+        assert_eq!(
+            session
+                .provider_plan
+                .records()
+                .filter(|record| record.identity.name == "widgets")
+                .count(),
+            1
+        );
+        assert_no_outputs(root)
+    }
+
+    /// Fresh vocabulary companions refuse at metadata discovery rather than compiling during check.
+    #[test]
+    fn dev7_checked_provider_metadata_vocab_cache_miss() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nwidgets={path='deps/widgets'}\n",
+            "main.incn",
+            "from pub::widgets import answer\n\ndef main() -> None:\n    print(answer())\n",
+        )?;
+        let widgets = root.join("deps/widgets");
+        write_package(
+            &widgets,
+            "[project]\nname='widgets'\n[vocab]\ncrate='companion'\n",
+            "lib.incn",
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
+        fs::create_dir_all(widgets.join("companion/src"))?;
+        fs::write(
+            widgets.join("companion/Cargo.toml"),
+            "[package]\nname='dev7_checked_provider_metadata_companion_miss'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        fs::write(widgets.join("companion/src/lib.rs"), "pub fn library_vocab() {}\n")?;
+        let report =
+            check_path_report_with_selections(&root.join("src/main.incn"), &FeatureSelection::default(), None)?;
+        assert!(!report.ok(), "{report:?}");
+        assert!(
+            report
+                .human_message()
+                .is_some_and(|message| message.contains("preparation authority is missing")),
+            "{report:?}"
+        );
+        assert_no_outputs(root)
+    }
+
+    /// A recursive source-provider graph refuses deterministically before producing artifacts.
+    #[test]
+    fn dev7_checked_provider_metadata_dependency_cycle() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\na={path='deps/a'}\n",
+            "main.incn",
+            "def main() -> None:\n    pass\n",
+        )?;
+        write_package(
+            &root.join("deps/a"),
+            "[project]\nname='a'\n[dependencies]\nb={path='../b'}\n",
+            "lib.incn",
+            "pub def answer() -> int:\n    return 1\n",
+        )?;
+        write_package(
+            &root.join("deps/b"),
+            "[project]\nname='b'\n[dependencies]\na={path='../a'}\n",
+            "lib.incn",
+            "pub def answer() -> int:\n    return 2\n",
+        )?;
+        let report =
+            check_path_report_with_selections(&root.join("src/main.incn"), &FeatureSelection::default(), None)?;
+        assert!(!report.ok(), "{report:?}");
+        assert!(
+            report.human_message().is_some_and(|message| message.contains("cycle")),
+            "{report:?}"
+        );
+        assert_no_outputs(root)
+    }
+
+    /// Missing producer Rust ABI facts refuse explicitly rather than triggering native inspection during check.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn dev7_checked_provider_metadata_rust_abi_refusal() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nwidgets={path='deps/widgets'}\n",
+            "main.incn",
+            "from pub::widgets import answer\n\ndef main() -> None:\n    print(answer())\n",
+        )?;
+        write_package(
+            &root.join("deps/widgets"),
+            "[project]\nname='widgets'\n",
+            "lib.incn",
+            "from rust::std::time import Duration\n\npub def answer() -> int:\n    return 42\n",
+        )?;
+        let report =
+            check_path_report_with_selections(&root.join("src/main.incn"), &FeatureSelection::default(), None)?;
+        assert!(!report.ok(), "{report:?}");
+        assert!(
+            report
+                .human_message()
+                .is_some_and(|message| message.contains("requires Rust ABI metadata")),
+            "{report:?}"
+        );
+        assert_no_outputs(root)
     }
 }

@@ -4,12 +4,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "rust_inspect")]
+use std::time::Instant;
 
 use crate::build::rust_extern::RustExternDeclContext;
 use crate::error::{CliError, CliResult};
 use crate::project::resolve_project_root;
-#[cfg(feature = "rust_inspect")]
-use crate::rust_inspect_workspace::collect_rust_inspect_query_paths;
 #[cfg(feature = "rust_inspect")]
 use ::rust_inspect::Inspector;
 #[cfg(feature = "rust_inspect")]
@@ -30,7 +30,35 @@ pub fn collect_library_rust_abi_query_paths(
     modules: &[ParsedModule],
     rust_extern_contexts: &[RustExternDeclContext],
 ) -> Vec<String> {
-    let mut paths: BTreeSet<String> = collect_rust_inspect_query_paths(modules).into_iter().collect();
+    // Consumer prewarming can skip runtime facets. A durable publication must retain its own imported native ABI
+    // as well, regardless of that performance policy or the ambient prewarm environment.
+    let mut paths = BTreeSet::new();
+    for module in modules {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } = &import.kind
+            else {
+                continue;
+            };
+            let base = std::iter::once(crate_name.replace('-', "_"))
+                .chain(path.iter().cloned())
+                .collect::<Vec<_>>()
+                .join("::");
+            if matches!(base.as_str(), "std::primitive" | "core::primitive") {
+                continue;
+            }
+            for item in items {
+                paths.insert(format!("{base}::{}", item.name));
+            }
+        }
+    }
     for context in rust_extern_contexts {
         paths.insert(format!("{}::{}", context.rust_module_path, context.item_name));
     }
@@ -51,15 +79,19 @@ pub fn collect_library_rust_abi(
     }
 
     let inspector = Inspector::new(InspectorConfig::new(rust_inspect_manifest_dir.to_path_buf()));
+    let extraction_start = Instant::now();
     let mut items = Vec::new();
+    let mut complete_requests = 0;
     for path in query_paths {
         let Some(lookup_path) = Inspector::normalize_lookup_path(path) else {
             continue;
         };
-        match inspector
-            .cache()
-            .get_or_extract_complete(rust_inspect_manifest_dir, lookup_path, &|_| ())
-        {
+        complete_requests += 1;
+        match inspector.cache().get_or_extract_complete_deferred_persist(
+            rust_inspect_manifest_dir,
+            lookup_path,
+            &|_| (),
+        ) {
             Ok(metadata) => items.push((*metadata).clone()),
             Err(
                 RustMetadataError::CrateNotFound(_)
@@ -73,6 +105,83 @@ pub fn collect_library_rust_abi(
                 )));
             }
         }
+    }
+    let complete_extraction_ms = extraction_start.elapsed().as_secs_f64() * 1000.0;
+    let persistence_start = Instant::now();
+    // Persisting metadata is an accelerator, not publication authority; retain the original best-effort behavior.
+    if complete_requests > 0
+        && let Err(error) = inspector.cache().persist_manifest_dir(rust_inspect_manifest_dir)
+    {
+        tracing::warn!(
+            root = %rust_inspect_manifest_dir.display(),
+            error = %error,
+            "failed to persist batched public Rust ABI metadata"
+        );
+    }
+    tracing::debug!(
+        complete_abi_requests = complete_requests,
+        complete_abi_items = items.len(),
+        persistence_attempts = usize::from(complete_requests > 0),
+        complete_extraction_ms,
+        persistence_ms = persistence_start.elapsed().as_secs_f64() * 1000.0,
+        root = %rust_inspect_manifest_dir.display(),
+        "public Rust ABI metadata batch completed"
+    );
+    Ok(LibraryRustAbi::from_items(items))
+}
+
+/// Select a shipped ABI record only when it can satisfy durable publication without source extraction.
+#[cfg(feature = "rust_inspect")]
+fn complete_shipped_rust_abi_item(
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+    path: &str,
+) -> Option<incan_lang::interop::RustItemMetadata> {
+    index.rust_abi_item(path).filter(|metadata| match &metadata.kind {
+        incan_lang::interop::RustItemKind::Type(info) => {
+            info.metadata_completeness.has_methods() && info.metadata_completeness.has_trait_impls()
+        }
+        _ => true,
+    })
+}
+
+/// Prepare inspection only for queries not already answered by complete ABI in the checker's dependency index.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn library_rust_abi_source_queries(
+    query_paths: &[String],
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+) -> Vec<String> {
+    query_paths
+        .iter()
+        .filter(|path| complete_shipped_rust_abi_item(index, path).is_none())
+        .cloned()
+        .collect()
+}
+
+/// Reuse the checker's complete shipped ABI records and inspect only demands not covered by that same index.
+///
+/// The caller retains the dependency owners behind the index throughout checking and publication. Copying their
+/// checked facts avoids reconstructing a dependency's inspection workspace. Partial type records still require
+/// complete extraction and cannot satisfy a durable ABI requirement by themselves.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn collect_library_rust_abi_with_shipped(
+    rust_inspect_manifest_dir: Option<&Path>,
+    query_paths: &[String],
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+) -> CliResult<Option<LibraryRustAbi>> {
+    let mut items = Vec::new();
+    let mut source_queries = Vec::new();
+    for path in query_paths {
+        if let Some(metadata) = complete_shipped_rust_abi_item(index, path) {
+            items.push(metadata);
+        } else {
+            source_queries.push(path.clone());
+        }
+    }
+    if !source_queries.is_empty()
+        && let Some(directory) = rust_inspect_manifest_dir
+        && let Some(extracted) = collect_library_rust_abi(directory, &source_queries)?
+    {
+        items.extend(extracted.items);
     }
     Ok(LibraryRustAbi::from_items(items))
 }
@@ -431,6 +540,135 @@ mod tests {
             paths.iter().any(|path| path == "incan_std_core::num::gcd_i64"),
             "expected rust.extern backing item in ABI query paths, got: {paths:?}"
         );
+        Ok(())
+    }
+
+    /// Prepare the supported dependency-free Loaf inspection route with explicit sysroot-only source authority.
+    #[cfg(feature = "rust_inspect")]
+    fn dev7_mutable_demand_prepare_local_abi_workspace(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        crate::lock::registry_sources::acquire_explicit_project_inspection_sources(root, root, &[])?;
+        fs::write(root.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
+        fs::write(root.join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")?;
+        Ok(())
+    }
+
+    /// ABI publication promotes partial records, survives source restoration and refuses missing extraction authority.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn dev7_mutable_demand_public_abi_remains_complete_and_source_current() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("src"))?;
+        fs::write(
+            root.path().join("loaf.toml"),
+            "[project]\nname='abi_demand_probe'\nversion='1.0.0'\n[rust]\nname='abi_demand_probe'\ntype='lib'\nedition='2021'\n",
+        )?;
+        let source = root.path().join("src/lib.rs");
+        let original = "pub trait Intrinsic {}\npub struct Thing;\nimpl Intrinsic for Thing {}\n";
+        fs::write(&source, original)?;
+        dev7_mutable_demand_prepare_local_abi_workspace(root.path())?;
+        let query = "abi_demand_probe::Thing";
+        let paths = vec![query.to_string()];
+        let cache = rust_inspect::RustMetadataCache::new();
+        cache.insert_test_item(
+            root.path(),
+            incan_lang::interop::RustItemMetadata {
+                canonical_path: query.to_string(),
+                definition_path: Some(query.to_string()),
+                visibility: incan_lang::interop::RustVisibility::Public,
+                kind: incan_lang::interop::RustItemKind::Type(incan_lang::interop::RustTypeInfo {
+                    type_params: Vec::new(),
+                    type_param_defaults: Vec::new(),
+                    mutable_reference_type_params: Vec::new(),
+                    expanded_derive_traits: Vec::new(),
+                    has_const_params: false,
+                    alias_target: None,
+                    metadata_completeness: incan_lang::interop::RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+                    methods: Vec::new(),
+                    implemented_traits: Vec::new(),
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )?;
+        let first = collect_library_rust_abi(root.path(), &paths)?.ok_or("missing checked ABI")?;
+        let incan_lang::interop::RustItemKind::Type(first_type) = &first.get(query).ok_or("missing type ABI")?.kind
+        else {
+            return Err("expected type ABI".into());
+        };
+        assert!(first_type.metadata_completeness.has_trait_impls());
+        assert!(
+            first_type
+                .implemented_traits
+                .iter()
+                .any(|implementation| implementation.path.ends_with("::Intrinsic"))
+        );
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.path().join(".incan_rust_inspect_cache.json"))?)?;
+        assert!(
+            persisted["complete_items"]
+                .as_array()
+                .ok_or("complete items missing")?
+                .iter()
+                .any(|item| item.as_str() == Some(query))
+        );
+        assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first.clone()));
+
+        // Each source generation explicitly invalidates its editable inspection workspace before publication.
+        fs::write(&source, "pub trait Intrinsic {}\npub struct Thing;\n")?;
+        cache.invalidate_manifest_dir(root.path())?;
+        let changed = collect_library_rust_abi(root.path(), &paths)?.ok_or("changed ABI missing")?;
+        assert_ne!(
+            changed, first,
+            "changed trait facts must not borrow the previous complete record"
+        );
+        fs::write(&source, original)?;
+        cache.invalidate_manifest_dir(root.path())?;
+        assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first));
+        let unprepared = tempfile::tempdir()?;
+        fs::write(
+            unprepared.path().join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER),
+            "1\n",
+        )?;
+        fs::write(
+            unprepared.path().join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER),
+            "1\n",
+        )?;
+        let error = collect_library_rust_abi(unprepared.path(), &paths)
+            .err()
+            .ok_or("missing Loaf inspection preparation was accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("Loaf-only inspection has no authored probe declaration"),
+            "missing preparation must refuse on the direct Loaf route: {error}"
+        );
+        Ok(())
+    }
+
+    /// A batched cache write remains best effort after the complete ABI has already been checked.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn dev7_mutable_demand_abi_cache_write_failure_preserves_checked_result() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("src"))?;
+        fs::write(
+            root.path().join("loaf.toml"),
+            "[project]\nname='abi_flush_probe'\nversion='1.0.0'\n[rust]\nname='abi_flush_probe'\ntype='lib'\nedition='2021'\n",
+        )?;
+        fs::write(root.path().join("src/lib.rs"), "pub struct Thing;\n")?;
+        dev7_mutable_demand_prepare_local_abi_workspace(root.path())?;
+        let paths = vec!["abi_flush_probe::Thing".to_string()];
+        let first = collect_library_rust_abi(root.path(), &paths)?.ok_or("missing checked ABI")?;
+        let temporary_cache = root.path().join(".incan_rust_inspect_cache.tmp");
+        fs::create_dir(&temporary_cache)?;
+        assert_eq!(
+            collect_library_rust_abi(root.path(), &paths)?,
+            Some(first.clone()),
+            "cache persistence failure must not erase checked semantic authority"
+        );
+        fs::remove_dir(temporary_cache)?;
+        assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first));
         Ok(())
     }
 

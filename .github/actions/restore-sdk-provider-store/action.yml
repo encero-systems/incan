@@ -3,11 +3,14 @@ description: Reuse an immutable SDK provider store for the compiler-owned source
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/fetch-sdk-native-sources
+    # The sealed store identity folds in native receipts that only preparation produces, so this restore, which runs
+    # before preparation, keys on the identity of the preparation inputs instead.
     - name: Fingerprint provider inputs
       id: identity
       shell: bash
       run: |
-        provider_identity="$(INCAN_NO_BANNER=1 target/debug/incan oven sdk-provider-store-identity --compiler-root .)"
+        provider_identity="$(INCAN_NO_BANNER=1 target/debug/incan oven sdk-provider-store-identity --inputs --compiler-root .)"
         rustc_identity="$(rustc --version --verbose | shasum -a 256 | awk '{print $1}')"
         printf 'provider_identity=%s\n' "$provider_identity" >> "$GITHUB_OUTPUT"
         printf 'rustc_identity=%s\n' "$rustc_identity" >> "$GITHUB_OUTPUT"

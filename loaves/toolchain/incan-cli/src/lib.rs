@@ -67,9 +67,11 @@ pub use oven_cli::cli::{
     OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
     PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
 };
+/// Shared opt-in invocation diagnostics used by both CLI entrypoints.
+pub use oven_cli::invocation_trace;
 
 /// ASCII art logo - embedded at compile time from the package's assets/logo.txt
-const LOGO: &str = include_str!("../assets/logo.txt");
+const LOGO: &str = include_str!("assets/logo.txt");
 const VERSION: &str = incan_lang::version::INCAN_VERSION;
 
 // ============================================================================
@@ -148,6 +150,10 @@ pub enum CacheCategory {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Publish or reuse checked native SDK components from the source catalog.
+    #[command(name = "prepare-sdk", hide = true)]
+    PrepareSdk,
+
     /// Compile to Rust and build an executable through Oven Alpha direct-rustc
     Build {
         /// Source file to compile
@@ -795,6 +801,7 @@ pub enum CacheCommand {
 /// This is the only place where `process::exit` is called. All command implementations return `CliResult` and errors
 /// are handled here. Parse CLI arguments, execute the selected command, and exit the process.
 pub fn run() {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::run", input = ?std::env::args_os().skip(1).collect::<Vec<_>>()).entered();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(err) => {
@@ -1209,6 +1216,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 detect,
             },
         ),
+        Some(Command::PrepareSdk) => {
+            let inventory = incan_driver::build::native_sdk::prepare_or_discover_sdk_inventory()?.ok_or_else(|| {
+                incan_driver::error::CliError::failure("no SDK source catalog or installed inventory")
+            })?;
+            println!("{}", inventory.root.display());
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Command::Lock { args }) => oven_cli::run_lock_command(args),
         None => {
             // Default: type check the file if provided
@@ -2439,12 +2453,29 @@ mod tests {
             "compiler-source",
         ])?;
         let Some(Command::Oven {
-            command: OvenCommand::SdkProviderStoreIdentity { compiler_root },
+            command: OvenCommand::SdkProviderStoreIdentity { compiler_root, inputs },
         }) = provider_identity.command
         else {
             return Err(expected_command("oven sdk-provider-store-identity"));
         };
         assert_eq!(compiler_root, PathBuf::from("compiler-source"));
+        assert!(!inputs, "the sealed store identity is the default");
+
+        let input_identity = parse_cli([
+            "incan",
+            "oven",
+            "sdk-provider-store-identity",
+            "--inputs",
+            "--compiler-root",
+            "compiler-source",
+        ])?;
+        let Some(Command::Oven {
+            command: OvenCommand::SdkProviderStoreIdentity { inputs, .. },
+        }) = input_identity.command
+        else {
+            return Err(expected_command("oven sdk-provider-store-identity --inputs"));
+        };
+        assert!(inputs, "--inputs selects the preparation-input identity");
 
         let compiler_suite = parse_cli([
             "incan",

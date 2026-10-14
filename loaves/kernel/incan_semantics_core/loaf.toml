@@ -1,0 +1,19 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_lang = { loaf = "incan_lang", path = "../incan_lang" }
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+
+[project]
+description = "Shared surface-semantics contracts and registry interfaces for the Incan compiler"
+license = "Apache-2.0"
+name = "incan_semantics_core"
+private = true
+version = "0.6.0-dev.6"
+
+[rust]
+edition = "2024"
+name = "incan_semantics_core"
+type = "lib"

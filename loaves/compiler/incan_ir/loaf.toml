@@ -1,0 +1,32 @@
+[dependencies]
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+
+[project]
+description = "The Incan compiler's IR and the lowering from the checked program to it"
+license = "Apache-2.0"
+name = "incan_ir"
+private = true
+version = "0.6.0-dev.6"
+
+[project.features]
+default = [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators",
+]
+rust_inspect = ["incan_frontend/rust_inspect"]
+std_async = ["incan_frontend/std_async"]
+std_decorators = ["incan_frontend/std_decorators"]
+std_testing = ["incan_frontend/std_testing"]
+
+[rust]
+edition = "2024"
+name = "incan_ir"
+type = "lib"

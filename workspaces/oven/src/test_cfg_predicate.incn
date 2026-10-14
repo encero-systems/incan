@@ -1,0 +1,45 @@
+"""Canonical selectors, snapshot-only evaluation and complete malformed-construct refusals."""
+
+from cfg_predicate import parse_selector, evaluate_cfg, Selector
+
+
+def matches(source: str) -> Result[bool, str]:
+    """Supply all target categories as explicit facts, never an ambient target database."""
+    values = {"target_arch": ["aarch64"], "target_os": ["macos"], "target_family": ["unix"], "target_env": [""], "target_abi": [""], "target_vendor": ["apple"], "target_pointer_width": ["64"], "target_endian": ["little"], "target_feature": ["neon"], "target_has_atomic": ["64", "ptr"], "panic": ["unwind"], "feature": ["full"], "custom": ["hello world"]}
+    selector = parse_selector(source)?
+    match selector:
+        Selector.Triple(triple) => return Ok(triple == "aarch64-apple-darwin")
+        Selector.Cfg(tokens) => return evaluate_cfg(tokens, ["unix", "debug_assertions", "custom_flag"], values)
+
+
+pub def test_atoms_and_all_fact_categories() -> Result[None, str]:
+    """Target and generic keys share the supplied complete snapshot contract."""
+    for atom in ["unix", "debug_assertions", "custom_flag", "target_arch = \"aarch64\"", "target_os = \"macos\"", "target_family = \"unix\"", "target_env = \"\"", "target_abi = \"\"", "target_vendor = \"apple\"", "target_pointer_width = \"64\"", "target_endian = \"little\"", "target_feature = \"neon\"", "target_has_atomic = \"ptr\"", "panic = \"unwind\"", "feature = \"full\"", "custom = \"hello world\""]:
+        assert matches(f"cfg({atom})")?
+    assert not matches("cfg(windows)")?
+    assert not matches("cfg(target_os = \"linux\")")?
+    assert not matches("cfg(missing = \"value\")")?
+    assert matches("aarch64-apple-darwin")?
+    assert not matches("x86_64-pc-windows-msvc")?
+    return Ok(None)
+
+
+pub def test_nested_boolean_predicates() -> Result[None, str]:
+    """Empty all is true, empty any is false, and not has one argument."""
+    assert matches("cfg(all())")?
+    assert not matches("cfg(any())")?
+    assert matches("cfg(not(windows))")?
+    assert matches("cfg(all(unix, any(windows, target_os = \"macos\"), not(any(windows, missing))))")?
+    assert not matches("cfg(any(windows, all(unix, missing)))")?
+    return Ok(None)
+
+
+pub def test_construct_refusals() -> Result[None, str]:
+    """Dead branches remain fully parsed; canonical spacing and function arity are mandatory."""
+    for source in ["", "cfg()", "cfg(unix", "cfg(unix))", "cfg(unix, windows)", "cfg(not())", "cfg(not(unix, windows))", "cfg(all(unix,))", "cfg(any(unix, unknown(windows)))", "cfg(unknown(unix))", "cfg(target_os = linux)", "cfg(target_os = \"linux)", "cfg(target_os=\"linux\")", "cfg(all(unix,windows))", "cfg( unix)", "cfg(unix )", "cfg(unix\t)", "cfg(1flag)", "cfg(target_os = \"a\\b\")", "cfg(foo::bar)", "cfg (unix)", " aarch64-apple-darwin", "aarch64 apple darwin"]:
+        match parse_selector(source):
+            Err(error) =>
+                assert error != ""
+            Ok(_) =>
+                assert false
+    return Ok(None)

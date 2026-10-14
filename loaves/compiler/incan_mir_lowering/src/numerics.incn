@@ -129,6 +129,11 @@ pub def sized_signed_integer(ty: PlanType) -> bool:
     return ty == PlanType.I8 or ty == PlanType.I16 or ty == PlanType.I32 or ty == PlanType.I128 or ty == PlanType.ISize
 
 
+pub def integer_carrier(ty: PlanType) -> bool:
+    """Recognize the ordinary and sized integer carriers that admit bit operations."""
+    return ty == PlanType.Int or sized_integer(ty)
+
+
 pub def numeric_carrier(ty: PlanType) -> bool:
     """Recognize ordinary and sized numeric carriers at checked assignment boundaries."""
     return has_sized_numeric(ty) or ty == PlanType.Int or ty == PlanType.Float

@@ -1,0 +1,33 @@
+"""Exact byte literal materialization through the legacy Vec[u8] representation."""
+
+from rust::incan_semantics_core::body_ir import Constant as RustConstant
+from pub::incan_mir_plan import Constant, ListLeaf, Operand, OperandKind, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place
+from builtins import list_call
+
+
+pub def bytes_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Place, str]:
+    """Build an owned byte vector with exact unsigned constants, including empty and non-ASCII literals."""
+    ty = PlanType.List(ListLeaf.U8, 1)
+    output = temporary(builder, ty, span)
+    match value:
+        RustConstant.Bytes(bytes) =>
+            list_call(builder, "empty_list", PlanType.U8, [], ty, [], output, span)
+            for byte in bytes:
+                reference = temporary(builder, PlanType.ListMutRef(ListLeaf.U8, 1), span)
+                builder.emit(plan_assign(reference, RvalueKind.MutBorrow(output), span))
+                argument = Operand(kind=OperandKind.Literal(Constant.Numeric(str(byte), PlanType.U8)), span=span)
+                unit = temporary(builder, PlanType.Unit, span)
+                list_call(
+                    builder,
+                    "append_list",
+                    PlanType.U8,
+                    [PlanType.ListMutRef(ListLeaf.U8, 1), PlanType.U8],
+                    PlanType.Unit,
+                    [read_place(reference, true, span), argument],
+                    unit,
+                    span,
+                )
+            return Ok(output)
+        _ => return Err("unsupported Body IR non-byte literal at bytes boundary")

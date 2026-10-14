@@ -10,6 +10,8 @@ from rust::incan_std_core::strings import (
     str_replace as runtime_replace_text,
     str_contains as runtime_contains_text,
     str_concat as runtime_concat,
+    str_starts_with as runtime_starts,
+    str_ends_with as runtime_ends,
     str_eq as runtime_equal,
     str_ne as runtime_unequal,
     str_lt as runtime_less,
@@ -17,6 +19,16 @@ from rust::incan_std_core::strings import (
     str_gt as runtime_greater,
     str_ge as runtime_greater_equal,
 )
+
+
+pub def starts_text(value: &str, prefix: &str) -> bool:
+    """Match a borrowed prefix through the same core function as legacy string methods."""
+    return runtime_starts(value, prefix)
+
+
+pub def ends_text(value: &str, suffix: &str) -> bool:
+    """Match a borrowed suffix through the same core function as legacy string methods."""
+    return runtime_ends(value, suffix)
 
 
 pub def concat_text(left: &str, right: &str) -> str:

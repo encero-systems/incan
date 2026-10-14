@@ -71,7 +71,7 @@ pub struct LibraryArtifactMetadata {
     pub cargo_toml_path: PathBuf,
     /// Path to generated crate entrypoint (`src/lib.rs`).
     pub crate_lib_path: PathBuf,
-    /// Whether this entry names a complete generated artifact or source-derived parser metadata only.
+    /// Whether this entry names a generated artifact, source-derived metadata, or standard vocabulary.
     pub kind: LibraryArtifactKind,
 }
 
@@ -82,6 +82,8 @@ pub enum LibraryArtifactKind {
     Materialized,
     /// Only source-derived syntax metadata is available for parser-only tooling such as formatting.
     ParserSource,
+    /// Checked public source metadata for a command-local check; no generated or native artifact exists.
+    CheckedSource,
     /// An SDK-provided artifact used only to activate and desugar standard vocabulary.
     ///
     /// The SDK provider plan remains the authority for executable standard modules, so this cannot become a package
@@ -191,6 +193,19 @@ impl LibraryManifestIndex {
     ) -> Result<(), LibraryManifestLoadFailure> {
         let manifest = LibraryManifest::read_from_path(manifest_path)
             .map_err(|source| LibraryManifestLoadFailure::from_manifest_error(manifest_path.to_path_buf(), source))?;
+        self.add_admitted_standard_vocab_provider(&manifest, manifest_path, crate_root)
+    }
+
+    /// Index standard vocabulary from an already admitted complete manifest, without reparsing source or metadata.
+    ///
+    /// The caller must hold the checked package owner and its exact reserved namespace grant. This syntax index
+    /// does not itself grant module ownership or execution authority.
+    pub fn add_admitted_standard_vocab_provider(
+        &mut self,
+        manifest: &LibraryManifest,
+        manifest_path: &Path,
+        crate_root: &Path,
+    ) -> Result<(), LibraryManifestLoadFailure> {
         let Some(vocab) = manifest.vocab.as_ref() else {
             return Ok(());
         };
@@ -593,7 +608,8 @@ fn load_library_manifest_entry_from_crate_root(dependency_key: &str, crate_root:
     }
 }
 
-fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
+/// Project a dependency package root into the canonical published library artifact coordinate.
+pub fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
     dependency_root.join(LIBRARY_ARTIFACT_DIR)
 }
 
@@ -690,12 +706,43 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
     Ok(candidates.remove(0))
 }
 
+/// Validate provider catalog shape without authorizing native execution.
+///
+/// A package-Loaf handoff supplies native authority through the driver's seal and receipt validators. Catalog loading
+/// only requires the named manifest and facade in that layout; it must not introduce generated Cargo metadata as an
+/// additional native input. Legacy generated providers retain their Cargo contract checks.
 fn validate_artifact_contract(
     dependency_key: &str,
     manifest: &LibraryManifest,
     manifest_path: &Path,
     crate_root: &Path,
 ) -> Result<LibraryArtifactMetadata, LibraryManifestLoadFailure> {
+    if crate::library_manifest::read_native_provider_artifact(crate_root, manifest)
+        .map_err(|error| LibraryManifestLoadFailure {
+            path: crate_root.join("native-provider.json"),
+            kind: LibraryManifestFailureKind::ArtifactInvalid,
+            message: error.to_string(),
+        })?
+        .is_some()
+        || crate::library_manifest::published_layout::packaged_library_loaf_manifest_path(crate_root).is_file()
+    {
+        let expected = format!("{}.incnlib", manifest.name);
+        if manifest_path.file_name().and_then(|name| name.to_str()) != Some(expected.as_str())
+            || !crate_root.join(LIBRARY_CRATE_LIB_RS).is_file()
+        {
+            return Err(LibraryManifestLoadFailure {
+                path: manifest_path.to_path_buf(),
+                kind: LibraryManifestFailureKind::ArtifactMismatch,
+                message: "native provider has mismatched manifest name or missing facade source".to_string(),
+            });
+        }
+        return Ok(LibraryArtifactMetadata::from_manifest_path(
+            dependency_key,
+            manifest.name.clone(),
+            manifest_path.to_path_buf(),
+            crate_root.to_path_buf(),
+        ));
+    }
     let cargo_toml_path = crate_root.join("Cargo.toml");
     if !cargo_toml_path.is_file() {
         return Err(LibraryManifestLoadFailure {
@@ -861,6 +908,18 @@ impl LibraryArtifactMetadata {
             manifest_name,
             crate_root,
             kind: LibraryArtifactKind::ParserSource,
+        }
+    }
+
+    /// Retain a checked source package's coordinates without claiming compiled execution authority.
+    pub fn for_checked_source(
+        dependency_key: impl Into<String>,
+        manifest_name: impl Into<String>,
+        project_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            kind: LibraryArtifactKind::CheckedSource,
+            ..Self::for_parser_source(dependency_key, manifest_name, project_root)
         }
     }
 

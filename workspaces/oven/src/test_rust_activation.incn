@@ -144,7 +144,8 @@ pub def test_dev_target_and_inert_build_slots_keep_separate_outcomes() -> None:
             assert reason == InactiveReason.TargetConditionFalse
         _ => fail("target request used the host cfg")
     match result.slots[2].activation:
-        SlotActivation.Inactive(reason) => assert reason == InactiveReason.InertBuildScript
+        SlotActivation.Inactive(reason) =>
+            assert reason == InactiveReason.InertBuildScript
         _ => fail("inert build declaration became a compilation demand")
     test_result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Test, false), "Cargo.toml"))
     match test_result.slots[0].activation:
@@ -167,8 +168,8 @@ pub def test_cfg_uses_actual_supplied_values_and_exact_target_triple() -> None:
             _ => fail("explicit matching target fact was not used")
 
 
-pub def test_missing_cfg_and_disallowed_feature_predicate_refuse() -> None:
-    """Missing target evidence and unsupported package-feature predicates are never false target claims."""
+pub def test_missing_cfg_refuses_and_supplied_feature_predicates_evaluate() -> None:
+    """Missing snapshots refuse; feature predicates use only the supplied snapshot."""
     source = "\n    [target.'cfg(unix)'.dependencies]\n    p='1'\n    "
     catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
     mut missing = context([], false, ActivationPurpose.Normal, false)
@@ -177,12 +178,12 @@ pub def test_missing_cfg_and_disallowed_feature_predicate_refuse() -> None:
         Ok(_) => fail("missing cfg facts were interpreted as false")
         Err(error) =>
             assert error.kind == IntakeErrorKind.Missing
-    disallowed = "\n    [target.'cfg(any(windows, feature = \"hidden\"))'.dependencies]\n    p='1'\n    "
-    disallowed_catalog = require_ok(read_dependency_catalog(disallowed, "Cargo.toml"))
-    match activate_unit(disallowed_catalog, context([], false, ActivationPurpose.Normal, false), "Cargo.toml"):
-        Ok(_) => fail("true branch hid an unsupported predicate")
-        Err(error) =>
-            assert error.kind == IntakeErrorKind.Unsupported
+    feature_source = "\n    [target.'cfg(any(windows, feature = \"hidden\"))'.dependencies]\n    p='1'\n    "
+    feature_catalog = require_ok(read_dependency_catalog(feature_source, "fixture"))
+    result = require_ok(activate_unit(feature_catalog, context([], false, ActivationPurpose.Normal, false), "fixture"))
+    match result.slots[0].activation:
+        SlotActivation.Active(_, _, _) => pass
+        _ => fail("supplied windows flag did not activate the declaration")
 
 
 pub def test_missing_feature_alias_or_inherited_source_refuses() -> None:
@@ -214,7 +215,7 @@ pub def test_real_regex_default_demands_keep_every_dev_slot_inactive() -> None:
 
 
 pub def test_semver_requirement_checks_do_not_select_a_source() -> None:
-    """Use the existing semver crate for bounds, including prerelease and malformed input behavior."""
+    """Use Incan SemVer policy for bounds, including prerelease and malformed input behavior."""
     assert require_ok(version_matches("1", "1.12.3", "request"))
     assert not require_ok(version_matches("1", "2.0.0", "request"))
     assert not require_ok(version_matches("1", "1.12.3-alpha.1", "request"))
@@ -249,7 +250,7 @@ pub def test_explicit_alias_feature_replaces_implicit_optional_activation() -> N
 
 
 pub def test_cfg_named_fields_use_supplied_snapshot_without_builtin_target_lookup() -> None:
-    """Exercise external struct-variant patterns and cfg-expr evaluation on explicit custom facts."""
+    """Evaluate generic key-value predicates against explicit custom facts."""
     source = "\n    [target.'cfg(all(custom, custom_key = \"enabled\"))'.dependencies]\n    p='1'\n    "
     catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
     mut selected = context([], false, ActivationPurpose.Normal, false)
@@ -293,3 +294,19 @@ pub def test_duplicate_requests_and_shared_feature_paths_keep_sorted_demands() -
         # Intake already collapsed the authored `['base','base']` into one sorted demand. Re-reading it after each
         # activation proves activation does not fold `cache?/serde` back into the declaration it was resolved from.
         assert catalog.dependencies[0].features == ["base"]
+
+
+pub def test_strong_forwarding_expands_explicit_alias_feature_per_domain() -> None:
+    """An explicit optional alias feature expands only where an optional declaration applies."""
+    source = "\n    [target.'cfg(unix)'.dependencies]\n    cache={version='1', optional=true}\n    [features]\n    use=['cache/serde']\n    cache=['dep:cache','extra']\n    extra=[]\n    "
+    catalog = require_ok(read_dependency_catalog(source, "fixture"))
+    mut host_context = context(["use"], false, ActivationPurpose.Normal, false)
+    host_context.domain = DependencyDomain.Host
+    host_result = require_ok(activate_unit(catalog, host_context, "fixture"))
+    assert host_result.effective_features == ["cache", "extra", "use"]
+    target_result = require_ok(
+        activate_unit(catalog, context(["use"], false, ActivationPurpose.Normal, false), "fixture"),
+    )
+    assert target_result.effective_features == ["use"]
+    direct = require_ok(activate_unit(catalog, context(["cache"], false, ActivationPurpose.Normal, false), "fixture"))
+    assert direct.effective_features == ["cache", "extra"]

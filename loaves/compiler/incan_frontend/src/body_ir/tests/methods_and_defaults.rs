@@ -4,6 +4,26 @@
 
 use super::*;
 
+/// Explicit builtin derives survive collection of a newtype's checked nominal carrier.
+#[test]
+fn retains_explicit_newtype_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("@derive(Clone, Eq)\npub newtype EntryId = str\n", &["ids"])?;
+    let nominal = module
+        .nominal_declarations
+        .first()
+        .ok_or("derived newtype carrier missing")?;
+    assert!(nominal.derives.iter().any(|selection| selection == "Clone"));
+    assert!(nominal.derives.iter().any(|selection| selection == "Eq"));
+    assert!(nominal.derives.iter().any(|selection| selection == "PartialEq"));
+    let numeric = build("@derive(Clone, Eq)\npub newtype Count = int\n", &["counts"])?;
+    let carrier = numeric
+        .nominal_declarations
+        .first()
+        .ok_or("numeric newtype carrier missing")?;
+    assert_eq!(carrier.derives, ["Debug", "Clone", "Copy", "Eq", "PartialEq"]);
+    Ok(())
+}
+
 #[test]
 fn lowers_an_immutable_receiver_read_through_a_field_projection() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Counter:\n  value: int\n\n  def get(self) -> int:\n    return self.value\n";
@@ -113,6 +133,51 @@ fn lowers_chained_assignment_right_to_left() -> Result<(), Box<dyn std::error::E
         snapshot.contains("const(5)"),
         "the rightmost target reads the literal value: {snapshot}"
     );
+    Ok(())
+}
+
+/// A chained value the checker recorded as written per target is evaluated once per target, left to right, at that
+/// target's type, as legacy writes it: `n = f = 1` over an `int` and a `float` writes the integer `1` to `n` and the
+/// float `1.0` to `f`, and a name the chain declares takes the literal as an `int`.
+#[test]
+fn chained_literal_written_per_target_takes_each_target_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def chain() -> None:\n  mut n: int = 0\n  mut f: float = 0.5\n  n = f = 1\n  x = n = f = -2\n";
+    let module = build(source, &["m", "chained_per_target"])?;
+    let body = body_named(&module, "chain")?;
+    let local_named = |name: &str| {
+        body.locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .map(|local| local.id)
+            .ok_or(format!("missing local `{name}`"))
+    };
+    let (n, f, x) = (local_named("n")?, local_named("f")?, local_named("x")?);
+    let writes: Vec<(bir::LocalId, &bir::Constant)> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Constant(constant)),
+            } => place.local_id().map(|local| (local, constant)),
+            _ => None,
+        })
+        .collect();
+    // An `int` target keeps `-2` as a negation of `2`; only the `float` target folds it into a constant.
+    let expected = [
+        (n, bir::Constant::Int(0)),
+        (f, bir::Constant::Float("0.5".into())),
+        (n, bir::Constant::Int(1)),
+        (f, bir::Constant::Float("1".into())),
+        (f, bir::Constant::Float("-2".into())),
+    ];
+    assert_eq!(body.locals[x.index()].ty, IncanType::Primitive(IncanPrimitiveType::Int));
+    let actual: Vec<(bir::LocalId, bir::Constant)> = writes
+        .into_iter()
+        .map(|(local, constant)| (local, constant.clone()))
+        .collect();
+    assert_eq!(actual, expected);
     Ok(())
 }
 
@@ -414,6 +479,7 @@ fn unsupported_race_arm_in_a_default_is_found_at_its_nested_source_span() {
     );
 }
 
+/// Default validation descends into structured computations and preserves the unsupported statement's own span.
 #[test]
 fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans() {
     // A source default can construct a closure or generator, or evaluate a match, whose structured Body IR owns
@@ -443,6 +509,7 @@ fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans
                 params: Vec::new(),
                 captured_operands: Vec::new(),
                 body: Box::new(bir::ClosureBody {
+                    function_item: false,
                     capture_locals: Vec::new(),
                     stmts: vec![unsupported(closure_span, "closure body")],
                     result: result.clone(),
@@ -1182,5 +1249,107 @@ def main() -> None:
         })
         .ok_or("the mutable default must retain its method call")?;
     assert_eq!(target.canonical.as_ref(), Some(&bump.method));
+    Ok(())
+}
+
+/// Supertrait slots and defaults of a trait with type parameters retain the body that fills them per adopter.
+#[test]
+fn trait_implementation_facts_cover_supertrait_slots_and_checked_instantiations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Named:
+  def name(self) -> str: ...
+
+trait Tag with Named:
+  def loud(self) -> str:
+    return self.name() + "!"
+
+trait Root:
+  def label(self) -> str: ...
+
+trait Child with Root:
+  def label(self) -> str:
+    return "child"
+
+trait Holder[T]:
+  def get(self) -> T: ...
+  def pair(self) -> list[T]:
+    return [self.get(), self.get()]
+
+model Label with Tag:
+  text: str
+  def name(self) -> str:
+    return self.text
+
+model Item with Child:
+  value: int
+
+model Box with Holder[int]:
+  value: int
+  def get(self) -> int:
+    return self.value
+
+def main() -> None:
+  println(Label(text="x").loud())
+  println(Item(value=1).label())
+  println(len(Box(value=4).pair()))
+"#;
+    let module = build(source, &["m", "trait_hierarchies"])?;
+    for implementation in &module.trait_implementations {
+        assert!(
+            module.is_well_formed_trait_implementation(implementation),
+            "{implementation:?}"
+        );
+    }
+    let slot = |owner: &str, method: &str| {
+        module
+            .trait_implementations
+            .iter()
+            .filter(|implementation| {
+                implementation.owner.declaration_name == owner && implementation.method.declaration_name == method
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // ---- A supertrait slot the adopter implements itself ----
+    let [name] = slot("Label", "name")[..] else {
+        return Err("the supertrait slot must be retained once for its adopter".into());
+    };
+    assert_ne!(name.method, name.implementation);
+    assert!(name.type_arguments.is_empty());
+
+    // ---- A supertrait slot a subtrait default fills ----
+    let filled = slot("Item", "label");
+    assert_eq!(
+        filled.len(),
+        2,
+        "both the supertrait and the subtrait slot are retained: {filled:?}"
+    );
+    let child_default = filled
+        .iter()
+        .find(|implementation| implementation.method == implementation.implementation)
+        .ok_or("the subtrait's own slot keeps its default")?;
+    assert!(
+        filled
+            .iter()
+            .all(|implementation| implementation.implementation == child_default.implementation),
+        "the supertrait slot is filled by the subtrait default: {filled:?}"
+    );
+
+    // ---- A default of a trait with type parameters carries its checked instantiation ----
+    let [pair] = slot("Box", "pair")[..] else {
+        return Err("the generic trait default must be retained for its adopter".into());
+    };
+    assert_eq!(pair.method, pair.implementation);
+    assert_eq!(
+        pair.type_arguments,
+        vec![bir::TraitTypeArgument {
+            parameter: "T".to_owned(),
+            argument: IncanType::Primitive(IncanPrimitiveType::Int),
+        }]
+    );
+    let [get] = slot("Box", "get")[..] else {
+        return Err("the required generic trait slot must be retained".into());
+    };
+    assert!(get.type_arguments.is_empty());
     Ok(())
 }

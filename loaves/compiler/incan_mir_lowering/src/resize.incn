@@ -1,0 +1,57 @@
+"""Checked builtin numeric resize calls reuse legacy casts and core policy functions."""
+
+from pub::incan_mir_plan import PlanType, Operand, Place, SourceSpan, RvalueKind, CalleeKind, ExternalFunction
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, terminate_call, place_type
+from numerics import numeric_carrier, numeric_name
+from options import carrier_layout
+
+
+pub def resize_policy(member: str, source: PlanType) -> Option[str]:
+    """Select only a numeric registry owner's canonical resize declaration."""
+    if not numeric_carrier(source):
+        return None
+    mut owner = numeric_name(source)
+    if source == PlanType.Int:
+        owner = "i64"
+    elif source == PlanType.Float:
+        owner = "f64"
+    for policy in ["resize", "wrapping_resize", "try_resize", "saturating_resize"]:
+        if member == f"{owner}.{policy}":
+            return Some(policy)
+    return None
+
+
+pub def emit_resize(
+    mut builder: Builder,
+    policy: str,
+    source: PlanType,
+    operand: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Use the checked output carrier, including the retained Some payload for checked resizing."""
+    result = place_type(builder.locals, output)
+    mut target = result
+    if policy == "try_resize":
+        _owner, declaration = carrier_layout(builder, result)?
+        if declaration.carrier != "Option" or len(declaration.variants) != 2:
+            return Err("invalid Body IR checked resize carrier")
+        mut payloads: list[PlanType] = []
+        for variant in declaration.variants:
+            if variant.name == "Some":
+                payloads = variant.fields
+        if len(payloads) != 1:
+            return Err("invalid Body IR checked resize payload")
+        target = payloads[0]
+    if not numeric_carrier(target):
+        return Err("unsupported Body IR resize destination outside numeric carriers")
+    if policy in ["resize", "wrapping_resize"]:
+        builder.emit(plan_assign(output, RvalueKind.NumericCast(operand, source, target), span))
+        return Ok(None)
+    path = f"incan_std_core::num::{policy}"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[source, target], parameters=[source], return_type=result, span=span),
+    )
+    terminate_call(builder, CalleeKind.InstantiatedPair(path, source, target), [operand], output, span)
+    return Ok(None)

@@ -122,6 +122,29 @@ impl TypeChecker {
         }
 
         // ---- Fields that bind one type parameter bind it to one type (#1561) ----
+        self.finish_constructor_type_bindings(
+            type_name,
+            display_name,
+            &field_arguments,
+            type_bindings,
+            errors_before_fields,
+            call_span,
+        )
+    }
+
+    /// Finish checked field inference and retain concrete executable owner facts before caller context is applied.
+    ///
+    /// This supplements the contextual expression type without changing the legacy checker result or introducing
+    /// argument inference in Body IR consumers.
+    fn finish_constructor_type_bindings(
+        &mut self,
+        type_name: &str,
+        display_name: &str,
+        field_arguments: &[(&Spanned<Expr>, ResolvedType)],
+        mut type_bindings: std::collections::HashMap<String, ResolvedType>,
+        errors_before_fields: usize,
+        call_span: Span,
+    ) -> ResolvedType {
         let type_params = self
             .lookup_type_info(type_name)
             .map(|info| Self::constructor_hook_owner_type_params(info).to_vec())
@@ -141,7 +164,22 @@ impl TypeChecker {
             call_span,
         );
 
-        self.constructor_result_type_with_bindings(type_name, &type_bindings)
+        let result = self.constructor_result_type_with_bindings(type_name, &type_bindings);
+        if self.errors.len() == errors_before_fields
+            && !type_params.is_empty()
+            && type_params.iter().all(|parameter| {
+                type_bindings.get(parameter).is_some_and(|ty| {
+                    !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
+                        && super::generic_bounds::first_open_type_param(ty, &type_params).is_none()
+                })
+            })
+        {
+            self.type_info
+                .calls
+                .inferred_constructor_types
+                .insert((call_span.start, call_span.end), result.clone());
+        }
+        result
     }
     /// Record the resolved argument-to-field binding for one `model`/`class` construction, for Body IR lowering.
     ///

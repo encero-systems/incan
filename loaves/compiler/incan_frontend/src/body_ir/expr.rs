@@ -3,13 +3,32 @@
 use super::primitives::*;
 use super::refusals::*;
 use super::*;
+use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Classify source-written tuple projections from the checked base type, preserving nominal field authority.
+    /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
+    /// Non-tuple indexing keeps its existing evaluation and ownership behavior.
+    fn lower_checked_index_operand(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        index: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if tuple_type_elements(&self.resolve_ty(base.span)).is_some()
+            && let Some(value) = crate::typechecker::TypeChecker::constant_tuple_index(index)
+        {
+            return bir::Operand::Constant(bir::Constant::Int(value));
+        }
+        self.lower_expr_to_operand(index, scope, out)
+    }
+
+    /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
     ///
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
-    /// structural. Other fields retain their checked canonical identity, including an explicit unresolved value.
-    fn lower_checked_field_projection(
+    /// structural. Checked member fields use the canonical declaration's name and identity together, so an alias
+    /// cannot become a second storage slot. Unresolved fields preserve their source spelling and remain unproven.
+    pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
@@ -29,6 +48,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             bir::PlaceElem::structural_field(name)
         } else {
+            if let Some(identity) = self.type_info.resolved_identity(span)
+                && identity.namespace == SymbolNamespace::Member
+                && identity.kind == SemanticSourceTargetKind::Field
+            {
+                return bir::PlaceElem::field(identity.declaration_name.clone(), Some(identity.clone()));
+            }
             bir::PlaceElem::field(name, self.type_info.resolved_identity(span).cloned())
         }
     }
@@ -60,7 +85,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         type_args: Vec::new(),
                         args: Vec::new(),
                     };
-                    return self.lower_partial(&partial, expr.span, scope, out);
+                    let value = self.lower_partial(&partial, expr.span, scope, out);
+                    self.retain_function_item(out);
+                    return value;
                 }
                 let Some(place) = self.place_for_name(name, expr.span, &ty) else {
                     return self.unsupported_operand(
@@ -70,6 +97,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
+                if let Some(global) = place.global()
+                    && global.identity.kind == SemanticSourceTargetKind::Const
+                    && let Some(value) = self.published_constants.get(&global.identity)
+                {
+                    let constant = match value {
+                        bir::Constant::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            bir::Constant::Float(number.to_string())
+                        }
+                        value => value.clone(),
+                    };
+                    return bir::Operand::Constant(constant);
+                }
                 // Retain the checker's evaluated scalar or text for a source-local constant. Identity must prove the
                 // module and declaration kind before the name-keyed const-evaluation table is consulted;
                 // imported globals and same-spelled locals keep their existing place representation.
@@ -92,7 +131,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             bir::Constant::Float(number.to_string())
                         }
                         ConstValue::Bool(flag) => bir::Constant::Bool(*flag),
-                        ConstValue::FrozenStr(text) => bir::Constant::Str(text.clone()),
+                        ConstValue::FrozenStr(text) => bir::Constant::FrozenStr(text.clone()),
                         _ => {
                             let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                             return bir::Operand::place(place, fact, last_use);
@@ -164,7 +203,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Operand::place(place, fact, last_use)
             }
             ast::Expr::Index(base, index) => {
-                let index_operand = self.lower_expr_to_operand(index, scope, out);
+                let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 let ty = self.resolve_ty(expr.span);
@@ -273,7 +312,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 place
             }
             ast::Expr::Index(base, index) => {
-                let index_operand = self.lower_expr_to_operand(index, scope, out);
+                let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 place

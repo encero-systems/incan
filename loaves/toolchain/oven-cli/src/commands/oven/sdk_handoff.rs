@@ -18,6 +18,8 @@ use super::{CliError, CliResult, ExitCode};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(270);
 const COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
 const CANARY: &str = "loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn";
+/// The store-root native receipt catalog the sealed provider identity folds in.
+const RECEIPT_CATALOG: &str = ".sealed-native-receipts.json";
 
 #[derive(Clone, Debug)]
 struct HandoffCoordinates {
@@ -62,9 +64,9 @@ fn run_sdk_handoff_from(invocation: &Path, command: SdkHandoffCommand) -> io::Re
             artifact,
             store,
         } => {
-            let (workspace, compiler) = (absolute(workspace), absolute(compiler));
-            let coordinates = coordinates(&workspace, &compiler, &rustc)?;
-            stage(&absolute(store), &absolute(artifact), &coordinates)
+            let (workspace, compiler, store) = (absolute(workspace), absolute(compiler), absolute(store));
+            let coordinates = coordinates(&workspace, &compiler, &rustc, &store)?;
+            stage(&store, &absolute(artifact), &coordinates)
         }
         SdkHandoffCommand::Consume {
             workspace,
@@ -74,12 +76,12 @@ fn run_sdk_handoff_from(invocation: &Path, command: SdkHandoffCommand) -> io::Re
             path_file,
             env_file,
         } => {
-            let (workspace, compiler) = (absolute(workspace), absolute(compiler));
-            let coordinates = coordinates(&workspace, &compiler, &rustc)?;
+            let (workspace, compiler, artifact) = (absolute(workspace), absolute(compiler), absolute(artifact));
+            let coordinates = coordinates(&workspace, &compiler, &rustc, &artifact)?;
             consume(
                 &workspace,
                 &compiler,
-                &absolute(artifact),
+                &artifact,
                 &absolute(path_file),
                 &absolute(env_file),
                 &coordinates,
@@ -89,14 +91,19 @@ fn run_sdk_handoff_from(invocation: &Path, command: SdkHandoffCommand) -> io::Re
 }
 
 /// Derive expected handoff coordinates independently of the downloaded envelope.
-fn coordinates(workspace: &Path, compiler: &Path, rustc: &Path) -> io::Result<HandoffCoordinates> {
+///
+/// The provider identity is the sealed one the store names its provider by. It folds in the store's native receipt
+/// catalog, so the compiler reads that catalog from `store`: the prepared store when staging, the transferred
+/// artifact when consuming.
+fn coordinates(workspace: &Path, compiler: &Path, rustc: &Path, store: &Path) -> io::Result<HandoffCoordinates> {
     let identity = run_command(
         Command::new(compiler)
             .args(["oven", "sdk-provider-store-identity", "--compiler-root"])
             .arg(workspace)
             .current_dir(workspace)
             .env("INCAN_NO_BANNER", "1")
-            .env("INCAN_SOURCE_ROOT", workspace),
+            .env("INCAN_SOURCE_ROOT", workspace)
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store),
     )?;
     let provider_identity = String::from_utf8_lossy(&identity).trim().to_owned();
     if provider_identity.len() != 64
@@ -142,11 +149,19 @@ fn run_command(command: &mut Command) -> io::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Stage only the selected provider, its transport digest, and its empty-directory manifest.
+/// Stage only the selected provider, its transport digest, its empty-directory manifest, and the receipt catalog the
+/// consumer recomputes the provider identity from.
 fn stage(store: &Path, artifact: &Path, coordinates: &HandoffCoordinates) -> io::Result<()> {
     let selected = store.join(&coordinates.provider_identity);
     require_inventory(&selected)?;
     require_real_directory(&selected)?;
+    let receipts = store.join(RECEIPT_CATALOG);
+    if !fs::symlink_metadata(&receipts).is_ok_and(|metadata| metadata.is_file()) {
+        return Err(io::Error::other(format!(
+            "SDK store has no native receipt catalog {}; prepare the SDK first",
+            receipts.display()
+        )));
+    }
     let payload_sha256 = payload_digest(&selected)?;
     let empty_directories = empty_directories(&selected)?;
     if artifact.exists() {
@@ -162,6 +177,7 @@ fn stage(store: &Path, artifact: &Path, coordinates: &HandoffCoordinates) -> io:
     fs::create_dir(&staged)?;
     let copied = staged.join(&coordinates.provider_identity);
     copy_regular_tree(&selected, &copied)?;
+    fs::copy(&receipts, staged.join(RECEIPT_CATALOG))?;
     if payload_digest(&copied)? != payload_sha256 {
         return Err(io::Error::other("SDK payload changed during handoff publication"));
     }
@@ -469,6 +485,7 @@ mod tests {
         let store = root.path().join("producer store");
         let provider = store.join(IDENTITY);
         fs::create_dir_all(provider.join("components"))?;
+        fs::write(store.join(RECEIPT_CATALOG), b"{}")?;
         fs::write(provider.join("sdk-inventory.json"), b"{\"compatible\": true}")?;
         fs::write(
             provider.join("components/provider.incnlib"),
@@ -514,6 +531,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                std::ffi::OsString::from(RECEIPT_CATALOG),
                 std::ffi::OsString::from(IDENTITY),
                 std::ffi::OsString::from("handoff.json")
             ]
@@ -529,6 +547,15 @@ mod tests {
         fs::write(store.join(IDENTITY).join("sdk-inventory.json"), b"{}")?;
         fs::create_dir(&artifact)?;
         assert!(stage(&store, &artifact, &coordinates).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn stage_requires_the_receipt_catalog_the_identity_folds_in() -> Result<(), Box<dyn std::error::Error>> {
+        let (_root, store, artifact, coordinates) = fixture()?;
+        fs::remove_file(store.join(RECEIPT_CATALOG))?;
+        assert!(stage(&store, &artifact, &coordinates).is_err());
+        assert!(!artifact.exists());
         Ok(())
     }
 
@@ -620,7 +647,7 @@ mod tests {
         let workspace = root.path().join("source checkout");
         fs::create_dir(&workspace)?;
         let (compiler, rustc) = command_probes(&workspace)?;
-        let coordinates = coordinates(&workspace, &compiler, &rustc)?;
+        let coordinates = coordinates(&workspace, &compiler, &rustc, &store)?;
         stage(&store, &artifact, &coordinates)?;
         let relocated = root.path().join("consumer checkout/sdk");
         fs::create_dir_all(relocated.parent().ok_or("relocated handoff needs parent")?)?;
@@ -647,7 +674,7 @@ mod tests {
         let workspace = root.path().join("source checkout");
         fs::create_dir(&workspace)?;
         let (compiler, rustc) = command_probes(&workspace)?;
-        stage(&store, &artifact, &coordinates(&workspace, &compiler, &rustc)?)?;
+        stage(&store, &artifact, &coordinates(&workspace, &compiler, &rustc, &store)?)?;
         let relative = |path: &Path| path.strip_prefix(root.path()).map(Path::to_path_buf);
         run_sdk_handoff_from(
             root.path(),

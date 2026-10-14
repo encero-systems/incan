@@ -350,13 +350,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         .iter()
                         .filter_map(|arg| match arg {
                             ast::PatternArg::Named(field, pat) => {
+                                let identity = self.type_info.resolved_identity(field.span).cloned();
+                                let name = canonical_pattern_field(declaration, identity.as_ref(), &field.node);
                                 let mut field_place = place.clone();
-                                field_place.projection.push(bir::PlaceElem::field(
-                                    field.node.clone(),
-                                    self.type_info.resolved_identity(field.span).cloned(),
-                                ));
+                                field_place
+                                    .projection
+                                    .push(bir::PlaceElem::field(name.clone(), identity));
                                 Some((
-                                    field.node.clone(),
+                                    name,
                                     self.lower_match_pattern(
                                         pat,
                                         &IncanType::Unknown,
@@ -412,8 +413,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         bir::ResultVariantKind::Ok => ok_type,
                         bir::ResultVariantKind::Err => error_type,
                     };
-                    let lowered_payload =
-                        self.lower_match_pattern(payload, payload_type, place, arm_scope, reads, seen, saved_bindings);
+                    // The payload is read from inside the scrutinee, as for every other positional constructor, so its
+                    // binding's fact follows from that projected place rather than from the whole scrutinee: an
+                    // untracked temporary scrutinee (a call result) would otherwise yield `Unknown`.
+                    let mut payload_place = place.clone();
+                    payload_place
+                        .projection
+                        .push(bir::PlaceElem::structural_field("0".to_string()));
+                    let lowered_payload = self.lower_match_pattern(
+                        payload,
+                        payload_type,
+                        &payload_place,
+                        arm_scope,
+                        reads,
+                        seen,
+                        saved_bindings,
+                    );
                     return bir::Pattern::Result {
                         variant,
                         fields: vec![lowered_payload],
@@ -496,4 +511,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         }
     }
+}
+
+/// Name a model pattern's field by its declared canonical name rather than the spelling the pattern wrote.
+///
+/// An RFC 021 alias (`Plan(type="premium")` for a field declared `type_`) resolves through the checker to the declared
+/// field's identity, so that identity selects the canonical name a consumer finds in the declaration's layout. A field
+/// whose identity the checker did not record keeps its written spelling, which a consumer then refuses as unproven.
+fn canonical_pattern_field(
+    declaration: &bir::NominalDeclaration,
+    identity: Option<&CanonicalSymbolId>,
+    written: &str,
+) -> String {
+    identity
+        .and_then(|identity| {
+            declaration
+                .field_identities
+                .iter()
+                .position(|candidate| candidate == identity)
+        })
+        .and_then(|slot| declaration.fields.get(slot))
+        .map_or_else(|| written.to_string(), Clone::clone)
 }

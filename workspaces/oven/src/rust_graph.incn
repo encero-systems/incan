@@ -339,7 +339,7 @@ def binding_for(
     )
 
 
-def merged(existing: NodeDemand, addition: NodeDemand) -> Option[NodeDemand]:
+pub def merged(existing: NodeDemand, addition: NodeDemand) -> Option[NodeDemand]:
     """
     Union one incoming demand into an existing one, or None when it adds nothing.
 

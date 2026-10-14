@@ -1486,6 +1486,7 @@ dependencies = [
  "tempfile",
  "toml",
  "toml_edit",
+ "tracing",
  "tracing-subscriber",
  "uuid",
  "wat",
@@ -1691,12 +1692,14 @@ dependencies = [
  "oven_rustc",
  "oven_store",
  "rust_inspect",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
  "wasmtime",
 ]
 
@@ -2333,11 +2336,14 @@ dependencies = [
  "oven_store",
  "rust_inspect",
  "rustix 1.1.4",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "toml",
+ "toml_edit",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -2427,6 +2433,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3477,6 +3484,8 @@ version = "0.6.0-dev.6"
 dependencies = [
  "hex",
  "incan_lang",
+ "oven_rustc",
+ "oven_store",
  "proc-macro2",
  "quote",
  "ra_ap_hir",

@@ -312,9 +312,10 @@ pub(crate) fn select_compiler_suite_foundation_family(
     receipt: &OvenReceipt,
     key: &OvenCompilerSuiteFoundationKey,
 ) -> Result<Option<SelectedCompilerSuiteFoundationFamily>, OvenLegacyCargoError> {
-    let candidates = store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::CompilerTestSuiteFoundation && manifest.intent == receipt.intent
-    })?;
+    let candidates = store.select_payloads_matching_for_execution(
+        |manifest| manifest.kind == OvenArtifactKind::CompilerTestSuiteFoundation && manifest.intent == receipt.intent,
+        |_, _| true,
+    )?;
 
     // ---- Group the current-schema partitions of this key by build, then by partition index ----
     let mut by_build = BTreeMap::<String, BTreeMap<u32, Vec<SelectedCompilerSuiteFoundationPartition>>>::new();
@@ -1392,7 +1393,7 @@ mod tests {
             "one partition of two on a mirror is not a family; Cargo builds the foundation"
         );
         // What the import admitted is verified and served locally, but it never stands in for the family alone.
-        let admitted = local.select_payloads_matching_for_execution(|_| true)?;
+        let admitted = local.select_payloads_matching_for_execution(|_| true, |_, _| true)?;
         assert_eq!(
             admitted.len(),
             1,
@@ -1539,7 +1540,11 @@ mod tests {
             "got {:?}",
             result.err()
         );
-        assert!(empty.select_payloads_matching_for_execution(|_| true)?.is_empty());
+        assert!(
+            empty
+                .select_payloads_matching_for_execution(|_| true, |_, _| true)?
+                .is_empty()
+        );
         Ok(())
     }
 }

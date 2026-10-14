@@ -163,7 +163,8 @@ jobs:
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        # --keep-going reports every failing crate in one run instead of stopping at the first.
+        run: cargo clippy --keep-going --workspace --all-targets --all-features -- -D warnings
       # The compiler library and the language server must compile without the `cli` feature (#1479): the LSP links
       # the driver, never the CLI, and the bare library is what every other consumer of the compiler sees. Both are
       # `cargo check`, not clippy — without the CLI most driver and Oven items are unreachable and warn as dead, which
