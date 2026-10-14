@@ -10184,114 +10184,6 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/src/project_owner/protocol.rs": {
-      "disposition": "keep",
-      "notes": "Bounded project-owner framing, independent progress/result messages and invalid protocol refusal; no Cargo or backend-specific compilation.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/toolchain/incan-cli/src/project_owner/unix.rs": {
-      "disposition": "keep",
-      "notes": "Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/toolchain/incan-cli/src/test_runner/execution.rs": {
-      "disposition": "keep",
-      "notes": "`incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "tests": {
-        "batch_suffix_is_path_independent_but_content_sensitive": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "hashes a batch's sources into the generated test-runner crate directory suffix (`batch_<hash>`); a data-structure invariant of the generated crate directory, which dies with #654."
-        },
-        "extracts_unindented_libtest_panic_payloads_from_a_batch": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "extracts assertion payloads from the `thread '...' panicked at` lines of the generated test crate's transcript; the transcript dies with #654. The assertion message reaching the `incan test` report (`AssertionError: custom boom`) is the re-point `integration_tests.rs::e2e_failure_skip_and_assert_reporting_share_one_project`. Teardown payload lines are carried by `e2e_fixture_teardown_failure_scenarios_share_one_project` (re-point)."
-        },
-        "inject_file_test_harness_emits_tests_module": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "asserts the injected `mod __incan_file_tests` text with one `fn incan_harness_<i>_<name>` per case and the `set_current_dir` guard; generated Rust text, dies with #654. The cwd guard is carried by `e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs` (re-point)."
-        },
-        "inject_file_test_harness_wraps_async_tests_and_fixtures": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "asserts the injected harness text for an async test with a yield fixture (`__incan_async_block_on`, `__incan_run_teardown`); generated Rust text, dies with #654. Async tests and fixture teardown through `incan test` are the re-point `integration_tests.rs::e2e_fixture_lifetime_success_scenarios_share_one_project` and `e2e_fixture_teardown_failure_scenarios_share_one_project`."
-        },
-        "merge_test_runner_dependencies_promotes_dev_deps_into_dependencies": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
-        },
-        "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
-        },
-        "native_test_outputs_do_not_alias_distinct_execution_groups": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "names the native test binary of one generated execution group so two groups of the same file do not overwrite each other's receipt-verified output; the generated crate and its outputs die with #654. Report correctness across normal and xfail groups of one file is carried by `e2e_markers_parametrize_timeout_and_collection_errors_share_projects` (re-point)."
-        },
-        "parse_libtest_outcomes_detects_ok_and_failed": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "parses libtest's `test ... ok|FAILED` lines from the generated test crate's transcript; the transcript dies with the crate (#654). `incan test` reporting a pass and a failure is proved by the re-point `integration_tests.rs::e2e_generated_harness_success_reports_the_incan_test_identity_issue996` and `e2e_failure_skip_and_assert_reporting_share_one_project`."
-        },
-        "parse_libtest_outcomes_normalizes_prefixed_names": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "strips the generated runner crate's name from libtest's qualified test names in the transcript; the crate and its transcript die with #654. The `.incn::fn` identity in the report is carried by `e2e_generated_harness_success_reports_the_incan_test_identity_issue996` (re-point)."
-        },
-        "runner_crate_name_is_derived_from_batch_suffix": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "derives the generated test-runner crate's name (`test_runner_<hash>`) from the batch directory suffix; the crate dies with #654."
-        },
-        "successful_native_batch_preserves_a_passing_harness_result_issue996": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "libtest harness of the generated test crate",
-          "dies": "maps the libtest summary line (`test result: ok. 1 passed`) of the generated test crate to a passed harness result; the transcript dies with #654. The user-visible half, a passing Incan test reported under its own identity (#996), is the re-point `integration_tests.rs::e2e_generated_harness_success_reports_the_incan_test_identity_issue996`."
-        }
-      },
-      "twin": ""
-    },
-    "loaves/toolchain/incan-cli/src/test_runner/mod.rs": {
-      "disposition": "keep",
-      "notes": "test collection, parametrize expansion, marker selection and scheduling.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/toolchain/incan-cli/src/test_runner/output.rs": {
-      "disposition": "unaffected",
-      "notes": "Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs": {
       "disposition": "re-point",
       "notes": "generated by `make behavior-roots`: one case per behavior fixture of the cli_dependencies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not.",
@@ -12008,6 +11900,122 @@
     "loaves/toolchain/oven-cli/src/invocation_trace.rs": {
       "disposition": "keep",
       "notes": "Opt-in compiler invocation diagnostics: disabled field laziness, nested identities, decision records, parent linkage, retained sinks and concurrent record integrity. No compiler semantics or legacy emitter dependence.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/project_owner/protocol.rs": {
+      "disposition": "keep",
+      "notes": "Bounded project-owner framing, independent progress/result messages and invalid protocol refusal; no Cargo or backend-specific compilation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/project_owner/unix.rs": {
+      "disposition": "keep",
+      "notes": "Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/test_runner/execution.rs": {
+      "disposition": "keep",
+      "notes": "`incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "batch_suffix_is_path_independent_but_content_sensitive": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "hashes a batch's sources into the generated test-runner crate directory suffix (`batch_<hash>`); a data-structure invariant of the generated crate directory, which dies with #654."
+        },
+        "extracts_unindented_libtest_panic_payloads_from_a_batch": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "extracts assertion payloads from the `thread '...' panicked at` lines of the generated test crate's transcript; the transcript dies with #654. The assertion message reaching the `incan test` report (`AssertionError: custom boom`) is the re-point `integration_tests.rs::e2e_failure_skip_and_assert_reporting_share_one_project`. Teardown payload lines are carried by `e2e_fixture_teardown_failure_scenarios_share_one_project` (re-point)."
+        },
+        "inject_file_test_harness_emits_tests_module": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "asserts the injected `mod __incan_file_tests` text with one `fn incan_harness_<i>_<name>` per case and the `set_current_dir` guard; generated Rust text, dies with #654. The cwd guard is carried by `e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs` (re-point)."
+        },
+        "inject_file_test_harness_wraps_async_tests_and_fixtures": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "asserts the injected harness text for an async test with a yield fixture (`__incan_async_block_on`, `__incan_run_teardown`); generated Rust text, dies with #654. Async tests and fixture teardown through `incan test` are the re-point `integration_tests.rs::e2e_fixture_lifetime_success_scenarios_share_one_project` and `e2e_fixture_teardown_failure_scenarios_share_one_project`."
+        },
+        "merge_test_runner_dependencies_promotes_dev_deps_into_dependencies": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
+        },
+        "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
+        },
+        "native_test_outputs_do_not_alias_distinct_execution_groups": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "names the native test binary of one generated execution group so two groups of the same file do not overwrite each other's receipt-verified output; the generated crate and its outputs die with #654. Report correctness across normal and xfail groups of one file is carried by `e2e_markers_parametrize_timeout_and_collection_errors_share_projects` (re-point)."
+        },
+        "parse_libtest_outcomes_detects_ok_and_failed": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "parses libtest's `test ... ok|FAILED` lines from the generated test crate's transcript; the transcript dies with the crate (#654). `incan test` reporting a pass and a failure is proved by the re-point `integration_tests.rs::e2e_generated_harness_success_reports_the_incan_test_identity_issue996` and `e2e_failure_skip_and_assert_reporting_share_one_project`."
+        },
+        "parse_libtest_outcomes_normalizes_prefixed_names": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "strips the generated runner crate's name from libtest's qualified test names in the transcript; the crate and its transcript die with #654. The `.incn::fn` identity in the report is carried by `e2e_generated_harness_success_reports_the_incan_test_identity_issue996` (re-point)."
+        },
+        "runner_crate_name_is_derived_from_batch_suffix": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "derives the generated test-runner crate's name (`test_runner_<hash>`) from the batch directory suffix; the crate dies with #654."
+        },
+        "successful_native_batch_preserves_a_passing_harness_result_issue996": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "libtest harness of the generated test crate",
+          "dies": "maps the libtest summary line (`test result: ok. 1 passed`) of the generated test crate to a passed harness result; the transcript dies with #654. The user-visible half, a passing Incan test reported under its own identity (#996), is the re-point `integration_tests.rs::e2e_generated_harness_success_reports_the_incan_test_identity_issue996`."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/test_runner/mod.rs": {
+      "disposition": "keep",
+      "notes": "test collection, parametrize expansion, marker selection and scheduling.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/test_runner/output.rs": {
+      "disposition": "unaffected",
+      "notes": "Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/test_runner/rust.rs": {
+      "disposition": "unaffected",
+      "notes": "Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",

@@ -219,9 +219,38 @@ fn inventory_native_tests_with_environment_and_timeout(
     allow_empty: bool,
     timeout: Option<Duration>,
 ) -> Result<OvenNativeTestInventory, OvenNativeTestError> {
+    inventory_native_tests_selected(executable, environment, working_directory, allow_empty, timeout, false)
+}
+
+/// Inventory both ordinary and ignored cases through the same supervised native process boundary.
+/// Empty roots are valid during project collection; execution still verifies every selected exact name.
+pub fn inventory_native_tests_for_collection(
+    executable: &Path,
+    environment: &BTreeMap<String, String>,
+    working_directory: &Path,
+    timeout: Option<Duration>,
+) -> Result<(OvenNativeTestInventory, OvenNativeTestInventory), OvenNativeTestError> {
+    let all = inventory_native_tests_selected(executable, environment, Some(working_directory), true, timeout, false)?;
+    let ignored =
+        inventory_native_tests_selected(executable, environment, Some(working_directory), true, timeout, true)?;
+    Ok((all, ignored))
+}
+
+/// Apply libtest's inventory selection while preserving the existing environment, deadline and process supervision.
+fn inventory_native_tests_selected(
+    executable: &Path,
+    environment: &BTreeMap<String, String>,
+    working_directory: Option<&Path>,
+    allow_empty: bool,
+    timeout: Option<Duration>,
+    ignored_only: bool,
+) -> Result<OvenNativeTestInventory, OvenNativeTestError> {
     let executable = verified_executable(executable)?;
     let mut command = Command::new(&executable);
     command.args(["--list", "--format", "terse"]);
+    if ignored_only {
+        command.arg("--ignored");
+    }
     if let Some(working_directory) = working_directory {
         command.current_dir(working_directory);
     }
@@ -362,6 +391,49 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
     timeout: Option<Duration>,
     root_label: Option<&str>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    run_native_tests_exact_selected(
+        executable,
+        exact_names,
+        environment,
+        working_directory,
+        timeout,
+        root_label,
+        false,
+        true,
+    )
+}
+
+/// Execute a runner-owned exact selection without writing to the owner's global stderr.
+/// The caller owns progress/reporting; `no_capture` controls test stdout in the returned transcript.
+pub fn run_native_tests_exact_for_request(
+    request: &OvenNativeTestRequest,
+    working_directory: &Path,
+    no_capture: bool,
+) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    run_native_tests_exact_selected(
+        &request.executable,
+        &request.exact_names,
+        &request.environment,
+        Some(working_directory),
+        request.timeout,
+        None,
+        no_capture,
+        false,
+    )
+}
+
+/// Apply capture and reporting policy around the single inventory-checked exact execution implementation.
+#[allow(clippy::too_many_arguments)]
+fn run_native_tests_exact_selected(
+    executable: &Path,
+    exact_names: &[String],
+    environment: &BTreeMap<String, String>,
+    working_directory: Option<&Path>,
+    timeout: Option<Duration>,
+    root_label: Option<&str>,
+    no_capture: bool,
+    report_progress: bool,
+) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
     let selection_started = Instant::now();
     let requested = normalized_exact_names(exact_names)?;
     let inventory_started = Instant::now();
@@ -428,6 +500,9 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         let mut command = Command::new(&executable);
         // Naming a case selects it: an `#[ignore]` case such as an explicit full census runs when named.
         command.args(["--exact", &exact_name, "--include-ignored"]);
+        if no_capture {
+            command.arg("--nocapture");
+        }
         if let Some(working_directory) = working_directory {
             command.current_dir(working_directory);
         }
@@ -441,7 +516,11 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             process_timeout,
             Some(NativeTestProgressReporter::for_inventory(
                 root_label,
-                ProgressSink::stderr(),
+                if report_progress {
+                    ProgressSink::stderr()
+                } else {
+                    ProgressSink::collecting()
+                },
                 BTreeSet::from([exact_name.clone()]),
             )),
         )?;

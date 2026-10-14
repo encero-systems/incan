@@ -4364,7 +4364,7 @@ mod tests {
             materialized_directories: Vec::new(),
         })?;
         let selected = super::select_compiler_test_suite(&store, &receipt, compiler_root.path(), &rustc)?;
-        assert_eq!(selected.manifest.identity, current_manifest.identity);
+        assert_eq!(selected.manifest().identity, current_manifest.identity);
         let tools = tempfile::tempdir()?;
         let cargo_marker = tools.path().join("cargo-started");
         let cargo = tools.path().join("cargo");
@@ -5763,7 +5763,7 @@ mod tests {
             OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
         )?;
         assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].stored.manifest.identity, manifest.identity);
+        assert_eq!(selected[0].stored.manifest().identity, manifest.identity);
         assert_eq!(selected[0].payload, shard);
         let inspection = store.inspect()?;
         assert_eq!(inspection.active_lease_physical_bytes, inspection.physical_bytes);
