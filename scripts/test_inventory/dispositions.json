@@ -12423,6 +12423,12 @@
       "owner": 1561,
       "pattern": "verified_*.incn"
     },
+    "workspaces/oven": {
+      "disposition": "keep",
+      "notes": "Explicit developer-workflow CLI contract driver; run nine named scenarios separately. Missing capabilities fail visibly; this is not the default green unit suite.",
+      "owner": 1337,
+      "pattern": "src/developer_workflow_acceptance.incn"
+    },
     "workspaces/oven/src": {
       "disposition": "re-point",
       "notes": "Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`.",

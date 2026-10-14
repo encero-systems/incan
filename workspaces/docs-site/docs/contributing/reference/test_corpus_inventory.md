@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3648 | 256 | 431 |
+| keep | 3648 | 256 | 432 |
 | re-point | 1488 | 91 | 1060 |
 | retire | 1508 | 153 | 0 |
 | unaffected | 2125 | 221 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8769** | **721** | **1496** |
+| **Total** | **8769** | **721** | **1497** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -120,6 +120,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/toolchain/incan-cli/tests/fixtures` | `**/*.incn` | 8 | re-point | #1561 | CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails). |
 | `workspaces/benchmarks` | `**/*.incn` | 9 | re-point | #1561 | benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not. |
 | `workspaces/docs-site/docs/_snippets/language/examples` | `verified_*.incn` | 8 | re-point | #1561 | verified documentation examples checked by scripts/check_docs_examples.sh. |
+| `workspaces/oven` | `src/developer_workflow_acceptance.incn` | 1 | keep | #1337 | Explicit developer-workflow CLI contract driver; run nine named scenarios separately. Missing capabilities fail visibly; this is not the default green unit suite. |
 | `workspaces/oven/src` | `test_*.incn` | 18 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
 | `workspaces/oven/tests/fixtures` | `**/*.incn` | 4 | re-point | #1561 | fixtures of the Oven release-policy project's tests. |
 
