@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3645 | 256 | 431 |
 | re-point | 1488 | 91 | 1060 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2101 | 219 | 5 |
+| unaffected | 2103 | 219 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8742** | **719** | **1496** |
+| **Total** | **8744** | **719** | **1496** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (752 tests in 100 files: keep 341, re-point 19, retire 105, unaffected 287)
+### `loaves/compiler/incan_driver` (753 tests in 100 files: keep 341, re-point 19, retire 105, unaffected 288)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -162,7 +162,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 5 | 205 | 205 | keep | - | - | - | #1698 | checker 1 | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
 | `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 668 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 987 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 3 | 346 | 346 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
+| `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 4 | 513 | 513 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
 | `loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs` | 3 | 195 | 195 | unaffected | - | - | - | #1337 | - | Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority. |
 | `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 2 | 584 | 64 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
 | `loaves/compiler/incan_driver/src/build/native_sdk_plan.rs` | 3 | 1104 | 350 | unaffected | - | - | - | #1698 | - | Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata. |
@@ -3117,7 +3117,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-### `loaves/toolchain/oven-cli` (223 tests in 27 files: keep 63, retire 11, unaffected 149)
+### `loaves/toolchain/oven-cli` (224 tests in 27 files: keep 63, retire 11, unaffected 150)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3144,9 +3144,9 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/project_owner/stored_native.rs` | 1 | 171 | 55 | keep | - | - | - | #1337 | - | Stored native owner requests reject relative paths before Store or compiler access and refuse mixed request shapes. Real CLI handoff, invalidation and lease lifetime have separate runtime proof. |
 | `loaves/toolchain/oven-cli/src/project_owner/unix.rs` | 7 | 740 | 215 | keep | - | - | - | #1337 | - | Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately. |
 | `loaves/toolchain/oven-cli/src/test_runner/execution.rs` | 23 | 3883 | 756 | keep (keep 12, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
-| `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 18 | 2545 | 556 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
+| `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 18 | 2544 | 556 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
 | `loaves/toolchain/oven-cli/src/test_runner/output.rs` | 2 | 137 | 60 | unaffected | - | - | - | #1337 | - | Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend. |
-| `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 7 | 660 | 250 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
+| `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 8 | 842 | 320 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
 | `loaves/toolchain/oven-cli/src/test_runner/tests/scheduling.rs` | 3 | 80 | 80 | unaffected | - | - | - | #1337 | - | Prepared Rust case concurrency and language boundaries; shared scheduler resource and serial constraints. |
 
 Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
