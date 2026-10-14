@@ -2470,6 +2470,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// the canonical identity, and when that method is declared in this module its declaration span is the
     /// `direct_call_id` the method's own [`bir::Body`] carries. A selection that is not a method (an enum variant
     /// constructor, say, or a member the checker did not resolve) refuses rather than being called by its spelling.
+    /// An applied receiver already carries its owner arguments, so its checked method instantiation supplies only
+    /// method binders. Bare factory receivers still need the supplemental checked owner frame.
     #[allow(clippy::too_many_arguments)]
     fn lower_static_method_call(
         &mut self,
@@ -2502,7 +2504,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         };
-        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+        let receiver_type = self.static_receiver_type(recv, span);
+        let method_arguments = self
+            .type_info
+            .calls
+            .call_site_monomorph_type_args
+            .get(&(span.start, span.end))
+            .filter(|_| matches!(receiver_type, Some(IncanType::Generic { .. })));
+        let resolved_type_args = match method_arguments
+            .map(|arguments| Ok(arguments.iter().map(|ty| self.checked_type(ty)).collect()))
+            .unwrap_or_else(|| self.call_site_type_arguments(span, type_args))
+        {
             Ok(resolved_type_args) => resolved_type_args,
             Err(_) => {
                 return self.unsupported_operand(
@@ -2531,7 +2543,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                receiver_type: self.static_receiver_type(recv, span),
+                receiver_type,
                 name: spelling,
                 direct_call_id,
                 canonical: Some(canonical),

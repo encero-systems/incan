@@ -637,13 +637,20 @@ fn classmethod_construction_retains_its_owner_declaration() -> Result<(), Box<dy
     Ok(())
 }
 
-/// A static call on an explicitly instantiated class keeps the applied owner type as its receiver.
+/// A static call keeps owner arguments in its receiver without duplicating them as method arguments.
 #[test]
 fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box<dyn std::error::Error>> {
-    let module = build(
-        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n\ndef main() -> int:\n  return Box[int].make(1).value\n",
-        &["applied_static"],
-    )?;
+    let source = "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n\ndef main() -> int:\n  return Box[int].make(1).value\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["applied_static".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let facts = checker.type_info();
+    let module = build_body_ir_module_v0(&program, &path, facts);
     let targets = named_targets(&module, "main");
     let make = targets
         .iter()
@@ -656,6 +663,38 @@ fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box
             args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
         })
     );
+    assert!(
+        make.type_args.is_empty(),
+        "owner binders must not also become method binders: native={:?}, legacy={:?}",
+        facts.calls.body_ir_call_type_arguments,
+        facts.calls.call_site_monomorph_type_args,
+    );
+    Ok(())
+}
+
+/// Explicit and inferred method binders stay independent of an applied static owner.
+#[test]
+fn applied_static_call_preserves_independent_method_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @staticmethod\n  def echo[U](value: U) -> U:\n    return value\n\ndef main() -> None:\n  println(Box[int].echo[str](\"explicit\"))\n  println(Box[int].echo(\"inferred\"))\n",
+        &["independent_static"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let calls = targets
+        .iter()
+        .filter(|target| target.name.ends_with("echo"))
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    for target in calls {
+        assert_eq!(target.type_args, [IncanType::Primitive(IncanPrimitiveType::Str)]);
+        assert_eq!(
+            target.receiver_type,
+            Some(IncanType::Generic {
+                base: "Box".to_string(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            })
+        );
+    }
     Ok(())
 }
 
