@@ -149,6 +149,7 @@ fn reuse_native(
     domain: &str,
     filename: &str,
 ) -> Result<Option<OvenDirectRustcBake>, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::admit_stored_native_output", input = %request.output.display()).entered();
     let candidates = store.select_payloads_matching_for_execution(
         |manifest| {
             manifest.kind == OvenArtifactKind::Engine
