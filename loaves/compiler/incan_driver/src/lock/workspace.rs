@@ -595,7 +595,10 @@ fn collect_project_lock_context_impl(
     // Ordinary publication replaces the recorded SDK with an original verified native request. The demand and
     // provider checks below must succeed before any replacement lock can be published.
     if let Some(native) = ordinary_native {
+        #[cfg(feature = "cli")]
         native.verify()?;
+        #[cfg(not(feature = "cli"))]
+        match *native {}
     } else {
         require_sdk_inventory_for_lock_write(
             session_manifest.project_root(),
