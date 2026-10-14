@@ -477,10 +477,13 @@ mod dev7_checked_provider_metadata_tests {
         fs::write(&producer, "pub model Widget:\n    value: int\n")?;
         let private = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
         assert!(!private.ok(), "private producer field was exposed");
-        assert!(private.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "INCAN-T0001"
-                && diagnostic.message.contains("Field 'value'")
-                && diagnostic.message.contains("private")
+        let json = serde_json::to_value(&private)?;
+        let diagnostics = json["diagnostics"].as_array().ok_or("missing check diagnostics")?;
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic["code"] == "INCAN-T0001"
+                && diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("Field 'value'") && message.contains("private"))
         }));
         fs::write(&producer, "pub model Widget:\n    pub value: int\n")?;
         assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());

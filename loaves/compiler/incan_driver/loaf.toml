@@ -85,6 +85,7 @@ type = "lib"
 
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
+incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
 incan_emit = { features = ["test_support"] }
 incan_provider = { features = ["test_support"] }
 oven_rustc = { features = ["test_support"] }

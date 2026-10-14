@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3633 | 252 | 431 |
 | re-point | 1488 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2064 | 219 | 5 |
+| unaffected | 2065 | 219 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8693** | **715** | **1494** |
+| **Total** | **8694** | **715** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2686,7 +2686,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/src/commands/build/mod.rs` | 11 | 1312 | 662 | keep (keep 8, retire 3) | 0/3 | 3 | - | #1561 | replacement 2, checker 4, parser 1 | build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build. |
 | `loaves/toolchain/incan-cli/src/commands/cache.rs` | 2 | 131 | 17 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/debug.rs` | 1 | 178 | 22 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/commands/diagnostics.rs` | 11 | 623 | 446 | keep | - | - | - | #1698 | checker 7 | Check-only public dependency metadata, source and graph invalidation, exact feature selection, nominal authority and missing-metadata refusal; no native execution authority. |
+| `loaves/toolchain/incan-cli/src/commands/diagnostics.rs` | 11 | 626 | 449 | keep | - | - | - | #1698 | checker 7 | Check-only public dependency metadata, source and graph invalidation, exact feature selection, nominal authority and missing-metadata refusal; no native execution authority. |
 | `loaves/toolchain/incan-cli/src/commands/init.rs` | 16 | 755 | 316 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/lifecycle.rs` | 4 | 924 | 104 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/representation_inspect.rs` | 4 | 503 | 126 | keep | - | - | - | #1561 | checker 4 | representation inspection from checked facts. |
@@ -3116,7 +3116,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-### `loaves/toolchain/oven-cli` (208 tests in 24 files: keep 55, retire 11, unaffected 142)
+### `loaves/toolchain/oven-cli` (209 tests in 24 files: keep 55, retire 11, unaffected 143)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3142,7 +3142,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/test_runner/execution.rs` | 23 | 3883 | 756 | keep (keep 12, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
 | `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 18 | 2543 | 556 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
 | `loaves/toolchain/oven-cli/src/test_runner/output.rs` | 2 | 137 | 60 | unaffected | - | - | - | #1337 | - | Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend. |
-| `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 2 | 389 | 48 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
+| `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 3 | 442 | 89 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
 | `loaves/toolchain/oven-cli/src/test_runner/tests/scheduling.rs` | 3 | 80 | 80 | unaffected | - | - | - | #1337 | - | Prepared Rust case concurrency and language boundaries; shared scheduler resource and serial constraints. |
 
 Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
