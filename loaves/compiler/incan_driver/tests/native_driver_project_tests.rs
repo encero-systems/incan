@@ -199,6 +199,30 @@ fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::erro
     )
 }
 
+/// Require complete native execution and byte parity with the unchanged legacy route for one original SDK fixture.
+fn check_completed_sdk_fixture(
+    name: &str,
+    source: &str,
+    expected_stdout: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    let root = fixture.scratch(name)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &closure,
+        source,
+    )?;
+    assert_eq!(
+        Command::new(root.join("builtin-parity/native")).output()?.stdout,
+        expected_stdout
+    );
+    Ok(())
+}
+
 /// The original reader adapter reaches callable-value assignment while its live legacy output stays pinned.
 #[test]
 fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
