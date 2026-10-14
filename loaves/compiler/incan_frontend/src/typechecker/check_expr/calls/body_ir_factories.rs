@@ -39,7 +39,10 @@ impl TypeChecker {
         let Some((owner, names, template)) = self.body_ir_factory_template(receiver) else {
             return;
         };
-        let (parameters, result) = self.method_types_substituting_call_site_self(method, &template);
+        let Some(declared) = self.body_ir_factory_declaration(&owner, method) else {
+            return;
+        };
+        let (parameters, result) = self.method_types_substituting_call_site_self(&declared, &template);
         let result = normalized(&result, &names, &self.type_info);
 
         // ---- Checked argument and destination constraints ----
@@ -110,6 +113,23 @@ impl TypeChecker {
         self.type_info.calls.body_ir_call_result_types.remove(&key);
         self.type_info.calls.body_ir_call_type_arguments.remove(&key);
         self.type_info.expressions.body_ir_expr_types.remove(&key);
+    }
+
+    /// Read the exact selected factory's original owner signature. The ordinary call checker can already have
+    /// substituted open receiver arguments into its local method copy; those holes cannot prove compatibility with
+    /// a destination. This native-only snapshot keeps the original checked parameter constraints and identity.
+    fn body_ir_factory_declaration(&self, owner: &str, selected: &MethodInfo) -> Option<MethodInfo> {
+        let identity = selected.identity.as_ref()?;
+        let (methods, overloads) = match self.lookup_semantic_type_info(owner)? {
+            TypeInfo::Class(info) => (&info.methods, &info.method_overloads),
+            TypeInfo::Model(info) => (&info.methods, &info.method_overloads),
+            _ => return None,
+        };
+        methods
+            .values()
+            .chain(overloads.values().flatten())
+            .find(|method| method.identity.as_ref() == Some(identity))
+            .cloned()
     }
 
     /// Recover missing SDK bound provenance only from the exact authenticated owner declaration.
