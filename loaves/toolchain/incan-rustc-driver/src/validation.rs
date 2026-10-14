@@ -77,6 +77,7 @@ enum Scalar {
     TupleMutRef(Vec<Scalar>),
     String,
     StringRef,
+    ScalarRef(Vec<Scalar>),
     StringMutRef,
     Decimal,
     FrozenStr,
@@ -180,6 +181,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::ScalarRef(elements) => Scalar::ScalarRef(elements.iter().map(scalar).collect()),
         PlanType::Future(outputs) => Scalar::Future(outputs.iter().map(scalar).collect()),
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
@@ -628,6 +630,12 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref(field_type) => {
             let pointee = match ty {
+                Scalar::ScalarRef(elements) => {
+                    let [inner] = elements.as_slice() else {
+                        return Err(invalid(function, "unsupported scalar reference arity"));
+                    };
+                    inner.clone()
+                }
                 Scalar::ValidationErrorRef => Scalar::ValidationError,
                 Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Scalar::Model(owner),
                 Scalar::EnumRef(owner) => Scalar::Enum(owner),
@@ -1101,6 +1109,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         Scalar::ValidationError => Ok(Scalar::ValidationErrorRef),
         Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
         Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
+        ty if scalar_referent(&ty) => Ok(Scalar::ScalarRef(vec![ty])),
         _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
     }
 }
@@ -1110,6 +1119,7 @@ fn shared_reference(ty: &Scalar) -> bool {
     matches!(
         ty,
         Scalar::StringRef
+            | Scalar::ScalarRef(_)
             | Scalar::ValidationErrorRef
             | Scalar::StrRef
             | Scalar::EnumRef(_)
@@ -1196,10 +1206,13 @@ fn source_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases, and
-/// the exclusive model and enum references a checked element reborrow returns. Concrete owned list iterators and
-/// their polling references cross only these native trait-call boundaries.
+/// Runtime signatures additionally admit exact scalar references and shared text and slice views, whose regions
+/// metadata checking erases, and the exclusive model and enum references a checked element reborrow returns.
+/// Concrete owned list iterators and their polling references cross only these native trait-call boundaries.
 fn external_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::ScalarRef(elements) = ty {
+        return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
+    }
     source_signature_type(ty)
         || matches!(
             ty,
@@ -1218,6 +1231,15 @@ fn external_signature_type(ty: &Scalar) -> bool {
                 | Scalar::ModelMutRef(_)
                 | Scalar::EnumMutRef(_)
                 | Scalar::GeneratorYieldRef(_, _)
+        )
+}
+
+/// The scalar reference carrier only borrows exact numeric, Boolean, decimal or frozen primitive storage.
+fn scalar_referent(ty: &Scalar) -> bool {
+    sized_numeric(ty).is_some()
+        || matches!(
+            ty,
+            Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Decimal | Scalar::FrozenStr | Scalar::FrozenBytes
         )
 }
 
@@ -1901,9 +1923,18 @@ fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
     }
 }
 
-/// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
+/// Validate retained nominal identities and the exact shape of nested and borrowed native carriers before MIR
+/// construction.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     match ty {
+        PlanType::ScalarRef(elements) => {
+            if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
+                return Err(PlanError::Unsupported {
+                    function: "scalar reference".into(),
+                    reason: "scalar reference requires one numeric, Boolean, decimal or frozen referent".into(),
+                });
+            }
+        }
         PlanType::FrozenCollection(name, elements) => {
             let arity = match name.as_str() {
                 "FrozenList" | "FrozenSet" => 1,

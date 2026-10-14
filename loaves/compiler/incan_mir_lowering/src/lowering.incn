@@ -57,6 +57,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
+from layout_types import shared_receiver_type
 from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import (
@@ -3100,7 +3101,7 @@ def lower_library_method(
     Call a stdlib method in the SDK crate that compiled it.
 
     The record's first parameter is the receiver as that crate declares it, a shared or exclusive borrow of the
-    retained stdlib layout. The receiver is borrowed in place and the other arguments bind as for a local method; the
+    retained nominal layout or checked scalar carrier. The receiver is borrowed in place and the other arguments bind as for a local method; the
     driver checks the whole signature against the crate's metadata before building the call.
 
     An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
@@ -3171,13 +3172,23 @@ def library_method_arguments(
     reference: Place,
     names: list[str],
 ) -> Result[list[RustType], str]:
-    """Close a checked SDK trait slot in native Self, trait, and method argument order; inherent calls retain owner binders."""
+    """Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders."""
     match target.sdk_trait:
         None => return library_receiver_arguments(module, builder, reference, names)
         Some(selected) =>
             if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
                 return Err("unsupported Body IR SDK trait item differs from its delegation")
-            mut closed = library_receiver_arguments(module, builder, reference, ["Self"])?
+            mut closed: list[RustType] = []
+            match place_type(builder.locals, reference):
+                PlanType.ModelRef(_owner, _name) =>
+                    closed = library_receiver_arguments(module, builder, reference, ["Self"])?
+                PlanType.ModelMutRef(_owner, _name) =>
+                    closed = library_receiver_arguments(module, builder, reference, ["Self"])?
+                _ =>
+                    match selected.receiver_type:
+                        Some(receiver) =>
+                            closed = checked_type_arguments(builder, [receiver.clone()])?
+                        None => return Err("unsupported Body IR SDK scalar receiver without checked Self")
             for argument in checked_type_arguments(builder, selected.type_arguments)?:
                 closed.append(argument.clone())
             for argument in checked_type_arguments(builder, target.type_args)?:
@@ -3256,19 +3267,20 @@ def library_receiver(
                         builder.intrinsics,
                     )?
                     receiver.local += builder.local_offset
-                    match place_type(builder.locals, receiver):
-                        PlanType.Model(owner, name) =>
-                            match declared:
-                                RustType.Ref(_inner) =>
-                                    reference = temporary(builder, PlanType.ModelRef(owner, name), span)
-                                    builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
-                                    return Ok(reference)
-                                RustType.RefMut(_inner) =>
+                    source = place_type(builder.locals, receiver)
+                    match declared:
+                        RustType.Ref(_inner) =>
+                            reference = temporary(builder, shared_receiver_type(source)?, span)
+                            builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+                            return Ok(reference)
+                        RustType.RefMut(_inner) =>
+                            match source:
+                                PlanType.Model(owner, name) =>
                                     reference = temporary(builder, PlanType.ModelMutRef(owner, name), span)
                                     builder.emit(plan_assign(reference, RvalueKind.MutBorrow(receiver), span))
                                     return Ok(reference)
-                                _ => return Err("unsupported Body IR by-value stdlib method receiver")
-                        _ => return Err("unsupported Body IR stdlib method receiver outside a stdlib layout")
+                                _ => return Err("unsupported Body IR mutable SDK receiver outside a nominal layout")
+                        _ => return Err("unsupported Body IR by-value stdlib method receiver")
                 _ => return Err("unsupported Body IR stdlib method nonplace receiver")
         None => return Err("unsupported Body IR stdlib method spread receiver")
 
@@ -3744,23 +3756,12 @@ def lower_delegated_call(
 
     A generic crate item takes the call's checked type arguments for its declared type parameters, in order, and the
     driver instantiates the item with them before checking its signature.
+    An associated SDK trait function closes Self from its checked type receiver before its method arguments.
     """
     mut names: list[str] = []
     for name in delegation.type_parameters:
         names.append(str(name))
-    mut closed: list[RustType] = []
-    if len(names) != 0:
-        match target.receiver_type:
-            Some(RustType.Generic(base=_base, args=arguments)) =>
-                if len(target.type_args) != 0:
-                    # The nominal producer also retains the full closed owner on the associated call. Both
-                    # checked views must agree and fill every declared binder before either is used.
-                    retained = checked_type_arguments(builder, target.type_args)?
-                    if len(arguments) != len(names) or retained != arguments:
-                        return Err("unsupported Body IR SDK owner and method type arguments")
-                closed = arguments.clone()
-            _ =>
-                closed = checked_type_arguments(builder, target.type_args)?
+    closed = library_function_arguments(builder, target, names)?
     if len(closed) != len(names) or (len(names) == 0 and len(target.type_args) != 0):
         return Err("unsupported Body IR nonlocal function with type parameters")
     mut parameters: list[PlanType] = []
@@ -3800,6 +3801,37 @@ def lower_delegated_call(
                 external_call(builder, path, parameters, result, operands, output, span)
                 return Ok(None)
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
+
+
+def library_function_arguments(
+    builder: Builder,
+    target: &RustNamedCallableTarget,
+    names: list[str],
+) -> Result[list[RustType], str]:
+    """Close an SDK associated Self from its checked type receiver; free functions and nominal owners retain their binders."""
+    if len(names) == 0:
+        return Ok([])
+    mut closed: list[RustType] = []
+    if names[0] == "Self":
+        match target.receiver_type:
+            Some(receiver) =>
+                closed = checked_type_arguments(builder, [receiver.clone()])?
+            None => return Err("unsupported Body IR SDK associated slot without checked Self")
+        for argument in checked_type_arguments(builder, target.type_args)?:
+            closed.append(argument.clone())
+        return Ok(closed)
+    match target.receiver_type:
+        Some(RustType.Generic(base=_base, args=arguments)) =>
+            if len(target.type_args) != 0:
+                # Older checked nominal calls also retain their owner arguments on the associated call. Exact
+                # agreement across both views and all declared binders preserves that proven representation.
+                retained = checked_type_arguments(builder, target.type_args)?
+                if len(arguments) != len(names) or retained != arguments:
+                    return Err("unsupported Body IR SDK owner and method type arguments")
+            for argument in arguments:
+                closed.append(argument.clone())
+            return Ok(closed)
+        _ => return checked_type_arguments(builder, target.type_args)
 
 
 def library_call_operands(
