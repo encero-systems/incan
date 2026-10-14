@@ -1839,7 +1839,7 @@ model Reversed with Ord:
     Ok(())
 }
 
-/// Importing only Ord retains the Eq supertrait's own-method and default slots for every adopter spelling.
+/// An Ord-only consumer retains checked provider Eq slots without a direct-adoption binder for the inherited key.
 #[test]
 fn ord_adopters_retain_inherited_comparison_slots() -> Result<(), Box<dyn std::error::Error>> {
     let source = include_str!(
@@ -1847,14 +1847,30 @@ fn ord_adopters_retain_inherited_comparison_slots() -> Result<(), Box<dyn std::e
     );
     let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = include_str!("../../../../../stdlib/core/src/derives/comparison.incn");
+    let tokens = lexer::lex(provider).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let path = vec!["m".to_owned(), "ordinal_comparison".to_owned()];
     let mut checker = TypeChecker::new();
     checker.set_current_module_path(Some(path.clone()));
+    checker.register_dependency_module_path_segments(
+        "std_derives_comparison",
+        vec!["std".to_owned(), "derives".to_owned(), "comparison".to_owned()],
+    );
     checker
-        .check_program(&program)
+        .check_with_imports(&program, &[("std_derives_comparison", &provider)])
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let info = checker.type_info();
-    let module = build_body_ir_module_v0(&program, &path, info);
+    let mut info = checker.type_info().clone();
+    for name in ["__eq__", "__ne__"] {
+        assert!(
+            info.traits
+                .method_identities
+                .contains_key(&("std.derives.comparison.Eq".to_owned(), name.to_owned()))
+        );
+    }
+    // Provider slots are checked, but an inherited key need not have a direct-adoption binder in the SDK snapshot.
+    info.traits.type_params.remove("std.derives.comparison.Eq");
+    let module = build_body_ir_module_v0(&program, &path, &info);
     for owner in ["Ordered", "Qualified", "Level"] {
         for name in ["__eq__", "__ne__"] {
             let implementation = module
@@ -1865,8 +1881,11 @@ fn ord_adopters_retain_inherited_comparison_slots() -> Result<(), Box<dyn std::e
                 })
                 .ok_or_else(|| {
                     std::io::Error::other(format!(
-                        "missing {owner}.{name}; binders={:?}; implementations={:?}",
-                        info.traits.type_params, module.trait_implementations,
+                        "missing {owner}.{name}; binders={:?}; supertraits={:?}; slots={:?}; implementations={:?}",
+                        info.traits.type_params,
+                        info.traits.direct_supertraits,
+                        info.traits.method_identities.keys().collect::<Vec<_>>(),
+                        module.trait_implementations,
                     ))
                 })?;
             assert!(implementation.type_arguments.is_empty());
