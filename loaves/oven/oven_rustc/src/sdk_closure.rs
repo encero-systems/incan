@@ -20,12 +20,15 @@ use std::path::{Path, PathBuf};
 type Error = Box<dyn std::error::Error>;
 const INDEX_COMMIT: &str = "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87";
 
+mod compile;
 pub(crate) mod current_inputs;
 mod environment;
 mod index_batch;
 mod local;
 mod native;
 mod physical_edges;
+
+use compile::compile_units;
 
 /// Actual process, protocol and blob work for one native preparation or validation reader.
 pub use index_batch::IndexBatchWork as NativeIndexReadWork;
@@ -305,118 +308,6 @@ fn validate_seed(seed: &Seed) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-/// Compile independent branches in dependency order, retaining every unavailable binding in the report.
-fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result<SdkCompiledClosure, Error> {
-    let mut selected_units: Vec<SdkCompiledUnit> = Vec::new();
-    let mut report = SdkClosureReport::default();
-    let mut pending: BTreeSet<usize> = (0..units.len()).collect();
-    let mut artifacts = BTreeMap::new();
-    let mut inspection_indices = BTreeMap::new();
-    let mut closures: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
-    while !pending.is_empty() {
-        let mut progressed = false;
-        for index in pending.clone() {
-            let unit = &units[index];
-            if unit.build_script && unit.fact.is_none() {
-                report.refused.push(binding_label(&unit.binding, context.profile));
-                pending.remove(&index);
-                progressed = true;
-                continue;
-            }
-            let edges = active_edges(unit, units)?;
-            if edges.iter().any(|(_, dependency)| pending.contains(dependency)) {
-                continue;
-            }
-            pending.remove(&index);
-            progressed = true;
-            if edges.iter().any(|(_, dependency)| !artifacts.contains_key(dependency)) {
-                report.failed.push(format!(
-                    "{}: dependency was refused or failed",
-                    binding_label(&unit.binding, context.profile)
-                ));
-                continue;
-            }
-            let externs = edges
-                .iter()
-                .filter_map(|(name, dependency)| {
-                    artifacts
-                        .get(dependency)
-                        .map(|path: &PathBuf| (name.clone(), path.clone()))
-                })
-                .collect();
-            let mut closure = BTreeSet::new();
-            for (_, dependency) in &edges {
-                closure.insert(*dependency);
-                if let Some(transitive) = closures.get(dependency) {
-                    closure.extend(transitive);
-                }
-            }
-            let searches = closure
-                .iter()
-                .filter_map(|index| {
-                    artifacts
-                        .get(index)
-                        .and_then(|path| path.parent())
-                        .map(Path::to_path_buf)
-                })
-                .collect();
-            let selected_dependencies = edges
-                .iter()
-                .map(|(name, dependency)| {
-                    inspection_indices
-                        .get(dependency)
-                        .and_then(|index| selected_units.get(*index))
-                        .map(|selected| (name.as_str(), selected))
-                        .ok_or("compiled dependency has no producer selection")
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let physical_bindings = selected_native_bindings(&selected_dependencies)?;
-            match compile_unit(unit, context, externs, searches, &physical_bindings) {
-                Ok((path, reused, owner, reproduced_receipt)) => {
-                    let physical_edges = physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
-                    let dependencies = edges
-                        .iter()
-                        .map(|(name, dependency)| {
-                            inspection_indices
-                                .get(dependency)
-                                .map(|index| serde_json::json!({"crate": index, "name": name}))
-                                .ok_or("compiled dependency has no inspection index")
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let inspection = inspection_unit(unit, &owner.artifact_root().join("source"), dependencies)?;
-                    inspection_indices.insert(index, selected_units.len());
-                    selected_units.push(SdkCompiledUnit {
-                        binding: unit.binding.clone(),
-                        output: path.clone(),
-                        owner,
-                        inspection,
-                        physical_edges,
-                        reproduced_receipt,
-                    });
-                    artifacts.insert(index, path);
-                    closures.insert(index, closure);
-                    if reused {
-                        report.reused.push(binding_label(&unit.binding, context.profile));
-                    } else {
-                        report.compiled.push(binding_label(&unit.binding, context.profile));
-                    }
-                }
-                Err(error) => report
-                    .failed
-                    .push(format!("{}: {error}", binding_label(&unit.binding, context.profile))),
-            }
-        }
-        if !progressed {
-            return Err("cycle in locked SDK closure".into());
-        }
-    }
-    Ok(SdkCompiledClosure {
-        report,
-        units: selected_units,
-        auxiliary_targets: BTreeMap::new(),
-    })
 }
 
 /// Freeze source inspection against the same selected facet, facts and active dependency indices as compilation.
