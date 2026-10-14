@@ -172,7 +172,7 @@ fn oven_native_runtime_uses_adjacent_compiler() -> Result<(), Box<dyn std::error
     let oven = directory.path().join(format!("oven{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&compiler, "compiler")?;
     assert_eq!(
-        super::compiler_for_native_runtime(&oven, Some(directory.path().join("stale")))?,
+        super::compiler_for_toolchain_command(&oven, Some(directory.path().join("stale")))?,
         compiler
     );
     Ok(())
@@ -184,11 +184,11 @@ fn native_runtime_compiler_selection_refuses_missing_toolchain() -> Result<(), B
     let directory = tempfile::tempdir()?;
     let compiler = directory.path().join("selected");
     let oven = directory.path().join(format!("oven{}", std::env::consts::EXE_SUFFIX));
-    assert!(super::compiler_for_native_runtime(&oven, Some(compiler.clone())).is_err());
+    assert!(super::compiler_for_toolchain_command(&oven, Some(compiler.clone())).is_err());
     assert_eq!(
-        super::compiler_for_native_runtime(&directory.path().join("native-libtest"), Some(compiler.clone()))?,
+        super::compiler_for_toolchain_command(&directory.path().join("native-libtest"), Some(compiler.clone()))?,
         compiler
     );
-    assert!(super::compiler_for_native_runtime(&directory.path().join("native-libtest"), None).is_err());
+    assert!(super::compiler_for_toolchain_command(&directory.path().join("native-libtest"), None).is_err());
     Ok(())
 }

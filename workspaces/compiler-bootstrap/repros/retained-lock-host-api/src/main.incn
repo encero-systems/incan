@@ -1,0 +1,25 @@
+"""Exercise the existing retained-session collector with its real argument types."""
+
+from rust::incan_driver::lock::resolution import collect_and_publish_project_lock_with_session
+from rust::incan_driver::session import CompilationSession
+from rust::oven_model::manifest import ProjectManifest
+from rust::oven_model::lock import CargoFeatureSelection
+from rust::incan_provider import FeatureSelection
+
+
+pub def prepare_lock(
+    manifest: ProjectManifest,
+    cargo_features: CargoFeatureSelection,
+    features: FeatureSelection,
+    session: CompilationSession,
+) -> Result[None, str]:
+    """Pass an original session through the existing lock collector without new discovery."""
+    collect_and_publish_project_lock_with_session(manifest, None, cargo_features, features, None, Some(session)).map_err(
+        (error) => str(error),
+    )?
+    return Ok(None)
+
+
+def main() -> None:
+    """Mark successful compilation if the host capability becomes available."""
+    println("retained lock API")

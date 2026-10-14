@@ -217,6 +217,11 @@ impl ExecutableBuildOwner {
         Ok(decisions)
     }
 
+    /// Prepare the canonical project lock through this owner's original source and dependency sessions.
+    pub fn prepare_lock(&mut self, request: &super::lock_preparation::LockPreparationRequest) -> CliResult<()> {
+        super::lock_preparation::execute_request(request, &mut self.authority)
+    }
+
     /// Run metadata-only checking through this serial owner using the single canonical driver pipeline.
     /// The request returns diagnostics and warning output, never a native artifact or execution permission.
     pub fn check(&mut self, request: &super::check::CheckRequest) -> CliResult<super::check::CheckOutput> {

@@ -366,6 +366,9 @@ pub struct WorkspaceLockResolutionRequest<'a> {
 
 /// Fully collected dependency inputs that define a project or workspace lock's freshness surface.
 pub struct ProjectLockContext {
+    /// Actual standalone test discovery inputs; aggregate workspace contexts require member-wise observations.
+    #[cfg(feature = "cli")]
+    pub(crate) test_discovery: Option<oven_model::observed_inputs::InputObservations>,
     resolved: ResolvedDependencies,
     project_requirements: ProjectRequirements,
     semantic: SemanticLockState,
@@ -381,9 +384,9 @@ pub struct PublishedOvenProjectLock {
 }
 
 /// Exact bytes and canonical location observed by the lock writer while holding its publication guard.
-struct PublishedLockFile {
-    canonical_path: PathBuf,
-    content_digest: String,
+pub(crate) struct PublishedLockFile {
+    pub(crate) canonical_path: PathBuf,
+    pub(crate) content_digest: String,
 }
 
 impl PublishedOvenProjectLock {
@@ -457,6 +460,9 @@ pub struct WorkspaceLockCollection {
 
 /// Test-file dependency inputs that must participate in the same project lock fingerprint as normal scripts.
 pub struct TestLockInputs {
+    /// Consulted source files, directory membership and nested manifest boundaries from canonical discovery.
+    #[cfg(feature = "cli")]
+    discovery_inputs: oven_model::observed_inputs::InputObservations,
     inline_imports: Vec<InlineRustImport>,
     project_requirement_modules: Vec<ParsedModule>,
 }

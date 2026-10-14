@@ -181,6 +181,8 @@ pub fn collect_workspace_lock_context_tolerating(
         .map_err(|error| outside(CliError::failure(error)))?;
     Ok(WorkspaceLockCollection {
         context: ProjectLockContext {
+            #[cfg(feature = "cli")]
+            test_discovery: None,
             resolved,
             project_requirements,
             semantic,
@@ -388,7 +390,7 @@ fn lock_provider_used_module_paths(session: &CompilationSession, modules: &[Pars
 /// A root library need not expose a runnable script. Canonical project and workspace locks nevertheless cover its
 /// `src/lib.incn` graph, so a rooted RFC 077 workspace can publish one complete lock from its root without inventing
 /// a command-only entrypoint.
-fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
+pub(crate) fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
     if let Some(project) = &manifest.project {
         for script in project.scripts.values() {
@@ -620,6 +622,8 @@ fn collect_project_lock_context_impl(
     }
 
     let TestLockInputs {
+        #[cfg(feature = "cli")]
+        discovery_inputs,
         inline_imports: test_inline_imports,
         project_requirement_modules: test_requirement_modules,
     } = collect_test_lock_inputs(
@@ -683,6 +687,8 @@ fn collect_project_lock_context_impl(
         })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     Ok(Some(ProjectLockContext {
+        #[cfg(feature = "cli")]
+        test_discovery: Some(discovery_inputs),
         resolved,
         project_requirements,
         semantic,

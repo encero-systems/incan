@@ -424,9 +424,23 @@ fn relative_traversal_path(root: &Path, path: &Path) -> Option<String> {
 /// Publish a complete lockfile while holding the compiler-private stable publication-lock identity.
 ///
 /// This is compiler-host infrastructure: `incan lock` runs before any user program exists, so it cannot invoke the
-/// generated Incan `std.fs` library directly. The operation intentionally mirrors its public recipe—exclusive stable
-/// lock, same-directory exclusive staging, content synchronization, atomic replacement, then parent synchronization.
+/// generated Incan `std.fs` library directly. Identical regular-file bytes retain their physical identity while still
+/// synchronizing the file and parent. Changed or unsupported inputs follow the existing staged publication
+/// recipe—exclusive stable lock, same-directory exclusive staging, content synchronization, atomic replacement, then
+/// parent synchronization.
 fn publish_lockfile(path: &Path, content: &[u8], _publication_lock: &PublicationLock) -> io::Result<()> {
+    let mut observed = crate::observed_inputs::InputObservations::default();
+    observed.observe(path);
+    if observed.supports_retention()
+        && fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
+        && fs::read(path).is_ok_and(|bytes| bytes == content)
+        && observed.current()
+    {
+        // Preserve the publication contract's durability without replacing identical bytes or their identity.
+        File::open(path)?.sync_all()?;
+        File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()?;
+        return Ok(());
+    }
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let (staged_path, mut staged_file) = create_staged_lockfile(path)?;
 
@@ -1491,6 +1505,43 @@ mod tests {
             compute_resolved_fingerprint(&[], &[], &selection, None, &first),
             compute_resolved_fingerprint(&[], &[], &selection, None, &second)
         );
+        Ok(())
+    }
+
+    /// A no-op publisher preserves the input generation; changed bytes still replace the destination atomically.
+    #[cfg(unix)]
+    #[test]
+    fn identical_lock_publication_preserves_observed_generation() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let root = fs::canonicalize(dir.path())?;
+        let path = root.join("oven.lock");
+        let guard = acquire_publication_lock(&path)?;
+        publish_lockfile(&path, b"first", &guard)?;
+        let mut inputs = crate::observed_inputs::InputObservations::default();
+        inputs.observe(&root);
+        inputs.observe(&path);
+        publish_lockfile(&path, b"first", &guard)?;
+        assert!(inputs.current());
+        publish_lockfile(&path, b"other", &guard)?;
+        assert!(!inputs.current());
+        assert_eq!(fs::read(&path)?, b"other");
+        Ok(())
+    }
+
+    /// Matching bytes behind a link must not turn a symbolic destination into an accepted canonical publication.
+    #[cfg(unix)]
+    #[test]
+    fn identical_linked_lock_still_publishes_regular_file() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let root = fs::canonicalize(dir.path())?;
+        let path = root.join("oven.lock");
+        let target = root.join("other.lock");
+        fs::write(&target, b"first")?;
+        std::os::unix::fs::symlink(&target, &path)?;
+        let guard = acquire_publication_lock(&path)?;
+        publish_lockfile(&path, b"first", &guard)?;
+        assert!(fs::symlink_metadata(&path)?.is_file());
+        assert_eq!(fs::read(&target)?, b"first");
         Ok(())
     }
 

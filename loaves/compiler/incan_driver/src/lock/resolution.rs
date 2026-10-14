@@ -71,7 +71,7 @@ fn collect_and_publish_project_lock_with_evidence(
 }
 
 /// Use an original admitted command session in the canonical collector without discovering another session.
-fn collect_and_publish_project_lock_with_session(
+pub(crate) fn collect_and_publish_project_lock_with_session(
     manifest: &ProjectManifest,
     entry_file: Option<&Path>,
     cargo_features: &CargoFeatureSelection,

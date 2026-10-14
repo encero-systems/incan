@@ -288,6 +288,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/lock_preparation.rs": {
+      "disposition": "unaffected",
+      "notes": "Existing-owner lock publication reuse guards; backend-neutral request/source/publication invalidation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/mod.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -12424,6 +12432,12 @@
       "notes": "benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not.",
       "owner": 1561,
       "pattern": "**/*.incn"
+    },
+    "workspaces/compiler-bootstrap/repros/parallel-test-compiler-stack": {
+      "disposition": "keep",
+      "owner": 2213,
+      "notes": "Two Incan source modules exercise parallel compiler workers without a stack-size environment override; run through incan test with jobs 4 and 1.",
+      "pattern": "test_*.incn"
     },
     "workspaces/docs-site/docs/_snippets/language/examples": {
       "disposition": "re-point",

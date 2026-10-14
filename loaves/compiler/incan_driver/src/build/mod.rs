@@ -21,6 +21,7 @@ pub mod library_metadata;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
+pub mod lock_preparation;
 mod lock_reuse;
 pub mod native_loaf_plan;
 pub mod native_runtime_inputs;
