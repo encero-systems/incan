@@ -47,6 +47,32 @@ fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), B
     Ok(())
 }
 
+/// An SDK constructor factory retains its checked applied owner independently of the method's own type arguments.
+#[test]
+fn sdk_constructor_factory_retains_applied_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.graph import DiGraph\n\ndef build() -> DiGraph[str]:\n    return DiGraph[str]()\n";
+    let module = build(source, &["applied_factory"])?;
+    let targets = named_targets(&module, "build");
+    let [target] = targets.as_slice() else {
+        return Err("expected one SDK factory call".into());
+    };
+    assert_eq!(
+        target.receiver_type,
+        Some(IncanType::Generic {
+            base: "DiGraph".to_owned(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+        }),
+        "{}",
+        body_named(&module, "build")?.render_snapshot()
+    );
+    assert!(target.type_args.is_empty());
+    assert_eq!(
+        target.canonical.as_ref().map(|identity| &identity.kind),
+        Some(&SemanticSourceTargetKind::Method)
+    );
+    Ok(())
+}
+
 /// A nominal callee and checked parameters cannot substitute for an absent full-call factory selection.
 #[test]
 fn sdk_constructor_factory_requires_full_call_identity() -> Result<(), Box<dyn std::error::Error>> {

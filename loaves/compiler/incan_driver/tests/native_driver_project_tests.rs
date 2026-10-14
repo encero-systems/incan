@@ -120,6 +120,33 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// The original reader reaches the SDK adapter interface boundary after its closed closure input is admitted.
+#[test]
+fn original_sdk_reader_reaches_adapter_interface() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "original_sdk_reader_adapter_interface",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+        &[],
+        b"16\n4\ndone\n",
+        "unsupported Body IR type FallibleIterator[bytes, str]",
+    )
+}
+
+/// An applied SDK factory supplies its owner arguments and preserves the initial graph storage bytes.
+#[test]
+fn applied_sdk_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("applied-sdk-factory")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.graph import DiGraph\n\ndef main() -> None:\n    graph = DiGraph[str]()\n    println(graph.next_node_id)\n",
+    )
+}
+
 /// A hand-filled Incan plan moves a non-Copy environment through native FnOnce invocation and returns its field.
 #[test]
 fn oven_driver_compiles_consuming_closure_plan() -> Result<(), Box<dyn std::error::Error>> {
