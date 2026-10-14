@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3608 | 250 | 431 |
+| keep | 3610 | 250 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2025 | 214 | 5 |
+| unaffected | 2027 | 215 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8628** | **708** | **1494** |
+| **Total** | **8632** | **709** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -171,7 +171,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/output_materialization.rs` | 4 | 1469 | 512 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_paths.rs` | 8 | 1567 | 527 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_selection.rs` | 6 | 1834 | 774 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/oven_project.rs` | 7 | 1656 | 160 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/oven_project.rs` | 7 | 1661 | 160 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/package_loafs.rs` | 6 | 1379 | 700 | unaffected | - | - | - | #1561 | text 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/plan_authority.rs` | 5 | 1387 | 265 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/plan_selection.rs` | 8 | 1434 | 653 | unaffected | - | - | - | #1561 | codegen 1, run 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -179,7 +179,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/provider_compilation.rs` | 7 | 1044 | 546 | unaffected | - | - | - | #1561 | checker 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/provider_metadata.rs` | 5 | 1102 | 267 | keep | - | - | - | #1561 | checker 3, parser 3 | provider operation metadata projected from checked declaration facts. |
 | `loaves/compiler/incan_driver/src/build/publication.rs` | 2 | 1092 | 102 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/retained_inputs.rs` | 18 | 949 | 460 | unaffected | - | - | - | #1337 | - | Owner-held canonical lock model and observation validity; shared source authority and admission behavior across backends. |
+| `loaves/compiler/incan_driver/src/build/retained_inputs.rs` | 18 | 1002 | 460 | unaffected | - | - | - | #1337 | - | Owner-held canonical lock model and observation validity; shared source authority and admission behavior across backends. |
 | `loaves/compiler/incan_driver/src/build/reuse.rs` | 6 | 1282 | 311 | unaffected | - | - | - | #1561 | checker 2 | Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed. |
 | `loaves/compiler/incan_driver/src/build/rust_bake_reuse.rs` | 2 | 466 | 128 | unaffected | - | - | - | #1337 | - | Receipt-bound Oven bake reuse for Rust caller projects; shared build infrastructure. |
 | `loaves/compiler/incan_driver/src/build/source_authority.rs` | 30 | 2772 | 1624 | unaffected | - | - | required | #1561 | codegen 1, checker 1, parser 22 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -2676,7 +2676,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/sdk_closure/staging_tests.rs` | 2 | 118 | 118 | unaffected | - | - | - | #1698 | - | Actual native Store publication cleans successful private staging and retains failed-publication receipts and sourced diagnostics. |
 | `loaves/oven/oven_rustc/tests/native_generated_output_store_tests.rs` | 6 | 68 | 68 | keep | - | - | - | #1698 | - | Public generated native library, binary and test-store reuse, restored source selection and atomic read-only output replacement with failure preservation. |
 
-### `loaves/toolchain/incan-cli` (1765 tests in 110 files: keep 137, re-point 1468, retire 34, unaffected 126)
+### `loaves/toolchain/incan-cli` (1769 tests in 111 files: keep 139, re-point 1468, retire 34, unaffected 128)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2691,10 +2691,11 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs` | 1 | 116 | 116 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/workspace.rs` | 1 | 428 | 45 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/lib.rs` | 37 | 3437 | 1122 | unaffected | - | - | - | #1561 | codegen 1 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/project_owner/protocol.rs` | 3 | 108 | 49 | keep | - | - | - | #1337 | - | Bounded project-owner framing, independent progress/result messages and invalid protocol refusal; no Cargo or backend-specific compilation. |
-| `loaves/toolchain/incan-cli/src/project_owner/unix.rs` | 4 | 514 | 112 | keep | - | - | - | #1337 | - | Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately. |
-| `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 23 | 3802 | 742 | keep (keep 12, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
-| `loaves/toolchain/incan-cli/src/test_runner/mod.rs` | 15 | 2306 | 506 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
+| `loaves/toolchain/incan-cli/src/project_owner/protocol.rs` | 3 | 117 | 56 | keep | - | - | - | #1337 | - | Bounded project-owner framing, independent progress/result messages and invalid protocol refusal; no Cargo or backend-specific compilation. |
+| `loaves/toolchain/incan-cli/src/project_owner/unix.rs` | 5 | 583 | 130 | keep | - | - | - | #1337 | - | Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately. |
+| `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 23 | 3808 | 742 | keep (keep 12, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
+| `loaves/toolchain/incan-cli/src/test_runner/mod.rs` | 16 | 2458 | 525 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
+| `loaves/toolchain/incan-cli/src/test_runner/output.rs` | 2 | 137 | 60 | unaffected | - | - | - | #1337 | - | Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs` | 28 | 182 | 182 | re-point | - | - | - | #1561 | - | generated by `make behavior-roots`: one case per behavior fixture of the cli_dependencies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_logic_comparisons_and_patterns_tests.rs` | 12 | 86 | 86 | re-point | - | - | - | #1561 | - | generated by `make behavior-roots`: one case per behavior fixture of the cli_logic_comparisons_and_patterns area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_modules_and_declarations_tests.rs` | 36 | 230 | 230 | re-point | - | - | - | #1561 | - | generated by `make behavior-roots`: one case per behavior fixture of the cli_modules_and_declarations area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. The route changes under it, the fixtures do not. |

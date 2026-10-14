@@ -3,7 +3,6 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -14,6 +13,7 @@ use incan_driver::cargo_policy::CargoPolicy;
 use incan_driver::session::CompilationSession;
 
 mod execution;
+pub(crate) mod output;
 mod reporter;
 
 pub use incan_driver::testing::discovery::{discover_test_files, discover_tests_and_fixtures};
@@ -31,6 +31,7 @@ use incan_driver::testing::discovery::{
     CollectionEvalContext, discover_test_file_candidates, discover_test_files_with_session,
     discover_tests_and_fixtures_with_context, get_autouse_fixtures, parse_duration_literal,
 };
+use output::TestOutputSink;
 use reporter::{print_test_result, style};
 
 const RED: &str = "1;31";
@@ -48,7 +49,8 @@ thread_local! {
     static TEST_COMMAND_SESSION_CONSTRUCTIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Create the only compilation session owned by one `incan test` invocation.
+/// Construct an uncached canonical session for unit controls of collection and lock behavior.
+#[cfg(test)]
 fn prepare_test_command_session(
     representative_test: &Path,
     list_only: bool,
@@ -346,6 +348,7 @@ fn emit_json_result(
     result: &TestResult,
     root: &Path,
     workspace_context: Option<&WorkspaceTestContext>,
+    output: &TestOutputSink,
 ) {
     let mut record = serde_json::json!({
         "schema_version": "incan.test.v1",
@@ -385,7 +388,7 @@ fn emit_json_result(
             );
         }
     }
-    println!("{record}");
+    output.line(format_args!("{record}"));
 }
 
 /// Escape text for the small JUnit XML writer.
@@ -453,17 +456,30 @@ fn write_junit_report(
 }
 
 /// Print the slowest collected test cases.
-fn print_durations(results: &[(TestInfo, TestResult)], count: usize, use_color: bool, root: &Path) {
+fn print_durations(
+    results: &[(TestInfo, TestResult)],
+    count: usize,
+    use_color: bool,
+    root: &Path,
+    output: &TestOutputSink,
+) {
     if count == 0 || results.is_empty() {
         return;
     }
     let mut ordered: Vec<_> = results.iter().collect();
     ordered.sort_by_key(|(_, result)| std::cmp::Reverse(result_duration_ms(result)));
 
-    println!();
-    println!("{}", style(centered_eq_banner("slowest durations"), "1", use_color));
+    output.line("");
+    output.line(format_args!(
+        "{}",
+        style(centered_eq_banner("slowest durations"), "1", use_color)
+    ));
     for (test, result) in ordered.into_iter().take(count) {
-        println!("{:>6}ms {}", result_duration_ms(result), stable_test_id(test, root));
+        output.line(format_args!(
+            "{:>6}ms {}",
+            result_duration_ms(result),
+            stable_test_id(test, root)
+        ));
     }
 }
 
@@ -930,6 +946,7 @@ fn run_execution_unit(
     no_capture: bool,
     verbose: bool,
     emit_progress: bool,
+    output: TestOutputSink,
 ) -> Vec<(TestInfo, TestResult)> {
     run_file_tests_batch(
         &unit.tests,
@@ -944,6 +961,7 @@ fn run_execution_unit(
             timeout: unit.timeout,
             verbose,
             emit_progress,
+            output,
         },
     )
 }
@@ -1166,6 +1184,7 @@ fn run_scheduled_execution_units(
     no_capture: bool,
     verbose: bool,
     emit_progress: bool,
+    output: TestOutputSink,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
     if jobs <= 1 {
         let mut completed = Vec::new();
@@ -1180,6 +1199,7 @@ fn run_scheduled_execution_units(
                 no_capture,
                 verbose,
                 emit_progress,
+                output.clone(),
             );
             let failed = batch_has_failure(&results);
             completed.push((unit.index, results));
@@ -1215,6 +1235,7 @@ fn run_scheduled_execution_units(
             let cargo_features = cargo_features.to_vec();
             let cargo_policy = cargo_policy.clone();
             let command_context = Arc::clone(&command_context);
+            let output = output.clone();
             active.push(ActiveUnit {
                 index: unit.index,
                 file_paths: unit.file_paths.clone(),
@@ -1236,6 +1257,7 @@ fn run_scheduled_execution_units(
                     no_capture,
                     verbose,
                     emit_progress,
+                    output,
                 );
                 let _ = sender.send((unit_index, results));
             });
@@ -1293,6 +1315,100 @@ impl TestCollectionOptions {
             timeout: config.timeout.map(str::to_string),
             cargo_policy: config.cargo_policy.clone(),
         }
+    }
+}
+
+/// Owned execution intent for the same runner; it carries configuration, never retained compiler authority.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TestExecutionRequest {
+    /// Collection choices shared verbatim with list-only requests.
+    pub(crate) collection: TestCollectionOptions,
+    stop_on_fail: bool,
+    use_color: bool,
+    fail_on_empty: bool,
+    report_format: TestOutputFormat,
+    /// Client-resolved report destination; the owner never changes its working directory.
+    pub(crate) junit_path: Option<PathBuf>,
+    durations: Option<usize>,
+    shuffle: bool,
+    seed: Option<u64>,
+    run_xfail: bool,
+    jobs: usize,
+    no_capture: bool,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    workspace_context: Option<WorkspaceTestContext>,
+}
+
+impl TestExecutionRequest {
+    /// Own an existing test configuration at the transport boundary without changing its semantics.
+    pub(crate) fn from_config(config: &TestRunConfig<'_>) -> Self {
+        Self {
+            collection: TestCollectionOptions::from_config(config),
+            stop_on_fail: config.stop_on_fail,
+            use_color: config.use_color,
+            fail_on_empty: config.fail_on_empty,
+            report_format: config.report_format,
+            junit_path: config.junit_path.clone(),
+            durations: config.durations,
+            shuffle: config.shuffle,
+            seed: config.seed,
+            run_xfail: config.run_xfail,
+            jobs: config.jobs,
+            no_capture: config.no_capture,
+            cargo_features: config.cargo_features.clone(),
+            cargo_no_default_features: config.cargo_no_default_features,
+            cargo_all_features: config.cargo_all_features,
+            workspace_context: config.workspace_context.clone(),
+        }
+    }
+
+    /// Recreate the existing borrowed runner configuration only for this request's execution lifetime.
+    fn as_config(&self) -> TestRunConfig<'_> {
+        TestRunConfig {
+            path: &self.collection.path,
+            verbose: self.collection.verbose,
+            include_slow: self.collection.include_slow,
+            filter: self.collection.filter.as_deref(),
+            list_only: false,
+            marker_expr: self.collection.marker_expr.as_deref(),
+            strict_markers: self.collection.strict_markers,
+            test_features: self.collection.test_features.clone(),
+            package_features: self.collection.package_features.clone(),
+            sdk_profile: self.collection.sdk_profile.clone(),
+            timeout: self.collection.timeout.as_deref(),
+            cargo_policy: self.collection.cargo_policy.clone(),
+            stop_on_fail: self.stop_on_fail,
+            use_color: self.use_color,
+            fail_on_empty: self.fail_on_empty,
+            report_format: self.report_format,
+            junit_path: self.junit_path.clone(),
+            durations: self.durations,
+            shuffle: self.shuffle,
+            seed: self.seed,
+            run_xfail: self.run_xfail,
+            jobs: self.jobs,
+            no_capture: self.no_capture,
+            cargo_features: self.cargo_features.clone(),
+            cargo_no_default_features: self.cargo_no_default_features,
+            cargo_all_features: self.cargo_all_features,
+            workspace_context: self.workspace_context.clone(),
+        }
+    }
+
+    /// Reject implicit working-directory authority before the owner executes or writes a report.
+    pub(crate) fn validate_paths(&self) -> CliResult<()> {
+        if !Path::new(&self.collection.path).is_absolute()
+            || self.junit_path.as_ref().is_some_and(|path| !path.is_absolute())
+            || self.workspace_context.as_ref().is_some_and(|workspace| {
+                !workspace.workspace_root.is_absolute() || !workspace.member_root.is_absolute()
+            })
+        {
+            return Err(CliError::failure("owner requires absolute test and report paths"));
+        }
+        Ok(())
     }
 }
 
@@ -1484,11 +1600,17 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     if config.list_only {
         return crate::project_owner::list_tests(&config);
     }
-    run_tests_in_process(config)
+    crate::project_owner::execute_tests(&config)
 }
 
-/// Execute fresh tests through the existing scheduler; list requests use shared collection in the owner.
-fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
+/// Execute fresh tests through the single scheduler, borrowing canonical preparation from this request's owner.
+pub(crate) fn execute_tests_with_owner(
+    request: &TestExecutionRequest,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    output: TestOutputSink,
+) -> CliResult<ExitCode> {
+    request.validate_paths()?;
+    let config = request.as_config();
     let collection_options = TestCollectionOptions::from_config(&config);
     let TestRunConfig {
         path,
@@ -1529,8 +1651,8 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
 
     let collected = collect_selected_tests(
         &collection_options,
-        |_, entry| prepare_test_command_session(entry, false, &package_features, sdk_profile.as_deref()),
-        |message| print!("{message}"),
+        |root, entry| owner.test_execution_session(root, entry, &package_features, sdk_profile.as_deref()),
+        |message| output.stdout(message),
     )?;
     let SelectedTestCollection {
         session,
@@ -1541,7 +1663,7 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     } = collected;
 
     if filtered_tests.is_empty() {
-        eprintln!("No tests collected");
+        output.error_line("No tests collected");
         if fail_on_empty {
             return Err(CliError::new("", ExitCode::FAILURE));
         }
@@ -1549,7 +1671,9 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     }
 
     let stage = trace_test_stage("dependency_admission");
-    let command_context = prepare_oven_test_command_context(Arc::clone(&session), &test_files[0], &test_files)?;
+    let native_context = owner.native_dependency_context(&session)?;
+    let command_context =
+        prepare_oven_test_command_context(Arc::clone(&session), &test_files[0], &test_files, native_context)?;
     drop(stage);
     let stage = trace_test_stage("scheduling");
 
@@ -1562,15 +1686,18 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     };
 
     if report_format == TestOutputFormat::Console {
-        println!("{}", style(centered_eq_banner("test session starts"), "1", use_color));
-        println!("collected {} item(s)", filtered_tests.len());
+        output.line(format_args!(
+            "{}",
+            style(centered_eq_banner("test session starts"), "1", use_color)
+        ));
+        output.line(format_args!("collected {} item(s)", filtered_tests.len()));
         if let Some(seed) = shuffle_seed {
-            println!("shuffle seed: {seed}");
+            output.line(format_args!("shuffle seed: {seed}"));
         }
         if jobs > 1 {
-            println!("jobs: {jobs}");
+            output.line(format_args!("jobs: {jobs}"));
         }
-        println!();
+        output.line("");
     }
 
     let mut results: Vec<(TestInfo, TestResult)> = Vec::new();
@@ -1583,11 +1710,11 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let planning_start = Instant::now();
     let units = build_execution_units(&filtered_tests, path_for_execution, default_timeout, stop_on_fail, jobs);
     if report_format == TestOutputFormat::Console && verbose {
-        println!(
+        output.line(format_args!(
             "planned {} generated harness unit(s) in {:.2}s",
             units.len(),
             planning_start.elapsed().as_secs_f64()
-        );
+        ));
     }
     if report_format == TestOutputFormat::Console && !stop_on_fail {
         for unit in &units {
@@ -1597,16 +1724,15 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!(
+            output.line(format_args!(
                 "{}",
                 style(
                     format!("running {} ({} item(s))", files, unit.tests.len()),
                     "2",
                     use_color
                 )
-            );
+            ));
         }
-        let _ = std::io::stdout().flush();
     }
 
     let mut raw_batch_results = run_scheduled_execution_units(
@@ -1621,12 +1747,13 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         no_capture,
         verbose,
         report_format == TestOutputFormat::Console,
+        output.clone(),
     );
     if report_format == TestOutputFormat::Console && verbose {
-        println!(
+        output.line(format_args!(
             "generated harness execution phase completed in {:.2}s",
             start_time.elapsed().as_secs_f64()
-        );
+        ));
     }
     drop(stage);
     let _reporting = trace_test_stage("reporting");
@@ -1691,9 +1818,9 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         };
 
         if report_format == TestOutputFormat::Console {
-            print_test_result(&test, &result, verbose, use_color);
+            print_test_result(&test, &result, verbose, use_color, &output);
         } else {
-            emit_json_result(&test, &result, &stable_id_root, workspace_context.as_ref());
+            emit_json_result(&test, &result, &stable_id_root, workspace_context.as_ref(), &output);
         }
         results.push((test, result));
     }
@@ -1704,24 +1831,30 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         .collect();
 
     if report_format == TestOutputFormat::Console && !failures.is_empty() {
-        println!();
-        println!("{}", style(centered_eq_banner("FAILURES"), RED, use_color));
+        output.line("");
+        output.line(format_args!(
+            "{}",
+            style(centered_eq_banner("FAILURES"), RED, use_color)
+        ));
         for (test, result) in failures {
             let display_name = test_display_name(test);
-            println!();
-            println!("{}", style(centered_banner(display_name, '_'), "1", use_color));
+            output.line("");
+            output.line(format_args!(
+                "{}",
+                style(centered_banner(display_name, '_'), "1", use_color)
+            ));
             if let TestResult::Failed(_, msg) = result {
-                println!();
-                println!("    {}", msg);
+                output.line("");
+                output.line(format_args!("    {}", msg));
             } else if let TestResult::XPassed(_) = result {
-                println!();
-                println!(
+                output.line("");
+                output.line(format_args!(
                     "    {}",
                     style("Test passed but was expected to fail (xfail)", YELLOW, use_color)
-                );
+                ));
             }
-            println!();
-            println!("    {}::{}", test.file_path.display(), display_name);
+            output.line("");
+            output.line(format_args!("    {}::{}", test.file_path.display(), display_name));
         }
     }
 
@@ -1731,9 +1864,9 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     }
     if report_format == TestOutputFormat::Console {
         if let Some(count) = durations {
-            print_durations(&results, count, use_color, &stable_id_root);
+            print_durations(&results, count, use_color, &stable_id_root, &output);
         }
-        println!();
+        output.line("");
     }
     let mut parts = Vec::new();
     if passed > 0 {
@@ -1755,10 +1888,10 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     if report_format == TestOutputFormat::Console {
         let summary_label = format!("{} in {:.2}s", parts.join(", "), total_time.as_secs_f64());
         let summary_color = if failed > 0 || xpassed > 0 { RED } else { GREEN };
-        println!(
+        output.line(format_args!(
             "{}",
             style(centered_eq_banner(&summary_label), summary_color, use_color)
-        );
+        ));
     } else {
         let mut record = serde_json::json!({
             "schema_version": "incan.test.v1",
@@ -1786,7 +1919,7 @@ fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
                 }),
             );
         }
-        println!("{record}");
+        output.line(format_args!("{record}"));
     }
 
     if failed > 0 || xpassed > 0 {
@@ -1919,7 +2052,8 @@ mod tests {
             "strict validation must collect through the command session without discovering another",
         );
 
-        let _execution_context = prepare_oven_test_command_context(Arc::clone(&session), representative, &test_files)?;
+        let _execution_context =
+            prepare_oven_test_command_context(Arc::clone(&session), representative, &test_files, None)?;
         TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
         Ok(())
     }
@@ -1997,6 +2131,24 @@ mod tests {
         assert!(error.message.contains("test path spans multiple Incan projects"));
         assert!(error.message.contains("alpha"));
         assert!(error.message.contains("beta"));
+        Ok(())
+    }
+
+    /// Execution refuses relative source/report paths before selecting any session or writing output.
+    #[test]
+    fn execution_request_requires_absolute_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = list_test_config("tests");
+        assert!(TestExecutionRequest::from_config(&config).validate_paths().is_err());
+        let directory = tempfile::tempdir()?;
+        let absolute = directory.path().to_str().ok_or("test path is not UTF-8")?;
+        config.path = absolute;
+        config.junit_path = Some(PathBuf::from("reports/tests.xml"));
+        assert!(TestExecutionRequest::from_config(&config).validate_paths().is_err());
+        config.junit_path = Some(directory.path().join("reports/tests.xml"));
+        let request = TestExecutionRequest::from_config(&config);
+        let decoded: TestExecutionRequest = serde_json::from_value(serde_json::to_value(request)?)?;
+        decoded.validate_paths()?;
+        assert_eq!(decoded.as_config().junit_path, config.junit_path);
         Ok(())
     }
 
