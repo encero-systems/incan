@@ -453,6 +453,20 @@ pub struct OvenDirectRustcBake {
     pub reused: bool,
     /// Held for stored consumers until their caller finishes executing the native test binary.
     lease: Option<OvenStoreLease>,
+    /// Original immutable output protected by `lease`; never the writable caller projection (#2205).
+    stored_output: Option<PathBuf>,
+}
+
+impl OvenDirectRustcBake {
+    /// Borrow the original admitted output while this bake retains its Store lease.
+    ///
+    /// Direct outputs without Store publication return `None`. Consumers may use this source for immutable
+    /// publication, but must preserve a separate writable caller destination. Filesystem aliases may differ
+    /// between first publication and selection; the path names the original leased bytes and cannot be retargeted.
+    /// This is the bounded host handoff tracked by #2205, not another output lookup or cache.
+    pub fn stored_output_path(&self) -> Option<&Path> {
+        self.stored_output.as_deref()
+    }
 }
 
 /// The concrete caller-owned output Rustc must produce for one Oven materialization step.
