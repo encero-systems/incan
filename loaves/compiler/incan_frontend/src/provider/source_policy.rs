@@ -63,6 +63,11 @@ pub enum TrustedStandardSourcePublicationError {
 }
 
 impl TrustedStandardSourcePublication {
+    /// Borrow the pinned package identity whose source and namespace policy this capability authorizes.
+    pub fn package_identity(&self) -> (&'static str, &'static str) {
+        (self.policy.package_name, self.policy.version)
+    }
+
     /// Read pinned own roots without filesystem work; the retained source must still be verified at each handoff.
     pub fn namespace_roots(&self) -> &'static [&'static str] {
         self.policy.namespace_roots

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use oven_model::manifest::{DependencySource, DependencySpec};
+use oven_model::observed_inputs::InputObservations;
 use oven_store::store::{OvenStore, OvenStoreLimits};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,8 @@ pub struct NativeLoafConsumerReport {
     pub graph_verification: NativeLoafVerificationWork,
     /// Whether an optional coordinate hint survived complete current-input and per-unit admission checks.
     pub prepared_reuse: bool,
+    /// Whether this request reconciled the original retained closure without Store readmission.
+    pub retained_reuse: bool,
     /// Actual calls into complete native preparation; an unchanged admitted command reports zero.
     pub preparation_calls: usize,
     /// Distinct per-unit records returned by a genuine complete preparation; zero on warm/empty commands.
@@ -68,7 +71,7 @@ pub struct NativeLoafConsumerReport {
     pub selected_native_owners: usize,
     /// Actual current local mapping/hash demands in this command, including a failed stale-hint validation.
     pub current_local_sources: usize,
-    /// Actual current selected registry fact/archive checks.
+    /// Actual registry binding/edge replays; unchanged privately retained lock authority requires none.
     pub current_registry_bindings: usize,
     /// Current source candidates demanded by local dependency selection, without acquiring their native owners.
     pub current_local_dependency_candidates: usize,
@@ -101,6 +104,10 @@ pub struct NativeLoafConsumerReport {
 pub struct NativeLoafConsumerPreparation {
     closure: NativeLoafClosure,
     report: NativeLoafConsumerReport,
+    /// Present only after complete current-input validation; persisted hints cannot supply this proof.
+    current_key: Option<String>,
+    local: LocalSources,
+    local_declarations: Option<ObservedDeclarations>,
 }
 
 impl NativeLoafConsumerPreparation {
@@ -112,6 +119,68 @@ impl NativeLoafConsumerPreparation {
     /// Borrow actual preparation/admission work counts and the measured whole boundary time.
     pub fn report(&self) -> &NativeLoafConsumerReport {
         &self.report
+    }
+
+    /// Reconcile a completed selection against current inputs, retaining its original graph and leases on success.
+    ///
+    /// A changed request returns `None` for the existing producer to handle. Corrupt original owners return an error.
+    /// This consumes the previous selection so a failed reconciliation cannot leave a supposedly current capability
+    /// with its caller. It does not discover Store entries or acquire replacement owners.
+    pub fn reconcile(mut self, request: &NativeLoafConsumerRequest<'_>) -> Result<Option<Self>> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_native_loafs", input = %request.output.display()).entered();
+        let started = Instant::now();
+        let mut report = NativeLoafConsumerReport::default();
+        if request.dependencies.is_empty() {
+            if self.current_key.is_some() {
+                return Ok(None);
+            }
+            report.prepared_reuse = true;
+            report.retained_reuse = true;
+            report.seconds = started.elapsed().as_secs_f64();
+            self.report = report;
+            return Ok(Some(self));
+        }
+        let mut current = Current::read(request, &mut report)?;
+        if self.current_key.as_ref() != Some(&current.key) {
+            return Ok(None);
+        }
+        current.local = std::mem::take(&mut self.local);
+        current.local.begin_request();
+        current.local_declarations = self.local_declarations.take();
+        for unit in self.closure.graph.units.values() {
+            report.graph_verification.record_checks += 1;
+            unit.verify()?;
+        }
+        let roots = self
+            .closure
+            .roots
+            .iter()
+            .map(|(alias, identity)| {
+                let unit = self
+                    .closure
+                    .graph
+                    .units
+                    .get(identity)
+                    .ok_or_else(|| refused("retained native root is missing"))?;
+                Ok(NativeLoafRoot {
+                    alias: alias.clone(),
+                    record_identity: identity.clone(),
+                    source: unit.record.source.clone(),
+                    intent: unit.record.recipe.intent.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if !current.matches_recipe(request, &self.closure, &roots, &mut report, false)? {
+            return Ok(None);
+        }
+        current.finish_index()?;
+        report.prepared_reuse = true;
+        report.retained_reuse = true;
+        finish_report(&self.closure, &current, &mut report, started);
+        self.report = report;
+        self.local = current.local;
+        self.local_declarations = current.local_declarations;
+        Ok(Some(self))
     }
 }
 
@@ -142,11 +211,18 @@ struct Current {
     key: String,
     compiler: CompilerInputs,
     local: LocalSources,
-    /// Authored declarations in graph facet order, shared only within this current-input snapshot.
-    local_declarations: Option<Vec<toml::Value>>,
+    /// Original authored declarations in graph facet order, guarded by their consulted paths.
+    local_declarations: Option<ObservedDeclarations>,
+    declarations_checked: bool,
     link: Option<Option<String>>,
     candidates: BTreeMap<String, Vec<CurrentCandidate>>,
     index: Option<current_inputs::PinnedIndexBatch>,
+}
+
+/// Parsed facet declarations in original graph order and the metadata observed before their reads.
+struct ObservedDeclarations {
+    manifests: Vec<toml::Value>,
+    inputs: InputObservations,
 }
 
 /// Current source-only candidate facts; this descriptor confers no physical or semantic execution authority.
@@ -216,6 +292,9 @@ fn prepare_with_store(
         return Ok(NativeLoafConsumerPreparation {
             closure: NativeLoafGraph::default().select(&[])?,
             report,
+            current_key: None,
+            local: LocalSources::default(),
+            local_declarations: None,
         });
     }
     let mut current = Current::read(request, &mut report)?;
@@ -232,7 +311,13 @@ fn prepare_with_store(
                     report.prepared_reuse = true;
                     current.finish_index()?;
                     finish_report(&closure, &current, &mut report, started);
-                    return Ok(NativeLoafConsumerPreparation { closure, report });
+                    return Ok(NativeLoafConsumerPreparation {
+                        closure,
+                        report,
+                        current_key: Some(current.key),
+                        local: current.local,
+                        local_declarations: current.local_declarations,
+                    });
                 }
             }
             Err(NativeLoafError::Unavailable { .. }) => {}
@@ -274,7 +359,13 @@ fn prepare_with_store(
         report.hint_persistence_error = Some(error.to_string());
     }
     finish_report(&closure, &current, &mut report, started);
-    Ok(NativeLoafConsumerPreparation { closure, report })
+    Ok(NativeLoafConsumerPreparation {
+        closure,
+        report,
+        current_key: Some(current.key),
+        local: current.local,
+        local_declarations: current.local_declarations,
+    })
 }
 
 impl Current {
@@ -326,6 +417,7 @@ impl Current {
             compiler,
             local: LocalSources::default(),
             local_declarations: None,
+            declarations_checked: false,
             link: None,
             candidates: BTreeMap::new(),
             index: None,
@@ -343,6 +435,20 @@ impl Current {
         hinted_roots: &[NativeLoafRoot],
         report: &mut NativeLoafConsumerReport,
     ) -> Result<bool> {
+        self.matches_recipe(request, closure, hinted_roots, report, true)
+    }
+
+    /// Reconcile mutable sources and tools through the original selectors. Immutable recipe replay may be omitted
+    /// only for the same privately retained closure after its complete graph/lock/compiler key matches again.
+    /// Disk hints and newly admitted records always require the pinned recipe replay.
+    fn matches_recipe(
+        &mut self,
+        request: &NativeLoafConsumerRequest<'_>,
+        closure: &NativeLoafClosure,
+        hinted_roots: &[NativeLoafRoot],
+        report: &mut NativeLoafConsumerReport,
+        replay_recipe: bool,
+    ) -> Result<bool> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::validate_current_native_inputs", input = %self.key).entered();
         if self.seed.schema != "incan.oven.loaf-resolution/2" {
             return Err(refused(
@@ -354,7 +460,9 @@ impl Current {
             .units
             .values()
             .filter(|unit| {
-                super::source_origin(&unit.record.recipe).is_ok_and(|origin| origin == NativeLoafOrigin::Registry)
+                replay_recipe
+                    && super::source_origin(&unit.record.recipe)
+                        .is_ok_and(|origin| origin == NativeLoafOrigin::Registry)
             })
             .map(|unit| {
                 serde_json::from_value(serde_json::to_value(&unit.record.source).map_err(failed)?).map_err(failed)
@@ -403,6 +511,16 @@ impl Current {
                 return Ok(false);
             }
             let origin = super::source_origin(&record.recipe)?;
+            if origin == NativeLoafOrigin::Registry && !replay_recipe {
+                let manifest = unit
+                    .source_declaration
+                    .get()
+                    .ok_or_else(|| refused("retained registry declaration was not admitted"))?;
+                if !self.matches_link_closure(request, inputs, manifest, report)? {
+                    return Ok(false);
+                }
+                continue;
+            }
             let manifest = source_manifest(unit)?;
             if origin == NativeLoafOrigin::Registry {
                 report.current_registry_bindings += 1;
@@ -474,34 +592,21 @@ impl Current {
             } else {
                 serde_json::Value::Null
             };
-            if !current_inputs::matches_current_recipe(
-                record,
-                &manifest,
-                origin,
-                &self.seed,
-                &metadata,
-                self.index.as_mut(),
-            )
-            .map_err(NativeLoafError::Failed)?
+            if replay_recipe
+                && !current_inputs::matches_current_recipe(
+                    record,
+                    &manifest,
+                    origin,
+                    &self.seed,
+                    &metadata,
+                    self.index.as_mut(),
+                )
+                .map_err(NativeLoafError::Failed)?
             {
                 return Ok(false);
             }
-            let proc_macro = manifest
-                .get("rust")
-                .and_then(|rust| rust.get("type"))
-                .and_then(toml::Value::as_str)
-                == Some("proc-macro");
-            if proc_macro || inputs.contains_key("link-closure") {
-                if self.link.is_none() {
-                    self.link = Some(
-                        crate::rustc::linking::pinned_link_closure_identity(request.rustc, request.target)
-                            .map_err(failed)?,
-                    );
-                    report.linker_closure_checks += 1;
-                }
-                if self.link.as_ref().and_then(Option::as_ref) != inputs.get("link-closure") {
-                    return Ok(false);
-                }
+            if !self.matches_link_closure(request, inputs, &manifest, report)? {
+                return Ok(false);
             }
         }
         let expected = select_roots_with_sources(
@@ -514,8 +619,42 @@ impl Current {
         Ok(serde_json::to_value(expected).map_err(failed)? == serde_json::to_value(hinted_roots).map_err(failed)?)
     }
 
+    /// Reconcile mutable linker inputs even when the authenticated registry recipe and declaration are retained.
+    /// The request-local observation is shared by all selected macro units; no previous request supplies its identity.
+    fn matches_link_closure(
+        &mut self,
+        request: &NativeLoafConsumerRequest<'_>,
+        inputs: &BTreeMap<String, String>,
+        manifest: &toml::Value,
+        report: &mut NativeLoafConsumerReport,
+    ) -> Result<bool> {
+        let proc_macro = manifest
+            .get("rust")
+            .and_then(|rust| rust.get("type"))
+            .and_then(toml::Value::as_str)
+            == Some("proc-macro");
+        if proc_macro || inputs.contains_key("link-closure") {
+            if self.link.is_none() {
+                self.link = Some(
+                    crate::rustc::linking::pinned_link_closure_identity(request.rustc, request.target)
+                        .map_err(failed)?,
+                );
+                report.linker_closure_checks += 1;
+            }
+            return Ok(self.link.as_ref().and_then(Option::as_ref) == inputs.get("link-closure"));
+        }
+        Ok(true)
+    }
+
     /// Require the command-owned Git child to terminate successfully before publishing or handing off current facts.
     fn finish_index(&mut self) -> Result<()> {
+        self.local.finish_request()?;
+        if let Some(declarations) = &self.local_declarations
+            && declarations.inputs.supports_retention()
+            && !declarations.inputs.current()
+        {
+            return Err(refused("local declarations changed during native selection"));
+        }
         if let Some(index) = &mut self.index {
             index.finish().map_err(NativeLoafError::Failed)?;
         }
@@ -616,7 +755,9 @@ impl Current {
             for (facet, manifest) in self.graph.facets.iter().zip(
                 self.local_declarations
                     .as_ref()
-                    .ok_or_else(|| refused("current local declarations missing"))?,
+                    .ok_or_else(|| refused("current local declarations missing"))?
+                    .manifests
+                    .iter(),
             ) {
                 let project = manifest
                     .get("project")
@@ -659,7 +800,9 @@ impl Current {
         for (facet, declaration) in self.graph.facets.iter().zip(
             self.local_declarations
                 .as_ref()
-                .ok_or_else(|| refused("current local declarations missing"))?,
+                .ok_or_else(|| refused("current local declarations missing"))?
+                .manifests
+                .iter(),
         ) {
             if facet.domain != source.domain {
                 continue;
@@ -691,19 +834,35 @@ impl Current {
         Ok(found == 1)
     }
 
-    /// Read each graph facet declaration once for this command, retaining graph order and candidate multiplicity.
-    /// Full source mapping remains independently checked by LocalSources for selected units. A new Current always
-    /// rereads declarations; no persistent observation can hide edits or new compatible candidates.
+    /// Reconcile existing facet declarations once per command, parsing only after relevant metadata changes.
+    /// Graph order and candidate multiplicity remain authoritative; unselected declarations are also observed so new
+    /// compatible candidates cannot hide behind retained selected units. Full source mapping is guarded separately.
     fn read_local_declarations(&mut self) -> Result<()> {
-        if self.local_declarations.is_none() {
-            self.local_declarations = Some(
-                self.graph
-                    .facets
-                    .iter()
-                    .map(|facet| read_local_declaration(&self.owner.join(&facet.project)))
-                    .collect::<Result<Vec<_>>>()?,
-            );
+        if self.declarations_checked {
+            return Ok(());
         }
+        let retained = self
+            .local_declarations
+            .as_ref()
+            .is_some_and(|declarations| declarations.inputs.supports_retention() && declarations.inputs.current());
+        if !retained {
+            let mut inputs = InputObservations::default();
+            let manifests = self
+                .graph
+                .facets
+                .iter()
+                .map(|facet| {
+                    let project = self.owner.join(&facet.project);
+                    inputs.observe(&project.join("loaf.toml"));
+                    read_local_declaration(&project)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if inputs.supports_retention() && !inputs.current() {
+                return Err(refused("local declarations changed during parsing"));
+            }
+            self.local_declarations = Some(ObservedDeclarations { manifests, inputs });
+        }
+        self.declarations_checked = true;
         Ok(())
     }
 }

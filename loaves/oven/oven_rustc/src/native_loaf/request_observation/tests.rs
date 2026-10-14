@@ -12,6 +12,11 @@ use super::super::{
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+thread_local! {
+    /// Count semantic recipe replay in this test thread, independently of mutable input and byte verification.
+    pub(super) static RECIPE_VERIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Two independent real local units; one remains outside the selected consumer's physical closure.
 struct Fixture {
     root: tempfile::TempDir,
@@ -103,8 +108,23 @@ fn dev7_native_request_observation_direct_complete_first_repeat_and_unselected_c
     let fixture = Fixture::new()?;
     let prepared = prepare_native_loafs(&fixture.request())?;
     assert_eq!(prepared.report().compiled.len(), 2);
+    RECIPE_VERIFICATIONS.with(|count| count.set(0));
     let observed = prepared.request_observation()?;
     let original_digest = observed.verified_digest()?.to_string();
+    let inventories = super::super::tests::InventoryChecks::default();
+    tracing::subscriber::with_default(inventories.clone(), || observed.verify())?;
+    assert_eq!(
+        inventories.count(),
+        2 * observed.graph().units().len(),
+        "one metadata handoff needs one record and one complete native inventory per unit"
+    );
+    RECIPE_VERIFICATIONS.with(|count| {
+        assert_eq!(
+            count.get(),
+            1,
+            "unchanged metadata handoffs repeated static recipe replay"
+        )
+    });
     let selected = prepared
         .graph()
         .units()
@@ -524,8 +544,10 @@ fn dev7_native_request_observation_registry_facts_edges_archives_and_pin() -> Te
     };
     let prepared = prepare_native_loafs(&request)?;
     assert_eq!(prepared.report().compiled.len(), 3);
+    RECIPE_VERIFICATIONS.with(|count| count.set(0));
     let observed = prepared.request_observation()?;
     let digest = observed.verified_digest()?.to_string();
+    RECIPE_VERIFICATIONS.with(|count| assert_eq!(count.get(), 1));
     let parent = prepared
         .graph()
         .units()
@@ -574,9 +596,10 @@ fn dev7_native_request_observation_registry_facts_edges_archives_and_pin() -> Te
     assert!(observed.verify().is_err());
     replace_owned_fixture(archive, &original)?;
     assert_eq!(observed.verified_digest()?, digest);
-    // Mutable index worktree content is not authority: every fact read still uses the original pinned commit.
+    // Mutable index worktree content is not authority: the retained successful proof binds the original pinned commit.
     fs::write(index.join("unrelated.toml"), "hostile uncommitted manifest")?;
     assert_eq!(observed.verified_digest()?, digest);
+    RECIPE_VERIFICATIONS.with(|count| assert_eq!(count.get(), 1, "unchanged pinned facts were replayed"));
     let repeated = prepare_native_loafs(&request)?;
     assert!(repeated.report().compiled.is_empty());
     assert_eq!(repeated.report().reused.len(), 3);

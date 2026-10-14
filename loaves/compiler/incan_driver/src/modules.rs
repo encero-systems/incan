@@ -159,6 +159,9 @@ pub fn collect_modules_detailed_with_session(
     path: PathBuf,
     session: &CompilationSession,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::collect_modules", input = %path.display())
+            .entered();
     collect_modules_detailed_with_session_at_path(path, session, vec!["main".to_string()])
 }
 

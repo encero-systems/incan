@@ -82,8 +82,7 @@ fn checked_library_abi_retains_inferred_rust_receiver() -> Result<(), Box<dyn st
         &input,
         &modules,
         &plan,
-        "ordinary_input",
-        "1.0.0",
+        ("ordinary_input", "1.0.0"),
         &mut std::collections::BTreeMap::new(),
         Some(probe.path()),
     )?;

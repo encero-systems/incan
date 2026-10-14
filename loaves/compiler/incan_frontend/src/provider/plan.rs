@@ -62,6 +62,13 @@ pub enum ProviderProvenance {
         /// Inventory file that granted reserved namespace authority, when installed.
         inventory_path: Option<PathBuf>,
     },
+    /// Ordinary standard loaf published from the compiler's original pinned package source.
+    StandardPublication {
+        /// Exact package whose compiler-pinned policy owns the standard namespace roots.
+        package_name: String,
+        /// Original authored declaration in the actual compiler-owned source layout.
+        manifest_path: PathBuf,
+    },
     /// Compiler-owned symbolic surface without a compiled library artifact.
     Compiler,
 }
@@ -75,7 +82,7 @@ pub enum NamespaceAuthority {
         /// Dependency key granted by the consumer manifest.
         dependency_key: String,
     },
-    /// SDK inventory may grant exact `std.*` claims.
+    /// Retained standard publication or legacy SDK selection may grant exact `std.*` claims.
     SdkReserved,
     /// Compiler-only roots and symbolic modules.
     Compiler,
@@ -413,7 +420,7 @@ pub struct ProviderPlan {
     /// Ordinary checked dependency inputs forbid ambient standard-source discovery, including an empty catalog.
     admitted_library_context: bool,
     /// Original issuer records produced by validated selection, never reconstructed from public record spelling.
-    namespace_issuers: BTreeMap<String, Arc<ProviderRecord>>,
+    namespace_issuers: BTreeMap<String, Arc<super::namespaces::ProviderNamespaceIssuer>>,
     /// Process-local identity assigned when this immutable record set is constructed.
     semantic_projection_identity: u64,
     /// Complete process-independent key derived once from the admitted immutable provider records.
@@ -700,8 +707,16 @@ impl ProviderPlan {
     }
 
     /// Borrow a retained producer capability; public record construction never issues this authority.
-    pub(super) fn namespace_issuer(&self, identity: &str) -> Option<&Arc<ProviderRecord>> {
+    pub(super) fn namespace_issuer(&self, identity: &str) -> Option<&Arc<super::namespaces::ProviderNamespaceIssuer>> {
         self.namespace_issuers.get(identity)
+    }
+
+    /// Verify each retained namespace issuer without discovering source or accepting public catalog descriptors.
+    pub fn verify_namespace_grants(&self) -> Result<(), String> {
+        for identity in self.namespace_issuers.keys() {
+            super::namespaces::SelectedProviderNamespace::from_plan(self, identity)?;
+        }
+        Ok(())
     }
 
     /// Return the consumer-side dependency manifest index normalized into this plan.
@@ -2031,6 +2046,13 @@ fn render_provider_provenance(provenance: &ProviderProvenance) -> String {
             ),
             None => format!("SDK `{sdk_identity}` component `{component_id}`"),
         },
+        ProviderProvenance::StandardPublication {
+            package_name,
+            manifest_path,
+        } => format!(
+            "ordinary standard package `{package_name}` from {}",
+            manifest_path.display()
+        ),
         ProviderProvenance::Compiler => "compiler-owned surface".to_string(),
     }
 }
@@ -2466,7 +2488,10 @@ pub(super) fn active_provider_claims(
 }
 
 /// Translate provider-local implementation facets into the backend-neutral compiler plan representation.
-fn implementation_facets(manifest: &LibraryManifest, active_features: &BTreeSet<String>) -> Vec<ImplementationFacet> {
+pub(super) fn implementation_facets(
+    manifest: &LibraryManifest,
+    active_features: &BTreeSet<String>,
+) -> Vec<ImplementationFacet> {
     manifest
         .contract_metadata
         .provider

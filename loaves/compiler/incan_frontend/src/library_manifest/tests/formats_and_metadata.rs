@@ -66,6 +66,39 @@ fn manifest_io_round_trip_preserves_rust_abi_metadata() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Query-specific trait proofs must not leak through an underlying definition identity.
+#[test]
+fn rust_abi_lookup_preserves_exact_queried_surface() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_lang::interop::{RustImplementedTrait, RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+
+    let reexport = RustItemMetadata {
+        canonical_path: "facade::Thing".into(),
+        definition_path: Some("original::Thing".into()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            implemented_traits: vec![RustImplementedTrait {
+                path: "facade::LocalTrait".into(),
+                mutable_reference: true,
+            }],
+            ..RustTypeInfo::default()
+        }),
+    };
+    let abi = LibraryRustAbi::from_items(vec![reexport.clone()]).ok_or("missing fixture ABI")?;
+    assert_eq!(abi.get("facade::Thing"), Some(&reexport));
+    assert!(abi.get("original::Thing").is_none());
+
+    let original = RustItemMetadata {
+        canonical_path: "original::Thing".into(),
+        definition_path: Some("original::Thing".into()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo::default()),
+    };
+    let abi = LibraryRustAbi::from_items(vec![reexport.clone(), original.clone()]).ok_or("missing fixture ABI")?;
+    assert_eq!(abi.get("original::Thing"), Some(&original));
+    assert_eq!(abi.get("facade::Thing"), Some(&reexport));
+    Ok(())
+}
+
 #[test]
 fn manifest_validation_rejects_duplicate_rust_abi_paths() -> Result<(), Box<dyn std::error::Error>> {
     use incan_lang::interop::{RustItemKind, RustItemMetadata, RustModuleInfo, RustVisibility};

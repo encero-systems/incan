@@ -43,6 +43,50 @@ pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
     ordinary_preparation_identity_from_values(current_compiler_identity_digest()?, |name| std::env::var_os(name))
 }
 
+/// Bind an ordinary library to its compiler and native producer inputs through the shared freshness store.
+/// The ordinary publisher consumes no SDK inventory, so an absent or changed inventory cannot invalidate this
+/// route. Explicit producer admissions supply their original graph coordinate rather than an ambient SDK graph;
+/// configured output reuse observes the current configured graph. Both use the same identity observer and domain.
+pub(super) fn ordinary_library_preparation_identity_digest(
+    native: Option<&super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+) -> CliResult<String> {
+    let explicit_graph = native
+        .map(|native| {
+            let mut requests = native.metadata().observations().values();
+            let graph = requests
+                .next()
+                .ok_or_else(|| CliError::failure("ordinary preparation has no original native request"))?
+                .resolved_graph_path();
+            if requests.any(|request| request.resolved_graph_path() != graph) {
+                return Err(CliError::failure(
+                    "ordinary preparation profiles disagree on their original graph coordinate",
+                ));
+            }
+            Ok(graph)
+        })
+        .transpose()?;
+    ordinary_library_preparation_identity_from_values(current_compiler_identity_digest()?, explicit_graph, |name| {
+        std::env::var_os(name)
+    })
+}
+
+/// Apply the ordinary library domain while retaining the canonical preparation input observer.
+/// An outer `None` uses configured inputs; `Some(None)` represents an explicit direct request without a graph.
+fn ordinary_library_preparation_identity_from_values(
+    compiler: String,
+    explicit_graph: Option<Option<&Path>>,
+    value: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> CliResult<String> {
+    ordinary_preparation_identity_from_values(format!("ordinary-library:{compiler}"), |name| match name {
+        "INCAN_SDK_INVENTORY" => None,
+        "INCAN_SDK_NATIVE_COMPILER_GRAPH" => explicit_graph.map_or_else(
+            || value(name),
+            |graph| graph.map(|path| path.as_os_str().to_os_string()),
+        ),
+        _ => value(name),
+    })
+}
+
 /// Observe explicit preparation inputs through the existing freshness store without changing global configuration.
 /// Referenced resolution bytes and the canonical graph owner matter even when the graph document itself is unchanged.
 fn ordinary_preparation_identity_from_values(
@@ -136,9 +180,88 @@ fn digest_project_authority_file(path: &Path, bytes: &[u8]) -> CliResult<String>
 }
 
 impl ProjectSourceAuthorityDigester {
+    /// Start a new request without carrying command-local graph digests into another input generation.
+    pub(super) fn begin_request(&mut self) {
+        self.project_digests.clear();
+        self.rust_crate_digests.clear();
+        self.rust_source_closure_digests.clear();
+        #[cfg(test)]
+        self.project_scan_counts.clear();
+    }
+
+    /// Reconcile retained workspace authority, then borrow the current canonical typed lock's fingerprint.
+    pub(super) fn lock_fingerprint(&mut self, root: &Path) -> CliResult<Option<String>> {
+        let path = self.retained_inputs.lock_path(root)?;
+        self.retained_inputs.fingerprint(&path)
+    }
+
     /// Digest the exact build-input graph for one project without observing generated or unrelated files.
     pub fn digest(&mut self, project_root: &Path) -> CliResult<String> {
         self.digest_project_node(project_root, &mut HashSet::new())
+    }
+
+    /// Reconcile dependency inputs with the existing graph while excluding only this root's own Incan bodies.
+    ///
+    /// Child identities and typed canonical locks remain in the same owner. The root's completed-output identity is
+    /// restored after this projection, including on failure: dependency reuse must never authorize stale root output.
+    pub(super) fn dependency_generation(&mut self, project_root: &Path) -> CliResult<String> {
+        let root = fs::canonicalize(project_root).map_err(|error| CliError::failure(error.to_string()))?;
+        let full_identity = self.project_digests.remove(&root);
+        let previous_root = self.development_root.replace(root.clone());
+        let result = self.digest(&root);
+        self.project_digests.remove(&root);
+        self.development_root = previous_root;
+        if let Some(identity) = full_identity {
+            self.project_digests.insert(root, identity);
+        }
+        result
+    }
+
+    /// Borrow the dependency session selected by the current canonical oven.lock and reconciled inputs.
+    ///
+    /// Compiler/configuration, feature/profile selection, manifest and child changes invalidate this generation.
+    /// Consumer source collection remains fresh and chooses through the retained session's existing module-use map.
+    pub(super) fn compilation_session(
+        &mut self,
+        root: &Path,
+        entry: &Path,
+        features: &incan_provider::FeatureSelection,
+        sdk_profile: Option<&str>,
+    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::retain_dependency_session").entered();
+        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        let identity = serde_json::to_vec(&(
+            self.dependency_generation(&root)?,
+            self.lock_fingerprint(&root)?,
+            ordinary_preparation_identity_digest()?,
+            features,
+            sdk_profile,
+        ))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+        self.retained_inputs
+            .compilation_session(&root, entry, digest_bytes(&identity), features, sdk_profile)
+    }
+
+    /// Borrow the original native plan only from a dependency session reconciled by this request.
+    pub(super) fn take_executable_dependencies(
+        &mut self,
+        root: &Path,
+    ) -> CliResult<Option<super::retained_inputs::RetainedExecutableDependencies>> {
+        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(self.retained_inputs.take_executable_dependencies(&root))
+    }
+
+    /// Keep a successful native plan inside the existing canonical project's dependency session.
+    pub(super) fn remember_executable_dependencies(
+        &mut self,
+        root: &Path,
+        dependencies: super::retained_inputs::RetainedExecutableDependencies,
+    ) -> CliResult<()> {
+        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+        self.retained_inputs
+            .remember_executable_dependencies(&root, dependencies);
+        Ok(())
     }
 
     /// Drop every memoized project-tree digest so the next scan re-reads each project from disk.
@@ -241,19 +364,21 @@ impl ProjectSourceAuthorityDigester {
             )));
         }
         self.record_project_scan(&canonical_root);
-        let manifest = effective_project_manifest_for_exact_root(&canonical_root)?;
+        let project = self.retained_inputs.project(&canonical_root)?;
+        let manifest = &project.manifest;
         let mut records = BTreeMap::from([
             (
                 "project-build-inputs".to_string(),
                 digest_baked_project_build_tree(
                     &canonical_root,
-                    &manifest,
+                    manifest,
                     self.development_root.as_ref() == Some(&canonical_root),
+                    &mut self.retained_inputs,
                 )?,
             ),
             (
                 "project-dependency-selections".to_string(),
-                digest_baked_project_dependency_selections(&manifest)?,
+                digest_baked_project_dependency_selections(manifest)?,
             ),
         ]);
         let mut library_dependencies = manifest.library_dependencies().iter().collect::<Vec<_>>();
@@ -342,6 +467,7 @@ impl ProjectSourceAuthorityDigester {
             CliError::failure(format!("failed to serialize Oven project source authority: {error}"))
         })?;
         let digest = digest_bytes(&payload);
+        self.retained_inputs.ensure_current_project(&canonical_root, &project)?;
         visiting.remove(&canonical_root);
         self.project_digests.insert(canonical_root, digest.clone());
         Ok(digest)
@@ -602,6 +728,7 @@ fn digest_baked_project_dependency_selections(manifest: &ProjectManifest) -> Cli
 /// Workspace members share the root RFC 077 lock. Reading a member-local file instead would let a stale side file
 /// hide changes to the real workspace authority, or make equivalent members disagree about the lock they consumed.
 pub fn canonical_baked_project_lock_path(project_root: &Path) -> CliResult<PathBuf> {
+    let _discovery = tracing::trace_span!(target: "incan::invocation", "incan_driver::canonical_project_lock_path", input = %project_root.display()).entered();
     let workspace = oven_model::workspace::WorkspaceGraph::discover(project_root)
         .map_err(|error| CliError::failure(format!("failed to resolve Oven project workspace: {error}")))?;
     Ok(workspace
@@ -611,13 +738,8 @@ pub fn canonical_baked_project_lock_path(project_root: &Path) -> CliResult<PathB
 
 /// Load the derived dependency fingerprint from the canonical project or workspace lock, when present.
 pub fn baked_project_lock_dependencies_fingerprint(project_root: &Path) -> CliResult<Option<String>> {
-    let lock_path = canonical_baked_project_lock_path(project_root)?;
-    if !lock_path.is_file() {
-        return Ok(None);
-    }
-    IncanLock::load(&lock_path)
-        .map(|lock| Some(lock.deps_fingerprint))
-        .map_err(|error| CliError::failure(error.to_string()))
+    super::retained_inputs::RetainedProjectInputs::default()
+        .fingerprint(&canonical_baked_project_lock_path(project_root)?)
 }
 
 /// Hash the canonical lock fields that can change build meaning while excluding derived and structural fields.
@@ -631,9 +753,12 @@ pub fn baked_project_lock_dependencies_fingerprint(project_root: &Path) -> CliRe
 /// refuses every previously baked provider in the workspace and makes staged member bakes impossible (#1414). A member
 /// that has no entry yet is digested as if the lock were absent, so its authority is the same before and after the
 /// root lock first appears without it.
-fn digest_baked_project_lock_authority(lock_path: &Path, project_root: &Path) -> CliResult<Option<String>> {
-    let lock = IncanLock::load(lock_path).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut semantic = lock.semantic;
+pub(super) fn project_lock_authority(
+    lock: &IncanLock,
+    lock_path: &Path,
+    project_root: &Path,
+) -> CliResult<Option<String>> {
+    let mut semantic = lock.semantic.clone();
     if !semantic.workspace_members.is_empty() {
         let workspace_root = lock_path.parent().unwrap_or(lock_path);
         let member_root = oven_model::lock::portable_project_path(workspace_root, project_root);
@@ -678,6 +803,7 @@ fn digest_baked_project_build_tree(
     project_root: &Path,
     manifest: &ProjectManifest,
     omit_incan_sources: bool,
+    inputs: &mut super::retained_inputs::RetainedProjectInputs,
 ) -> CliResult<String> {
     /// Record one regular authority file under a caller-selected portable key.
     fn append_named_file(path: &Path, record_key: String, records: &mut BTreeMap<String, String>) -> CliResult<()> {
@@ -785,11 +911,11 @@ fn digest_baked_project_build_tree(
     let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
     append_file(project_root, &manifest_path, &mut records)?;
     already_recorded.insert(manifest_path);
-    let lockfile = canonical_baked_project_lock_path(project_root)?;
+    let lockfile = inputs.lock_path(project_root)?;
+    if let Some(authority) = inputs.authority(&lockfile, project_root)? {
+        records.insert(LOCK_FILENAME.to_string(), authority);
+    }
     if lockfile.is_file() {
-        if let Some(authority) = digest_baked_project_lock_authority(&lockfile, project_root)? {
-            records.insert(LOCK_FILENAME.to_string(), authority);
-        }
         already_recorded.insert(lockfile);
     }
     let source_root = resolve_source_root(project_root, Some(manifest));
@@ -1124,6 +1250,58 @@ mod tests {
         Ok(())
     }
 
+    /// SDK inventory bytes are not an input to the ordinary library route; compiler bytes remain an input.
+    #[test]
+    fn ordinary_library_preparation_identity_excludes_unconsumed_sdk() -> Result<(), Box<dyn std::error::Error>> {
+        let inputs = tempfile::tempdir()?;
+        let inventory = inputs.path().join("absent-sdk.json");
+        let identity = |compiler: &str| {
+            ordinary_library_preparation_identity_from_values(compiler.to_string(), None, |name| {
+                (name == "INCAN_SDK_INVENTORY").then(|| inventory.as_os_str().to_os_string())
+            })
+        };
+        let original = identity("compiler")?;
+        fs::write(&inventory, b"unused SDK")?;
+        assert_eq!(identity("compiler")?, original);
+        assert_ne!(identity("another compiler")?, original);
+        assert_ne!(
+            ordinary_preparation_identity_from_values("compiler".to_string(), |_| None)?,
+            original
+        );
+
+        // ---- Explicit native request: observe its graph, preserving external resolution freshness ----
+        let graph = inputs.path().join("ordinary-graph.json");
+        let lock = inputs.path().join("ordinary-lock.json");
+        let ambient = inputs.path().join("forged-sdk-graph.json");
+        fs::write(
+            &graph,
+            r#"{"index_commit":"fixture","registry_lock":"ordinary-lock.json","facets":[]}"#,
+        )?;
+        fs::write(&lock, b"original resolution")?;
+        fs::write(&ambient, b"not a resolved native graph")?;
+        let explicit = |selected| {
+            ordinary_library_preparation_identity_from_values("compiler".into(), selected, |name| {
+                (name == "INCAN_SDK_NATIVE_COMPILER_GRAPH").then(|| ambient.as_os_str().to_os_string())
+            })
+        };
+        let observed = explicit(Some(Some(graph.as_path())))?;
+        fs::write(&ambient, b"another unconsumed SDK graph")?;
+        assert_eq!(explicit(Some(Some(graph.as_path())))?, observed);
+        fs::write(&lock, b"changed resolution")?;
+        assert_ne!(explicit(Some(Some(graph.as_path())))?, observed);
+        fs::remove_file(&lock)?;
+        assert!(explicit(Some(Some(graph.as_path()))).is_err());
+        assert!(
+            explicit(Some(None)).is_ok(),
+            "an explicit direct request consumes no graph document"
+        );
+        assert!(
+            explicit(None).is_err(),
+            "configured reuse must still refuse its malformed graph"
+        );
+        Ok(())
+    }
+
     /// A changed or absent compiler identity misses before inspection; an exact identity proceeds to authority
     /// validation even when source-equivalent outputs from older compiler generations coexist in the store.
     #[test]
@@ -1402,6 +1580,57 @@ mod tests {
 
         fs::write(provider.join("src/lib.incn"), "pub def value() -> int:\n    return 2\n")?;
         assert_ne!(initial, digest_baked_project_source_authority(project.path())?);
+        Ok(())
+    }
+
+    /// Dependency-session identity excludes root bodies while preserving named child and canonical lock inputs.
+    #[test]
+    fn dependency_generation_preserves_root_authority_and_tracks_child_and_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let provider = project.path().join("provider");
+        fs::create_dir_all(project.path().join("src"))?;
+        fs::create_dir_all(provider.join("src"))?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nprovider = { path = \"provider\" }\n",
+        )?;
+        let source = project.path().join("src/main.incn");
+        fs::write(&source, "def main() -> None:\n    println(1)\n")?;
+        fs::write(provider.join("loaf.toml"), "[project]\nname = \"provider\"\n")?;
+        let child = provider.join("src/lib.incn");
+        fs::write(&child, "pub def value() -> int:\n    return 1\n")?;
+        let mut authority = ProjectSourceAuthorityDigester::default();
+        let full = authority.digest(project.path())?;
+        let dependencies = authority.dependency_generation(project.path())?;
+        assert_eq!(authority.digest(project.path())?, full);
+        fs::write(&source, "def main() -> None:\n    println(2)\n")?;
+        authority.begin_request();
+        assert_ne!(authority.digest(project.path())?, full);
+        assert_eq!(authority.dependency_generation(project.path())?, dependencies);
+        fs::write(&child, "pub def value() -> int:\n    return 2\n")?;
+        authority.begin_request();
+        let changed_child = authority.dependency_generation(project.path())?;
+        assert_ne!(changed_child, dependencies);
+        let lock_path = project.path().join("oven.lock");
+        let lock = IncanLock::new(
+            INCAN_VERSION,
+            "selected dependencies".into(),
+            CargoFeatureSelection::default(),
+            "".into(),
+        );
+        lock.write(&lock_path)?;
+        authority.begin_request();
+        let locked = authority.dependency_generation(project.path())?;
+        assert_ne!(locked, changed_child);
+        let full = authority.digest(project.path())?;
+        fs::write(&lock_path, "invalid lock")?;
+        assert!(authority.dependency_generation(project.path()).is_err());
+        assert!(authority.development_root.is_none());
+        assert_eq!(authority.digest(project.path())?, full);
+        lock.write(&lock_path)?;
+        authority.begin_request();
+        assert_eq!(authority.dependency_generation(project.path())?, locked);
         Ok(())
     }
 

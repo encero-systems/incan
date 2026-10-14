@@ -30,8 +30,11 @@ mod physical_edges;
 /// Actual process, protocol and blob work for one native preparation or validation reader.
 pub use index_batch::IndexBatchWork as NativeIndexReadWork;
 
+#[cfg(test)]
+pub(crate) use local::local_native_source_selection;
+
 pub(crate) use local::{
-    compile_local_native_facets_for_profile, local_native_source_selection, native_required_features,
+    compile_local_native_facets_for_profile, local_native_source_selection_with_observer, native_required_features,
 };
 
 pub use physical_edges::SdkPhysicalNativeEdge;

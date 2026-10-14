@@ -8,6 +8,91 @@ use crate::backend::ir::test_support::{
 use crate::backend::ir::{AstLowering, IrCodegen, IrEmitter};
 use incan_frontend::{lexer, parser};
 
+/// Ordinary namespace projection follows the already linked artifact even without an authored standard import.
+#[test]
+fn ordinary_linked_core_projects_generated_namespace_without_source_imports() -> Result<(), Box<dyn std::error::Error>>
+{
+    use crate::backend::project::ProjectGenerator;
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+    use incan_provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
+    use std::collections::{BTreeSet, HashMap};
+    use std::sync::Arc;
+
+    let output = tempfile::tempdir()?;
+    let artifact = LibraryArtifactMetadata::from_crate_root(
+        "ordinary-core-alias",
+        "incan_stdlib_core",
+        output.path().join("artifact"),
+    );
+    // This isolates generator projection; the publication control separately proves genuine source admission.
+    let mut record = ProviderRecord {
+        identity: ProviderIdentity {
+            name: "incan_stdlib_core".into(),
+            version: "0.6.0".into(),
+            digest: "sha256:ordinary-generator-projection".into(),
+            feature_projection: BTreeSet::new(),
+        },
+        provenance: ProviderProvenance::StandardPublication {
+            package_name: "incan_stdlib_core".into(),
+            manifest_path: output.path().join("loaf.toml"),
+        },
+        authority: NamespaceAuthority::SdkReserved,
+        namespace_claims: [vec!["std".into(), "derives".into(), "collection".into()]].into(),
+        available: true,
+        enabled: true,
+        manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_core", "0.6.0"))),
+        artifact: Some(artifact.clone()),
+        implementation_facets: Vec::new(),
+    };
+    let plan = ProviderPlan::new(Default::default(), vec![record.clone()], std::iter::empty())?;
+    assert!(
+        plan.sdk_link_roots().is_empty(),
+        "no authored module or synthetic prelude use"
+    );
+    assert!(
+        crate::build::caller_owned::oven_caller_owned_libraries(&plan, "debug", "target", "toolchain", None)
+            .is_err_and(|error| error.message.contains("no retained producer issuer")),
+        "a public namespace descriptor cannot authorize a native library attachment"
+    );
+    for binary in [false, true] {
+        for nested in [false, true] {
+            let path = output.path().join(format!("{binary}-{nested}"));
+            let mut generator = ProjectGenerator::new(&path, "ordinary_consumer", binary);
+            generator.set_provider_plan(&plan);
+            generator.set_dependencies(vec![artifact.to_dependency_spec()]);
+            let root = "// __INCAN_INSERT_MODS__\npub fn answer() -> i64 { 42 }\n";
+            if nested {
+                generator.generate_nested(root, &HashMap::new())?;
+            } else {
+                generator.generate(root)?;
+            }
+            let generated = std::fs::read_to_string(generator.crate_root_path())?;
+            assert!(
+                generated.contains("pub use ordinary_core_alias::__incan_std::*;"),
+                "{generated}"
+            );
+            assert!(!path.join("src/__incan_std").exists());
+            assert!(
+                generator.sdk_path_dependencies.is_empty(),
+                "ordinary artifacts are not SDK paths"
+            );
+        }
+    }
+
+    record.provenance = ProviderProvenance::Sdk {
+        sdk_identity: "legacy-test".into(),
+        component_id: "stdlib-core".into(),
+        inventory_path: None,
+    };
+    let unused_sdk = ProviderPlan::new(Default::default(), vec![record], std::iter::empty())?;
+    let mut generator = ProjectGenerator::new(output.path().join("unused-sdk"), "unused", false);
+    generator.set_provider_plan(&unused_sdk);
+    generator.generate("pub fn answer() -> i64 { 42 }\n")?;
+    assert!(!std::fs::read_to_string(generator.crate_root_path())?.contains("mod __incan_std"));
+    Ok(())
+}
+
 /// A genuine source owner maps only emitted owned roots; a default plan and conflicting roots cannot grant it.
 #[cfg(unix)]
 #[test]
@@ -91,6 +176,7 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
     Ok(())
 }
 
+/// Generated model code must compile without warnings through the suite's selected native dependency closure.
 #[test]
 fn generated_rust_warning_clean() -> Result<(), Box<dyn std::error::Error>> {
     use crate::backend::project::ProjectGenerator;
@@ -123,8 +209,9 @@ def main() -> None:
     let capability = oven_store::compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
         oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
     )
-    .map_err(std::io::Error::other)?;
-    let output = if let Some(capability) = capability {
+    .map_err(std::io::Error::other)?
+    .ok_or("generated warning check requires the suite's selected direct-rustc capability")?;
+    let output = {
         if !capability.externs.contains_key("incan_std_core") {
             return Err("stored Oven compiler suite direct-rustc capability omitted incan_std_core".into());
         }
@@ -149,13 +236,6 @@ def main() -> None:
             command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
         }
         command.arg(generator.crate_root_path()).output()?
-    } else {
-        Command::new("cargo")
-            .arg("check")
-            .current_dir(tmp.path())
-            .env("CARGO_NET_OFFLINE", "true")
-            .env("RUSTFLAGS", "-Dwarnings")
-            .output()?
     };
 
     assert!(
@@ -167,6 +247,7 @@ def main() -> None:
     Ok(())
 }
 
+/// Retained Rustix files must satisfy the generated generic borrow through the selected native dependency closure.
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_codegen_borrows_retained_rustix_file_for_as_fd_generic_free_function() -> Result<(), Box<dyn std::error::Error>>
@@ -219,8 +300,9 @@ pub def retain(file: File) -> File:
     let capability = oven_store::compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
         oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
     )
-    .map_err(std::io::Error::other)?;
-    let output = if let Some(capability) = capability {
+    .map_err(std::io::Error::other)?
+    .ok_or("generated borrow check requires the suite's selected direct-rustc capability")?;
+    let output = {
         let fixture_output = tmp.path().join("oven-rustix-fixture");
         std::fs::create_dir_all(&fixture_output)?;
         let fixture = std::process::Command::new(&capability.rustc)
@@ -257,17 +339,15 @@ pub def retain(file: File) -> File:
                 .arg(format!("dependency={}", dependency_path.display()));
         }
         for (crate_name, path) in &capability.externs {
-            command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
+            // This case owns a deliberately small Rustix fixture; only that original artifact may supply its alias.
+            if crate_name != "rustix" {
+                command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
+            }
         }
         command
             .arg("--extern")
             .arg(format!("rustix={}", rustix_rlib.display()))
             .arg(generator.crate_root_path())
-            .output()?
-    } else {
-        std::process::Command::new("cargo")
-            .args(["check", "--offline"])
-            .current_dir(&generated_root)
             .output()?
     };
     assert!(

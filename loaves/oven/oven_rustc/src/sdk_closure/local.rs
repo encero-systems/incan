@@ -152,8 +152,19 @@ pub fn local_sdk_facet_source_digest_with(
 }
 
 /// Reproduce the current local producer mapping once for declaration-authorized native selection.
+#[cfg(test)]
 pub(crate) fn local_native_source_selection(project: &Path) -> Result<(toml::Value, String), Error> {
-    let sources = local_facet_sources(project)?;
+    local_native_source_selection_with_observer(project, &mut |_| {})
+}
+
+/// Report exact consulted declarations, enumerated directories and source files before canonical selection reads.
+/// The observer may retain the resulting selection only after reconciling these same paths again.
+pub(crate) fn local_native_source_selection_with_observer(
+    project: &Path,
+    observe: &mut impl FnMut(&Path),
+) -> Result<(toml::Value, String), Error> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::select_local_source", input = %project.display()).entered();
+    let sources = local_facet_sources_with_observer(project, observe)?;
     let digest = digest_local_facet_sources(&sources, |path| Ok(oven_store::store::digest_regular_file(path)?.1))?;
     Ok((sources.manifest, digest))
 }
@@ -191,8 +202,9 @@ fn digest_local_facet_sources(
 
 /// Enumerate the publisher's exact authored source inputs without copying or hashing their contents.
 ///
-/// Freshness observers must enumerate again on every check so additions, removals and links invalidate their old
-/// observation. Embedded compiler inputs share the publisher's mapping; neighboring Cargo files are never read.
+/// This fresh projection enumerates the current tree. Retained consumers instead observe the same publisher mapping
+/// through `local_native_source_selection_with_observer`, guarding files and enumerated directories before reuse.
+/// Embedded compiler inputs share the publisher's mapping; neighboring Cargo files are never read.
 pub fn local_sdk_facet_source_inputs(project: &Path) -> Result<Vec<std::path::PathBuf>, Error> {
     let sources = local_facet_sources(project)?;
     let mut inputs = vec![project.canonicalize()?.join("loaf.toml")];
@@ -413,8 +425,17 @@ struct LocalFacetSources {
 
 /// Admit a declared or conventional Rust source tree and its compiler-owned embedded inputs.
 fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
+    local_facet_sources_with_observer(project, &mut |_| {})
+}
+
+/// Apply the publisher's one source mapping while reporting every input that can change its result.
+fn local_facet_sources_with_observer(
+    project: &Path,
+    observe: &mut impl FnMut(&Path),
+) -> Result<LocalFacetSources, Error> {
     let project = project.canonicalize()?;
     let manifest_path = project.join("loaf.toml");
+    observe(&manifest_path);
     if !std::fs::symlink_metadata(&manifest_path)?.is_file() {
         return Err("local Loaf declaration is not a plain file".into());
     }
@@ -479,7 +500,10 @@ fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
         files.push(emitter_text_source(&project)?);
         relative = Path::new("loaves/compiler/incan_emit").join(relative);
     }
-    collect_local_sources(&source, &relative, &mut files)?;
+    collect_local_sources(&source, &relative, &mut files, observe)?;
+    for (source, _) in &files {
+        observe(source);
+    }
     facet.insert(
         "source".to_string(),
         toml::Value::Table(toml::map::Map::from_iter([(
@@ -556,7 +580,9 @@ fn collect_local_sources(
     source: &Path,
     relative: &Path,
     files: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    observe: &mut impl FnMut(&Path),
 ) -> Result<(), Error> {
+    observe(source);
     if !std::fs::symlink_metadata(source)?.is_dir() {
         return Err("local Rust source root is not a plain directory".into());
     }
@@ -566,7 +592,7 @@ fn collect_local_sources(
         let path = entry.path();
         let destination = relative.join(entry.file_name());
         if kind.is_dir() {
-            collect_local_sources(&path, &destination, files)?;
+            collect_local_sources(&path, &destination, files, observe)?;
         } else if kind.is_file() {
             if matches!(
                 entry.file_name().to_str(),

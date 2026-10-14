@@ -693,13 +693,11 @@ pub fn publish_project_output_loaf(
                 "cannot publish Oven project-output Loaf whose payload omits a source file",
             ));
         };
+        let (logical_bytes, digest) =
+            super::output_materialization::digest_project_output_projection_file(&source.source_path)?;
         if source.caller_relative_path != file.caller_relative_path
-            || digest_bytes(&fs::read(&source.source_path).map_err(|error| {
-                CliError::failure(format!(
-                    "cannot publish missing Oven project output {}: {error}",
-                    source.source_path.display()
-                ))
-            })?) != file.digest
+            || logical_bytes != file.logical_bytes
+            || digest != file.digest
         {
             return Err(CliError::failure(
                 "cannot publish Oven project output whose source differs from its payload",
@@ -902,22 +900,12 @@ pub fn project_output_payload_for_bake(
         .files
         .into_iter()
         .map(|file| {
-            let bytes = fs::read(&file.source_path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to digest completed Oven project output {}: {error}",
-                    file.source_path.display()
-                ))
-            })?;
-            let logical_bytes = u64::try_from(bytes.len()).map_err(|_| {
-                CliError::failure(format!(
-                    "completed Oven project output {} is too large to account",
-                    file.source_path.display()
-                ))
-            })?;
+            let (logical_bytes, digest) =
+                super::output_materialization::digest_project_output_projection_file(&file.source_path)?;
             Ok(OvenProjectOutputFile {
                 caller_relative_path: file.caller_relative_path,
                 output_relative_path: file.output_relative_path,
-                digest: digest_bytes(&bytes),
+                digest,
                 logical_bytes,
             })
         })
@@ -1007,6 +995,45 @@ mod tests {
     use std::fs;
 
     use oven_store::store::OvenStore;
+
+    /// Publication must reject changed bytes and inconsistent lengths even after payload generation warmed the
+    /// observer.
+    #[test]
+    fn publication_rechecks_changed_sources_and_payload_lengths() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname='fixture'\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, payload, files) = fixture_project_output_publication(project.path(), "debug", "observed")?;
+        let source = &files.first().ok_or("fixture output missing")?.source_path;
+        let original = fs::read(source)?;
+        let modified = fs::metadata(source)?.modified()?;
+        let mut changed = original.clone();
+        let first = changed.first_mut().ok_or("fixture output is empty")?;
+        *first ^= 1;
+        fs::write(source, changed)?;
+        fs::File::options()
+            .write(true)
+            .open(source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        assert!(publish_project_output_loaf(&store, &receipt, &payload, &files).is_err());
+        fs::write(source, original)?;
+        let mut wrong_length = payload.clone();
+        wrong_length
+            .files
+            .first_mut()
+            .ok_or("fixture payload missing")?
+            .logical_bytes += 1;
+        assert!(publish_project_output_loaf(&store, &receipt, &wrong_length, &files).is_err());
+        let selected = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert_eq!(selected.payload.files, payload.files);
+        Ok(())
+    }
 
     /// Store budgets sweep idle entries; bounded publication preserves every leased project sibling above the target.
     #[test]

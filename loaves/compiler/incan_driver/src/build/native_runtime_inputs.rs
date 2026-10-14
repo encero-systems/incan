@@ -30,31 +30,43 @@ pub fn digest_native_compiler_input(path: &Path) -> std::io::Result<String> {
     super::file_freshness::digest_file(path)
 }
 
-/// Forward source-current completed-output selection without the optional borrowed-tuple argument that Incan cannot
-/// emit.
+/// Select one source-current output through the canonical locator and fallback without the borrowed tuple arguments
+/// that Incan cannot emit.
 ///
 /// Removable argument-shape adapter for the minimized #872 repro in
 /// `workspaces/compiler-bootstrap/repros/optional-tuple-api-gap`. All selection inputs are caller-owned;
-/// target/toolchain, exact compiler, dependency and lock acceptance remain in the Incan bootstrap. The returned owners
-/// retain the existing immutable execution leases. Remove this adapter when the public optional tuple parameter can be
-/// called directly.
-pub fn matching_project_outputs_for_incan(
+/// the bootstrap supplies its current source, target/toolchain, compiler and dependency identities to the same
+/// canonical selector. Returned owners retain the existing immutable execution leases. Remove this adapter when the
+/// public optional tuple parameter can be called directly. Exact compiler, dependency, target and toolchain predicates
+/// apply inside the same selector to both the locked address and fallback candidates; a fresh client therefore need not
+/// discover unrelated Store entries.
+#[allow(clippy::too_many_arguments)]
+pub fn select_project_output_for_incan(
     store: &oven_store::store::OvenStore,
     project_root: &Path,
     entrypoint: &Path,
     target: super::OvenBakeProjectTarget,
     profile: &str,
     source_authority: &str,
-) -> CliResult<Vec<super::OvenStoredProjectOutput>> {
-    super::output_selection::matching_baked_project_outputs_with_source_authority(
+    required_target: &str,
+    required_toolchain: &str,
+    required_compiler: &str,
+    required_dependencies: &str,
+) -> CliResult<Option<super::OvenStoredProjectOutput>> {
+    Ok(super::output_selection::project_outputs_with_source_authority(
         store,
         project_root,
         entrypoint,
         target,
         profile,
         source_authority,
+        Some((required_target, required_toolchain)),
+        true,
         None,
-    )
+        Some((required_compiler, required_dependencies)),
+    )?
+    .into_iter()
+    .next())
 }
 
 #[derive(Serialize)]

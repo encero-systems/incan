@@ -497,6 +497,7 @@ mod tests {
         assert!(!exact.clear_existing);
     }
 
+    /// One lock collection retains imports from every script and test in the ordinary dependency surface.
     #[test]
     fn explicit_oven_lock_publication_collects_once_and_retains_the_whole_dependency_surface()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -514,12 +515,10 @@ version = "0.1.0"
 main = "src/main.incn"
 worker = "src/worker.incn"
 
-[rust-dependencies]
-semver = "1"
-serde_json = "1"
-
-[rust-dev-dependencies]
-regex = "1"
+[dependencies]
+semver = { loaf = "crates-io/semver", version = "1" }
+serde_json = { loaf = "crates-io/serde_json", version = "1" }
+regex = { loaf = "crates-io/regex", version = "1" }
 "#,
         )?;
         let main = project_root.join("src/main.incn");
@@ -563,7 +562,7 @@ regex = "1"
             "one explicit publication must read one session authority and project one aggregate provider plan across every manifest entry",
         );
         assert!(
-            normal_dependencies.is_superset(&BTreeSet::from(["semver", "serde_json"])),
+            normal_dependencies.is_superset(&BTreeSet::from(["regex", "semver", "serde_json"])),
             "normal dependencies: {normal_dependencies:?}"
         );
         // `std.testing` brings its component and, since facets became demand-driven, the Rust facet it names.
@@ -572,15 +571,15 @@ regex = "1"
                 "incan_std_testing",
                 "incan_stdlib_core",
                 "incan_stdlib_testing",
+                "regex",
                 "semver",
                 "serde_json",
             ])),
             "normal dependencies: {normal_dependencies:?}"
         );
-        assert_eq!(
-            dev_dependencies,
-            BTreeSet::from(["regex"]),
-            "dev dependencies: {dev_dependencies:?}"
+        assert!(
+            dev_dependencies.is_empty(),
+            "ordinary test dependencies: {dev_dependencies:?}"
         );
         let lock = IncanLock::load(&project_root.join("oven.lock"))?;
         assert!(!lock.deps_fingerprint.is_empty());

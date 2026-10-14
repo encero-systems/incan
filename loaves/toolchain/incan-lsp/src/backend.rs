@@ -3791,6 +3791,7 @@ fn provider_component_label(provenance: &ProviderProvenance) -> String {
         ProviderProvenance::ProjectDependency { dependency_key, .. } => {
             format!("package dependency `{dependency_key}`")
         }
+        ProviderProvenance::StandardPublication { package_name, .. } => format!("standard package `{package_name}`"),
         ProviderProvenance::Compiler => "compiler-owned provider".to_string(),
     }
 }

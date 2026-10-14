@@ -34,6 +34,7 @@
 #![deny(clippy::expect_used)]
 
 pub mod commands;
+pub mod project_owner;
 pub mod test_runner;
 
 use std::env;

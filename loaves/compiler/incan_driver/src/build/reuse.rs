@@ -16,7 +16,8 @@ use crate::build::output_selection::{
     located_project_output, matching_baked_project_outputs_with_source_authority, remember_project_output,
 };
 use crate::build::package_loafs::{
-    copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
+    copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, has_complete_packaged_library_loaf,
+    validated_packaged_library_loaf_profile,
 };
 use crate::build::plan_authority::explicit_bake_profiles;
 use crate::build::source_authority::{digest_baked_project_source_authority, project_bake_receipt_path};
@@ -63,7 +64,7 @@ fn restore_reused_library_package(
     let manifest_path = packaged_library_loaf_manifest_path(&artifact_root);
     let bytes = match fs::read(&manifest_path) {
         Ok(bytes) => bytes,
-        Err(_) => return Ok(false),
+        Err(_) => return Ok(trace_package_reuse_miss()),
     };
     let manifest = match serde_json::from_slice::<OvenPackagedLibraryLoafManifest>(&bytes) {
         Ok(manifest)
@@ -73,10 +74,10 @@ fn restore_reused_library_package(
         {
             manifest
         }
-        Ok(_) | Err(_) => return Ok(false),
+        Ok(_) | Err(_) => return Ok(trace_package_reuse_miss()),
     };
     if manifest.profiles.len() != outputs.len() {
-        return Ok(false);
+        return Ok(trace_package_reuse_miss());
     }
     let package_store = OvenStore::new(packaged_library_loaf_store_root(&artifact_root), *store.limits());
     if !restore_reused_library_metadata(
@@ -85,11 +86,11 @@ fn restore_reused_library_package(
         manifest.checked_metadata.as_ref(),
         &manifest.metadata_files,
     )? {
-        return Ok(false);
+        return Ok(trace_package_reuse_miss());
     }
     for output in outputs {
         let Some(candidate) = manifest.profiles.get(&output.profile) else {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         };
         if candidate.receipt.verify_identity().is_err()
             || candidate.receipt.identity != output.payload.receipt_identity
@@ -102,7 +103,7 @@ fn restore_reused_library_package(
                 .get("compiler-version")
                 .is_none_or(|version| version != INCAN_VERSION)
         {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         let Some(native) = output
             .payload
@@ -110,18 +111,18 @@ fn restore_reused_library_package(
             .iter()
             .find(|file| file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH)
         else {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         };
         let expected_library_relative_path = match Path::new(&native.caller_relative_path).strip_prefix("target/lib") {
             Ok(path) => path.to_string_lossy().replace('\\', "/"),
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(trace_package_reuse_miss()),
         };
         if validated_project_output_relative_path(&candidate.library_relative_path, "package library").is_err()
             || candidate.library_relative_path != expected_library_relative_path
             || candidate.library_digest != native.digest
             || output.payload.package_loaf_store_relative_path.as_deref() != Some("target/lib/oven/loafs")
         {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         let mut candidate_entries = candidate.entries.clone();
         candidate_entries.sort_by(|left, right| {
@@ -132,49 +133,30 @@ fn restore_reused_library_package(
             (&left.identity, &left.receipt.identity).cmp(&(&right.identity, &right.receipt.identity))
         });
         if candidate_entries != output_entries {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         if candidate.entries.is_empty()
             && resolve_compiler_owned_loaf_for_registry_dependencies(&candidate.receipt, &[])
                 .map_or(true, |selected| selected.is_none())
         {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         for entry in &candidate.entries {
             if entry.receipt.verify_identity().is_err() || entry.receipt.intent != candidate.receipt.intent {
-                return Ok(false);
+                return Ok(trace_package_reuse_miss());
             }
             if let Some(base_loaf_identity) = entry.base_loaf_identity.as_deref()
                 && resolve_compiler_owned_loaf_by_identity(&candidate.receipt, base_loaf_identity)
                     .map_or(true, |selected| selected.is_none())
             {
-                return Ok(false);
+                return Ok(trace_package_reuse_miss());
             }
-            let packaged = package_store.select_payloads_matching_for_execution(
-                |stored| {
-                    stored.identity == entry.identity
-                        && stored.kind == entry.kind
-                        && stored.receipt_identity == entry.receipt.identity
-                        && stored.build_unit_identity == entry.receipt.build_unit_identity
-                        && stored.intent == entry.receipt.intent
-                },
-                |_, _| true,
-            );
-            match packaged {
-                Ok(selected) if selected.len() == 1 => {}
-                Ok(selected) if selected.is_empty() => {
-                    let source = store.select_payloads_matching_for_execution(
-                        |stored| {
-                            stored.identity == entry.identity
-                                && stored.kind == entry.kind
-                                && stored.receipt_identity == entry.receipt.identity
-                                && stored.build_unit_identity == entry.receipt.build_unit_identity
-                                && stored.intent == entry.receipt.intent
-                        },
-                        |_, _| true,
-                    );
-                    if source.map_or(true, |selected| selected.len() != 1) {
-                        return Ok(false);
+            let pinned = std::slice::from_ref(entry);
+            match has_complete_packaged_library_loaf(&package_store, pinned) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if !has_complete_packaged_library_loaf(store, pinned).unwrap_or(false) {
+                        return Ok(trace_package_reuse_miss());
                     }
                     let copied = copy_receipted_oven_store_entry(
                         store,
@@ -190,11 +172,21 @@ fn restore_reused_library_package(
                         ));
                     }
                 }
-                Ok(_) | Err(_) => return Ok(false),
+                Err(_) => return Ok(trace_package_reuse_miss()),
             }
         }
     }
     Ok(true)
+}
+
+/// Report the exact package-validation refusal when optional reuse diagnostics are enabled.
+#[track_caller]
+fn trace_package_reuse_miss() -> bool {
+    if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
+        let caller = std::panic::Location::caller();
+        eprintln!("Oven reuse package miss: {}:{}", caller.file(), caller.line());
+    }
+    false
 }
 
 /// Restore a package's exact checked owner, declining reuse only when both original Store coordinates lost it.
@@ -676,6 +668,16 @@ pub fn try_reuse_baked_project(
     let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
     let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
     trace_reuse_timing(started, "source and compiler authority");
+    let ordinary_library_identity = if targets.len() == 1
+        && targets[0].0 == OvenBakeProjectTarget::Library
+        && super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_some()
+    {
+        Some(super::source_authority::ordinary_library_preparation_identity_digest(
+            None,
+        )?)
+    } else {
+        None
+    };
     let mut selected_outputs = Vec::new();
     let current = CurrentReuseAuthority {
         source_digest: &source_authority_digest,
@@ -688,6 +690,11 @@ pub fn try_reuse_baked_project(
         let Some(selected) = select_current_project_output(project_root, store, expected, located, &current)? else {
             return Ok(None);
         };
+        if let Some(identity) = ordinary_library_identity.as_deref()
+            && !super::output_selection::project_output_preparation_matches(&selected.1.payload, Some(identity), true)
+        {
+            return Ok(None);
+        }
         selected_outputs.push(selected);
     }
     trace_reuse_timing(started, "output selection");
@@ -717,7 +724,13 @@ pub fn try_reuse_baked_project(
     if !project_authority_release_loafs_available(&authority)? {
         return Ok(None);
     }
-    let native_sdk_context = authority_context.native_sdk_context()?;
+    // The exact ordinary preparation identity already selects the native producer route. Its stored inspection
+    // constituents validate themselves; discovering an SDK here would contaminate a later miss in output restoration.
+    let native_sdk_context = if ordinary_library_identity.is_some() {
+        None
+    } else {
+        authority_context.native_sdk_context()?
+    };
     let _validated_authority =
         crate::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(
             authority,
