@@ -8610,7 +8610,7 @@ fn published_imported_enum_payload_output_matches_legacy() -> Result<(), Box<dyn
     fs::create_dir_all(provider.join("src"))?;
     fs::write(
         project.join("loaf.toml"),
-        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'probe.incn'\n[dependencies]\npayloads = { path = 'deps/payloads' }\n",
+        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'main.incn'\n[dependencies]\npayloads = { path = 'deps/payloads' }\n",
     )?;
     fs::write(
         provider.join("loaf.toml"),
@@ -8665,7 +8665,7 @@ fn published_static_storage_output_matches_legacy() -> Result<(), Box<dyn std::e
     fs::create_dir_all(provider.join("src"))?;
     fs::write(
         project.join("loaf.toml"),
-        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'probe.incn'\n[dependencies]\ncells = { path = 'deps/cells' }\n",
+        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'main.incn'\n[dependencies]\ncells = { path = 'deps/cells' }\n",
     )?;
     fs::write(
         provider.join("loaf.toml"),
@@ -16802,11 +16802,15 @@ def main() -> None:
     )
 }
 
-/// Reordered factory arguments remain refused until their legacy evaluation policy has retained ownership facts.
+/// Reordered factory arguments with omitted flags retain the declaration-order policy and live legacy output.
 #[test]
-fn reordered_regex_factory_arguments_are_refused() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_refusal(
-        "reordered-regex-factory",
+fn reordered_regex_factory_arguments_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("reordered-regex-factory")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         r#"from std.regex import Regex
 
 def flag(label: str, value: bool) -> bool:
@@ -16818,6 +16822,18 @@ def main() -> None:
         Ok(regex) => println(regex.is_match("aXXb"))
         Err(error) => println(error.message())
 "#,
-        "unsupported Body IR Unsupported: checked constructor factory argument evaluation outside declaration order",
+    )
+}
+
+/// An owned model crosses the captured callable input boundary without changing either call's legacy output.
+#[test]
+fn captured_model_input_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("captured-model-input")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model Value:\n    number: int\n\ndef main() -> None:\n    prefix = \"item:\"\n    render: (Value) -> str = (value) => f\"{prefix}{value.number}\"\n    println(render(Value(number=7)))\n    println(render(Value(number=9)))\n",
     )
 }

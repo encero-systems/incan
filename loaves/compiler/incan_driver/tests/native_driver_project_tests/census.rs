@@ -175,7 +175,7 @@ fn published_codec_reaches_carrier_and_shared_read_admission() -> Result<(), Box
     Ok(())
 }
 
-/// Public enum and storage publication reaches separate carrier and decorated-body boundaries without failure.
+/// Public enum and storage publication reaches separate nested-pattern and decorated-body boundaries without failure.
 #[test]
 fn published_enum_and_static_context_reaches_named_frontiers() -> Result<(), Box<dyn std::error::Error>> {
     let graph = driver_fixture()?;
@@ -185,7 +185,7 @@ fn published_enum_and_static_context_reaches_named_frontiers() -> Result<(), Box
         (
             "cli_dependencies",
             "dependency_reexported_type_identity",
-            "unsupported Body IR ambiguous project nominal carrier Candidate",
+            "unsupported Body IR nested enum payload pattern",
         ),
         (
             "emit_dependency_unions_and_surfaces",
