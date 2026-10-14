@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::build::{OvenDirectRustcPlanPreparation, OvenToolchainMaterialization};
 use crate::error::{CliError, CliResult};
@@ -22,6 +22,28 @@ pub struct NativeSdkCommandContext {
     inventory: Arc<incan_provider::SdkInventory>,
     selection: incan_provider::sdk_native::SdkNativeSelection,
     shared_owners: oven_rustc::plan::shared::OvenSharedNativeOwners,
+    runtime_projections: Mutex<Vec<RuntimeInputProjection>>,
+}
+
+/// One canonical runtime projection retained by the existing admitted owner, guarded by the shared input observer.
+/// Logical declarations belong to the reconciled session; original native files and the bound engine guard reuse.
+struct RuntimeInputProjection {
+    providers: Vec<String>,
+    facets: Vec<String>,
+    dependencies: Vec<DependencySpec>,
+    observations: super::retained_inputs::ModelInputs,
+    inputs: BTreeMap<String, String>,
+}
+
+impl RuntimeInputProjection {
+    /// Compare the complete request before accepting unchanged physical observations; consumer bodies are absent.
+    fn matches(&self, providers: &[String], facets: &[String], dependencies: &[DependencySpec]) -> bool {
+        self.providers == providers
+            && self.facets == facets
+            && self.dependencies == dependencies
+            && self.observations.supports_retention()
+            && self.observations.current()
+    }
 }
 
 impl NativeSdkCommandContext {
@@ -64,6 +86,7 @@ impl NativeSdkCommandContext {
             inventory,
             selection,
             shared_owners,
+            runtime_projections: Mutex::default(),
         }))
     }
 
@@ -83,20 +106,55 @@ impl NativeSdkCommandContext {
         self.selection.owners.len()
     }
 
-    /// Project runtime identity through the existing source-bound engine from this exact retained selection.
+    /// Reuse canonical runtime identity while the complete request, original owners and bound engine are unchanged.
+    /// Misses use the existing source-bound engine; this context retains results, never test outcomes or new authority.
     pub(crate) fn runtime_inputs(
         &self,
         providers: &[String],
         facets: &[String],
         dependencies: &[DependencySpec],
     ) -> CliResult<BTreeMap<String, String>> {
-        super::native_runtime_inputs::runtime_inputs(
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::retained_native_runtime_inputs").entered();
+        let mut projections = self
+            .runtime_projections
+            .lock()
+            .map_err(|_| CliError::failure("native runtime preparation was interrupted"))?;
+        if let Some(projection) = projections
+            .iter()
+            .find(|projection| projection.matches(providers, facets, dependencies))
+        {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_native_runtime_inputs");
+            return Ok(projection.inputs.clone());
+        }
+
+        // ---- Canonical miss: observe original owners before invoking the existing identity engine ----
+        projections.retain(|projection| projection.observations.current());
+        let (engine, _) = super::native_runtime_inputs::bound_compiler_engine()?;
+        let mut observations = super::retained_inputs::ModelInputs::default();
+        self.visit_retained_inputs(&mut |path| observations.observe(path));
+        observations.observe(&engine);
+        let inputs = super::native_runtime_inputs::runtime_inputs(
             &self.selection,
             self.selection.receipt_catalog(),
             providers,
             facets,
             dependencies,
-        )
+        )?;
+        if observations.supports_retention() {
+            if !observations.current() {
+                return Err(CliError::failure("native runtime inputs changed during projection"));
+            }
+            projections.push(RuntimeInputProjection {
+                providers: providers.to_vec(),
+                facets: facets.to_vec(),
+                dependencies: dependencies.to_vec(),
+                observations,
+                inputs: inputs.clone(),
+            });
+        }
+        tracing::trace!(target: "incan::invocation", decision = "project_native_runtime_inputs");
+        Ok(inputs)
     }
 
     /// Install the existing frozen SDK inspection projection while sharing its command-admitted source owners.
@@ -613,6 +671,53 @@ fn seal_source_roles(receipt: &oven_store::OvenReceipt, manifest: &mut OvenRustc
 mod tests {
     use super::{native_unit_manifest, native_unit_root_aliases, seal_source_roles};
     use std::path::Path;
+
+    /// Retained projection must match every logical input and reject a replaced engine or selected native file.
+    #[test]
+    fn retained_runtime_projection_requires_exact_request_and_physical_inputs() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?;
+        let engine = root.join("engine");
+        let native = root.join("native");
+        std::fs::write(&engine, b"engine one")?;
+        std::fs::write(&native, b"native one")?;
+        let mut observations = super::super::retained_inputs::ModelInputs::default();
+        observations.observe(&engine);
+        observations.observe(&native);
+        let mut projection = super::RuntimeInputProjection {
+            providers: vec!["provider".into()],
+            facets: vec!["testing".into()],
+            dependencies: Vec::new(),
+            observations,
+            inputs: std::collections::BTreeMap::new(),
+        };
+        #[cfg(unix)]
+        assert!(projection.matches(&projection.providers, &projection.facets, &[]));
+        assert!(!projection.matches(&[], &projection.facets, &[]));
+        assert!(!projection.matches(&projection.providers, &[], &[]));
+        let dependency = oven_model::manifest::DependencySpec {
+            crate_name: "extra".into(),
+            version: Some("1".into()),
+            features: Vec::new(),
+            default_features: true,
+            optional: false,
+            package: None,
+            source: oven_model::manifest::DependencySource::Registry,
+        };
+        assert!(!projection.matches(&projection.providers, &projection.facets, &[dependency]));
+        std::fs::write(&engine, b"engine two")?;
+        assert!(!projection.matches(&projection.providers, &projection.facets, &[]));
+        let mut renewed = super::super::retained_inputs::ModelInputs::default();
+        renewed.observe(&engine);
+        renewed.observe(&native);
+        projection.observations = renewed;
+        #[cfg(unix)]
+        assert!(projection.matches(&projection.providers, &projection.facets, &[]));
+        std::fs::write(&native, b"native two")?;
+        assert!(!projection.matches(&projection.providers, &projection.facets, &[]));
+        Ok(())
+    }
 
     /// The covered debug-target fast path shares the command's original SDK owner instead of reacquiring it.
     #[test]
