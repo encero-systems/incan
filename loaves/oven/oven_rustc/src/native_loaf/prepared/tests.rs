@@ -308,6 +308,16 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
     );
     assert_eq!(retained.report.graph_verification.record_checks, 1);
     assert!(retained.report.retained_reuse);
+    let checks = crate::native_loaf::tests::InventoryChecks::default();
+    let retained = tracing::subscriber::with_default(checks.clone(), || retained.reconcile(&fixture.request()))?
+        .ok_or("observed retained selection missed")?;
+    assert_eq!(retained.report.graph_verification.record_checks, 0);
+    assert_eq!(
+        checks.count(),
+        2,
+        "only the declared-root handoff should verify its record/native pair"
+    );
+    assert!(retained.report.retained_reuse);
     Ok(())
 }
 
@@ -1262,5 +1272,49 @@ fn dev7_native_loaf_candidate_archive_coordinate_changes_request_identity() -> T
     request.blobs = &other;
     let changed = Current::read(&request, &mut NativeLoafConsumerReport::default())?;
     assert_ne!(original.key, changed.key);
+    Ok(())
+}
+
+/// Retained aggregate observations must return to canonical refusal after any consumed owner change.
+#[test]
+fn dev7_native_loaf_retained_inventory_rejects_owner_mutations() -> TestResult {
+    for change in ["native", "declaration", "payload", "extra-file", "extra-directory"] {
+        let fixture = Fixture::new()?;
+        let mut report = NativeLoafConsumerReport::default();
+        let current = Current::read(&fixture.request(), &mut report)?;
+        let mut graph = NativeLoafGraph::default();
+        let identity = fixture.publish(&current, &mut graph, &[])?;
+        let unit = Arc::clone(graph.units.get(&identity).ok_or("unit missing")?);
+        let retained = prepare_with(&fixture.request(), || Ok(prepared(graph)))?
+            .reconcile(&fixture.request())?
+            .ok_or("initial retained selection missed")?;
+        let retained = retained.reconcile(&fixture.request())?.ok_or("warm selection missed")?;
+        assert_eq!(retained.report.graph_verification.record_checks, 0);
+        let root = unit.native_owner.artifact_root();
+        match change {
+            "native" => replace_owned_fixture(&unit.output()?, b"changed native bytes")?,
+            "declaration" => replace_owned_fixture(&root.join("source/loaf.toml"), b"invalid declaration")?,
+            "payload" => {
+                let entry = root.parent().ok_or("entry missing")?;
+                replace_owned_fixture(&entry.join("payload"), b"changed payload")?;
+            }
+            "extra-file" | "extra-directory" => {
+                let permissions = std::fs::metadata(root)?.permissions();
+                let mut writable = permissions.clone();
+                use std::os::unix::fs::PermissionsExt;
+                writable.set_mode(writable.mode() | 0o200);
+                std::fs::set_permissions(root, writable)?;
+                let mutation = if change == "extra-file" {
+                    std::fs::write(root.join("unexpected"), b"unexpected")
+                } else {
+                    std::fs::create_dir(root.join("unexpected"))
+                };
+                std::fs::set_permissions(root, permissions)?;
+                mutation?;
+            }
+            _ => return Err("unknown mutation".into()),
+        }
+        assert!(retained.reconcile(&fixture.request()).is_err(), "{change}");
+    }
     Ok(())
 }

@@ -112,12 +112,42 @@ pub struct NativeLoafConsumerPreparation {
     current_key: Option<String>,
     local: LocalSources,
     local_declarations: Option<ObservedDeclarations>,
+    /// Original leased physical closure observations; never supplied by a persisted hint.
+    physical_inputs: Option<InputObservations>,
 }
 
 impl NativeLoafConsumerPreparation {
     /// Borrow the source-current declared closure and original leases for direct-plan publication.
     pub fn closure(&self) -> &NativeLoafClosure {
         &self.closure
+    }
+
+    /// Reconcile the privately retained closure through the existing replacement-sensitive observer.
+    /// An unchanged observation preserves the original per-unit verification; a changed or unsupported observation
+    /// runs every canonical check again. Capture before verification and compare afterward so a racing replacement
+    /// cannot seed a reusable proof. Original owner leases and immutable bindings stay attached to this preparation.
+    fn reconcile_physical_inputs(&mut self, report: &mut NativeLoafConsumerReport) -> Result<()> {
+        if let Some(inputs) = self.physical_inputs.as_ref()
+            && inputs.supports_retention()
+        {
+            let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_retained_native_inventory", metadata_checks = inputs.len()).entered();
+            if inputs.current() {
+                return Ok(());
+            }
+        }
+        self.physical_inputs = None;
+        let inputs = observe_native_closure(&self.closure);
+        for unit in self.closure.graph.units.values() {
+            report.graph_verification.record_checks += 1;
+            unit.verify()?;
+        }
+        if inputs.supports_retention() {
+            if !inputs.current() {
+                return Err(refused("retained native inventory changed during verification"));
+            }
+            self.physical_inputs = Some(inputs);
+        }
+        Ok(())
     }
 
     /// Borrow actual preparation/admission work counts and the measured whole boundary time.
@@ -151,10 +181,7 @@ impl NativeLoafConsumerPreparation {
         current.local = std::mem::take(&mut self.local);
         current.local.begin_request();
         current.local_declarations = self.local_declarations.take();
-        for unit in self.closure.graph.units.values() {
-            report.graph_verification.record_checks += 1;
-            unit.verify()?;
-        }
+        self.reconcile_physical_inputs(&mut report)?;
         let roots = self
             .closure
             .roots
@@ -186,6 +213,29 @@ impl NativeLoafConsumerPreparation {
         self.local_declarations = current.local_declarations;
         Ok(Some(self))
     }
+}
+
+/// Observe all original record, witness, consumed inventory and source-declaration paths without Store discovery.
+/// Full directory observations within each artifact detect added members; outer ancestors only guard replacement.
+/// Archived source bodies remain unconsumed, while their exact declaration and its ancestors always participate.
+fn observe_native_closure(closure: &NativeLoafClosure) -> InputObservations {
+    let mut inputs = InputObservations::default();
+    for unit in closure.graph.units.values() {
+        for owner in [&unit.record_owner, &unit.native_owner] {
+            owner.visit_admitted_native_inputs(&mut |path| {
+                inputs.observe(path);
+                for directory in path
+                    .ancestors()
+                    .skip(1)
+                    .take_while(|parent| parent.starts_with(owner.artifact_root()))
+                {
+                    inputs.observe(directory);
+                }
+            });
+        }
+        inputs.observe(&unit.native_owner.artifact_root().join("source/loaf.toml"));
+    }
+    inputs
 }
 
 /// A mutable optional hint contains coordinates only; every referenced immutable record is independently checked.
@@ -302,6 +352,7 @@ fn prepare_with_store(
             current_key: None,
             local: LocalSources::default(),
             local_declarations: None,
+            physical_inputs: None,
         });
     }
     let mut current = Current::read(request, &mut report)?;
@@ -324,6 +375,7 @@ fn prepare_with_store(
                         current_key: Some(current.key),
                         local: current.local,
                         local_declarations: current.local_declarations,
+                        physical_inputs: None,
                     });
                 }
             }
@@ -372,6 +424,7 @@ fn prepare_with_store(
         current_key: Some(current.key),
         local: current.local,
         local_declarations: current.local_declarations,
+        physical_inputs: None,
     })
 }
 
