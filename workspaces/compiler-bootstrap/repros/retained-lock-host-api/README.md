@@ -1,9 +1,29 @@
 # Retained lock host API
 
-The Incan control-plane migration in [#1034](https://github.com/encero-systems/incan/issues/1034), supporting the toolchain workflow in [#1698](https://github.com/encero-systems/incan/issues/1698), needs access to the existing lock collector with an original admitted session. Run `incan run src/main.incn` with prepared compiler dependencies. The complete typed call reaches Rust compilation and fails with E0603 because `collect_and_publish_project_lock_with_session` is private. This is an export/ownership boundary, not a failure of Incan mutable Rust interop: a separate control constructs `ExecutableBuildOwner` and compiles a call to its `check` method successfully.
+The retained-owner lock operation is implemented and callable from Incan. `src/owner_lock.incn` constructs `ExecutableBuildOwner`, calls its public `prepare_lock` operation twice with the same request, and checks that the published lock bytes remain unchanged. Both calls execute through the original owner; the example adds no resolver or cache.
 
-The public `collect_and_publish_project_lock` starts discovery without accepting an existing session. The original owner also keeps its reconciler and retained sessions private. Calling the public collector in another process would lose the retained state; copying those objects or adding another resolver would violate the shared-owner contract.
+## Positive acceptance
 
-The initial host adapter therefore connects the existing owner to the existing session-aware collector and retains successful publication evidence beside that same session. It adds no dependency-selection policy. Its Rust request/transport glue remains removable host debt under [#1034](https://github.com/encero-systems/incan/issues/1034#issuecomment-6173949508); it is not authorization to reimplement lock or dependency policy in Rust. Incan-facing orchestration should consume an admitted owner operation when that host API is available.
+With prepared compiler dependencies, run from this directory:
 
-The probe deliberately imports the collector rather than a made-up function. It supplies all six arguments and preserves the complete compiler diagnostic. A zero-argument preliminary probe only established the signature and is not the visibility proof.
+```bash
+incan run src/owner_lock.incn -- /absolute/path/to/prepared-project
+```
+
+The selected project must have a `loaf.toml` and a declared `[project.scripts]` entry, because this example supplies no explicit source entrypoint. Its successful output is:
+
+```text
+public owner lock first and repeat passed
+```
+
+The example was compiled against the host-library source at PR #2211 head `061592e1cdefeda4de9d4529f1962ce93ff8dca0` and executed successfully with both Cargo guards empty. This proves the public host operation from Incan; it is not a fresh installation or complete dependency-lifecycle acceptance test. The existing owner controls and command traces separately verify retained reuse and invalidation.
+
+## Preserved private-access repro
+
+`src/main.incn` deliberately calls the private `collect_and_publish_project_lock_with_session` function. It still fails with E0603, as expected. Its six typed arguments preserve the original visibility failure; it is not the supported entrypoint and does not indicate that `prepare_lock` is missing.
+
+The public operation owns the retained session and delegates to that private collector. Making the collector public would expose the wrong ownership boundary; calling the older stateless collector would discard retained state. Mutable Rust interop is supported: the positive example exercises it directly.
+
+## Remaining migration scope
+
+The host adapter and transport are implemented in Rust. Moving their orchestration to Incan remains tracked under [#1034](https://github.com/encero-systems/incan/issues/1034#issuecomment-6173949508), within the broader [toolchain workflow](https://github.com/encero-systems/incan/issues/1698). That migration is still open; this PR delivers the working retained-lock operation and its Incan-facing API, not the entire control-plane migration.
