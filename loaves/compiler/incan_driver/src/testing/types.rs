@@ -99,7 +99,7 @@ pub struct ParametrizeCase {
 }
 
 /// Fixture scope determines lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum FixtureScope {
     #[default]
     Function,
@@ -119,7 +119,7 @@ impl FixtureScope {
 }
 
 /// Information about a discovered fixture.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FixtureInfo {
     pub name: String,
     #[allow(dead_code)]
@@ -166,6 +166,39 @@ pub struct TestRunReport {
     pub shuffle_seed: Option<u64>,
     /// Command outcome, including fail-on-empty policy.
     pub exit_code: i32,
+}
+
+/// Request-local test progress facts. Presentation and terminal styling belong to the invoking client.
+/// Raw child output remains a separate byte-preserving stream rather than being interpreted as progress.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum TestProgress {
+    /// Current fixture metadata requested by verbose collection, in discovery order.
+    FixturesDiscovered { fixtures: Vec<FixtureInfo> },
+    /// Selection completed without any cases; failure policy remains in the completion result.
+    NoTestsCollected,
+    /// Selected inventory and execution policy, emitted before any test body runs.
+    SessionStarted {
+        collected: usize,
+        shuffle_seed: Option<u64>,
+        jobs: usize,
+    },
+    /// Existing scheduler finished grouping selected cases into execution units.
+    UnitsPlanned { units: usize, elapsed: Duration },
+    /// One selected unit is queued for execution; filenames retain sorted source order.
+    UnitStarting { files: Vec<PathBuf>, tests: usize },
+    /// Fresh execution completed, before result policy and final report assembly.
+    ExecutionCompleted { elapsed: Duration },
+    /// Detailed timing facts for an Incan harness; no display strings are produced by the worker.
+    HarnessCompleted {
+        file: PathBuf,
+        frontend: Duration,
+        generation: Duration,
+        receipt: Duration,
+        selection: Duration,
+        native: Duration,
+        execution: Duration,
+        native_reused: bool,
+    },
 }
 
 /// Result of discovering tests and fixtures in a file.

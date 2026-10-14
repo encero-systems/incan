@@ -189,6 +189,7 @@ pub(super) fn build(intent: BuildIntent, progress: impl FnMut(String)) -> CliRes
         &std::env::current_exe().map_err(transport_error)?,
         serde_json::to_value(intent).map_err(transport_error)?,
         progress,
+        None,
     )
 }
 
@@ -197,7 +198,11 @@ pub(super) fn submit(
     executable: &Path,
     intent: serde_json::Value,
     mut progress: impl FnMut(String),
+    test_config: Option<&crate::test_runner::TestRunConfig<'_>>,
 ) -> CliResult<serde_json::Value> {
+    let test_output = test_config.map(|config| {
+        crate::test_runner::output::TestOutputSink::rendered(config.report_format, config.verbose, config.use_color)
+    });
     let (path, generation) = coordinates(executable).map_err(transport_error)?;
     let mut stream = ensure_connection(executable, &path, &generation).map_err(transport_error)?;
     configure_reply_timeout(&stream, &intent).map_err(transport_error)?;
@@ -206,6 +211,12 @@ pub(super) fn submit(
         match protocol::read::<Reply>(&mut stream).map_err(transport_error)? {
             Reply::Progress { message } => progress(message),
             Reply::Diagnostic { message } => eprint!("{message}"),
+            Reply::TestProgress { event } => {
+                let output = test_output
+                    .as_ref()
+                    .ok_or_else(|| CliError::failure("unexpected test progress for a non-test request"))?;
+                output.progress(event);
+            }
             Reply::Complete { result, .. } => return Ok(result),
             Reply::Failure { message, exit_code } => return Err(CliError::with_code(message, exit_code)),
         }
@@ -260,6 +271,7 @@ fn dispatch(
             let reply = match event {
                 crate::test_runner::output::TestOutput::Stdout(message) => Reply::Progress { message },
                 crate::test_runner::output::TestOutput::Stderr(message) => Reply::Diagnostic { message },
+                crate::test_runner::output::TestOutput::Progress(event) => Reply::TestProgress { event },
             };
             let written = output_stream
                 .lock()
@@ -297,8 +309,8 @@ fn dispatch(
                     if !Path::new(&intent.test_list.path).is_absolute() {
                         return Err(CliError::failure("owner requires an absolute test collection path"));
                     }
-                    crate::test_runner::list_tests_with_owner(&intent.test_list, owner, |message| {
-                        if !disconnected && protocol::write(stream, &Reply::Progress { message }).is_err() {
+                    crate::test_runner::list_tests_with_owner(&intent.test_list, owner, |event| {
+                        if !disconnected && protocol::write(stream, &Reply::TestProgress { event }).is_err() {
                             disconnected = true;
                         }
                     })
@@ -630,7 +642,7 @@ mod tests {
             let ids = loop {
                 match protocol::read::<Reply>(&mut client)? {
                     Reply::Diagnostic { message } => warnings.push(message),
-                    Reply::Progress { .. } => {}
+                    Reply::Progress { .. } | Reply::TestProgress { .. } => {}
                     Reply::Complete { result, .. } => break result["ids"].clone(),
                     Reply::Failure { message, .. } => return Err(message.into()),
                 }
