@@ -151,14 +151,14 @@ fn sdk_reader_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error
     )
 }
 
-/// The original take adapter retains its live legacy oracle while the native source-trait implementation is absent.
+/// The original source take adapter names its missing SDK publication and retains its live legacy oracle.
 #[test]
 fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_sdk_adapter_fixture(
         "sdk-fallible-take",
         include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"),
         b"3\n1 2 3\n0\n0\n",
-        "unsupported native instantiation of `incan_stdlib_core::derives::TakeFallibleIterator`",
+        "unsupported Body IR package executable representation:",
     )?;
     check_sdk_adapter_fixture(
         "sdk-native-take-opaque-return",
@@ -178,7 +178,7 @@ fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::E
     )
 }
 
-/// Both original collection adapters advance to missing native trait implementations with their legacy output pinned.
+/// Both original source collection adapters require their SDK executable layouts and retain live legacy output.
 #[test]
 fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_sdk_adapter_fixture(
@@ -187,7 +187,7 @@ fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::erro
             "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
         ),
         b"3\n2 4 6\n",
-        "unsupported native instantiation of `incan_stdlib_core::derives::MapFallibleIterator`",
+        "unsupported Body IR package executable representation:",
     )?;
     check_sdk_adapter_fixture(
         "sdk-collection-adapters-imported-clone",
@@ -195,32 +195,8 @@ fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::erro
             "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
         ),
         b"2 4 6\n1 2\ntrue\n",
-        "unsupported native instantiation of `incan_stdlib_core::derives::MapFallibleIterator`",
+        "unsupported Body IR package executable representation:",
     )
-}
-
-/// Require complete native execution and byte parity with the unchanged legacy route for one original SDK fixture.
-fn check_completed_sdk_fixture(
-    name: &str,
-    source: &str,
-    expected_stdout: &[u8],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
-    closure.extend_with(&sdk_closure(fixture)?)?;
-    let root = fixture.scratch(name)?;
-    corpus::check_builtin_source_with_closure(
-        &fixture.driver_binary("debug"),
-        &root,
-        &fixture.sysroot,
-        &closure,
-        source,
-    )?;
-    assert_eq!(
-        Command::new(root.join("builtin-parity/native")).output()?.stdout,
-        expected_stdout
-    );
-    Ok(())
 }
 
 /// The original reader adapter reaches callable-value assignment while its live legacy output stays pinned.
@@ -275,7 +251,7 @@ def main() -> None:
     )
 }
 
-/// The original SDK iterator reaches native collect bound admission while its unchanged legacy oracle executes.
+/// The original source SDK iterator reports its absent collect publication while its unchanged legacy oracle executes.
 #[test]
 fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -298,8 +274,7 @@ fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::erro
     .output()?;
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::collect`"),
+        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR package executable representation:"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -12667,21 +12642,21 @@ def main() -> None:
             include_str!(
                 "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"
             ),
-            "unsupported Body IR nonlocal or trait-object Method",
+            "unsupported Body IR package executable representation:",
         ),
         (
             "sdk_fallible_collection_loop",
             include_str!(
                 "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
             ),
-            "unsupported Body IR Method without canonical identity",
+            "unsupported Body IR package executable representation:",
         ),
         (
             "sdk_fallible_collection_default",
             include_str!(
                 "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
             ),
-            "unsupported Body IR nonlocal or trait-object Method",
+            "unsupported Body IR package executable representation:",
         ),
         (
             "sdk_fallible_source_native_impl",
