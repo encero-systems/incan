@@ -75,3 +75,43 @@ The pure feature audit takes the retained cfg output and its target triple expli
 `semver_req` implements complete SemVer 2.0 versions and comma-conjoined requirements with caret, tilde, equality, ordered comparators, and trailing `*`, `x`, or `X` wildcards. A bare version means caret. Pre-releases need an explicit same-core pre-release comparator and must satisfy every comparator. Build metadata does not affect requirements or SemVer precedence; the resolver preserves the former semver crate's build-metadata tie order when choosing among equal-precedence candidates. Version components retain the unsigned 64-bit range without narrowing to an Incan integer. Requirements retain the replaced parser's 32-comparator limit and ASCII-space syntax.
 
 `cfg_predicate` accepts exact target triples and canonical `cfg(...)` selectors with atoms, quoted key-value atoms, `all`, `any`, and single-argument `not`. It evaluates all branches from the supplied complete snapshot, including feature and debug-assertion facts; it never infers package features or queries the host. Canonical separators are `, ` and ` = `, with no other whitespace outside quoted values. Unsupported functions, invalid arity, malformed quoting, escapes and noncanonical spacing are refusals naming the construct.
+
+## Developer workflow contract
+
+`src/developer_workflow_acceptance.incn` is a separate, Incan-authored CLI acceptance program. It takes `COMPILER ROOT SCENARIO`; `COMPILER` is an absolute path to the compiler under test and `ROOT` is an existing disposable directory. It writes only its named fixture projects beneath that root. Do not point it at an existing project. It requires the selected compiler's prepared toolchain; this is not proof of installed-toolchain or MIR acceptance.
+
+Run each scenario in the order shown. A nonzero exit is a failed capability contract, even when that capability is not implemented yet. The program never treats an unknown command as a passing test. It is intentionally separate from the default green unit-test suite while these public command contracts are being implemented.
+
+| Scenario | Contract |
+| --- | --- |
+| `scaffold` | Create `workflow_a` and `workflow_b`, without baking. |
+| `ordinary` | Run, repeat, check, build and test A; edit its answer from 42 to 43; rerun and retest; B still returns 42. |
+| `dependency-fixture` | Create `workflow_dependency`, a controlled local source library returning 100. |
+| `oven-build` / `oven-run` | Require ordinary project operations through the Oven command family. |
+| `dependency-add` | Require proposed `oven add workflow_dependency --path ../workflow_dependency`; `--path` is the acceptance target for local requirements, not a shipped command claim. |
+| `local-dependency` | Declare the same local dependency in both consumers; run without baking; edit only the child's source from 100 to 101; both consumers must return 101. |
+| `external-test-control` | Change the tracked root as well as the helper; prove the same assertion-failure and restoration oracle succeeds when the harness actually recompiles. |
+| `external-test-input` | Compile a Rust test using `../helper.rs`; edit only that helper so the assertion should fail; require that exact test failure, then restore and pass again. |
+
+For example, from the repository root:
+
+```bash
+incan run workspaces/oven/src/developer_workflow_acceptance.incn -- /absolute/path/to/incan /absolute/disposable/root scaffold
+incan run workspaces/oven/src/developer_workflow_acceptance.incn -- /absolute/path/to/incan /absolute/disposable/root ordinary
+```
+
+The actual subprocess commands contain no Cargo or manual bake invocation. Apply the usual negative Cargo guard to the environment and retain each scenario's stdout, stderr, exit status and compiler/source identities. Fresh roots are required when repeating scaffold scenarios. Failures can leave their disposable fixtures changed so that the failure remains inspectable.
+
+This contract does not yet assert a single owner across standalone `oven` and `incan`, eager registry acquisition, exact lock generation, or storage bounds. Those checks belong to subsequent owner/dependency slices. The library fixture uses local source only and does not exercise registry resolution.
+
+## Native test consumed inputs
+
+The `external-test-input` scenario reproduces the native runner's previous stale reuse: `src/lib.rs` uses `#[path = "../helper.rs"]`, and changing only the helper from 42 to 43 used to run the old passing assertion. The corrected native output record retains the files and environment observed by Rustc, so this edit rebuilds the harness and executes the failing assertion; restoration can reuse the earlier admitted output.
+
+The runner's source receipt still records its crate-root tree. The existing direct compiler now supplements native test output evidence with exact Rustc dep-info, using the existing parser and metadata-sensitive file digester. A cache hit checks those consumed inputs without launching Rustc. On a miss, a dep-info-only pass discovers inputs before compilation; the actual compile reports its consumed set again, and the original physical observations must still match before publication. This adds cold discovery work; it does not add a second cache, resolver or Rust source scanner.
+
+Missing evidence in older output records causes a miss. Missing consumed files cannot select stale tests. Changed-during-compilation inputs, unsupported dependency observations, and input paths whose identity cannot be safely observed are refused. This focused correction is verified on macOS; it does not establish non-Unix acceptance or complete dependency discovery for arbitrary procedural macro filesystem access.
+
+The existing Incan native-compilation policy remains the intended shared policy boundary. The native-test adapter is removable Rust host debt under #1698 and #1034: it supplies observations unavailable through the previous binary/test API. The current native output lifecycle still owns publication and original leases.
+
+Acceptance covers unchanged reuse, helper-only edits, restored source, missing includes, `include_str!`/`include_bytes!`, consumed environment and a compilation race. Existing feature/compiler binding and output corruption controls remain in the direct Rustc suite. No whole developer-workflow, installed-toolchain or MIR acceptance follows from these controls.

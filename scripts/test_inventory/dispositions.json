@@ -9588,6 +9588,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/invocation/consumed_inputs.rs": {
+      "disposition": "keep",
+      "notes": "Real Rustc dependency observations refuse publication after a compilation race and validate consumed environment without caching test outcomes.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/linking.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; the pinned linker binds the SDK closure, platform inputs and explicit arguments into link identities on macOS and Linux.",
@@ -12422,6 +12430,12 @@
       "notes": "verified documentation examples checked by scripts/check_docs_examples.sh.",
       "owner": 1561,
       "pattern": "verified_*.incn"
+    },
+    "workspaces/oven": {
+      "disposition": "keep",
+      "notes": "Explicit developer-workflow CLI contract driver; run nine named scenarios separately. Missing capabilities fail visibly; this is not the default green unit suite.",
+      "owner": 1337,
+      "pattern": "src/developer_workflow_acceptance.incn"
     },
     "workspaces/oven/src": {
       "disposition": "re-point",

@@ -1578,3 +1578,9 @@ fn linux_native_binary_and_harness_proof() -> Result<(), Box<dyn std::error::Err
 fn pinned_binary_receipt_proof() -> Result<(), Box<dyn std::error::Error>> {
     native_binary_and_harness_proof(false)
 }
+
+/// External modules and include macros participate in native harness freshness and restored-output reuse.
+#[test]
+fn generated_test_store_tracks_external_consumed_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_test_store_tracks_external_consumed_inputs()
+}
