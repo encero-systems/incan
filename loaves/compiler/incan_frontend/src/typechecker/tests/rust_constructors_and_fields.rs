@@ -76,6 +76,28 @@ pub fn empty_holder() -> Holder {
     Ok(())
 }
 
+/// Retain one read-only probe and its extracted metadata for the independent constructor assertions in this process.
+///
+/// Only source-identical, read-only cases use this fixture. Each keeps its own typechecker; metadata-upgrade tests
+/// keep a private root so they cannot overwrite these prepared records. The existing inspector owns all metadata.
+#[cfg(feature = "rust_inspect")]
+fn shared_rust_inspect_probe() -> Result<&'static std::path::Path, Box<dyn std::error::Error>> {
+    static PROBE: std::sync::OnceLock<Result<tempfile::TempDir, String>> = std::sync::OnceLock::new();
+    PROBE
+        .get_or_init(|| {
+            let prepare = || -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+                let root = tempfile::tempdir()?;
+                write_rust_inspect_probe_crate(root.path())?;
+                Ok(root)
+            };
+            prepare().map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map(tempfile::TempDir::path)
+        .map_err(|error| std::io::Error::other(error.as_str()).into())
+}
+
+/// Extract the requested fixture metadata through the ordinary inspector before checking Incan source.
 #[cfg(feature = "rust_inspect")]
 fn prewarm_metadata(manifest_dir: &std::path::Path, paths: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
@@ -88,6 +110,7 @@ fn prewarm_metadata(manifest_dir: &std::path::Path, paths: &[&str]) -> Result<()
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+/// Resolve an associated function as a callable from real extracted metadata.
 fn test_rust_inspect_resolves_type_associated_function_field_access() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from rust::demo import Builder
@@ -99,10 +122,9 @@ def f() -> None:
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let tmp = tempfile::tempdir()?;
-    write_rust_inspect_probe_crate(tmp.path())?;
-    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
-    prewarm_metadata(tmp.path(), &["demo::Builder"])?;
+    let root = shared_rust_inspect_probe()?;
+    checker.set_rust_inspect_manifest_dir(root.to_path_buf());
+    prewarm_metadata(root, &["demo::Builder"])?;
     checker.check_program(&ast).map_err(|errs| {
         std::io::Error::other(format!(
             "expected associated function field access to typecheck: {errs:?}"
@@ -124,6 +146,7 @@ def f() -> None:
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+/// Reject incorrect associated-function arity using the real probe metadata.
 fn test_rust_inspect_validates_associated_function_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from rust::demo import Builder
@@ -133,11 +156,10 @@ def f() -> None:
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
-    let tmp = tempfile::tempdir()?;
-    write_rust_inspect_probe_crate(tmp.path())?;
+    let root = shared_rust_inspect_probe()?;
     let mut checker = TypeChecker::new();
-    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
-    prewarm_metadata(tmp.path(), &["demo::Builder"])?;
+    checker.set_rust_inspect_manifest_dir(root.to_path_buf());
+    prewarm_metadata(root, &["demo::Builder"])?;
     let Err(errs) = checker.check_program(&ast) else {
         panic!("expected arity error for Builder.new with an argument");
     };
@@ -151,6 +173,7 @@ def f() -> None:
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+/// Keep unsupported enum-variant diagnostics after extracting the real probe shape.
 fn test_rust_inspect_reports_unsupported_rust_item_shape() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from rust::demo::Choice import Some
@@ -160,11 +183,10 @@ def f() -> None:
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
-    let tmp = tempfile::tempdir()?;
-    write_rust_inspect_probe_crate(tmp.path())?;
+    let root = shared_rust_inspect_probe()?;
     let mut checker = TypeChecker::new();
-    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
-    prewarm_metadata(tmp.path(), &["demo::Choice", "demo::Choice::Some"])?;
+    checker.set_rust_inspect_manifest_dir(root.to_path_buf());
+    prewarm_metadata(root, &["demo::Choice", "demo::Choice::Some"])?;
     let Err(errs) = checker.check_program(&ast) else {
         panic!("expected unsupported Rust item shape diagnostic");
     };
