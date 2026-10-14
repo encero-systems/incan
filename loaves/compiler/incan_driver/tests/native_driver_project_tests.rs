@@ -10416,9 +10416,8 @@ def main() -> None:
 "#,
         b"false\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\n",
     )?;
-    // The checker chose the plain operator while the operand was a type parameter; at a text instantiation that
-    // operator needs a runtime operation it never selected, so the native route refuses by name.
-    check_project_refusal(
+    // A checked Ord instance also reaches the retained text comparison operation.
+    check_project_case(
         "comparison_dunder_text_instance",
         r#"from std.derives.comparison import Ord
 
@@ -10430,7 +10429,7 @@ def less[T with Ord](a: T, b: T) -> bool:
 def main() -> None:
     println(less("a", "b"))
 "#,
-        "unsupported Body IR binary operator on text or nominal operands",
+        b"true\n",
     )
 }
 
@@ -10733,6 +10732,30 @@ fn imported_comparison_defaults_output_matches_legacy() -> Result<(), Box<dyn st
         &fixture.formatting,
         &fs::read_to_string(corpus_root.join("main.incn"))?,
     )
+}
+
+/// Standard comparison defaults retain inherited Eq slots through qualified imports and builtin bounds.
+#[test]
+fn inherited_comparison_preservation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    for name in [
+        "comparison_dunders_through_every_spelling",
+        "dunders_through_builtin_bounds",
+        "ne_reaches_the_eq_default_of_an_ord_only_adopter",
+    ] {
+        let root = fixture.scratch(name)?;
+        let source = support::fixtures_dir()
+            .join("behavior/lowering_declarations")
+            .join(format!("{name}.incn"));
+        corpus::check_builtin_source(
+            &fixture.driver_binary("debug"),
+            &root,
+            &fixture.sysroot,
+            &fixture.formatting,
+            &fs::read_to_string(source)?,
+        )?;
+    }
+    Ok(())
 }
 
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
