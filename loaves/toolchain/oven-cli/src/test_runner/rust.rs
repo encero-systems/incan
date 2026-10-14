@@ -148,22 +148,8 @@ fn prepare_inner(
         return Err("Rust test roots with build scripts require declared build facts in their native plan".into());
     }
     let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
-    let mut resolved = incan_provider::dependency_resolver::resolve_dependencies(
-        Some(manifest),
-        &[],
-        true,
-        &oven_model::lock::CargoFeatureSelection::default().normalized(),
-    )
-    .map_err(|errors| format!("invalid Rust test dependencies: {errors:?}"))?;
-    resolved
-        .apply_package_features(manifest, &selected_features)
-        .map_err(|errors| format!("invalid Rust test feature projection: {errors:?}"))?;
-    let dependencies = resolved
-        .dependencies
-        .iter()
-        .chain(&resolved.dev_dependencies)
-        .cloned()
-        .collect::<Vec<_>>();
+    let dependencies =
+        crate::commands::oven::native_compiler_tests::native_test_dependencies(manifest, &selected_features)?;
     let rustc = resolve_active_rustc()?;
     let project = manifest
         .project
@@ -256,8 +242,8 @@ fn prepare_inner(
         },
         &context.store,
     )?;
-    // Native test helpers consume the same leased closure as their root. Propagate the existing typed
-    // vocabulary capability so nested extraction cannot silently choose a Cargo-built dependency graph.
+    // Native test helpers consume the same leased closure as their root. Both existing child consumers receive
+    // that checked plan: generated-code checks and vocabulary extraction must not discover another dependency graph.
     let mut environment = environment;
     environment.insert("RUSTC".to_string(), rustc.display().to_string());
     environment.insert(
@@ -266,7 +252,10 @@ fn prepare_inner(
     );
     crate::commands::oven::append_compiler_suite_direct_rustc_environment(
         &mut environment,
-        oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV,
+        &[
+            oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
+            oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV,
+        ],
         &rustc,
         &plan,
     )?;
@@ -392,6 +381,55 @@ leaf = { optional = false }
             ..Default::default()
         };
         assert!(super::resolve_test_manifest(&manifest, &unknown).is_err());
+        Ok(())
+    }
+
+    /// Mixed-loaf Rust facets retain optional activation and dependency feature selection in the shared native
+    /// projection.
+    #[test]
+    fn mixed_loaf_native_dependencies_preserve_selected_features() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("mixed/rust/src"))?;
+        std::fs::write(root.join("mixed/rust/src/lib.rs"), "pub fn value() -> u32 { 42 }")?;
+        std::fs::write(
+            root.join("mixed/loaf.toml"),
+            "[project]\nname = \"mixed\"\n[rust.source]\nroot = \"rust\"\n",
+        )?;
+        let manifest = oven_model::manifest::ProjectManifest::from_str(
+            r#"
+[project]
+name = "mixed-consumer"
+[project.features]
+helpers = ["dep:mixed", "mixed/extra"]
+[dependencies]
+mixed = { loaf = "mixed", path = "mixed", optional = true, default-features = false, features = ["base"] }
+"#,
+            &root.join("loaf.toml"),
+        )?;
+        assert!(manifest.library_dependencies().contains_key("mixed"));
+        let (effective, features) = super::resolve_test_manifest(&manifest, &Default::default())?;
+        let inactive = crate::commands::oven::native_compiler_tests::native_test_dependencies(&effective, &features)?;
+        assert!(inactive.is_empty());
+        let selection = incan_provider::FeatureSelection {
+            requested: std::collections::BTreeSet::from(["helpers".into()]),
+            ..Default::default()
+        };
+        let (effective, features) = super::resolve_test_manifest(&manifest, &selection)?;
+        let dependencies =
+            crate::commands::oven::native_compiler_tests::native_test_dependencies(&effective, &features)?;
+        assert_eq!(dependencies.len(), 1);
+        let dependency = &dependencies[0];
+        assert_eq!(dependency.crate_name, "mixed");
+        assert_eq!(dependency.features, ["base", "extra"]);
+        assert!(!dependency.default_features);
+        assert!(dependency.optional);
+        assert_eq!(
+            dependency.source,
+            oven_model::manifest::DependencySource::Path {
+                path: root.join("mixed")
+            }
+        );
         Ok(())
     }
 
