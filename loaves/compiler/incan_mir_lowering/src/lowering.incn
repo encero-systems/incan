@@ -3752,7 +3752,11 @@ def lower_delegated_call(
         match target.receiver_type:
             Some(RustType.Generic(base=_base, args=arguments)) =>
                 if len(target.type_args) != 0:
-                    return Err("unsupported Body IR SDK owner and method type arguments")
+                    # The nominal producer also retains the full closed owner on the associated call. Both
+                    # checked views must agree and fill every declared binder before either is used.
+                    retained = checked_type_arguments(builder, target.type_args)?
+                    if len(arguments) != len(names) or retained != arguments:
+                        return Err("unsupported Body IR SDK owner and method type arguments")
                 closed = arguments.clone()
             _ =>
                 closed = checked_type_arguments(builder, target.type_args)?
