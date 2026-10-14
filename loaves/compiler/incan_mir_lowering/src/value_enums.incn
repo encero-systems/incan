@@ -65,7 +65,9 @@ pub def value_method_owner(
     unions: list[RustType],
     intrinsics: list[NativeEnumDeclaration],
 ) -> Result[Option[int], str]:
-    """Admit the getter under its owner's span; independently declared methods retain their canonical body path."""
+    """Admit the getter under its owner's span; declared methods and authenticated SDK trait calls retain their own paths."""
+    if target.sdk_trait != None:
+        return Ok(None)
     index = receiver_layout(module, locals, argument, span, unions, intrinsics)?
     if index < 0 or index >= len(module.enum_declarations):
         return Ok(None)
