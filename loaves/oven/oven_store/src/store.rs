@@ -959,6 +959,7 @@ impl OvenStore {
         admitted_files: Option<&[OvenArtifactMaterializedFileManifest]>,
         admitted_directories: Option<&[OvenArtifactMaterializedDirectoryManifest]>,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
+        let _publication = tracing::trace_span!(target: "incan::invocation", "oven_store::publish_artifact", domain = %request.domain, files = request.materialized_files.len(), payload_bytes = request.payload.len()).entered();
         let domain = normalized_domain(&request.domain)?;
         if request.payload.is_empty() {
             return Err(OvenStoreError::InvalidInput {
@@ -983,10 +984,13 @@ impl OvenStore {
         let manifest = artifact_manifest(request, domain.clone(), &materialized_files, &materialized_directories)?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
+        let manager_wait =
+            tracing::trace_span!(target: "incan::invocation", "oven_store::wait_publication_lock").entered();
         manager.lock().map_err(|source| OvenStoreError::Io {
             path: self.root.join(MANAGER_LOCK_FILE),
             source,
         })?;
+        drop(manager_wait);
         self.reclaim_stale_staging()?;
         if !allow_legacy_cargo_publisher {
             self.reject_active_legacy_cargo_publisher()?;
@@ -1949,6 +1953,7 @@ impl OvenStore {
         pending_logical_bytes: u64,
         pending_physical_bytes: u64,
     ) -> Result<(), OvenStoreError> {
+        let _capacity = tracing::trace_span!(target: "incan::invocation", "oven_store::admit_publication_capacity", pending_logical_bytes, pending_physical_bytes).entered();
         let root = self.entries_root();
         if let Some(stamp) = store_directory_stamp(&root)
             && let Ok(memo) = read_manifest_memo().lock()
@@ -2913,6 +2918,7 @@ fn validated_materialized_files(
     files: &[OvenArtifactMaterializedFile],
     expected: Option<&[OvenArtifactMaterializedFileManifest]>,
 ) -> Result<Vec<ValidatedMaterializedFile>, OvenStoreError> {
+    let _validation = tracing::trace_span!(target: "incan::invocation", "oven_store::validate_publication_files", files = files.len()).entered();
     let expected_by_path = expected.map(|files| {
         files
             .iter()
@@ -3295,6 +3301,7 @@ fn write_staged_entry(
     materialized_directories: &[ValidatedMaterializedDirectory],
     shared_materialized_files: &mut BTreeMap<(String, bool), PathBuf>,
 ) -> Result<BTreeMap<String, MaterializedFileDigest>, OvenStoreError> {
+    let _staging = tracing::trace_span!(target: "incan::invocation", "oven_store::write_staged_entry", input = %manifest.identity, files = materialized_files.len()).entered();
     let mut written_files = BTreeMap::new();
     write_synced_file(&root.join(PAYLOAD_FILE), payload, false)?;
     let materialized_root = root.join(MATERIALIZED_DIRECTORY);
@@ -3362,6 +3369,7 @@ fn write_staged_entry(
                 path: destination.clone(),
                 source,
             })?;
+            tracing::trace!(target: "incan::invocation", decision = "link_shared_publication_member", bytes = file.manifest.logical_bytes);
         } else {
             // A source that is already an immutable, synchronized store file is adopted by link. The bytes above
             // were still read and re-digested first, so the entry is admitted on exactly the same evidence as a
@@ -3374,6 +3382,7 @@ fn write_staged_entry(
                 false
             };
             if !linked {
+                let _copy = tracing::trace_span!(target: "incan::invocation", "oven_store::copy_publication_member", bytes = file.manifest.logical_bytes).entered();
                 // The copy route is the one that rewrites bytes, so it is the one that re-verifies them in full.
                 let bytes = fs::read(&file.source_path).map_err(|source| OvenStoreError::Io {
                     path: file.source_path.clone(),
@@ -3399,6 +3408,8 @@ fn write_staged_entry(
                         },
                     );
                 }
+            } else {
+                tracing::trace!(target: "incan::invocation", decision = "link_immutable_publication_member", bytes = file.manifest.logical_bytes);
             }
             shared_materialized_files.insert(shared_key, destination.clone());
         }
@@ -3436,6 +3447,7 @@ fn write_staged_entry(
 /// links invalidate the full stamp and forfeit acceleration. Linked files have no private-write observation here.
 /// Missing, unsupported or unwritable cache state never changes publication or subsequent digest verification.
 fn remember_published_file_observations(root: &Path, written_files: &BTreeMap<String, MaterializedFileDigest>) {
+    let _retention = tracing::trace_span!(target: "incan::invocation", "oven_store::remember_publication_observations", files = written_files.len()).entered();
     let mut retained = 0_u64;
     for (relative, record) in written_files {
         let path = root.join(MATERIALIZED_DIRECTORY).join(relative);
@@ -3508,6 +3520,8 @@ fn link_immutable_materialized_source(
     destination: &Path,
     sync_source: bool,
 ) -> Result<bool, OvenStoreError> {
+    let _link =
+        tracing::trace_span!(target: "incan::invocation", "oven_store::link_publication_member", sync_source).entered();
     if sync_source {
         OpenOptions::new()
             .read(true)
@@ -4554,6 +4568,8 @@ fn measure_entry_for_admission(root: &Path) -> Result<OvenStoreEntry, OvenStoreE
 /// Staging roots add a process-unique suffix so concurrent publishers cannot collide. They are never selection
 /// candidates; once atomically renamed, the public-entry measurement above requires the manifest identity name.
 fn measure_staged_entry_for_admission(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
+    let _measurement =
+        tracing::trace_span!(target: "incan::invocation", "oven_store::measure_staged_publication").entered();
     measure_entry_for_admission_with_directory_identity(root, false)
 }
 
@@ -5323,6 +5339,7 @@ fn write_synced_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Resul
 
 /// Return the exact newly written, synchronized handle so private publication can observe its final generation.
 fn write_synced_file_handle(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<File, OvenStoreError> {
+    let _write = tracing::trace_span!(target: "incan::invocation", "oven_store::write_synced_file", bytes = bytes.len(), trailing_newline).entered();
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -5341,6 +5358,7 @@ fn write_synced_file_handle(path: &Path, bytes: &[u8], trailing_newline: bool) -
             source,
         })?;
     }
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_published_file").entered();
     file.sync_all().map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
@@ -5350,6 +5368,7 @@ fn write_synced_file_handle(path: &Path, bytes: &[u8], trailing_newline: bool) -
 
 /// Synchronize a directory entry after atomic store publication where the host supports directory handles.
 pub fn sync_directory(path: PathBuf) -> Result<(), OvenStoreError> {
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_publication_directory").entered();
     File::open(&path)
         .and_then(|directory| directory.sync_all())
         .map_err(|source| OvenStoreError::Io { path, source })
