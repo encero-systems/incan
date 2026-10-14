@@ -4583,6 +4583,21 @@ def main() -> None:
 /// Builtin staticmethod and classmethod markers on models and classes, including a classmethod constructing an
 /// explicitly instantiated generic owner, match legacy.
 #[test]
+fn applied_classmethod_owner_arguments_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("applied-classmethod-owner")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/classmethod_with_explicit_type_arguments.incn"
+        ),
+    )
+}
+
+/// Builtin method markers preserve ordinary model/class receivers and independently applied owner frames.
+#[test]
 fn builtin_method_markers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(

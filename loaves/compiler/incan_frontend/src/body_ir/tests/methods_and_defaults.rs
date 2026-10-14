@@ -637,7 +637,7 @@ fn classmethod_construction_retains_its_owner_declaration() -> Result<(), Box<dy
     Ok(())
 }
 
-/// A static call on an explicitly instantiated class keeps the applied owner type as its receiver.
+/// A static call keeps owner arguments in its receiver without duplicating them as method arguments.
 #[test]
 fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
@@ -655,6 +655,10 @@ fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box
             base: "Box".to_string(),
             args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
         })
+    );
+    assert!(
+        make.type_args.is_empty(),
+        "owner binders must not also become method binders"
     );
     Ok(())
 }
