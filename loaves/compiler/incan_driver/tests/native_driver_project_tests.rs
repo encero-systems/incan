@@ -10737,23 +10737,25 @@ fn imported_comparison_defaults_output_matches_legacy() -> Result<(), Box<dyn st
 /// Standard comparison defaults retain inherited Eq slots through qualified imports and builtin bounds.
 #[test]
 fn inherited_comparison_preservation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    for name in [
-        "comparison_dunders_through_every_spelling",
-        "dunders_through_builtin_bounds",
-        "ne_reaches_the_eq_default_of_an_ord_only_adopter",
-    ] {
-        let root = fixture.scratch(name)?;
+    let cases: [(&str, &[u8]); 3] = [
+        (
+            "comparison_dunders_through_every_spelling",
+            b"true\nfalse\ntrue\nfalse\ntrue\n3\nPoint { x: 1 }\ntrue\ntrue\n",
+        ),
+        (
+            "dunders_through_builtin_bounds",
+            b"true\ntrue\ntrue\ntrue\ntrue\n3\nPoint { x: 1 }\n",
+        ),
+        (
+            "ne_reaches_the_eq_default_of_an_ord_only_adopter",
+            b"true\nfalse\nfalse\ntrue\nfalse\n",
+        ),
+    ];
+    for (name, expected) in cases {
         let source = support::fixtures_dir()
             .join("behavior/lowering_declarations")
             .join(format!("{name}.incn"));
-        corpus::check_builtin_source(
-            &fixture.driver_binary("debug"),
-            &root,
-            &fixture.sysroot,
-            &fixture.formatting,
-            &fs::read_to_string(source)?,
-        )?;
+        check_project_case(name, &fs::read_to_string(source)?, expected)?;
     }
     Ok(())
 }
