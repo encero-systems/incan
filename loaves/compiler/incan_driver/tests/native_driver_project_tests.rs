@@ -199,7 +199,8 @@ fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::erro
     )
 }
 
-/// The original reader adapter passes callable-value assignment and reaches the SDK iteration hook with legacy pinned.
+/// The original reader adapter passes callable-value assignment and reaches a named native SDK trait-bound refusal with
+/// legacy pinned.
 #[test]
 fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_sdk_adapter_fixture(
@@ -208,11 +209,12 @@ fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std:
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
         ),
         b"16\n4\ndone\n",
-        "unsupported Body IR nonlocal or trait-object Method __iter__",
+        "unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::map_err`: a type argument has no native impl for the callee's bounds",
     )
 }
 
-/// A captured SDK generic value no longer coerces to a function pointer; its remaining iteration hook stays refused.
+/// A captured SDK generic value keeps its owned model-input ABI before the compiled callee's native bounds remain
+/// refused.
 #[test]
 fn sdk_generic_callable_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_sdk_adapter_fixture(
@@ -221,7 +223,7 @@ fn sdk_generic_callable_value_output_matches_legacy() -> Result<(), Box<dyn std:
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
         ),
         b"16\n4\ndone\n",
-        "unsupported Body IR nonlocal or trait-object Method __iter__",
+        "unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::map_err`: a type argument has no native impl for the callee's bounds",
     )
 }
 
@@ -8610,7 +8612,7 @@ fn published_imported_enum_payload_output_matches_legacy() -> Result<(), Box<dyn
     fs::create_dir_all(provider.join("src"))?;
     fs::write(
         project.join("loaf.toml"),
-        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nmain = 'main.incn'\n[dependencies]\npayloads = { path = 'deps/payloads' }\n",
+        "[project]\nname = 'main'\nversion = '0.1.0'\n[project.scripts]\nmain = 'main.incn'\n[dependencies]\npayloads = { path = 'deps/payloads' }\n",
     )?;
     fs::write(
         provider.join("loaf.toml"),
@@ -8665,7 +8667,7 @@ fn published_static_storage_output_matches_legacy() -> Result<(), Box<dyn std::e
     fs::create_dir_all(provider.join("src"))?;
     fs::write(
         project.join("loaf.toml"),
-        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nmain = 'main.incn'\n[dependencies]\ncells = { path = 'deps/cells' }\n",
+        "[project]\nname = 'main'\nversion = '0.1.0'\n[project.scripts]\nmain = 'main.incn'\n[dependencies]\ncells = { path = 'deps/cells' }\n",
     )?;
     fs::write(
         provider.join("loaf.toml"),
