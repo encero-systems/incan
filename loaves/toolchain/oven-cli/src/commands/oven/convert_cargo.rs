@@ -57,6 +57,18 @@ fn render(loaf: &Value) -> Result<String, Error> {
         }
         document.insert("dependencies", toml_edit::Item::Table(table));
     }
+    if let Some(dependencies) = loaf
+        .get("envs")
+        .and_then(|envs| envs.get("test"))
+        .and_then(|test| test.get("dependencies"))
+        .and_then(Value::as_table)
+    {
+        let mut table = toml_edit::Table::new();
+        for (alias, declaration) in dependencies {
+            table.insert(alias, toml_edit::Item::Value(inline(declaration)?));
+        }
+        document["envs"]["test"]["dependencies"] = toml_edit::Item::Table(table);
+    }
     Ok(document.to_string())
 }
 
@@ -237,3 +249,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "convert_cargo/test_dependencies.rs"]
+mod test_dependencies;

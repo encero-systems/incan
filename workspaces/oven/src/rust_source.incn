@@ -6,6 +6,9 @@ activate dependencies, discover a workspace or permit build-time effects. The re
 for the later unit/configuration producer; a dependency catalog alone cannot produce semantic input evidence.
 """
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from std import toml
 from std.toml import TomlValue, TomlKind
 from manifest_errors import IntakeError, IntakeErrorKind

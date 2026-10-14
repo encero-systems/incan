@@ -635,6 +635,25 @@ oven tests --incan-only --list
 oven tests --format json --junit reports/all-tests.xml
 ```
 
+## `oven convert-cargo`
+
+```text
+oven convert-cargo [--workspace PATH] --project RELATIVE_PATH [--project RELATIVE_PATH ...]
+incan oven convert-cargo [--workspace PATH] --project RELATIVE_PATH [--project RELATIVE_PATH ...]
+```
+
+Adopts selected Cargo workspace libraries and their local dependency closure into `loaf.toml` without invoking Cargo. `--workspace` defaults to the current directory and must contain `Cargo.toml` and `Cargo.lock`; each required `--project` path is relative to that workspace. Upstream source and Cargo files are unchanged. Existing Loaf-specific policy is preserved while imported declarations are replaced.
+
+| Imported input | Loaf contract |
+| --- | --- |
+| Ordinary dependencies | `[dependencies]`, including workspace inheritance and target predicates. |
+| Dev dependencies | `[envs.test.dependencies]`; they are required for tests without changing production optionality. Local dev packages are adopted too. Reimport replaces this dependency table, removing deleted imported requirements. |
+| Overlapping normal/dev dependencies | The existing test environment combines feature demands. Incompatible source/version identities, overlapping target alternatives, and optional production-only features that cannot be represented faithfully are refused. |
+| Build dependencies | Adoption inventory only; conversion does not execute build scripts or establish build facts. |
+| Unsupported inputs | Git dependencies without registered Loaf adaptation and nonconventional library roots are refused. All converted declarations are validated before publication. |
+
+Successful conversion exits with `0`; invalid or unsupported declarations exit with `1`. Conversion does not compile, test, or prove native dependency availability. Run [`oven tests`](#oven-tests) after the selected dependency closure has been admitted.
+
 ## `incan new`
 
 ```text
