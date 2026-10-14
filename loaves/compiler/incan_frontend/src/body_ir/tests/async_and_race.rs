@@ -54,6 +54,21 @@ async def main() -> None:
     Ok(())
 }
 
+/// A source-owned equal spelling cannot acquire the SDK's opaque rest-pack storage contract.
+#[test]
+fn source_owned_race_arm_rest_pack_stays_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model RaceArm:\n    value: int\n\ndef consume(*arms: RaceArm) -> None:\n    pass\n\ndef main() -> None:\n    consume(RaceArm(value=1))\n";
+    let module = build(source, &["main"])?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.render_snapshot()
+            .contains("rest call with an unretained concrete pack element"),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// The exact SDK FnOnce bridge retains a checked zero-argument callable's output in native task storage.
 #[test]
 fn sdk_blocking_callback_retains_output() -> Result<(), Box<dyn std::error::Error>> {
