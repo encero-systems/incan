@@ -108,6 +108,42 @@ fn scalar_capture_keeps_reusable_invocation_contract() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// Generic value parameters retain captured callable storage without changing an explicit function-type contract.
+#[test]
+fn generic_callable_arguments_retain_owned_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.traits.callable import Callable1\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef plain(text: str) -> str:\n  return text\n\ndef main() -> None:\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n  println(use(plain, \"y\"))\n",
+        &["app", "generic_callable_storage"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let targets = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } if target
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| identity.declaration_name == "use") =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [capturing, item] = targets.as_slice() else {
+        return Err("expected both checked generic call sites".into());
+    };
+    let captured = serde_json::to_value(capturing)?;
+    let pointer = serde_json::to_value(item)?;
+    assert_eq!(captured["owned_callable_slots"], serde_json::json!([0]));
+    assert_eq!(pointer["owned_callable_slots"], serde_json::json!([]));
+    Ok(())
+}
+
 /// A deferred read of `self` belongs to an explicit captured local, never the enclosing receiver frame.
 #[test]
 fn closure_captures_the_receiver_in_its_own_local() -> Result<(), Box<dyn std::error::Error>> {
