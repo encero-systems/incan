@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4291 | 283 | 431 |
+| keep | 4293 | 284 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **9262** | **739** | **1494** |
+| **Total** | **9264** | **740** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1833,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2540 tests in 158 files: keep 2527, unaffected 13)
+### `loaves/compiler/incan_frontend` (2542 tests in 159 files: keep 2529, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1846,6 +1846,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs` | 4 | 95 | 95 | keep | - | - | - | #1337 | - | Checked channel value arguments close send-error payload types without changing legacy inference. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/class_inheritance.rs` | 4 | 164 | 164 | keep | - | - | - | #1337 | - | Checked parent-first layout, canonical override selection and malformed inheritance admission; frontend-only Body IR contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closed_callback_types.rs` | 6 | 83 | 83 | keep | - | - | - | #1337 | - | Checked callback return contracts and original fixture local types retained for direct-route execution without modifying legacy inference. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/closed_sdk_rest.rs` | 2 | 52 | 52 | keep | - | - | - | #1337 | - | Closed SDK race rest carrier and source-owned spelling refusal; frontend-only checked call binding contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs` | 42 | 1330 | 1330 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs` | 38 | 1263 | 1263 | keep | - | - | - | #1561 | replacement 4 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/decorated_bindings.rs` | 18 | 522 | 522 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Original callable identity and initialized decorator replacement contracts; frontend-only Body IR coverage. |
