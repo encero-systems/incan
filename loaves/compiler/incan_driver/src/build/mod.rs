@@ -27,6 +27,7 @@ pub mod native_sdk;
 pub(crate) mod native_sdk_plan;
 pub mod native_source_output;
 mod retained_inputs;
+pub mod test_generation;
 pub use native_sdk_plan::NativeSdkCommandContext;
 pub(crate) mod ordinary_library_native;
 pub(crate) mod ordinary_support;

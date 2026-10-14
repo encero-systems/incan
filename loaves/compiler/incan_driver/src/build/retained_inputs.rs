@@ -71,6 +71,7 @@ struct RetainedSession {
     session: Arc<CompilationSession>,
     executable: Option<RetainedExecutableDependencies>,
     native_admission: Option<ObservedNativeAdmission>,
+    test_generation: Arc<super::test_generation::RetainedTestGeneration>,
 }
 
 /// Original native dependency owners shared by build and test within one reconciled lock/session generation.
@@ -387,9 +388,24 @@ impl RetainedProjectInputs {
                 session: Arc::clone(&session),
                 executable: None,
                 native_admission: None,
+                test_generation: Arc::default(),
             },
         );
         Ok(session)
+    }
+
+    /// Borrow generated test sources only from the exact, already reconciled artifact session.
+    pub(super) fn test_generation(
+        &self,
+        root: &Path,
+        session: &Arc<CompilationSession>,
+    ) -> Option<Arc<super::test_generation::RetainedTestGeneration>> {
+        self.projects
+            .get(root)?
+            .sessions
+            .get(&SessionPurpose::Artifacts)
+            .filter(|retained| Arc::ptr_eq(&retained.session, session))
+            .map(|retained| Arc::clone(&retained.test_generation))
     }
 
     /// Transfer the prior plan out of the current session; failures cannot leave a partially reused plan installed.

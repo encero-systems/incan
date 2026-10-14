@@ -25,6 +25,8 @@ enum StdlibSourceSelection {
 struct RetainedSourceMembers {
     members: HashMap<String, Arc<CompilerOwnedSourceMember>>,
     failure: Option<String>,
+    /// Ambient source discovery has no complete retained observation contract.
+    legacy_lookup: bool,
 }
 
 /// Original source selection and members behind one command's parsed metadata, independent of cache entry spelling.
@@ -106,10 +108,16 @@ impl StdlibSourceInputs {
         Ok(())
     }
 
+    /// Retain generated consumers only when every metadata source has its original verifiable owner.
+    pub(super) fn supports_generation_reuse(&self) -> bool {
+        self.retained.lock().is_ok_and(|retained| !retained.legacy_lookup) && self.verify().is_ok()
+    }
+
     /// Read only an owned pinned module, retaining its original file owner; foreign metadata comes from providers.
     pub(super) fn read_module(&mut self, module: &[String]) -> Option<String> {
         let source = match &self.selection {
             StdlibSourceSelection::Legacy => {
+                self.retained.lock().ok()?.legacy_lookup = true;
                 let relative = incan_lang::lang::stdlib::stdlib_stub_path(module)?;
                 let path = super::find_stdlib_file(&relative)?;
                 return std::fs::read_to_string(&path)

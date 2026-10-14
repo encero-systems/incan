@@ -465,6 +465,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/test_generation.rs": {
+      "disposition": "keep",
+      "notes": "Session-owned test generation reuse: exact source, selection, configuration, compiler, output and metadata observation guards; test outcomes and runtime data remain fresh.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build_unit.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
