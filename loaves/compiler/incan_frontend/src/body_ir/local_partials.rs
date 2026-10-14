@@ -189,6 +189,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 body: Box::new(bir::ClosureBody {
                     original_callable: None,
                     function_item: false,
+                    consumes_environment: false,
                     capture_locals: frame.captures,
                     stmts: statements,
                     result,

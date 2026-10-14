@@ -286,6 +286,7 @@ fn initializer(
             body: Box::new(bir::ClosureBody {
                 original_callable: original.canonical.clone(),
                 function_item: true,
+                consumes_environment: false,
                 capture_locals: Vec::new(),
                 stmts: Vec::new(),
                 result: bir::Operand::Constant(bir::Constant::None),
