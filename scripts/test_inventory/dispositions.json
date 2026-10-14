@@ -6312,17 +6312,17 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs": {
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_factory_defaults.rs": {
       "disposition": "keep",
-      "notes": "Checked SDK iteration hook identities retain native declarations independently of written call facts.",
+      "notes": "Checked SDK factory identity and source-owned default frame, absent selection refusal and source shadowing.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_factory_defaults.rs": {
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs": {
       "disposition": "keep",
-      "notes": "Checked SDK factory identity and source-owned default frame, absent selection refusal and source shadowing.",
+      "notes": "Checked SDK iteration hook identities retain native declarations independently of written call facts.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
