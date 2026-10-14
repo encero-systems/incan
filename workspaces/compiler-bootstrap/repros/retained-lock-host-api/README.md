@@ -1,0 +1,9 @@
+# Retained lock host API
+
+The Incan control-plane migration in [#1034](https://github.com/encero-systems/incan/issues/1034), supporting the toolchain workflow in [#1698](https://github.com/encero-systems/incan/issues/1698), needs access to the existing lock collector with an original admitted session. Run `incan run src/main.incn` with prepared compiler dependencies. The complete typed call reaches Rust compilation and fails with E0603 because `collect_and_publish_project_lock_with_session` is private. This is an export/ownership boundary, not a failure of Incan mutable Rust interop: a separate control constructs `ExecutableBuildOwner` and compiles a call to its `check` method successfully.
+
+The public `collect_and_publish_project_lock` starts discovery without accepting an existing session. The original owner also keeps its reconciler and retained sessions private. Calling the public collector in another process would lose the retained state; copying those objects or adding another resolver would violate the shared-owner contract.
+
+The initial host adapter therefore connects the existing owner to the existing session-aware collector and retains successful publication evidence beside that same session. It adds no dependency-selection policy. Its Rust request/transport glue remains removable host debt under [#1034](https://github.com/encero-systems/incan/issues/1034#issuecomment-6173949508); it is not authorization to reimplement lock or dependency policy in Rust. Incan-facing orchestration should consume an admitted owner operation when that host API is available.
+
+The probe deliberately imports the collector rather than a made-up function. It supplies all six arguments and preserves the complete compiler diagnostic. A zero-argument preliminary probe only established the signature and is not the visibility proof.

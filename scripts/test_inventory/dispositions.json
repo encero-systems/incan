@@ -288,6 +288,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/lock_preparation.rs": {
+      "disposition": "unaffected",
+      "notes": "Existing-owner lock publication reuse guards; backend-neutral request/source/publication invalidation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/mod.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",

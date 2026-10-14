@@ -74,6 +74,7 @@ struct RetainedSession {
     /// Canonical discovery warnings replayed for every check request, including retained sessions.
     check_warnings: Vec<String>,
     check_report: Option<super::check::CompletedCheck>,
+    lock_preparation: Option<super::lock_preparation::CompletedLockPreparation>,
     executable: Option<RetainedExecutableDependencies>,
     native_admission: Option<ObservedNativeAdmission>,
     test_generation: Arc<super::test_generation::RetainedTestGeneration>,
@@ -420,6 +421,7 @@ impl RetainedProjectInputs {
                 session: Arc::clone(&session),
                 check_warnings,
                 check_report: None,
+                lock_preparation: None,
                 executable: None,
                 native_admission: None,
                 test_generation: Arc::default(),
@@ -440,6 +442,20 @@ impl RetainedProjectInputs {
             .sessions
             .get_mut(&SessionPurpose::CheckMetadata)?;
         Arc::ptr_eq(&retained.session, session).then_some(&mut retained.check_report)
+    }
+
+    /// Retain lock publication only in the original reconciled artifact session, never in a second project cache.
+    pub(super) fn lock_preparation(
+        &mut self,
+        root: &Path,
+        session: &Arc<CompilationSession>,
+    ) -> Option<&mut Option<super::lock_preparation::CompletedLockPreparation>> {
+        let retained = self
+            .projects
+            .get_mut(root)?
+            .sessions
+            .get_mut(&SessionPurpose::Artifacts)?;
+        Arc::ptr_eq(&retained.session, session).then_some(&mut retained.lock_preparation)
     }
 
     /// Discard a session whose input generation changed during preparation, including failed reconciliation.
