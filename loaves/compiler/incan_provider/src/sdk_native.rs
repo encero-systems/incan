@@ -921,7 +921,7 @@ mod tests {
         selection.units[0].binding.domain = "host".to_string();
         assert!(super::sdk_native_runtime_loaves(&selection, &["companion"]).is_err());
         selection.units[0].binding.domain = "target".to_string();
-        let declaration = selection.owners[0].artifact_root.join("source/loaf.toml");
+        let declaration = selection.owners[0].artifact_root().join("source/loaf.toml");
         let admitted_bytes = std::fs::read(&declaration)?;
         let replacement = declaration.with_extension("replacement");
         std::fs::write(

@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3618 | 251 | 431 |
 | re-point | 1488 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2033 | 216 | 5 |
+| unaffected | 2034 | 216 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8647** | **711** | **1494** |
+| **Total** | **8648** | **711** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3158,7 +3158,7 @@ Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
 | `inject_file_test_harness_emits_tests_module` | retire | `dies` | asserts the injected `mod __incan_file_tests` text with one `fn incan_harness_<i>_<name>` per case and the `set_current_dir` guard; generated Rust text, dies with #654. The cwd guard is carried by `e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs` (re-point). | generated_text | libtest harness of the generated test crate |
 | `inject_file_test_harness_wraps_async_tests_and_fixtures` | retire | `dies` | asserts the injected harness text for an async test with a yield fixture (`__incan_async_block_on`, `__incan_run_teardown`); generated Rust text, dies with #654. Async tests and fixture teardown through `incan test` are the re-point `integration_tests.rs::e2e_fixture_lifetime_success_scenarios_share_one_project` and `e2e_fixture_teardown_failure_scenarios_share_one_project`. | - | libtest harness of the generated test crate |
 
-??? note "Unaffected crates (887 tests in 77 files)"
+??? note "Unaffected crates (888 tests in 77 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3169,12 +3169,12 @@ Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
     | `loaves/compiler/incan_oven_facet/src/lib.rs` | 4 | 495 | 235 | unaffected | - | - | - | #1561 | - | Oven facet of the compiler; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_oven_facet/tests/oven_pr_regressions.rs` | 2 | 214 | 214 | unaffected | - | - | - | #1561 | - | Oven facet of the compiler; no emit/driver dependency. Reviewed at crate level. |
 
-    #### `loaves/compiler/incan_provider` (114 tests in 10 files: unaffected 114)
+    #### `loaves/compiler/incan_provider` (115 tests in 10 files: unaffected 115)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/compiler/incan_provider/src/compiled_sdk.rs` | 1 | 74 | 16 | unaffected | - | - | - | #1561 | - | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/incan_provider/src/dependency_resolver.rs` | 23 | 1281 | 597 | unaffected | - | - | - | #1561 | checker 22 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
+    | `loaves/compiler/incan_provider/src/dependency_resolver.rs` | 24 | 1327 | 635 | unaffected | - | - | - | #1561 | checker 23 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/inventory.rs` | 13 | 1457 | 873 | unaffected | - | - | - | #1561 | checker 6 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/lock_semantics.rs` | 14 | 2063 | 1320 | unaffected | - | - | - | #1561 | checker 12 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/requirements.rs` | 13 | 1119 | 316 | unaffected | - | - | - | #1561 | checker 8 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
