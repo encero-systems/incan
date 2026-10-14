@@ -297,12 +297,15 @@ impl rustc_driver::Callbacks for Callbacks {
             if let Err(error) = callees::verify_bounds(tcx, def, args) {
                 refuse(tcx, error);
             }
-            let signature =
-                tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate(tcx, args).skip_normalization());
+            let signature = tcx
+                .fn_sig(def)
+                .instantiate(tcx, args)
+                .map(|signature| tcx.instantiate_bound_regions_with_erased(signature));
+            let raw_signature = signature.skip_normalization();
             // A hidden concrete factory layout is not the SDK method's opaque return ABI. Borrow checking still
             // requires the opaque type, so revealing its layout here would admit a broken MIR call destination.
-            if has_opaque_return_abi(tcx, signature.output())
-                && signature.output() != native_type_or_refuse(tcx, &external.return_type)
+            if has_opaque_return_abi(tcx, raw_signature.output())
+                && raw_signature.output() != native_type_or_refuse(tcx, &external.return_type)
             {
                 refuse(
                     tcx,
