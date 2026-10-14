@@ -61,6 +61,51 @@ fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// A repeated consuming read clones the incoming carrier and leaves its enclosing scope responsible for its drop.
+#[test]
+fn consuming_carrier_in_a_loop_keeps_the_incoming_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  value: Option[str] = Some(\"kept\")\n  for index in range(2):\n    println(value.unwrap_or(\"fallback\"))\n",
+        &["app", "repeated_carrier"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let local = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("value"))
+        .ok_or("missing carrier local")?;
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing repeated body")?;
+    let read = loop_body
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } if read.place.local_id() == Some(local.id) => Some(read),
+            _ => None,
+        })
+        .ok_or("missing carrier snapshot")?;
+    assert_eq!(read.fact, bir::OwnershipFact::Clone, "{}", body.render_snapshot());
+    assert!(!read.last_use, "a repeated read is not the final dynamic use");
+    assert!(
+        body.block.stmts.iter().any(|statement| matches!(
+            statement.kind, bir::StatementKind::Drop { local: dropped } if dropped == local.id
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A consuming carrier field is materialized before a default can mutate its owner in place.
 #[test]
 fn carrier_receiver_snapshot_precedes_default_effects() -> Result<(), Box<dyn std::error::Error>> {
