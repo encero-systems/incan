@@ -47,7 +47,7 @@ def main() -> None:
     )
 }
 
-/// The original SDK iterator advances to its published body boundary while its unchanged legacy oracle executes.
+/// The original SDK iterator reaches the remaining nonlocal collect method while its unchanged legacy oracle executes.
 #[test]
 fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -70,8 +70,7 @@ fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::erro
     .output()?;
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("unsupported Body IR body identity pub::incan_stdlib_core::derives::collection::__iter__"),
+        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR nonlocal or trait-object Method collect"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -152,7 +151,7 @@ fn oven_driver_compiles_consuming_closure_plan() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Legacy rejects reuse; direct lowering currently reaches the generator-owned source boundary first.
+/// Both routes reject a second invocation of a closure that consumes its captured zip environment.
 #[test]
 fn consuming_zip_closure_rejects_repeated_invocation() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -191,23 +190,23 @@ fn consuming_zip_closure_rejects_repeated_invocation() -> Result<(), Box<dyn std
     assert!(!native.status.success());
     let diagnostic = String::from_utf8(native.stderr)?;
     assert!(
-        diagnostic.contains("unsupported Body IR generator expression source"),
+        diagnostic.contains("unsupported Body IR consuming callable requires a moved last-use invocation"),
         "{diagnostic}"
     );
+    assert!(!root.join("native").exists());
     Ok(())
 }
 
-/// The original advances past consuming capture admission to the generator source boundary, with live legacy parity.
+/// The complete original consumes its captured zip environment once and preserves live legacy output bytes.
 #[test]
 fn consuming_zip_closure_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
-        "consuming_zip_generator_handoff",
+    check_project_modules_case(
+        "consuming_zip_original",
         include_str!(
             "../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
         ),
         &[],
         b"9\n",
-        "unsupported Body IR generator expression source",
     )
 }
 
