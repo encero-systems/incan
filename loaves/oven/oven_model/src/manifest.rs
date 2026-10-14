@@ -1198,6 +1198,25 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
+    /// Return the authored Rust source directory, shared by library and test-root discovery.
+    pub fn rust_source_directory(&self) -> PathBuf {
+        let root = self.project_root();
+        self.rust_source
+            .as_ref()
+            .map_or_else(|| root.join("src"), |source| root.join(&source.root).join("src"))
+    }
+
+    /// Return this Loaf's library crate root; manifest admission has checked any explicit path's source containment.
+    pub fn rust_library_path(&self) -> PathBuf {
+        self.rust_facet
+            .as_ref()
+            .and_then(|facet| facet.path.as_deref())
+            .map_or_else(
+                || self.rust_source_directory().join("lib.rs"),
+                |path| self.project_root().join(path),
+            )
+    }
+
     /// Discover and parse a `loaf.toml` manifest by walking upward from `start_dir`.
     ///
     /// Returns `Ok(None)` when no manifest is found at all, which is single-file mode rather than an error. Returns
@@ -1719,6 +1738,8 @@ pub struct RustFacet {
     pub kind: Option<String>,
     /// Explicit Rust language edition.
     pub edition: Option<String>,
+    /// Library crate entry point relative to the project, inside its Rust source directory.
+    pub path: Option<String>,
     /// Whether the upstream package declared a build script; when true, a binding compiles only with a recorded fact.
     pub build_script: Option<bool>,
 }
@@ -1734,20 +1755,50 @@ pub struct LoafDependency {
     pub spec: DependencySpec,
 }
 
-/// Identify Rust registry edges and existing local Rust roots without interpreting Cargo files.
-fn is_rust_loaf_entry(entry: &DependencyEntry, manifest_path: &Path, observe: &mut dyn FnMut(&Path)) -> bool {
+/// Identify Rust registry edges and authored local Rust roots without interpreting Cargo files or resolving children.
+/// Observe a nonconventional child's declaration and selected source so changing either invalidates classification.
+fn is_rust_loaf_entry(
+    entry: &DependencyEntry,
+    manifest_path: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<bool, ManifestError> {
     match entry {
-        DependencyEntry::Targets(_) => true,
+        DependencyEntry::Targets(_) => Ok(true),
         DependencyEntry::Table(table) => {
-            table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/"))
-                || table.path.as_deref().is_some_and(|root| {
-                    let root = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(root);
-                    observe(&root.join("src/lib.rs"));
-                    observe(&root.join("src/main.rs"));
-                    root.join("src/lib.rs").is_file() || root.join("src/main.rs").is_file()
-                })
+            if table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/")) {
+                return Ok(true);
+            }
+            let Some(root) = table.path.as_deref() else {
+                return Ok(false);
+            };
+            let root = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(root);
+            observe(&root.join("src/lib.rs"));
+            observe(&root.join("src/main.rs"));
+            if root.join("src/lib.rs").is_file() || root.join("src/main.rs").is_file() {
+                return Ok(true);
+            }
+            let path = root.join(LOAF_MANIFEST_FILENAME);
+            observe(&path);
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(source) => return Err(ManifestError::Read { path, source }),
+            };
+            let document: Document<String> = content
+                .parse()
+                .map_err(|error| manifest_parse_error(&path, &content, error))?;
+            let spans = ManifestSpans::new(&content, &document);
+            let raw: RawManifest = toml_edit::de::from_document(document.clone())
+                .map_err(|error| manifest_parse_error(&path, &content, error))?;
+            validate_rust_library_path(&raw, &spans, &path)?;
+            let Some(library) = raw.rust.as_ref().and_then(|rust| rust.path.as_deref()) else {
+                return Ok(false);
+            };
+            let library = root.join(library);
+            observe(&library);
+            Ok(library.is_file())
         }
-        DependencyEntry::Version(_) => false,
+        DependencyEntry::Version(_) => Ok(false),
     }
 }
 
@@ -1790,7 +1841,7 @@ fn parse_loaf_dependencies(
     let mut result = BTreeMap::new();
     let Some(table) = table else { return Ok(result) };
     for (name, entry) in &table.entries {
-        if !is_rust_loaf_entry(entry, path, observe) {
+        if !is_rust_loaf_entry(entry, path, observe)? {
             continue;
         }
         let entries = match entry {
@@ -1893,6 +1944,8 @@ struct RustTables {
     kind: Option<String>,
     #[serde(default)]
     edition: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
     #[serde(rename = "build-script", default)]
     build_script: Option<bool>,
     #[serde(default)]
@@ -2868,6 +2921,7 @@ fn parse_manifest_content(
             name: rust.name.clone(),
             kind: rust.kind.clone(),
             edition: rust.edition.clone(),
+            path: rust.path.clone(),
             build_script: rust.build_script,
         }),
         loaf_dependencies,
@@ -2947,6 +3001,36 @@ fn validate_manifest_rust_facet(
     Ok(())
 }
 
+/// Validate the library entry without dependency discovery, shared by full admission and local-edge classification.
+fn validate_rust_library_path(raw: &RawManifest, spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
+    if let Some(entry) = raw.rust.as_ref().and_then(|rust| rust.path.as_deref()) {
+        let relative = Path::new(entry);
+        let source_root = raw
+            .rust
+            .as_ref()
+            .and_then(|rust| rust.source.as_ref())
+            .map_or("", |source| source.root.as_str());
+        let source_directory: PathBuf = Path::new(source_root)
+            .join("src")
+            .components()
+            .filter(|component| *component != Component::CurDir)
+            .collect();
+        if entry.trim() != entry
+            || entry.is_empty()
+            || !relative.components().all(|part| matches!(part, Component::Normal(_)))
+            || relative.extension().is_none_or(|extension| extension != "rs")
+            || !relative.starts_with(&source_directory)
+        {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust"], "path"),
+                "[rust].path must name a plain relative .rs file inside the Loaf's Rust source directory",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validate authority roots and owned metadata before dependency or source consumers run.
 fn validate_manifest_metadata(
     raw: &RawManifest,
@@ -2995,6 +3079,7 @@ fn validate_manifest_metadata(
             ));
         }
     }
+    validate_rust_library_path(raw, spans, path)?;
     if let Some(vocab) = &raw.vocab {
         if let Some(crate_path) = &vocab.crate_path {
             if crate_path.trim().is_empty() {
@@ -3451,7 +3536,7 @@ fn parse_library_dependency_table(
     let mut result = ParsedLibraryDependencyTable::default();
     for (name, entry) in &table.entries {
         let location = spans.entry_location(&["dependencies"], name);
-        if is_rust_loaf_entry(entry, path, observe) {
+        if is_rust_loaf_entry(entry, path, observe)? {
             continue;
         }
 
@@ -3749,7 +3834,7 @@ fn parse_workspace_library_dependency_table(
                 format!("workspace root dependency `{name}` cannot inherit from another workspace"),
             ));
         }
-        if is_rust_loaf_entry(&entry, path, observe) {
+        if is_rust_loaf_entry(&entry, path, observe)? {
             continue;
         }
         parsed.insert(name.clone(), library_dependency_from_entry(name, &entry, path, None)?);
@@ -4571,6 +4656,34 @@ version = "1"
         ] {
             ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         }
+        Ok(())
+    }
+
+    /// An explicit local library root is a Rust dependency and contributes its declaration to observed inputs.
+    #[test]
+    fn custom_rust_dependency_root_is_not_an_incan_package() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("leaf/src"))?;
+        std::fs::write(
+            root.join("leaf/loaf.toml"),
+            "[project]\nname='leaf'\n[rust]\npath='src/mod.rs'\n",
+        )?;
+        std::fs::write(root.join("leaf/src/mod.rs"), "")?;
+        let source = "[project]\nname='consumer'\n[dependencies]\nleaf={loaf='leaf',path='leaf'}\n";
+        let manifest = ProjectManifest::from_str(source, &root.join("loaf.toml"))?;
+        assert!(manifest.library_dependencies().is_empty());
+        assert!(manifest.loaf_dependencies.contains_key("leaf"));
+        let dot_source = ProjectManifest::from_str(
+            "[project]\nname='leaf'\n[rust]\npath='src/mod.rs'\n[rust.source]\nroot='.'\n",
+            &root.join("leaf/loaf.toml"),
+        )?;
+        assert_eq!(dot_source.rust_library_path(), root.join("leaf/src/mod.rs"));
+        std::fs::write(
+            root.join("leaf/loaf.toml"),
+            "[project]\nname='leaf'\n[rust]\npath='../escape.rs'\n",
+        )?;
+        assert!(ProjectManifest::from_str(source, &root.join("loaf.toml")).is_err());
         Ok(())
     }
 
