@@ -2130,16 +2130,18 @@ def lower_generator_expression(
 
     The first source becomes an owned generator now. A lifted step receives each of its items only when a consumer polls
     and returns that item's accepted element, or nothing, so no clause, filter or element runs before it is drawn.
+    A consuming closure admits only a canonical zip source and no separate step captures; reusable closures and deferred
+    defaults retain their ordinary source and capture rules.
     """
     if target.projection != Projection.Whole:
         return Err("unsupported Body IR projected generator expression")
-    if builder.local_offset != 0 and (not builder.consuming_closure_frame or len(captures) != 0):
-        return Err("unsupported Body IR generator expression inside a lifted or deferred frame")
+    if builder.consuming_closure_frame and len(captures) != 0:
+        return Err("unsupported Body IR consuming closure generator expression captures")
     if len(captures) != len(body.capture_locals):
         return Err("invalid Body IR generator expression capture layout")
     item_local = first_clause_item(body)?
     evaluated = value_operand(builder, source, span)?
-    if builder.local_offset != 0:
+    if builder.consuming_closure_frame:
         match operand_type(builder, evaluated)?:
             PlanType.ZipIterator(_left, _right) => pass
             _ => return Err("unsupported Body IR consuming closure generator source outside canonical zip")
