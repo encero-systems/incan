@@ -414,18 +414,18 @@ fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// The combined parameter roles, acknowledgment statements and native union fields reject older positional layouts
-/// before decoding.
+/// The combined parameter roles, native union fields, enum identities, and publication context reject older positional
+/// layouts before decoding.
 #[test]
 fn combined_body_ir_shape_refuses_older_wire_versions() -> Result<(), Box<dyn std::error::Error>> {
     use incan_semantics_core::executable_representation::{
         EXECUTABLE_REPRESENTATION_VERSION, ExecutableRepresentationError, decode_module,
     };
-    assert_eq!(EXECUTABLE_REPRESENTATION_VERSION, 11);
-    for version in [9, 10] {
+    assert_eq!(EXECUTABLE_REPRESENTATION_VERSION, 12);
+    for version in [9, 10, 11] {
         assert!(matches!(
             decode_module(&[version]),
-            Err(ExecutableRepresentationError::UnsupportedVersion { found, supported: 11 }) if found == u32::from(version)
+            Err(ExecutableRepresentationError::UnsupportedVersion { found, supported: 12 }) if found == u32::from(version)
         ));
     }
     Ok(())

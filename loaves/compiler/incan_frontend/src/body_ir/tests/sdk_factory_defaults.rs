@@ -38,12 +38,12 @@ fn omitted_sdk_factory_arguments_retain_declared_defaults() -> Result<(), Box<dy
         return Err("expected one factory call".into());
     };
     assert_eq!(target.canonical.as_ref(), Some(expected));
-    let bir::ArgumentBinding::Resolved {
+    let bir::ArgumentBinding::ResolvedFactory {
         arguments,
         defaulted_slots,
     } = &target.binding
     else {
-        return Err("factory binding unresolved".into());
+        return Err("checked factory binding policy absent".into());
     };
     assert_eq!(arguments.len(), 1);
     assert_eq!(arguments[0].slot, 0);
