@@ -15,8 +15,8 @@ use crate::loaf::LoafTemporaryDirectory;
 use super::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming, seconds_to_rounded_millis};
 
 /// One terminal record emitted by the selected harness, never inferred from diagnostic output.
-#[derive(Debug, Clone)]
-pub(crate) struct CaseResult {
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CaseResult {
     /// Exact name from the selected root inventory.
     pub name: String,
     /// Known libtest terminal spelling: `ok`, `failed`, or `ignored`.
@@ -32,6 +32,8 @@ pub(crate) struct NativeTestEvidence {
     pub counts: Option<OvenNativeTestCaseCounts>,
     /// Observed case times, retained even when another selected case never completed.
     pub timings: Vec<OvenNativeTestCaseTiming>,
+    /// Trusted terminal outcomes; malformed evidence cannot supply passing results.
+    pub results: Vec<CaseResult>,
 }
 
 /// Temporary result channel whose path is supplied only to the root harness invocation.
@@ -152,6 +154,11 @@ impl NativeTestLog {
             && self.unread.is_empty()
             && self.pending_record.is_empty()
             && self.results.len() == self.expected.len();
+        let results = if self.invalid {
+            Vec::new()
+        } else {
+            self.results.values().cloned().collect()
+        };
         let mut counts = OvenNativeTestCaseCounts::default();
         let mut timings = Vec::new();
         for result in self.results.into_values() {
@@ -177,6 +184,7 @@ impl NativeTestLog {
         NativeTestEvidence {
             counts: complete.then_some(counts),
             timings,
+            results,
         }
     }
 }

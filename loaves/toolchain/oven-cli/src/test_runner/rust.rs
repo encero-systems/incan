@@ -479,40 +479,63 @@ fn prepare_inner(
     })
 }
 
-/// Execute only selected Rust cases, freshly, under the common scheduler's timeout and output policy.
+/// Execute one exact Rust-root selection through the same supervisor and private result channel as isolation.
 pub(super) fn execute(
     tests: &[TestInfo],
     context: &OvenTestCommandContext,
     timeout: Option<Duration>,
     no_capture: bool,
     output: &TestOutputSink,
+    shared_threads: Option<usize>,
 ) -> Vec<(TestInfo, TestResult)> {
+    let Some(first) = tests.first() else {
+        return Vec::new();
+    };
+    let started = Instant::now();
+    let report = (|| {
+        let root = context
+            .rust_roots
+            .get(&first.file_path)
+            .ok_or("Rust root was not in the prepared inventory")?;
+        if tests.iter().any(|test| test.file_path != first.file_path) {
+            return Err("shared Rust execution crosses prepared roots".to_string());
+        }
+        run_native_tests_exact_for_request(
+            &OvenNativeTestRequest {
+                executable: root.executable.clone(),
+                exact_names: tests.iter().map(|test| test.function_name.clone()).collect(),
+                environment: root.environment.clone(),
+                timeout,
+            },
+            &root.working_directory,
+            no_capture,
+            Some(&root.collection),
+            shared_threads,
+        )
+        .map_err(|error| error.to_string())
+    })();
+    if no_capture && let Ok(report) = &report {
+        output.stdout(report.output.clone());
+    }
     tests
         .iter()
         .map(|test| {
-            let started = Instant::now();
-            let result = match context.rust_roots.get(&test.file_path) {
-                None => TestResult::Failed(started.elapsed(), "Rust root was not in the prepared inventory".into()),
-                Some(root) => match run_native_tests_exact_for_request(
-                    &OvenNativeTestRequest {
-                        executable: root.executable.clone(),
-                        exact_names: vec![test.function_name.clone()],
-                        environment: root.environment.clone(),
-                        timeout,
-                    },
-                    &root.working_directory,
-                    no_capture,
-                    Some(&root.collection),
-                ) {
-                    Ok(report) if report.success => {
-                        if no_capture {
-                            output.stdout(report.output);
+            let result = match &report {
+                Err(error) => TestResult::Failed(started.elapsed(), error.clone()),
+                Ok(report) => {
+                    let valid = report
+                        .case_counts
+                        .as_ref()
+                        .is_some_and(|counts| !report.timed_out && (report.process_success || counts.failed > 0));
+                    let case = report.case_results.iter().find(|case| case.name == test.function_name);
+                    match case.filter(|_| valid) {
+                        Some(case) if case.outcome == "ok" => {
+                            TestResult::Passed(Duration::from_millis(case.elapsed_ms.unwrap_or(0)))
                         }
-                        TestResult::Passed(started.elapsed())
+                        Some(case) if case.outcome == "ignored" => TestResult::Skipped("Rust #[ignore]".into()),
+                        _ => TestResult::Failed(started.elapsed(), report.output.clone()),
                     }
-                    Ok(report) => TestResult::Failed(started.elapsed(), report.output),
-                    Err(error) => TestResult::Failed(started.elapsed(), error.to_string()),
-                },
+                }
             };
             (test.clone(), result)
         })

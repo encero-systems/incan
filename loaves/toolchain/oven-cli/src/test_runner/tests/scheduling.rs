@@ -77,3 +77,61 @@ fn prepared_rust_cases_share_root_without_bypassing_constraints() -> Result<(), 
     assert!(active_units_allow(&[], &candidate));
     Ok(())
 }
+
+/// A shared root consumes one exclusive global budget, while isolation preserves case-level scheduling.
+#[test]
+fn shared_native_groups_reserve_one_global_budget() -> Result<(), Box<dyn std::error::Error>> {
+    let mut first = make_test("alpha", Vec::new());
+    first.file_path = PathBuf::from("src/lib.rs");
+    let mut second = first.clone();
+    second.function_name = "beta".into();
+    let mut third = first.clone();
+    third.function_name = "other".into();
+    third.file_path = PathBuf::from("tests/integration.rs");
+    let tests = [first, second, third];
+    let isolated = build_execution_units(&tests, Path::new("."), None, false, 18);
+    assert_eq!(super::super::share_native_execution_units(isolated, 18, true).len(), 3);
+    let units = build_execution_units(&tests, Path::new("."), None, false, 18);
+    let shared = super::super::share_native_execution_units(units, 18, false);
+    assert_eq!(shared.len(), 2);
+    let root = shared.first().ok_or("missing root")?;
+    assert_eq!(root.tests.len(), 2);
+    assert_eq!(root.shared_threads, Some(18));
+    assert!(root.serial);
+    let active = [ActiveUnit {
+        index: root.index,
+        file_paths: root.file_paths.clone(),
+        resources: root.resources.clone(),
+        serial: root.serial,
+    }];
+    assert!(!active_units_allow(&active, shared.get(1).ok_or("missing other root")?));
+    Ok(())
+}
+
+/// Time limits, resource conflicts, serial markers and Incan fixtures keep their existing execution boundaries.
+#[test]
+fn shared_native_groups_preserve_deadlines_and_incan_units() {
+    let mut timed = make_test("timed", Vec::new());
+    timed.file_path = PathBuf::from("src/lib.rs");
+    timed.timeout = Some(std::time::Duration::from_secs(1));
+    let mut serial = timed.clone();
+    serial.function_name = "serial".into();
+    serial.timeout = None;
+    serial.markers.push(TestMarker::Serial);
+    let mut resource = serial.clone();
+    resource.function_name = "resource".into();
+    resource.markers = vec![TestMarker::Resource("db".into())];
+    let mut other_resource = resource.clone();
+    other_resource.function_name = "other_resource".into();
+    let incan = make_test("fixture_case", Vec::new());
+    let units = build_execution_units(
+        &[timed, serial, resource, other_resource, incan],
+        Path::new("."),
+        None,
+        false,
+        18,
+    );
+    let shared = super::super::share_native_execution_units(units, 18, false);
+    assert_eq!(shared.len(), 5);
+    assert!(shared.iter().all(|unit| unit.shared_threads.is_none()));
+}

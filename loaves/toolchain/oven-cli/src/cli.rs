@@ -898,6 +898,11 @@ pub struct LockArgs {
     pub cargo_all_features: bool,
 }
 
+/// Use the process-available CPU budget; explicit `--jobs` remains authoritative.
+fn default_test_jobs() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
 /// Shared project test options used by both entry points.
 #[derive(clap::Args, Debug)]
 pub struct TestArgs {
@@ -928,9 +933,12 @@ pub struct TestArgs {
     /// Treat unknown marker names as collection errors
     #[arg(long = "strict-markers")]
     pub strict_markers: bool,
-    /// Maximum number of runner execution units to run concurrently
-    #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = 1)]
+    /// Total test worker budget, shared by native test threads and isolated execution units
+    #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = default_test_jobs())]
     pub jobs: usize,
+    /// Run Rust test cases in separate processes; Incan fixture groups preserve their existing scope
+    #[arg(long)]
+    pub isolate: bool,
     /// Enable a collection-time testing feature for std.testing.feature("name")
     #[arg(long = "feature", value_name = "NAME")]
     pub test_features: Vec<String>,

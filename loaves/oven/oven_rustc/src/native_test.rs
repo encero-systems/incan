@@ -88,6 +88,9 @@ impl OvenNativeTestCollection {
     }
 }
 
+/// Trusted per-case results recovered from the root-owned private result channel.
+pub use evidence::CaseResult as OvenNativeTestCaseResult;
+
 /// Exact native test execution request.
 #[derive(Debug, Clone)]
 pub struct OvenNativeTestRequest {
@@ -209,6 +212,8 @@ pub struct OvenNativeTestBatchReport {
     /// times at all. On a compiler-suite root it means the libtest process emitted no terminal timing event for an
     /// inventory case, which is what a crashed or killed root leaves behind. An ignored case has no timing.
     pub case_timings: Vec<OvenNativeTestCaseTiming>,
+    /// Per-case outcomes from the private result channel, never inferred from child stdout.
+    pub case_results: Vec<OvenNativeTestCaseResult>,
     /// Opt-in nested command timings emitted by existing integration-test helpers.
     pub command_timings: Vec<OvenNativeTestCommandTiming>,
     /// Wall-clock timing for the two native-test subprocess phases already required by this execution.
@@ -443,6 +448,7 @@ pub fn run_native_test_batch(
         timed_out,
         case_counts: parse_libtest_case_counts(&transcript),
         case_timings,
+        case_results: Vec::new(),
         command_timings,
         timing: OvenNativeTestBatchTiming {
             inventory_elapsed_ms,
@@ -483,18 +489,21 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         false,
         true,
         None,
+        None,
     )
 }
 
 /// Execute a runner-owned exact selection without writing to the owner's global stderr.
 /// The caller owns progress/reporting; `no_capture` controls test stdout in the returned transcript.
 /// A matching request-owned collection avoids relisting the same harness before each case; changed or unsupported
-/// inputs use fresh inventory.
+/// inputs use fresh inventory. `shared_threads` selects one shared process with that positive thread budget;
+/// `None` preserves per-case process isolation. Both modes retain exact selection and aggregate deadlines.
 pub fn run_native_tests_exact_for_request(
     request: &OvenNativeTestRequest,
     working_directory: &Path,
     no_capture: bool,
     collection: Option<&OvenNativeTestCollection>,
+    shared_threads: Option<usize>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
     run_native_tests_exact_selected(
         &request.executable,
@@ -506,6 +515,7 @@ pub fn run_native_tests_exact_for_request(
         no_capture,
         false,
         collection,
+        shared_threads,
     )
 }
 
@@ -521,11 +531,18 @@ fn run_native_tests_exact_selected(
     no_capture: bool,
     report_progress: bool,
     collection: Option<&OvenNativeTestCollection>,
+    shared_threads: Option<usize>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact").entered();
     let selection_started = Instant::now();
     let selection_trace =
         tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact_selection").entered();
+    if shared_threads == Some(0) {
+        return Err(OvenNativeTestError::InvalidInput {
+            field: "native test thread budget",
+            message: "must be greater than zero".to_string(),
+        });
+    }
     let requested = normalized_exact_names(exact_names)?;
     let inventory_started = Instant::now();
     let inventory_timeout = remaining_native_test_timeout(&selection_started, timeout).map_err(|timeout| {
@@ -568,6 +585,7 @@ fn run_native_tests_exact_selected(
         timed_out: false,
         case_counts: Some(OvenNativeTestCaseCounts::default()),
         case_timings: Vec::new(),
+        case_results: Vec::new(),
         command_timings: Vec::new(),
         timing: OvenNativeTestBatchTiming {
             inventory_elapsed_ms,
@@ -577,7 +595,9 @@ fn run_native_tests_exact_selected(
         case_slice: None,
     };
     drop(selection_trace);
-    for exact_name in requested {
+    let group_size = shared_threads.map_or(1, |_| requested.len().max(1));
+    for group in requested.chunks(group_size) {
+        let exact_name = group.join(", ");
         let process_timeout = match remaining_native_test_timeout(&selection_started, timeout) {
             Ok(timeout) => timeout,
             Err(timeout) => {
@@ -599,7 +619,10 @@ fn run_native_tests_exact_selected(
         };
         let mut command = Command::new(&executable);
         // Naming a case selects it: an `#[ignore]` case such as an explicit full census runs when named.
-        command.args(["--exact", &exact_name, "--include-ignored"]);
+        command.arg("--exact").args(group).arg("--include-ignored");
+        if let Some(threads) = shared_threads {
+            command.arg(format!("--test-threads={threads}"));
+        }
         if no_capture {
             command.arg("--nocapture");
         }
@@ -621,7 +644,7 @@ fn run_native_tests_exact_selected(
                 } else {
                     ProgressSink::collecting()
                 },
-                BTreeSet::from([exact_name.clone()]),
+                group.iter().cloned().collect(),
             )),
         )?;
         report.timing.execution_elapsed_ms = report
@@ -662,6 +685,7 @@ fn run_native_tests_exact_selected(
             (None, Some(_)) => {}
         }
         report.case_timings.extend(evidence.timings);
+        report.case_results.extend(evidence.results);
         report
             .command_timings
             .extend(parse_native_test_command_timings(&transcript));
@@ -781,6 +805,7 @@ pub fn run_native_test_batch_all_for_request(
             timed_out: false,
             case_counts: Some(OvenNativeTestCaseCounts::default()),
             case_timings: Vec::new(),
+            case_results: Vec::new(),
             command_timings: Vec::new(),
             timing: OvenNativeTestBatchTiming {
                 inventory_elapsed_ms,
@@ -843,6 +868,7 @@ pub fn run_native_test_batch_all_for_request(
         timed_out,
         case_counts: evidence.counts,
         case_timings: evidence.timings,
+        case_results: evidence.results,
         command_timings,
         timing: OvenNativeTestBatchTiming {
             inventory_elapsed_ms,
