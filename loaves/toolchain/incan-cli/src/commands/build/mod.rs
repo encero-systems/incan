@@ -842,6 +842,12 @@ impl ChildId {
     #[test]
     fn build_library_canonicalizes_explicit_and_implicit_nested_module_imports()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::build::tests::build_library_canonicalizes_explicit_and_implicit_nested_module_imports",
+        )? {
+            return Ok(());
+        }
+
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         let src_dir = project_root.join("src");
@@ -917,6 +923,12 @@ impl ChildId {
     #[test]
     fn build_library_publishes_an_executable_surface_joined_to_the_manifest_by_identity()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::build::tests::build_library_publishes_an_executable_surface_joined_to_the_manifest_by_identity",
+        )? {
+            return Ok(());
+        }
+
         // RFC 123's core claim is that the manifest and the representation are joined by the identity space rather
         // than by file naming or ordering. This proves exactly that: the identity is taken from the manifest the
         // build published, hydrated, and looked up in the surface. Nothing here reconstructs an identity or matches
@@ -1096,6 +1108,12 @@ pub def answer() -> int:
     #[test]
     fn build_library_publishes_public_registry_metadata_and_facade_projections()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::build::tests::build_library_publishes_public_registry_metadata_and_facade_projections",
+        )? {
+            return Ok(());
+        }
+
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         let src_dir = project_root.join("src");

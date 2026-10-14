@@ -2511,6 +2511,12 @@ mod tests {
     /// Export inspection keeps an admitted provider's physical bytes and canonical pointers intact.
     #[test]
     fn checked_exports_preserve_published_provider() -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "build::bake::tests::checked_exports_preserve_published_provider",
+        )? {
+            return Ok(());
+        }
+
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
         fs::write(

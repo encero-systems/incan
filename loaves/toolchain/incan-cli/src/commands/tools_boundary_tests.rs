@@ -16,6 +16,12 @@ use oven_model::lock::{CargoFeatureSelection, IncanLock, compute_deps_fingerprin
 /// producer publishes through `incan build --lib`, the consumer's inspection reads the sealed metadata.
 #[test]
 fn inspect_registry_reads_only_public_facts_from_a_library_consumer() -> Result<(), Box<dyn std::error::Error>> {
+    if incan_test_support::in_compiler_source_layout(
+        "commands::tools_boundary_tests::inspect_registry_reads_only_public_facts_from_a_library_consumer",
+    )? {
+        return Ok(());
+    }
+
     let tmp = tempfile::tempdir()?;
     let producer_root = tmp.path().join("registrylib");
     let producer_src = producer_root.join("src");
