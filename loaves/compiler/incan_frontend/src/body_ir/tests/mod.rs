@@ -52,6 +52,7 @@ mod static_storage;
 mod task_handles;
 mod text_codecs;
 mod trait_placeholders;
+mod value_enum_methods;
 mod web_path;
 
 use helpers::{

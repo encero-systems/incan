@@ -6296,6 +6296,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/value_enum_methods.rs": {
+      "disposition": "keep",
+      "notes": "Checked value-enum layouts beside supported methods and public executable context; frontend-only contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/web_path.rs": {
       "disposition": "keep",
       "notes": "Authenticated canonical native web Path tuple storage and independent filesystem Path ownership retained in Body IR; frontend-only contract coverage.",
