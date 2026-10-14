@@ -9,6 +9,7 @@ pub mod backend_selection;
 pub mod bake;
 pub mod caller_facet;
 pub mod caller_owned;
+pub mod check;
 pub mod executable;
 mod file_freshness;
 pub mod inline_command;

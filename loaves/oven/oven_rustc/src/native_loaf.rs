@@ -837,6 +837,7 @@ fn verify_native(
 /// Check original on-disk payloads and consumed members without reconstructing sealed recipe metadata.
 /// Execution excludes archived source members while independently validating the source declaration.
 fn verify_native_inventory(owner: &OvenStoreExecutionPayload, inventory: NativeInventory) -> Result<()> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::verify_native_inventory", input = %owner.manifest().identity).entered();
     match inventory {
         NativeInventory::Execution => owner.verify_admitted_payload_except_directory("source"),
         NativeInventory::Complete => owner.verify_admitted_payload(),

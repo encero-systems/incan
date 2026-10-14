@@ -706,7 +706,7 @@ incan env show [OPTIONS] [ENV]
 incan env run [OPTIONS] <ENV> <SCRIPT> [-- <ARGS>...]
 ```
 
-Works with the environments declared in `[tool.incan.envs]` of `loaf.toml`. The `default` environment always exists.
+Works with the environments declared in `[envs]` of `loaf.toml`. The `default` environment always exists.
 
 - `list` lists the environments. `show` prints one environment resolved, or an overview of all when `ENV` is omitted. `run` runs a script of an environment, with the arguments after `--` appended.
 - `--format text|json` (default `text`), for `list` and `show`.

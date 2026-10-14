@@ -273,11 +273,11 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
     let modules = crate::modules::collect_modules_detailed_with_session(entry, input.session())
         .map_err(|failure| failure.render_human())?;
     assert_eq!(modules.len(), 1, "core source must remain in its checked loaf");
-    assert!(input.session().sdk_inventory.is_none());
-    assert!(input.session().sdk_components.is_none());
+    assert!(input.session().sdk_inventory().is_none());
+    assert!(input.session().sdk_components().is_none());
     let core_provider = input
         .session()
-        .provider_plan
+        .provider_plan()
         .active_records()
         .find(|provider| provider.identity.name == "incan_stdlib_core")
         .ok_or("admitted core provider absent")?;
@@ -300,14 +300,14 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
         .ok_or("ordinary dependencies absent")?;
     assert!(
         owners
-            .physical_native_dependencies(&input.session().provider_plan, std::slice::from_ref(&core_dependency))?
+            .physical_native_dependencies(input.session().provider_plan(), std::slice::from_ref(&core_dependency))?
             .is_empty()
     );
     let mut changed_dependency = core_dependency;
     changed_dependency.features.push("unadmitted".into());
     assert_eq!(
         owners.physical_native_dependencies(
-            &input.session().provider_plan,
+            input.session().provider_plan(),
             std::slice::from_ref(&changed_dependency)
         )?,
         vec![changed_dependency]
@@ -315,7 +315,7 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
     assert!(matches!(
         input
             .session()
-            .provider_plan
+            .provider_plan()
             .resolve_module(&["std".into(), "derives".into(), "collection".into()]),
         incan_provider::ProviderModuleResolution::Active(_)
     ));
@@ -392,8 +392,8 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
         "unchanged core must reuse completed output before source preparation or metadata replay"
     );
     assert_eq!(fs::read(&handoff_path)?, handoff);
-    assert!(repeated.session().sdk_inventory.is_none());
-    assert!(repeated.session().sdk_components.is_none());
+    assert!(repeated.session().sdk_inventory().is_none());
+    assert!(repeated.session().sdk_components().is_none());
     repeated
         .session()
         .admitted_library_dependencies()
@@ -402,7 +402,7 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
     assert!(matches!(
         repeated
             .session()
-            .provider_plan
+            .provider_plan()
             .resolve_module(&["std".into(), "derives".into(), "collection".into()]),
         incan_provider::ProviderModuleResolution::Active(_)
     ));
@@ -427,7 +427,7 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
     let rustc = resolve_active_rustc()?;
     let target = rustc_host_target(&rustc)?;
     let toolchain = rustc_identity(&rustc)?;
-    let plan = &downstream_input.session().provider_plan;
+    let plan = downstream_input.session().provider_plan();
     let checked = crate::build::provider_compilation::checked_packaged_provider_profiles(
         plan,
         &["debug"],
@@ -485,11 +485,11 @@ fn standard_source_publication(package: &str, graph: &str, required_abi: &[&str]
         dependencies,
         Arc::clone(&source),
     )?;
-    assert!(session.sdk_inventory.is_none());
-    assert!(session.sdk_components.is_none());
+    assert!(session.sdk_inventory().is_none());
+    assert!(session.sdk_components().is_none());
     assert!(Arc::ptr_eq(
         session
-            .provider_plan
+            .provider_plan()
             .standard_source_publication()
             .ok_or("own source authority lost")?,
         &source,

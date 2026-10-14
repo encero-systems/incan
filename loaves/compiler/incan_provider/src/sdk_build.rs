@@ -1030,9 +1030,10 @@ mod tests {
         assert_eq!(configured_stdlib, Some(stdlib_root.as_os_str()));
     }
 
+    /// Restricted profiles retain catalog facts from the selected test checkout even with relocated dependencies.
     #[test]
     fn restricted_sdk_profile_retains_unavailable_provider_catalog_facts() -> Result<(), Box<dyn std::error::Error>> {
-        let catalog_path = oven_model::toolchain_layout::development_root()
+        let catalog_path = incan_test_support::repo_root()
             .join("loaves/stdlib")
             .join(SDK_SOURCE_CATALOG_FILE);
         let catalog = SdkSourceCatalog::read_from_path(&catalog_path)?;

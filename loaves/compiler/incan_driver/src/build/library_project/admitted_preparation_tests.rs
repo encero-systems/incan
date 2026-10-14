@@ -176,7 +176,7 @@ fn checked_library_abi_retains_inferred_rust_receiver() -> Result<(), Box<dyn st
         )
         .is_err()
     );
-    assert!(input.sdk_inventory.is_none());
+    assert!(input.sdk_inventory().is_none());
     Ok(())
 }
 
@@ -197,9 +197,9 @@ fn ordinary_explicit_preparation_reuses_original_dependency_capability() -> Resu
                 .admitted_library_dependencies()
                 .ok_or("missing retained dependencies")?,
         ));
-        assert!(current.sdk_inventory.is_none());
-        assert!(current.sdk_components.is_none());
-        assert!(Arc::ptr_eq(&current.provider_plan, original.provider_plan()));
+        assert!(current.sdk_inventory().is_none());
+        assert!(current.sdk_components().is_none());
+        assert!(Arc::ptr_eq(current.provider_plan(), original.provider_plan()));
     }
     Ok(())
 }
@@ -244,11 +244,11 @@ fn ordinary_explicit_preparation_refuses_provider_substitution() -> Result<(), B
     let root = tempfile::tempdir()?;
     let features = FeatureSelection::default();
     let (entry, mut input) = session(root.path(), &features)?;
-    input.provider_plan = Arc::new(ProviderPlan::new(
+    input.replace_provider_plan_for_test(Arc::new(ProviderPlan::new(
         LibraryManifestIndex::default(),
         Vec::new(),
         std::iter::empty(),
-    )?);
+    )?));
     let error = current_admitted_library_session(&input, &entry, &features)
         .err()
         .ok_or("provider substitution admitted")?;

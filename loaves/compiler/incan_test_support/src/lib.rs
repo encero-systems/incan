@@ -22,21 +22,33 @@ use std::time::Instant;
 
 /// Locate the checkout from the test package, including after it moves into a Loaves ring.
 ///
-/// The native harness supplies an explicit source root because receipt-bound dependencies have no checkout ancestor.
-/// Cargo-built tests discover the checkout from their package. Both routes require a lockfile and the Loaves directory;
-/// an invalid explicit anchor is a setup error and cannot fall back to another checkout or the working directory.
+/// The native harness supplies an explicit source root or the selected test package's runtime manifest directory,
+/// because receipt-bound helper dependencies have no checkout ancestor. Explicit roots take precedence; otherwise
+/// package ancestry is checked using the runtime anchor before the compiled package path. Both routes require a
+/// lockfile and the Loaves directory. An invalid supplied anchor cannot fall back to another checkout or the cwd.
 pub fn repo_root() -> PathBuf {
     let selected = std::env::var_os("INCAN_INTERNAL_TEST_SOURCE_ROOT").map(PathBuf::from);
-    checkout_root(Path::new(env!("CARGO_MANIFEST_DIR")), selected.as_deref())
-        .unwrap_or_else(|| panic!("integration test package has no authorized Incan checkout"))
+    let runtime_package = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from);
+    checkout_root(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        selected.as_deref(),
+        runtime_package.as_deref(),
+    )
+    .unwrap_or_else(|| panic!("integration test package has no authorized Incan checkout"))
 }
 
-/// Resolve a native harness anchor exactly, or discover the Cargo package's ancestor checkout when no anchor exists.
-fn checkout_root(package: &Path, selected: Option<&Path>) -> Option<PathBuf> {
+/// Resolve an explicit checkout exactly, then the selected runtime package, then the compiled package's ancestry.
+/// A supplied runtime package must exist; failure never retries the compiled path or current working directory.
+fn checkout_root(package: &Path, selected: Option<&Path>, runtime_package: Option<&Path>) -> Option<PathBuf> {
     let is_checkout = |candidate: &Path| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir();
     if let Some(root) = selected {
         return is_checkout(root).then(|| root.to_path_buf());
     }
+    let package = match runtime_package {
+        Some(runtime) if runtime.is_dir() => runtime,
+        Some(_) => return None,
+        None => package,
+    };
     package
         .ancestors()
         .find(|candidate| is_checkout(candidate))
@@ -342,13 +354,25 @@ mod fixture_bake_tests {
         std::fs::create_dir(root.path().join("loaves"))?;
         let sealed = std::path::Path::new("/oven/sealed-source");
         assert_eq!(
-            checkout_root(sealed, Some(root.path())),
+            checkout_root(sealed, Some(root.path()), None),
             Some(root.path().to_path_buf())
         );
-        let invalid = root.path().join("missing");
-        assert_eq!(checkout_root(root.path(), Some(&invalid)), None);
+        let runtime_package = root.path().join("loaves/package");
+        std::fs::create_dir(&runtime_package)?;
         assert_eq!(
-            checkout_root(&root.path().join("loaves/package"), None),
+            checkout_root(sealed, None, Some(&runtime_package)),
+            Some(root.path().to_path_buf())
+        );
+        let other = tempfile::tempdir()?;
+        assert_eq!(checkout_root(root.path(), None, Some(other.path())), None);
+        assert_eq!(
+            checkout_root(root.path(), None, Some(&other.path().join("missing"))),
+            None
+        );
+        let invalid = root.path().join("missing");
+        assert_eq!(checkout_root(root.path(), Some(&invalid), None), None);
+        assert_eq!(
+            checkout_root(&root.path().join("loaves/package"), None, None),
             Some(root.path().to_path_buf())
         );
         Ok(())

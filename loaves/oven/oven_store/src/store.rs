@@ -374,6 +374,7 @@ impl OvenStoreExecutionPayload {
     /// generations avoid artifact opens and persistent digest-cache I/O through the same observations as inventory
     /// verification. Changed or unsupported generations use the existing held-file hashing path.
     pub fn digest_materialized_member(&self, relative_path: &str) -> Result<(u64, String), OvenStoreError> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::digest_materialized_member", input = relative_path, inventory_members = self.admitted_materialized_files().len()).entered();
         let relative = Path::new(relative_path);
         if relative_path.is_empty()
             || relative_path.contains('\\')
@@ -393,31 +394,12 @@ impl OvenStoreExecutionPayload {
         let root = self.admitted_entry_root.join(MATERIALIZED_DIRECTORY);
         let path = root.join(relative);
         let mut inputs = InputObservations::default();
-        inputs.observe_within(&root, &path);
-        let mut ancestor = Some(root.as_path());
-        while let Some(directory) = ancestor {
-            let metadata = fs::symlink_metadata(directory).map_err(|source| OvenStoreError::Io {
-                path: directory.to_path_buf(),
+        let metadata = inputs
+            .observe_regular_file_within(&root, &path)
+            .map_err(|source| OvenStoreError::Io {
+                path: path.clone(),
                 source,
             })?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(OvenStoreError::Integrity {
-                    identity: self.manifest.identity.clone(),
-                    message: "materialized member ancestor must be a plain directory".into(),
-                });
-            }
-            ancestor = if directory == root {
-                path.parent().filter(|parent| *parent != root)
-            } else {
-                directory
-                    .parent()
-                    .filter(|parent| parent.starts_with(&root) && *parent != root)
-            };
-        }
-        let metadata = fs::symlink_metadata(&path).map_err(|source| OvenStoreError::Io {
-            path: path.clone(),
-            source,
-        })?;
         let before = materialized_metadata_stamp(&metadata).map_err(|source| OvenStoreError::Io {
             path: path.clone(),
             source,
@@ -448,9 +430,42 @@ impl OvenStoreExecutionPayload {
     /// The manifest, root and retained bytes are immutable after admission. This authenticates the original manifest
     /// identity and reconciles the current primary payload through the owner's replacement-sensitive observations;
     /// it does not rehash immutable held bytes. The lease prevents pruning, while these file checks detect out-of-band
-    /// edits. Consumers that do not independently verify the closure must use [`Self::verify_admitted_payload`].
+    /// edits. An unchanged original record reuses this owner's successful validation under the same input
+    /// observations as its files; replacement, mutation and absent-witness changes return to canonical checks.
+    /// Consumers that do not independently verify the closure must use [`Self::verify_admitted_payload`].
     pub fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
         let _verification = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_admitted_record", input = %self.manifest.identity).entered();
+        verify_store_entry_root(&self.admitted_entry_root)?;
+        {
+            let mut observations = self
+                .materialized_observations
+                .lock()
+                .map_err(|_| OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "materialized file observation lock poisoned".to_string(),
+                })?;
+            if let Some(record) = observations.record.as_ref()
+                && record.supports_retention()
+                && record.current()
+            {
+                tracing::trace!(target: "incan::invocation", decision = "reuse_original_record_verification", metadata_checks = record.len());
+                return Ok(());
+            }
+            observations.record = None;
+        }
+
+        // Observe before canonical verification: replacements during the check cannot seed a retained success.
+        // Both manifest spellings matter because adding loaf.json changes the canonical selector for a bare entry.
+        let mut inputs = InputObservations::default();
+        for member in [
+            LOAF_MANIFEST_FILE,
+            ARTIFACT_MANIFEST_FILE,
+            PAYLOAD_FILE,
+            NATIVE_RECEIPT_FILE,
+            MATERIALIZED_DIRECTORY,
+        ] {
+            inputs.observe_within(&self.admitted_entry_root, &self.admitted_entry_root.join(member));
+        }
         let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
         if manifest.identity != self.manifest.identity {
             return Err(OvenStoreError::Integrity {
@@ -501,7 +516,23 @@ impl OvenStoreExecutionPayload {
                 });
             }
         }
-        verify_materialized_root(&self.admitted_entry_root, &manifest)
+        verify_materialized_root(&self.admitted_entry_root, &manifest)?;
+        if inputs.supports_retention() {
+            if !inputs.current() {
+                return Err(OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "original record changed during verification".to_string(),
+                });
+            }
+            self.materialized_observations
+                .lock()
+                .map_err(|_| OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "materialized file observation lock poisoned".to_string(),
+                })?
+                .record = Some(inputs);
+        }
+        Ok(())
     }
 
     /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
@@ -833,6 +864,8 @@ struct StagedOvenArtifactPublication {
     manifest: OvenArtifactManifest,
     logical_bytes: u64,
     physical_bytes: u64,
+    /// Actual private copy observations, retained across the directory commit only while full stamps match.
+    written_files: BTreeMap<String, MaterializedFileDigest>,
 }
 
 /// Held shared advisory lease that protects one selected Oven artifact from pruning.
@@ -1006,10 +1039,13 @@ impl OvenStore {
             &materialized_directories,
             &mut shared_materialized_files,
         );
-        if let Err(error) = publication {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error);
-        }
+        let written_files = match publication {
+            Ok(written_files) => written_files,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+        };
 
         // `write_staged_entry` has just rechecked every source digest while writing and synchronizing the new
         // files. Capacity admission needs the actual allocation and shape, not a second full content walk of this
@@ -1038,6 +1074,7 @@ impl OvenStore {
             source,
         })?;
         sync_directory(self.entries_root())?;
+        remember_published_file_observations(&entry_path, &written_files);
         remember_published_manifest(
             &entries_root,
             &entry_path,
@@ -1304,7 +1341,7 @@ impl OvenStore {
                 cleanup_batch_staging(&staged);
                 return Err(OvenStoreError::Io { path: staging, source });
             }
-            if let Err(error) = write_staged_entry(
+            let written_files = match write_staged_entry(
                 &staging,
                 &publication.manifest,
                 &publication.request.payload,
@@ -1313,10 +1350,13 @@ impl OvenStore {
                 &publication.materialized_directories,
                 &mut shared_materialized_files,
             ) {
-                let _ = fs::remove_dir_all(&staging);
-                cleanup_batch_staging(&staged);
-                return Err(error);
-            }
+                Ok(written_files) => written_files,
+                Err(error) => {
+                    let _ = fs::remove_dir_all(&staging);
+                    cleanup_batch_staging(&staged);
+                    return Err(error);
+                }
+            };
             let measurement = match measure_staged_entry_for_admission(&staging) {
                 Ok(measurement) => measurement,
                 Err(error) => {
@@ -1330,6 +1370,7 @@ impl OvenStore {
                 manifest: publication.manifest.clone(),
                 logical_bytes: measurement.logical_bytes,
                 physical_bytes: 0,
+                written_files,
             });
         }
         let measured_physical = assign_unique_staged_physical_bytes(&mut staged)?;
@@ -1404,6 +1445,7 @@ impl OvenStore {
                     source,
                 });
             }
+            remember_published_file_observations(&destination, &publication.written_files);
             published.push(destination);
         }
         sync_directory(self.entries_root())?;
@@ -3227,7 +3269,8 @@ fn write_staged_entry(
     materialized_files: &[ValidatedMaterializedFile],
     materialized_directories: &[ValidatedMaterializedDirectory],
     shared_materialized_files: &mut BTreeMap<(String, bool), PathBuf>,
-) -> Result<(), OvenStoreError> {
+) -> Result<BTreeMap<String, MaterializedFileDigest>, OvenStoreError> {
+    let mut written_files = BTreeMap::new();
     write_synced_file(&root.join(PAYLOAD_FILE), payload, false)?;
     let materialized_root = root.join(MATERIALIZED_DIRECTORY);
     fs::create_dir(&materialized_root).map_err(|source| OvenStoreError::Io {
@@ -3316,8 +3359,21 @@ fn write_staged_entry(
                 {
                     return Err(changed_before_storage(file));
                 }
-                write_synced_file(&destination, &bytes, false)?;
+                let written = write_synced_file_handle(&destination, &bytes, false)?;
                 set_materialized_executable(&destination, file.manifest.executable)?;
+                // Only this private, newly written handle supplies observations; links remain canonical reads.
+                if let Ok(stamp) = materialized_file_stamp(&written)
+                    && stamp.supports_retention()
+                    && stamp.length() == file.manifest.logical_bytes
+                {
+                    written_files.insert(
+                        file.manifest.relative_path.clone(),
+                        MaterializedFileDigest {
+                            stamp,
+                            digest: file.manifest.digest.clone(),
+                        },
+                    );
+                }
             }
             shared_materialized_files.insert(shared_key, destination.clone());
         }
@@ -3345,7 +3401,30 @@ fn write_staged_entry(
         now_unix_seconds()?.to_string().as_bytes(),
         true,
     )?;
-    sync_directory(root.to_path_buf())
+    sync_directory(root.to_path_buf())?;
+    Ok(written_files)
+}
+
+/// Carry actual private-write observations into the existing digest cache after the containing directory commits.
+///
+/// A directory rename preserves the child file generation. Replacements, edits, permission changes and new hard
+/// links invalidate the full stamp and forfeit acceleration. Linked files have no private-write observation here.
+/// Missing, unsupported or unwritable cache state never changes publication or subsequent digest verification.
+fn remember_published_file_observations(root: &Path, written_files: &BTreeMap<String, MaterializedFileDigest>) {
+    let mut retained = 0_u64;
+    for (relative, record) in written_files {
+        let path = root.join(MATERIALIZED_DIRECTORY).join(relative);
+        let current = fs::symlink_metadata(&path).and_then(|metadata| materialized_metadata_stamp(&metadata));
+        if !current.is_ok_and(|stamp| file_digest_matches(record, &stamp)) {
+            continue;
+        }
+        if let Some(cache) = materialized_digest_cache_path(&path)
+            && publish_materialized_file_digest(&cache, record).is_ok()
+        {
+            retained += 1;
+        }
+    }
+    tracing::trace!(target: "incan::invocation", decision = "retain_published_file_observations", retained_files = retained);
 }
 
 /// Return whether a verified materialized source is already immutable and owned by this store.
@@ -3995,6 +4074,8 @@ fn verify_materialized_files_with_observations(
 /// One owner-held observation state for byte digests and its most recently verified inventory scope.
 #[derive(Default)]
 struct MaterializedObservations {
+    /// Successful original-record validation under the same replacement-sensitive observations as its files.
+    record: Option<InputObservations>,
     files: BTreeMap<PathBuf, MaterializedFileDigest>,
     inventory: Option<ObservedInventory>,
 }
@@ -5212,6 +5293,11 @@ fn set_materialized_executable(_path: &Path, _executable: bool) -> Result<(), Ov
 
 /// Persist one file and its data before its containing directory is renamed into the published store.
 fn write_synced_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<(), OvenStoreError> {
+    write_synced_file_handle(path, bytes, trailing_newline).map(drop)
+}
+
+/// Return the exact newly written, synchronized handle so private publication can observe its final generation.
+fn write_synced_file_handle(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<File, OvenStoreError> {
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -5233,7 +5319,8 @@ fn write_synced_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Resul
     file.sync_all().map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    Ok(file)
 }
 
 /// Synchronize a directory entry after atomic store publication where the host supports directory handles.
@@ -5322,6 +5409,104 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// A copied publication seeds its existing digest observer without weakening subsequent corruption checks.
+    #[cfg(unix)]
+    #[test]
+    fn copied_publication_reuses_written_bytes_on_first_observation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = project.path().join("program");
+        fs::write(&source, b"original")?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publication = request(project.path(), "copied-observation", b"payload")?;
+        publication.materialized_files.push(OvenArtifactMaterializedFile {
+            source_path: source,
+            relative_path: "program".into(),
+        });
+        let manifest = store.publish(&publication)?;
+        let stored = store.entry_root(&manifest.identity).join("artifacts/program");
+        let cache = super::materialized_digest_cache_path(&stored).ok_or("no file observation cache")?;
+        let first = super::digest_observed_file(&stored, Some(&cache))?;
+        assert_eq!(
+            first.input_bytes_read, 0,
+            "publication already wrote and verified these bytes"
+        );
+        assert_eq!(first.digest, crate::digest_bytes(b"original"));
+
+        let modified = fs::metadata(&stored)?.modified()?;
+        replace_native_witness_fixture(&stored, b"modified")?;
+        fs::File::open(&stored)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed = super::digest_observed_file(&stored, Some(&cache))?;
+        assert_eq!(changed.input_bytes_read, 8);
+        assert_eq!(changed.digest, crate::digest_bytes(b"modified"));
+        assert!(store.select(&manifest.identity).is_err());
+        Ok(())
+    }
+
+    /// Related publication uses the same write observations for independently copied batch members.
+    #[cfg(unix)]
+    #[test]
+    fn related_publication_reuses_written_byte_observations() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publications = Vec::new();
+        for name in ["first", "second"] {
+            let source = project.path().join(name);
+            fs::write(&source, name)?;
+            let mut publication = request(project.path(), name, name.as_bytes())?;
+            publication.materialized_files.push(OvenArtifactMaterializedFile {
+                source_path: source,
+                relative_path: "program".into(),
+            });
+            publications.push(publication);
+        }
+        for manifest in store.publish_batch(&publications)? {
+            let stored = store.entry_root(&manifest.identity).join("artifacts/program");
+            let cache = super::materialized_digest_cache_path(&stored).ok_or("no file observation cache")?;
+            let first = super::digest_observed_file(&stored, Some(&cache))?;
+            assert_eq!(first.input_bytes_read, 0);
+            assert_eq!(first.digest, crate::digest_bytes(manifest.domain.as_bytes()));
+            store.select(&manifest.identity)?;
+        }
+        Ok(())
+    }
+
+    /// A private write changed before commitment cannot seed an old digest under its new file generation.
+    #[cfg(unix)]
+    #[test]
+    fn publication_observation_rejects_changed_commit_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let staged = root.path().join("staging");
+        fs::create_dir_all(staged.join("artifacts"))?;
+        let source = staged.join("artifacts/program");
+        let written = super::write_synced_file_handle(&source, b"original", false)?;
+        let record = super::MaterializedFileDigest {
+            stamp: super::materialized_file_stamp(&written)?,
+            digest: crate::digest_bytes(b"original"),
+        };
+        let modified = written.metadata()?.modified()?;
+        let observations = BTreeMap::from([("program".to_string(), record)]);
+        let published = root.path().join("entries/published");
+        fs::create_dir_all(root.path().join("entries"))?;
+        fs::rename(&staged, &published)?;
+        let path = published.join("artifacts/program");
+        fs::write(&path, b"modified")?;
+        fs::File::open(&path)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        super::remember_published_file_observations(&published, &observations);
+        let cache = super::materialized_digest_cache_path(&path).ok_or("no file observation cache")?;
+        assert!(
+            !cache.exists(),
+            "changed stamps must not inherit the private write digest"
+        );
+        let changed = super::digest_observed_file(&path, Some(&cache))?;
+        assert_eq!(changed.input_bytes_read, 8);
+        assert_eq!(changed.digest, crate::digest_bytes(b"modified"));
+        Ok(())
+    }
 
     /// Non-plan publications must never inspect the catalog for a plan-only equivalence relation.
     #[test]
@@ -8367,6 +8552,46 @@ pub(crate) mod tests {
             "witness removal must not downgrade an admitted owner"
         );
         fs::write(&path, &original_bytes)?;
+        owner.verify_admitted_payload()?;
+        Ok(())
+    }
+
+    /// A warm original record still rejects changed bytes and newly present metadata at alternate coordinates.
+    #[test]
+    fn retained_record_refuses_changed_payload_and_added_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "record-observation", b"native")?;
+        original.kind = OvenArtifactKind::Engine;
+        let published = store.publish(&original)?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&published.identity))?;
+        let owner = selected.first().ok_or("original owner missing")?;
+        owner.verify_admitted_record()?;
+        owner.verify_admitted_record()?;
+        let entry = store.entry_root(&published.identity);
+
+        // ---- Same-length payload change with its original modification time ----
+        let payload = entry.join(super::PAYLOAD_FILE);
+        let modified = fs::metadata(&payload)?.modified()?;
+        replace_native_witness_fixture(&payload, b"edited")?;
+        fs::File::open(&payload)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert!(owner.verify_admitted_record().is_err());
+        replace_native_witness_fixture(&payload, b"native")?;
+        owner.verify_admitted_record()?;
+
+        // ---- Absence is part of original record identity ----
+        let witness = entry.join(super::NATIVE_RECEIPT_FILE);
+        fs::write(&witness, b"injected receipt")?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::remove_file(&witness)?;
+        owner.verify_admitted_record()?;
+        let alternate = entry.join(super::LOAF_MANIFEST_FILE);
+        fs::copy(entry.join(super::ARTIFACT_MANIFEST_FILE), &alternate)?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::remove_file(alternate)?;
+        owner.verify_admitted_record()?;
         owner.verify_admitted_payload()?;
         Ok(())
     }

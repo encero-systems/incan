@@ -9308,6 +9308,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_model/src/observed_inputs.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven input observations: one metadata read per initial coordinate, preserved-mtime edits, linked paths and replacement during reconciliation. No generated Rust assertion.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_model/src/oven_interop.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -11924,6 +11932,14 @@
     "loaves/toolchain/oven-cli/src/project_owner/protocol.rs": {
       "disposition": "keep",
       "notes": "Bounded project-owner framing, independent progress/result messages and invalid protocol refusal; no Cargo or backend-specific compilation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/project_owner/source_format.rs": {
+      "disposition": "keep",
+      "notes": "Shared-owner fresh formatting, nested project isolation and explicit source/display path binding; no retained formatted result.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",

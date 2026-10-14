@@ -224,7 +224,7 @@ pub(super) fn prepare_oven_project_with_session(
         .map(|manifest| manifest.project_root().to_path_buf())
         .unwrap_or(inferred_project_root);
     let entrypoint_evidence_key = oven_executable_entrypoint_evidence_key(&project_root, path)?;
-    let package_feature_plan = compilation_session.package_feature_plan.clone();
+    let package_feature_plan = compilation_session.package_feature_plan().clone();
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
     drop(phase);
@@ -936,8 +936,8 @@ pub(super) fn prepare_oven_project_with_session(
             project_requirements.stdlib_facets.clone(),
         ),
         semantic: semantic_report(
-            compilation_session.sdk_inventory.as_deref(),
-            compilation_session.sdk_components.as_ref(),
+            compilation_session.sdk_inventory().as_deref(),
+            compilation_session.sdk_components().as_ref(),
             package_feature_plan.as_ref(),
             &provider_plan,
         ),

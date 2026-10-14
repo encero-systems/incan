@@ -990,9 +990,9 @@ pub struct ToolSection {
 /// the subsection they own.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IncanToolSection {
-    /// Named RFC 015 environment definitions.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub envs: HashMap<String, EnvSection>,
+    /// Retired environment namespace, recognized only to emit a targeted migration error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub envs: Option<toml::Value>,
     /// RFC 048 checked metadata configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<MetadataToolSection>,
@@ -1007,7 +1007,7 @@ pub struct MetadataToolSection {
     pub model_bundles: Vec<String>,
 }
 
-/// Serializable shape for `[tool.incan.envs.<name>]`.
+/// Serializable shape for `[envs.<name>]`.
 ///
 /// This canonical manifest-side type owns the RFC 015 env schema. Unknown keys inside an env definition are rejected
 /// here through `deny_unknown_fields`, and downstream lifecycle helpers resolve overlays from this parsed shape instead
@@ -1016,7 +1016,11 @@ pub struct MetadataToolSection {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EnvSection {
     /// Env names to apply before this env.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_env_extends",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub extends: Vec<String>,
     /// Required Incan toolchain version requirement for this env.
     #[serde(rename = "requires-incan", skip_serializing_if = "Option::is_none")]
@@ -1053,6 +1057,20 @@ pub struct EnvSection {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub dev_dependencies: HashMap<String, toml::Value>,
+}
+
+/// Normalize the single-name shorthand and ordered inheritance lists into one environment representation.
+fn deserialize_env_extends<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Names {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Names::deserialize(deserializer)? {
+        Names::One(name) => vec![name],
+        Names::Many(names) => names,
+    })
 }
 
 /// `[workspace]` topology declarations from RFC 077.
@@ -1142,6 +1160,8 @@ pub struct ProjectManifest {
     pub vocab: Option<VocabSection>,
     /// `[tool]` configuration (optional).
     pub tool: Option<ToolSection>,
+    /// Named command environments from the canonical `[envs]` root.
+    pub envs: BTreeMap<String, EnvSection>,
     /// `[sdk]` profile and component selection (optional).
     pub sdk: Option<SdkSection>,
     /// `[interop]` declared foreign-binding requirements, one table per binding kind.
@@ -1471,24 +1491,69 @@ impl ProjectManifest {
             .unwrap_or_default()
     }
 
-    /// Canonical env definitions as parsed from `[tool.incan.envs]`.
+    /// Canonical env definitions as parsed from `[envs]`.
     pub fn env_sections(&self) -> BTreeMap<String, EnvSection> {
-        self.incan_tool()
-            .map(|tool| {
-                tool.envs
-                    .iter()
-                    .map(|(name, env)| (name.clone(), env.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.envs.clone()
     }
 
     /// Canonical project-level Rust dependency overlay used as the base for env resolution.
     pub fn env_base_dependency_overlay(&self) -> BTreeMap<String, toml::Value> {
-        self.rust_dependencies
+        let mut values = self
+            .rust_dependencies
             .iter()
             .map(|(name, spec)| (name.clone(), dependency_spec_to_toml_value(spec)))
-            .collect()
+            .collect::<BTreeMap<_, _>>();
+        for (name, entries) in &self.loaf_dependencies {
+            let entries = entries
+                .iter()
+                .map(|entry| {
+                    let mut value = dependency_spec_to_toml_value(&entry.spec);
+                    if let toml::Value::Table(table) = &mut value {
+                        table.remove("package");
+                        table.insert("loaf".into(), toml::Value::String(entry.loaf.clone()));
+                        if let Some(target) = &entry.target {
+                            table.insert("target".into(), toml::Value::String(target.clone()));
+                        }
+                    }
+                    value
+                })
+                .collect::<Vec<_>>();
+            let value = match entries.as_slice() {
+                [entry] => entry.clone(),
+                _ => toml::Value::Array(entries),
+            };
+            values.insert(name.clone(), value);
+        }
+        values
+    }
+
+    /// Materialize resolved environment dependencies through the canonical manifest parser.
+    /// The original source identity and non-dependency settings are preserved. Native Loaf declarations retain
+    /// their feature and target metadata; this derived view never mutates the production manifest on disk.
+    pub fn with_environment_dependencies(
+        &self,
+        dependencies: &BTreeMap<String, toml::Value>,
+    ) -> Result<Self, ManifestError> {
+        let mut canonical = toml::map::Map::new();
+        let mut legacy = toml::map::Map::new();
+        for (name, value) in dependencies {
+            if value.get("loaf").is_some() || value.is_array() {
+                canonical.insert(name.clone(), value.clone());
+            } else {
+                legacy.insert(name.clone(), value.clone());
+            }
+        }
+        let mut document = toml::map::Map::new();
+        document.insert("dependencies".into(), toml::Value::Table(canonical));
+        document.insert("rust-dependencies".into(), toml::Value::Table(legacy));
+        let content =
+            toml::to_string(&document).map_err(|error| manifest_invalid(&self.path, None, error.to_string()))?;
+        let resolved = Self::from_str(&content, &self.path)?;
+        let mut effective = self.clone();
+        effective.library_dependencies.extend(resolved.library_dependencies);
+        effective.rust_dependencies = resolved.rust_dependencies;
+        effective.loaf_dependencies = resolved.loaf_dependencies;
+        Ok(effective)
     }
 
     /// Canonical project-level Rust dev-dependency overlay used as the base for env resolution.
@@ -1616,6 +1681,8 @@ struct RawManifest {
     vocab: Option<VocabSection>,
     #[serde(default)]
     tool: Option<ToolSection>,
+    #[serde(default)]
+    envs: BTreeMap<String, EnvSection>,
     #[serde(default)]
     sdk: Option<SdkSection>,
     #[serde(default)]
@@ -2719,6 +2786,18 @@ fn parse_manifest_content(
             "workspace.rust-dev-dependencies is outside the Loaf grammar; use workspace.dependencies",
         ));
     }
+    if raw
+        .tool
+        .as_ref()
+        .and_then(|tool| tool.incan.as_ref())
+        .is_some_and(|incan| incan.envs.is_some())
+    {
+        return Err(manifest_invalid(
+            path,
+            spans.table_location(&["tool", "incan", "envs"]),
+            "[tool.incan.envs] is retired; move named environments to [envs]",
+        ));
+    }
     validate_manifest_rust_facet(&raw, &spans, path)?;
 
     let library_dependencies = raw
@@ -2781,6 +2860,7 @@ fn parse_manifest_content(
         build: raw.build,
         vocab: raw.vocab,
         tool: raw.tool,
+        envs: raw.envs,
         sdk: raw.sdk,
         interop: raw.interop,
         rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
@@ -3008,20 +3088,13 @@ fn validate_requires_incan_constraints(
         validate_requires_incan_requirement(requirement, path, spans.entry_location(&["project"], "requires-incan"))?;
     }
 
-    if let Some(envs) = raw
-        .tool
-        .as_ref()
-        .and_then(|tool| tool.incan.as_ref())
-        .map(|incan| &incan.envs)
-    {
-        for (env_name, env) in envs {
-            if let Some(requirement) = env.requires_incan.as_deref() {
-                validate_requires_incan_requirement(
-                    requirement,
-                    path,
-                    spans.entry_location(&["tool", "incan", "envs", env_name.as_str()], "requires-incan"),
-                )?;
-            }
+    for (env_name, env) in &raw.envs {
+        if let Some(requirement) = env.requires_incan.as_deref() {
+            validate_requires_incan_requirement(
+                requirement,
+                path,
+                spans.entry_location(&["envs", env_name.as_str()], "requires-incan"),
+            )?;
         }
     }
 
@@ -4420,15 +4493,14 @@ serde = "1.0"
     #[test]
     fn parse_env_rust_dependency_overlay_tables() -> TestResult {
         let content = r#"
-[tool.incan.envs.unit.rust-dependencies.serde]
+[envs.unit.rust-dependencies.serde]
 version = "1.0"
 
-[tool.incan.envs.unit.rust-dev-dependencies.proptest]
+[envs.unit.rust-dev-dependencies.proptest]
 version = "1"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
-        let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
-        let unit = tool.envs.get("unit").ok_or("missing unit env")?;
+        let unit = manifest.envs.get("unit").ok_or("missing unit env")?;
 
         assert!(unit.dependencies.contains_key("serde"));
         assert!(unit.dev_dependencies.contains_key("proptest"));
@@ -4438,15 +4510,14 @@ version = "1"
     #[test]
     fn parse_env_legacy_dependency_overlay_aliases() -> TestResult {
         let content = r#"
-[tool.incan.envs.unit.dependencies.serde]
+[envs.unit.dependencies.serde]
 version = "1.0"
 
-[tool.incan.envs.unit.dev-dependencies.proptest]
+[envs.unit.dev-dependencies.proptest]
 version = "1"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
-        let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
-        let unit = tool.envs.get("unit").ok_or("missing unit env")?;
+        let unit = manifest.envs.get("unit").ok_or("missing unit env")?;
 
         assert!(unit.dependencies.contains_key("serde"));
         assert!(unit.dev_dependencies.contains_key("proptest"));
@@ -4551,7 +4622,7 @@ features = ["derive"]
 [rust-dependencies.proptest]
 version = "1"
 
-[tool.incan.envs.unit]
+[envs.unit]
 extends = ["default"]
 env-vars = { INCAN_NO_BANNER = "1" }
 "#;

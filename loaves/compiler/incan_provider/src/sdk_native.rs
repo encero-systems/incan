@@ -992,7 +992,7 @@ mod tests {
     /// Component imports parse using their Loaf dependency declarations instead of removed inline version hints.
     #[test]
     fn system_sources_use_loaf_dependency_declarations() -> Result<(), Box<dyn std::error::Error>> {
-        let root = oven_model::toolchain_layout::development_root().join("loaves/stdlib/system/src");
+        let root = incan_test_support::repo_root().join("loaves/stdlib/system/src");
         for relative in [
             "fs/file.incn",
             "fs/locking.incn",

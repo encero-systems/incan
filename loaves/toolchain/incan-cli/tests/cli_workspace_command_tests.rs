@@ -145,6 +145,7 @@ fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semant
     Ok(())
 }
 
+/// Workspace checks preserve their aggregate report on repeats and invalidate an edited member independently.
 #[test]
 fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -185,6 +186,19 @@ fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), B
     );
     assert_eq!(member_report["results"].as_array().map(Vec::len), Some(1));
     assert_eq!(member_report["results"][0]["member"]["name"], "zebra");
+
+    let repeated = run_incan(root.path(), &["check", "--workspace", "--format", "json"])?;
+    assert_success(&repeated, "unchanged workspace check");
+    assert_eq!(parse_json_stdout(&repeated)?, report);
+    fs::write(
+        root.path().join("packages/alpha/src/main.incn"),
+        "def main() -> None:\n    let value: int = \"wrong\"\n",
+    )?;
+    let edited = run_incan(root.path(), &["check", "--workspace", "--format", "json"])?;
+    assert!(!edited.status.success());
+    let edited_report = parse_json_stdout(&edited)?;
+    assert_eq!(edited_report["results"][0]["report"]["ok"], false);
+    assert_eq!(edited_report["results"][1]["report"]["ok"], true);
     Ok(())
 }
 
@@ -341,7 +355,7 @@ test = ["incan", "test"]
 [project]
 name = "member"
 
-[tool.incan.envs.ci]
+[envs.ci]
 extends = ["workspace:ci"]
 env-vars = { SHARED = "member", MEMBER = "1" }
 "#,
