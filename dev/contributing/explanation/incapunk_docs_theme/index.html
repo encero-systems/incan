@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20261014-whats-new-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -336,7 +336,7 @@
   
     
   
-  Release notes
+  What's New
 
         </a>
       </li>
@@ -8450,6 +8450,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#release-journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release journal
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -8817,7 +8828,7 @@
   <span class="md-ellipsis">
     
   
-    Release notes
+    What's New
   
 
     
@@ -8839,7 +8850,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Release notes
+    What's New
   
 
           </label>
@@ -9826,6 +9837,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#release-journal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release journal
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9894,6 +9916,9 @@
 <li>Run <code>make docs-build</code> after theme changes.</li>
 <li>Restart <code>make docs</code> before visual review because CSS edits are not reliably live-reloaded.</li>
 </ul>
+<h2 id="release-journal">Release journal<a class="headerlink" href="#release-journal" title="Permanent link">&para;</a></h2>
+<p>The release-notes overview is a curated vertical journal. Maintain highlights in <code>docs/release_notes/index.md</code>, with <code>data-news-version</code> on each release section and <code>data-news-area</code> (<code>language</code> or <code>toolchain</code>) and <code>data-news-kind</code> (<code>new</code>, <code>improved</code>, <code>fixed</code>, or <code>breaking</code>) on each entry. Keep every highlight linked to its detailed release notes or authored user guide; the journal does not replace the complete release inventories. Preserve patch-version labels when a repair belongs to a patch rather than the initial minor release.</p>
+<p>The browser runtime in <code>docs/_snippets/javascripts/incan_whats_new.js</code> filters the authored content and keeps the selection in the URL. Without JavaScript, every release and highlight remains readable and the filter controls stay hidden. Language covers source-level behavior and the standard library; Toolchain covers compilation, Oven, packaging, and developer tooling. Development highlights must retain an explicit unshipped-release notice. When adding a release, update its navigation link, highlights, complete-notes link, and availability label together; move <code>data-news-default</code> to the latest released minor.</p>
 
 
 
@@ -9965,6 +9990,8 @@
         <script src="../../../_snippets/javascripts/tablesort.js"></script>
       
         <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_whats_new.js?v=20261014-1"></script>
       
     
   </body>

@@ -25,7 +25,7 @@
     
     
       
-        <title>Overview - Incan Documentation</title>
+        <title>What's New - Incan Documentation</title>
       
     
     
@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20261014-whats-new-1">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Overview
+              What's New
             
           </span>
         </div>
@@ -336,7 +336,7 @@
   
     
   
-  Release notes
+  What's New
 
         </a>
       </li>
@@ -383,7 +383,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -8713,7 +8715,7 @@
   <span class="md-ellipsis">
     
   
-    Release notes
+    What's New
   
 
     
@@ -8735,7 +8737,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Release notes
+    What's New
   
 
           </label>
@@ -9649,7 +9651,9 @@
             
             
               
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -9668,6 +9672,428 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#release-0-5-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incan 0.5 Released
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan 0.5 Released">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-a-typed-data-processor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build a typed data processor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-established-rust-crates-from-incan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use established Rust crates from Incan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choose-which-model-fields-are-public" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose which model fields are public
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-compound-powers-grouped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep compound powers grouped
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publish-a-checked-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish a checked library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bake-once-reuse-compatible-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bake once, reuse compatible artifacts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-projects-on-one-checked-view" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep projects on one checked view
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repair-installed-native-toolchains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repair installed native toolchains
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-0-4-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incan 0.4 Released
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan 0.4 Released">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keep-ordinary-03-programs-working" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep ordinary 0.3 programs working
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-without-cloning-the-compiler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start without cloning the compiler
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#give-tools-structured-compiler-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Give tools structured compiler output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspect-compiler-backed-source-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspect compiler-backed source structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-0-3-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incan 0.3 Released
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan 0.3 Released">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#let-a-loop-produce-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Let a loop produce a value
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compose-lazy-iteration-pipelines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compose lazy iteration pipelines
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#check-local-numeric-type-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check local numeric type aliases
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-calls-and-fluent-chains-consistently" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format calls and fluent chains consistently
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-tests-with-structured-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run tests with structured results
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-0-2-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incan 0.2 Released
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan 0.2 Released">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#move-standard-library-imports-to-std" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Move standard-library imports to std.*
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-runtime-state-in-a-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep runtime state in a module
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#share-an-incan-library-between-projects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Share an Incan library between projects
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#separate-incan-and-rust-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Separate Incan and Rust dependencies
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-0-1-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incan 0.1 Released
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan 0.1 Released">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#write-typed-programs-with-explicit-failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write typed programs with explicit failure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-run-format-and-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build, run, format, and test
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-0-6-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incan 0.6 In development
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incan 0.6 In development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#read-typed-toml-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read typed TOML values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#carry-union-types-across-package-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Carry union types across package contracts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#make-compiler-facts-the-compilation-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Make compiler facts the compilation authority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#make-oven-the-normal-project-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Make Oven the normal project authority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-matching-highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No matching highlights
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#full-release-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full release notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Full release notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#docs-versioning-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9677,15 +10103,9 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#releases" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Releases
-      
-    </span>
-  </a>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -9703,6 +10123,8 @@
               <article class="md-content__inner md-typeset">
                 
                   
+  
+
 
   <nav class="md-tags" >
     
@@ -9727,13 +10149,6 @@
         <a href="../tags/#tag:releases" class="md-tag">releases</a>
       
     
-      
-      
-      
-      
-        <a href="../tags/#tag:versioning" class="md-tag">versioning</a>
-      
-    
   </nav>
 
 
@@ -9741,26 +10156,280 @@
   
 
 
-<h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
-<p>This section tracks user-facing changes in Incan across releases.</p>
-<h2 id="docs-versioning-model">Docs versioning model<a class="headerlink" href="#docs-versioning-model" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>dev</strong>: docs built from <code>main</code></li>
-<li><strong>released</strong>: docs built from tags, exposed as minor versions (e.g. <code>0.1</code>)</li>
-</ul>
-<h2 id="releases">Releases<a class="headerlink" href="#releases" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="0_6/">Release 0.6 — in development</a></li>
-<li><a href="0_5/">Release 0.5</a></li>
-<li><a href="0_4/">Release 0.4</a></li>
-<li><a href="0_3/">Release 0.3</a></li>
-<li><a href="0_2/">Release 0.2</a></li>
-<li><a href="0_1/">Release 0.1</a></li>
-</ul>
-<p>See also:</p>
-<ul>
-<li><a href="../stability/">Stability policy</a></li>
-</ul>
+<!-- markdownlint-disable MD033 -->
+
+<article class="inc-news" data-inc-news="data-inc-news">
+<nav aria-label="Browse releases" class="inc-news__releases" id="releases">
+<p class="inc-news__eyebrow">Releases</p>
+<a class="inc-news__version inc-news__version--development" href="#release-0-6" data-news-release="0.6">0.6 <span>In development</span></a>
+<a class="inc-news__version" href="#release-0-5" data-news-release="0.5">0.5<span>Released</span></a>
+<a class="inc-news__version" href="#release-0-4" data-news-release="0.4">0.4<span>Released</span></a>
+<a class="inc-news__version" href="#release-0-3" data-news-release="0.3">0.3<span>Released</span></a>
+<a class="inc-news__version" href="#release-0-2" data-news-release="0.2">0.2<span>Released</span></a>
+<a class="inc-news__version" href="#release-0-1" data-news-release="0.1">0.1<span>Released</span></a>
+<a class="inc-news__archive" href="#full-release-notes">All release notes</a>
+</nav>
+<div class="inc-news__main">
+<header class="inc-news__intro">
+<h1 id="release-notes">What's new in Incan<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
+<p>Explore the language and the tools behind each release.</p>
+<a class="inc-news__full-link" href="#full-release-notes">Full release notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a>
+</header>
+<div class="inc-news__controls" data-news-controls="data-news-controls" hidden="hidden">
+<div aria-label="Focus of changes" class="inc-news__views" role="group">
+<button type="button" data-news-view="language" aria-pressed="true">Language</button>
+<button type="button" data-news-view="toolchain" aria-pressed="false">Toolchain</button>
+</div>
+<p class="inc-news__view-description" data-news-description="data-news-description"></p>
+<div aria-label="Filter by change type" class="inc-news__filters" role="group">
+<button type="button" data-news-type="all" aria-pressed="true">All</button>
+<button type="button" data-news-type="new" aria-pressed="false">New</button>
+<button type="button" data-news-type="improved" aria-pressed="false">Improved</button>
+<button type="button" data-news-type="fixed" aria-pressed="false">Fixed</button>
+<button type="button" data-news-type="breaking" aria-pressed="false">Breaking</button>
+</div>
+<p aria-atomic="true" aria-live="polite" class="inc-news__status" data-news-status="data-news-status" role="status"></p>
+</div>
+<div class="inc-news__feed" id="news-feed">
+<section aria-labelledby="release-0-5-title" class="inc-news__release" data-news-default="data-news-default" data-news-version="0.5" id="release-0-5">
+<header class="inc-news__release-heading">
+<h2 id="release-0-5-title">Incan 0.5 <span class="inc-news__badge">Released</span><a class="headerlink" href="#release-0-5-title" title="Permanent link">&para;</a></h2>
+<p><a href="0_5/">Full 0.5 notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a></p>
+</header>
+<p class="inc-news__summary">Readable source. Real native systems.</p>
+<div class="inc-news__timeline">
+<section class="inc-news__entry" data-news-area="language" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Standard library</span></p>
+<h3 id="build-a-typed-data-processor">Build a typed data processor<a class="headerlink" href="#build-a-typed-data-processor" title="Permanent link">&para;</a></h3>
+<p>Model JSON records, handle file failures, test transformations, and produce a native report tool.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">batch</span> <span class="o">=</span> <span class="nc">OrderBatch</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p class="inc-news__code-caption">Excerpt: OrderBatch is defined by the tutorial application.</p>
+<p><a class="inc-news__entry-link" href="../language/tutorials/typed_data_processor/">Try the tutorial</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Native interop</span></p>
+<h3 id="use-established-rust-crates-from-incan">Use established Rust crates from Incan<a class="headerlink" href="#use-established-rust-crates-from-incan" title="Permanent link">&para;</a></h3>
+<p>Keep application logic in readable Incan and use existing crates through an explicit native boundary.</p>
+<p><a class="inc-news__entry-link" href="0_5/#native-boundaries-become-checked">Explore native integrations</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="breaking">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--breaking">Breaking</span><span>Models</span></p>
+<h3 id="choose-which-model-fields-are-public">Choose which model fields are public<a class="headerlink" href="#choose-which-model-fields-are-public" title="Permanent link">&para;</a></h3>
+<p>Fields on a public model now need their own <code>pub</code> marker to belong to its external API. Check your models before upgrading.</p>
+<p><a class="inc-news__entry-link" href="0_5/#before-you-upgrade">Read the migration guidance</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="fixed">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--fixed">Fixed</span><span>0.5.1 · Expressions</span></p>
+<h3 id="keep-compound-powers-grouped">Keep compound powers grouped<a class="headerlink" href="#keep-compound-powers-grouped" title="Permanent link">&para;</a></h3>
+<p>Compound bases of <code>**</code> retain their grouping during emission. The patch fixes valid programs that could previously return an incorrect numeric result.</p>
+<p><a class="inc-news__entry-link" href="0_5/#v051-rust-interop-and-installed-toolchain-repairs">Read the patch notes</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Packages</span></p>
+<h3 id="publish-a-checked-library">Publish a checked library<a class="headerlink" href="#publish-a-checked-library" title="Permanent link">&para;</a></h3>
+<p>Build a library and consume its public contract through one portable dependency identity.</p>
+<p><a class="inc-news__entry-link" href="../tooling/tutorials/build_and_consume_library/">Build and consume a library</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Oven Alpha</span></p>
+<h3 id="bake-once-reuse-compatible-artifacts">Bake once, reuse compatible artifacts<a class="headerlink" href="#bake-once-reuse-compatible-artifacts" title="Permanent link">&para;</a></h3>
+<p>Within the documented Alpha envelope, an explicit bake seals native build inputs for compatible build, run, and test commands. Unsupported shapes stop with guidance.</p>
+<p><a class="inc-news__entry-link" href="0_5/#oven-turns-builds-into-evidence">Explore Oven Alpha</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Workspaces</span></p>
+<h3 id="keep-projects-on-one-checked-view">Keep projects on one checked view<a class="headerlink" href="#keep-projects-on-one-checked-view" title="Permanent link">&para;</a></h3>
+<p>Rooted and virtual workspaces share portable locks, provider identities, and inspectable feature selection.</p>
+<p><a class="inc-news__entry-link" href="0_5/#packages-become-checked-inputs">Read the package changes</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="fixed">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--fixed">Fixed</span><span>0.5.1 · Distribution</span></p>
+<h3 id="repair-installed-native-toolchains">Repair installed native toolchains<a class="headerlink" href="#repair-installed-native-toolchains" title="Permanent link">&para;</a></h3>
+<p>Release archives retain the standard-library sources and split-metadata sidecars needed by installed native consumers.</p>
+<p><a class="inc-news__entry-link" href="0_5/#v051-rust-interop-and-installed-toolchain-repairs">Read the patch notes</a></p>
+</section>
+</div>
+</section>
+<section aria-labelledby="release-0-4-title" class="inc-news__release" data-news-version="0.4" id="release-0-4">
+<header class="inc-news__release-heading">
+<h2 id="release-0-4-title">Incan 0.4 <span class="inc-news__badge">Released</span><a class="headerlink" href="#release-0-4-title" title="Permanent link">&para;</a></h2>
+<p><a href="0_4/">Full 0.4 notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a></p>
+</header>
+<p class="inc-news__summary">Install, try, inspect, and automate.</p>
+<div class="inc-news__timeline">
+<section class="inc-news__entry" data-news-area="language" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Compatibility</span></p>
+<h3 id="keep-ordinary-03-programs-working">Keep ordinary 0.3 programs working<a class="headerlink" href="#keep-ordinary-03-programs-working" title="Permanent link">&para;</a></h3>
+<p>The release focuses on tooling rather than a language rewrite. Review its migration notes when adopting the new inspection and reporting commands.</p>
+<p><a class="inc-news__entry-link" href="0_4/#migrating-from-03">Read the migration notes</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Installation</span></p>
+<h3 id="start-without-cloning-the-compiler">Start without cloning the compiler<a class="headerlink" href="#start-without-cloning-the-compiler" title="Permanent link">&para;</a></h3>
+<p>The checksum-verified installer and zero-clone starter flow take you from a toolchain install to a runnable project.</p>
+<p><a class="inc-news__entry-link" href="0_4/#install-and-first-contact">Explore installation</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Diagnostics</span></p>
+<h3 id="give-tools-structured-compiler-output">Give tools structured compiler output<a class="headerlink" href="#give-tools-structured-compiler-output" title="Permanent link">&para;</a></h3>
+<p>Use incan check, incan explain, and JSON build reports instead of scraping terminal prose.</p>
+<p><a class="inc-news__entry-link" href="0_4/#diagnostics-and-reports">Explore diagnostics and reports</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Inspection</span></p>
+<h3 id="inspect-compiler-backed-source-structure">Inspect compiler-backed source structure<a class="headerlink" href="#inspect-compiler-backed-source-structure" title="Permanent link">&para;</a></h3>
+<p>incan inspect codegraph exports source, declaration, import, diagnostic, and provenance facts as JSONL.</p>
+<p><a class="inc-news__entry-link" href="0_4/#semantic-inspection-and-codegraph-export">Explore codegraph inspection</a></p>
+</section>
+</div>
+</section>
+<section aria-labelledby="release-0-3-title" class="inc-news__release" data-news-version="0.3" id="release-0-3">
+<header class="inc-news__release-heading">
+<h2 id="release-0-3-title">Incan 0.3 <span class="inc-news__badge">Released</span><a class="headerlink" href="#release-0-3-title" title="Permanent link">&para;</a></h2>
+<p><a href="0_3/">Full 0.3 notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a></p>
+</header>
+<p class="inc-news__summary">More expressive programs, stronger library boundaries.</p>
+<div class="inc-news__timeline">
+<section class="inc-news__entry" data-news-area="language" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Control flow</span></p>
+<h3 id="let-a-loop-produce-a-value">Let a loop produce a value<a class="headerlink" href="#let-a-loop-produce-a-value" title="Permanent link">&para;</a></h3>
+<p>Use loop: with break <value> for searches, retries, and other loops whose result belongs in an expression.</p>
+<p><a class="inc-news__entry-link" href="0_3/#language-features">Explore the language additions</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Iteration</span></p>
+<h3 id="compose-lazy-iteration-pipelines">Compose lazy iteration pipelines<a class="headerlink" href="#compose-lazy-iteration-pipelines" title="Permanent link">&para;</a></h3>
+<p>Generators and source-owned iterator adapters support pipelines with explicit terminal operations such as collect, find, and fold.</p>
+<p><a class="inc-news__entry-link" href="../language/how-to/generators/">Work with generators</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="breaking">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--breaking">Breaking</span><span>Numeric names</span></p>
+<h3 id="check-local-numeric-type-aliases">Check local numeric type aliases<a class="headerlink" href="#check-local-numeric-type-aliases" title="Permanent link">&para;</a></h3>
+<p>Names such as decimal, bigint, and numeric can collide with the canonical numeric vocabulary. Rename local aliases when migrating.</p>
+<p><a class="inc-news__entry-link" href="0_3/#migrating-from-02">Read the migration guidance</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Formatter</span></p>
+<h3 id="format-calls-and-fluent-chains-consistently">Format calls and fluent chains consistently<a class="headerlink" href="#format-calls-and-fluent-chains-consistently" title="Permanent link">&para;</a></h3>
+<p>The formatter follows the vertical-spacing contract, wraps more long calls and signatures, and preserves scoped DSL expressions.</p>
+<p><a class="inc-news__entry-link" href="0_3/#tooling">Read the tooling changes</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Testing</span></p>
+<h3 id="run-tests-with-structured-results">Run tests with structured results<a class="headerlink" href="#run-tests-with-structured-results" title="Permanent link">&para;</a></h3>
+<p>The test runner supports fixtures, parametrization, markers, JSON Lines, and JUnit XML for local and automated workflows.</p>
+<p><a class="inc-news__entry-link" href="0_3/#tooling">Explore the test workflow</a></p>
+</section>
+</div>
+</section>
+<section aria-labelledby="release-0-2-title" class="inc-news__release" data-news-version="0.2" id="release-0-2">
+<header class="inc-news__release-heading">
+<h2 id="release-0-2-title">Incan 0.2 <span class="inc-news__badge">Released</span><a class="headerlink" href="#release-0-2-title" title="Permanent link">&para;</a></h2>
+<p><a href="0_2/">Full 0.2 notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a></p>
+</header>
+<p class="inc-news__summary">Explicit libraries and a clearer native boundary.</p>
+<div class="inc-news__timeline">
+<section class="inc-news__entry" data-news-area="language" data-news-kind="breaking">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--breaking">Breaking</span><span>Imports</span></p>
+<h3 id="move-standard-library-imports-to-std">Move standard-library imports to std.*<a class="headerlink" href="#move-standard-library-imports-to-std" title="Permanent link">&para;</a></h3>
+<p>Import web, testing, and async capabilities from their named standard-library modules. Existing 0.1 projects need an import migration.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
+</code></pre></div>
+<p class="inc-news__code-caption">Existing standard-library import.</p>
+<p><a class="inc-news__entry-link" href="0_2/#migrating-from-01">Migrate imports and decorators</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Modules</span></p>
+<h3 id="keep-runtime-state-in-a-module">Keep runtime state in a module<a class="headerlink" href="#keep-runtime-state-in-a-module" title="Permanent link">&para;</a></h3>
+<p>Module static storage gives source modules an explicit place for runtime state.</p>
+<p><a class="inc-news__entry-link" href="0_2/#module-static-storage">Explore static storage</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Libraries · Experimental</span></p>
+<h3 id="share-an-incan-library-between-projects">Share an Incan library between projects<a class="headerlink" href="#share-an-incan-library-between-projects" title="Permanent link">&para;</a></h3>
+<p>Experimental library builds publish public APIs for other Incan projects to consume.</p>
+<p><a class="inc-news__entry-link" href="0_2/#incan-libraries-experimental">Explore the library workflow</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="breaking">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--breaking">Breaking</span><span>Dependencies</span></p>
+<h3 id="separate-incan-and-rust-dependencies">Separate Incan and Rust dependencies<a class="headerlink" href="#separate-incan-and-rust-dependencies" title="Permanent link">&para;</a></h3>
+<p>Use distinct manifest tables for Incan packages and Rust crates when migrating a project from 0.1.</p>
+<p><a class="inc-news__entry-link" href="0_2/#3-split-incan-dependencies-from-rust-dependencies">Update the project manifest</a></p>
+</section>
+</div>
+</section>
+<section aria-labelledby="release-0-1-title" class="inc-news__release" data-news-version="0.1" id="release-0-1">
+<header class="inc-news__release-heading">
+<h2 id="release-0-1-title">Incan 0.1 <span class="inc-news__badge">Released</span><a class="headerlink" href="#release-0-1-title" title="Permanent link">&para;</a></h2>
+<p><a href="0_1/">Full 0.1 notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a></p>
+</header>
+<p class="inc-news__summary">The first published Incan release.</p>
+<div class="inc-news__timeline">
+<section class="inc-news__entry" data-news-area="language" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Language</span></p>
+<h3 id="write-typed-programs-with-explicit-failure">Write typed programs with explicit failure<a class="headerlink" href="#write-typed-programs-with-explicit-failure" title="Permanent link">&para;</a></h3>
+<p>Typed functions, models, enums, pattern matching, and Result/Option error handling establish the first language surface.</p>
+<p><a class="inc-news__entry-link" href="0_1/#features-and-enhancements">Explore the first release</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>CLI</span></p>
+<h3 id="build-run-format-and-test">Build, run, format, and test<a class="headerlink" href="#build-run-format-and-test" title="Permanent link">&para;</a></h3>
+<p>The first published release introduces the core CLI workflow and a generated language reference.</p>
+<p><a class="inc-news__entry-link" href="0_1/#highlights">Read the release highlights</a></p>
+</section>
+</div>
+</section>
+<section aria-labelledby="release-0-6-title" class="inc-news__release" data-news-version="0.6" id="release-0-6">
+<header class="inc-news__release-heading">
+<h2 id="release-0-6-title">Incan 0.6 <span class="inc-news__badge inc-news__badge--development">In development</span><a class="headerlink" href="#release-0-6-title" title="Permanent link">&para;</a></h2>
+<p><a href="0_6/">Full 0.6 notes <img src="../shared/incapunk/icons/arrow-right.svg" alt=""></a></p>
+</header>
+<p class="inc-news__summary">Compiler-owned meaning and Oven-native project authority.</p>
+<p class="inc-news__development-note"><strong>Incan 0.6 has not shipped.</strong> These highlights describe the development line and its release contract. Consult the full notes for delivered behavior, remaining acceptance work, and current limitations.</p>
+<div class="inc-news__timeline">
+<section class="inc-news__entry" data-news-area="language" data-news-kind="new">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--new">New</span><span>Standard library · Development</span></p>
+<h3 id="read-typed-toml-values">Read typed TOML values<a class="headerlink" href="#read-typed-toml-values" title="Permanent link">&para;</a></h3>
+<p>The development notes describe typed manifest values and declared models in std.toml, with source locations for parse and structural errors. Comment-preserving editing remains deferred.</p>
+<p><a class="inc-news__entry-link" href="0_6/#the-compiler-owns-source-meaning-end-to-end">Read the development notes</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="language" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Packages · Development</span></p>
+<h3 id="carry-union-types-across-package-contracts">Carry union types across package contracts<a class="headerlink" href="#carry-union-types-across-package-contracts" title="Permanent link">&para;</a></h3>
+<p>The development line records anonymous unions in checked package signatures and an explicit manifest-format boundary for older readers.</p>
+<p><a class="inc-news__entry-link" href="0_6/#the-compiler-owns-source-meaning-end-to-end">Read the package development notes</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Compiler · Development</span></p>
+<h3 id="make-compiler-facts-the-compilation-authority">Make compiler facts the compilation authority<a class="headerlink" href="#make-compiler-facts-the-compilation-authority" title="Permanent link">&para;</a></h3>
+<p>The release contract moves lowering, backend selection, and parity evidence onto compiler-owned facts. The notes distinguish delivered slices from acceptance work still owed.</p>
+<p><a class="inc-news__entry-link" href="0_6/#the-compiler-owns-source-meaning-end-to-end">Explore the compiler direction</a></p>
+</section>
+<section class="inc-news__entry" data-news-area="toolchain" data-news-kind="improved">
+<p class="inc-news__meta"><span class="inc-news__kind inc-news__kind--improved">Improved</span><span>Oven · Development</span></p>
+<h3 id="make-oven-the-normal-project-authority">Make Oven the normal project authority<a class="headerlink" href="#make-oven-the-normal-project-authority" title="Permanent link">&para;</a></h3>
+<p>The development contract covers selected Loafs, sealed dependencies, and explicit build evidence. Read the current boundaries before trying the development line.</p>
+<p><a class="inc-news__entry-link" href="0_6/#loaf-and-oven-become-the-opted-in-project-authority">Explore the Oven direction</a></p>
+</section>
+</div>
+</section>
+</div>
+<div class="inc-news__empty" data-news-empty="data-news-empty" hidden="hidden">
+<h3 id="no-matching-highlights">No matching highlights<a class="headerlink" href="#no-matching-highlights" title="Permanent link">&para;</a></h3>
+<p>This is a curated selection. The full release notes include the complete change inventory.</p>
+<button type="button" data-news-reset>Show all change types</button>
+</div>
+<footer class="inc-news__footer">
+<h2 id="full-release-notes">Full release notes<a class="headerlink" href="#full-release-notes" title="Permanent link">&para;</a></h2>
+<p>Highlights link to the detailed release notes and guides. For complete inventories, patch notes, and migration requirements, choose a release:</p>
+<p><a href="0_6/">0.6 — in development</a> · <a href="0_5/">0.5</a> · <a href="0_4/">0.4</a> · <a href="0_3/">0.3</a> · <a href="0_2/">0.2</a> · <a href="0_1/">0.1</a></p>
+<h3 id="docs-versioning-model">Docs versioning model<a class="headerlink" href="#docs-versioning-model" title="Permanent link">&para;</a></h3>
+<p><strong>dev</strong> documentation is built from <code>main</code> and includes work that has not shipped. Released documentation is built from tags and published by minor version. A release badge on this page describes the release; it does not detect your installed compiler. See the <a href="../stability/">stability policy</a> before upgrading.</p>
+</footer>
+</div>
+</article>
+<!-- markdownlint-enable MD033 -->
 
 
 
@@ -9773,6 +10442,8 @@
 
 
 
+
+  
 
 
 
@@ -9835,6 +10506,8 @@
         <script src="../_snippets/javascripts/tablesort.js"></script>
       
         <script src="../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+        <script src="../_snippets/javascripts/incan_whats_new.js?v=20261014-1"></script>
       
     
   </body>

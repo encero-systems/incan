@@ -49,7 +49,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20261014-whats-new-1">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -330,7 +330,7 @@
   
     
   
-  Release notes
+  What's New
 
         </a>
       </li>
@@ -8702,7 +8702,7 @@
   <span class="md-ellipsis">
     
   
-    Release notes
+    What's New
   
 
     
@@ -8724,7 +8724,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Release notes
+    What's New
   
 
           </label>
@@ -10140,7 +10140,7 @@
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Incan already leans into a future where agents generate more code and the language provides a smaller, typed, auditable surface. Types, <code>Result</code>, <code>Option</code>, newtypes, checked metadata, and Rust-backed emission catch broad classes of mistakes, but they do not fully capture human intent. A human can say "a percentage is between 0 and 100" or "this transfer never creates a negative balance," but today that knowledge is spread across validation code, tests, comments, and review conventions rather than represented as a compiler-owned contract that an agent can repair against.</p>
-<p>Formal-methods languages and tools point at the missing layer. SPARK makes contracts such as preconditions, postconditions, type invariants, and assertions part of the language and uses deductive proof to establish absence of runtime errors and functional properties. Dafny is verification-aware and has native specifications, a static verifier, preconditions, postconditions, termination conditions, loop invariants, and read/write specifications. F<em> combines dependent types with SMT-backed automation and interactive theorem proving. Why3 provides a provider-oriented deductive verification platform where verification conditions can be discharged by external provers. Frama-C's ACSL shows the value of formal function contracts that are understandable by humans and manipulable by analyzers. The lesson is not that Incan should become Ada/SPARK, Dafny, F</em>, WhyML, or ACSL; the lesson is that source-level intent must become structured, analyzable, and tied to implementation feedback.</p>
+<p>Formal-methods languages and tools point at the missing layer. SPARK makes contracts such as preconditions, postconditions, type invariants, and assertions part of the language and uses deductive proof to establish absence of runtime errors and functional properties. Dafny is verification-aware and has native specifications, a static verifier, preconditions, postconditions, termination conditions, loop invariants, and read/write specifications. F* combines dependent types with SMT-backed automation and interactive theorem proving. Why3 provides a provider-oriented deductive verification platform where verification conditions can be discharged by external provers. Frama-C's ACSL shows the value of formal function contracts that are understandable by humans and manipulable by analyzers. The lesson is not that Incan should become Ada/SPARK, Dafny, F*, WhyML, or ACSL; the lesson is that source-level intent must become structured, analyzable, and tied to implementation feedback.</p>
 <p>The agentic angle changes the ergonomics. Traditional formal verification often assumes that trained humans will repair failed proofs, supply invariants, and adjust specifications. Incan can reshape that workflow for this century: a human writes the domain contract, an agent writes or edits ordinary Incan code, the compiler reports structured verification facts and counterexamples, and the agent uses RFC 106 context packing to inspect only the relevant declarations, assumptions, tests, and failed obligations. Humans still decide the specification; agents handle much of the iteration needed to satisfy it.</p>
 <p>This also keeps Incan honest about correctness. A spec can be wrong, incomplete, or too weak. A proof can only establish a property under declared assumptions and supported semantics. The value of this RFC is not magic correctness; it is a bounded, inspectable feedback loop where human-authored intent is mechanically checked and agent repairs are grounded in compiler facts.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
@@ -10507,6 +10507,8 @@
         <script src="../../_snippets/javascripts/tablesort.js"></script>
       
         <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_whats_new.js?v=20261014-1"></script>
       
     
   </body>
