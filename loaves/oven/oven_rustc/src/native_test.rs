@@ -24,7 +24,7 @@ use evidence::{CaseResult, NativeTestEvidence, NativeTestLog};
 
 use crate::rustc::clear_inherited_cargo_environment;
 use oven_store::process::{isolate_process_group, terminate_process_group};
-use oven_store::progress::{DEFAULT_HEARTBEAT_INTERVAL, Heartbeat, ProgressSink};
+use oven_store::progress::{DEFAULT_HEARTBEAT_INTERVAL, ProgressSink};
 
 /// Inventory returned by one exact native libtest binary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1319,6 +1319,7 @@ fn libtest_outcome_label(outcome: &str) -> &str {
 ///
 /// `Command::output` cannot supervise a running child. Keeping this small polling loop here ensures the same
 /// Cargo-free environment and output capture apply to a terminated child as to a normally completed libtest process.
+/// The same supervisor emits periodic liveness reports, avoiding a separate heartbeat thread for every case.
 fn run_native_batch_child(
     command: Command,
     executable: &Path,
@@ -1334,16 +1335,25 @@ fn run_native_batch_child(
             path: executable.to_path_buf(),
             source,
         })?;
-    run_native_batch_child_with_log(command, executable, timeout, reporter, result_log)
+    run_native_batch_child_with_log(
+        command,
+        executable,
+        timeout,
+        reporter,
+        result_log,
+        DEFAULT_HEARTBEAT_INTERVAL,
+    )
 }
 
 /// Run a root with an explicitly owned result channel; every post-spawn exit reaps its group and both readers.
+/// Production uses the common progress interval; an explicit interval lets liveness controls avoid wall-clock waits.
 fn run_native_batch_child_with_log(
     mut command: Command,
     executable: &Path,
     timeout: Option<Duration>,
     reporter: Option<NativeTestProgressReporter>,
     mut result_log: Option<NativeTestLog>,
+    heartbeat_interval: Duration,
 ) -> Result<(std::process::Output, bool, NativeTestEvidence), OvenNativeTestError> {
     let setup_trace =
         tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_setup").entered();
@@ -1383,12 +1393,8 @@ fn run_native_batch_child_with_log(
         .as_ref()
         .and_then(|reporter| reporter.lock().ok().map(|reporter| reporter.sink()))
         .unwrap_or_default();
-    let heartbeat = progress.as_ref().map(|reporter| {
-        let watched = Arc::clone(reporter);
-        Heartbeat::start(sink.clone(), DEFAULT_HEARTBEAT_INTERVAL, move || {
-            watched.lock().ok().and_then(|reporter| reporter.still_running())
-        })
-    });
+    // The supervisor already polls while the root lives, so progress needs no additional timer thread.
+    let mut next_heartbeat = Instant::now() + heartbeat_interval;
     let root_progress = progress.clone();
     let mut progress = progress;
     let stdout_reader = thread::spawn(move || {
@@ -1441,6 +1447,15 @@ fn run_native_batch_child_with_log(
         let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_wait").entered();
         loop {
             poll_native_result_log(&mut result_log, &root_progress, executable)?;
+            if Instant::now() >= next_heartbeat {
+                if let Some(description) = root_progress
+                    .as_ref()
+                    .and_then(|reporter| reporter.lock().ok().and_then(|reporter| reporter.still_running()))
+                {
+                    sink.line(&description);
+                }
+                next_heartbeat = Instant::now() + heartbeat_interval;
+            }
             match child.try_wait().map_err(|source| OvenNativeTestError::Io {
                 path: executable.to_path_buf(),
                 source,
@@ -1463,7 +1478,6 @@ fn run_native_batch_child_with_log(
     } else {
         terminate_native_batch_child(&mut child, executable).map(|_| ())
     };
-    drop(heartbeat);
     let stdout = join_output_reader(stdout_reader, executable, "stdout");
     let stderr = join_output_reader(stderr_reader, executable, "stderr");
     // Both joins happen before any error is propagated; losing one stream cannot detach the other reader.
@@ -2817,6 +2831,7 @@ mod tests {
             Some(Duration::from_secs(10)),
             Some(reporter),
             Some(log),
+            super::DEFAULT_HEARTBEAT_INTERVAL,
         )
         .err()
         .ok_or("injected log read unexpectedly succeeded")?;
@@ -3076,5 +3091,69 @@ mod tests {
             return Err(format!("rustc could not report its version: {}", rustc.display()).into());
         }
         Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    }
+    /// A silent child reports liveness before completion without a separate timer worker.
+    #[test]
+    fn supervisor_reports_silent_child_before_release() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let executable = compile_probe(
+            directory.path(),
+            r#"
+            #[test]
+            fn waits_for_release() -> Result<(), Box<dyn std::error::Error>> {
+                let release = std::path::PathBuf::from(std::env::var("INCAN_PROBE_RELEASE")?);
+                let started = std::time::Instant::now();
+                while !release.exists() {
+                    if started.elapsed() > std::time::Duration::from_secs(10) {
+                        return Err("supervisor never released the child".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(())
+            }
+            "#,
+        )?;
+        let release = directory.path().join("release");
+        let environment = BTreeMap::from([("INCAN_PROBE_RELEASE".to_string(), release.display().to_string())]);
+        let sink = ProgressSink::collecting();
+        let worker_sink = sink.clone();
+        let working_directory = directory.path().to_path_buf();
+        let worker = std::thread::spawn(move || {
+            let selected = BTreeSet::from(["waits_for_release".to_string()]);
+            let log = super::NativeTestLog::new(selected.clone()).map_err(|error| error.to_string())?;
+            let reporter = NativeTestProgressReporter::for_inventory(Some("silent-child"), worker_sink, selected);
+            let mut command = Command::new(&executable);
+            command.current_dir(&working_directory).envs(environment);
+            command.args(["--exact", "waits_for_release"]);
+            super::add_structured_libtest_output(&mut command);
+            super::run_native_batch_child_with_log(
+                command,
+                &executable,
+                Some(std::time::Duration::from_secs(5)),
+                Some(reporter),
+                Some(log),
+                std::time::Duration::from_millis(50),
+            )
+            .map_err(|error| error.to_string())
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        let mut observed_live = false;
+        while std::time::Instant::now() < deadline && !worker.is_finished() {
+            if sink
+                .collected()
+                .is_some_and(|text| text.contains("RUNNING") && text.contains("silent-child"))
+            {
+                observed_live = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // Release and join on both assertion paths, so a failed liveness control cannot detach its child.
+        fs::write(&release, b"release")?;
+        let (output, timed_out, evidence) = worker.join().map_err(|_| "supervisor worker panicked")??;
+        assert!(observed_live, "no heartbeat while the silent child was waiting");
+        assert!(output.status.success() && !timed_out, "{output:?}");
+        assert_eq!(evidence.counts.ok_or("missing case counts")?.passed, 1);
+        Ok(())
     }
 }
