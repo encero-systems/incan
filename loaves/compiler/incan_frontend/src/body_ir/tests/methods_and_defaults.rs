@@ -640,10 +640,17 @@ fn classmethod_construction_retains_its_owner_declaration() -> Result<(), Box<dy
 /// A static call keeps owner arguments in its receiver without duplicating them as method arguments.
 #[test]
 fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box<dyn std::error::Error>> {
-    let module = build(
-        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n\ndef main() -> int:\n  return Box[int].make(1).value\n",
-        &["applied_static"],
-    )?;
+    let source = "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n\ndef main() -> int:\n  return Box[int].make(1).value\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["applied_static".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let facts = checker.type_info();
+    let module = build_body_ir_module_v0(&program, &path, facts);
     let targets = named_targets(&module, "main");
     let make = targets
         .iter()
@@ -658,7 +665,9 @@ fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box
     );
     assert!(
         make.type_args.is_empty(),
-        "owner binders must not also become method binders"
+        "owner binders must not also become method binders: native={:?}, legacy={:?}",
+        facts.calls.body_ir_call_type_arguments,
+        facts.calls.call_site_monomorph_type_args,
     );
     Ok(())
 }
