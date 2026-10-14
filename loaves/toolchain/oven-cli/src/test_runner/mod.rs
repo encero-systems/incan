@@ -20,7 +20,7 @@ mod rust;
 pub use incan_driver::testing::discovery::{discover_test_files, discover_tests_and_fixtures};
 pub use incan_driver::testing::types::{
     DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestCaseResult, TestInfo,
-    TestLanguages, TestMarker, TestOutputFormat, TestResult, TestRunConfig, TestRunReport, TestSummary,
+    TestLanguages, TestMarker, TestOutputFormat, TestProgress, TestResult, TestRunConfig, TestRunReport, TestSummary,
     WorkspaceTestContext,
 };
 pub use reporter::{ConsoleReporter, TestReporter};
@@ -922,7 +922,6 @@ fn run_execution_unit(
     command_context: &Arc<OvenTestCommandContext>,
     no_capture: bool,
     verbose: bool,
-    emit_progress: bool,
     output: TestOutputSink,
 ) -> Vec<(TestInfo, TestResult)> {
     if unit
@@ -951,7 +950,6 @@ fn run_execution_unit(
             no_capture,
             timeout: unit.timeout,
             verbose,
-            emit_progress,
             output,
         },
     )
@@ -1219,7 +1217,6 @@ fn run_scheduled_execution_units(
     stop_on_fail: bool,
     no_capture: bool,
     verbose: bool,
-    emit_progress: bool,
     output: TestOutputSink,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
     // A single compilation batch has no parallel work. Keep it on the owner thread, avoiding a worker allocation
@@ -1236,7 +1233,6 @@ fn run_scheduled_execution_units(
                 &command_context,
                 no_capture,
                 verbose,
-                emit_progress,
                 output.clone(),
             );
             let failed = batch_has_failure(&results);
@@ -1294,7 +1290,6 @@ fn run_scheduled_execution_units(
                     &command_context,
                     no_capture,
                     verbose,
-                    emit_progress,
                     output,
                 );
                 let _ = sender.send((unit_index, results));
@@ -1469,7 +1464,7 @@ fn collect_selected_tests(
     options: &TestCollectionOptions,
     owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
     list_only: bool,
-    mut emit: impl FnMut(String),
+    mut emit: impl FnMut(TestProgress),
 ) -> CliResult<SelectedTestCollection> {
     let TestCollectionOptions {
         languages,
@@ -1596,22 +1591,9 @@ fn collect_selected_tests(
     let known_markers = inventory.known_markers;
 
     if *verbose && !all_fixtures.is_empty() {
-        emit(format!("Discovered {} fixture(s):\n", all_fixtures.len()));
-        for (name, fixture) in &all_fixtures {
-            let scope_str = match fixture.scope {
-                FixtureScope::Function => "function",
-                FixtureScope::Module => "module",
-                FixtureScope::Session => "session",
-            };
-            let autouse_str = if fixture.autouse { " (autouse)" } else { "" };
-            let async_str = if fixture.is_async { " async" } else { "" };
-            let teardown_str = if fixture.has_teardown { " (with teardown)" } else { "" };
-            emit(format!(
-                "  - {}: scope={}{}{}{}\n",
-                name, scope_str, autouse_str, async_str, teardown_str
-            ));
-        }
-        emit("\n".to_string());
+        emit(TestProgress::FixturesDiscovered {
+            fixtures: all_fixtures.into_values().collect(),
+        });
     }
 
     drop(stage);
@@ -1669,7 +1651,7 @@ pub(crate) struct TestListReport {
 pub(crate) fn list_tests_with_owner(
     options: &TestCollectionOptions,
     owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
-    emit: impl FnMut(String),
+    emit: impl FnMut(TestProgress),
 ) -> CliResult<TestListReport> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = %options.path, list_only = true, jobs = 1).entered();
     let collected = collect_selected_tests(options, owner, true, emit)?;
@@ -1709,10 +1691,10 @@ pub(crate) fn execute_tests_with_owner(
         stop_on_fail,
         include_slow: _,
         filter: _,
-        use_color,
+        use_color: _,
         fail_on_empty,
         list_only: _,
-        report_format,
+        report_format: _,
         junit_path: _,
         durations: _,
         shuffle,
@@ -1741,7 +1723,7 @@ pub(crate) fn execute_tests_with_owner(
     let jobs = jobs.max(1);
     let path_for_execution = Path::new(path);
 
-    let collected = collect_selected_tests(&collection_options, owner, false, |message| output.stdout(message))?;
+    let collected = collect_selected_tests(&collection_options, owner, false, |event| output.progress(event))?;
     let SelectedTestCollection {
         command_context,
         mut filtered_tests,
@@ -1750,7 +1732,7 @@ pub(crate) fn execute_tests_with_owner(
     } = collected;
 
     if filtered_tests.is_empty() {
-        output.error_line("No tests collected");
+        output.progress(TestProgress::NoTestsCollected);
         return Ok(TestRunReport {
             results: Vec::new(),
             summary: TestSummary::default(),
@@ -1784,20 +1766,11 @@ pub(crate) fn execute_tests_with_owner(
         None
     };
 
-    if report_format == TestOutputFormat::Console {
-        output.line(format_args!(
-            "{}",
-            style(centered_eq_banner("test session starts"), "1", use_color)
-        ));
-        output.line(format_args!("collected {} item(s)", filtered_tests.len()));
-        if let Some(seed) = shuffle_seed {
-            output.line(format_args!("shuffle seed: {seed}"));
-        }
-        if jobs > 1 {
-            output.line(format_args!("jobs: {jobs}"));
-        }
-        output.line("");
-    }
+    output.progress(TestProgress::SessionStarted {
+        collected: filtered_tests.len(),
+        shuffle_seed,
+        jobs,
+    });
 
     let mut results = Vec::new();
     let mut passed = 0;
@@ -1809,29 +1782,18 @@ pub(crate) fn execute_tests_with_owner(
     let planning_start = Instant::now();
     let units = build_execution_units(&filtered_tests, path_for_execution, default_timeout, stop_on_fail, jobs);
     let units = share_native_execution_units(units, jobs, isolate || shuffle || stop_on_fail);
-    if report_format == TestOutputFormat::Console && verbose {
-        output.line(format_args!(
-            "planned {} generated harness unit(s) in {:.2}s",
-            units.len(),
-            planning_start.elapsed().as_secs_f64()
-        ));
+    if verbose {
+        output.progress(TestProgress::UnitsPlanned {
+            units: units.len(),
+            elapsed: planning_start.elapsed(),
+        });
     }
-    if report_format == TestOutputFormat::Console && !stop_on_fail {
+    if !stop_on_fail {
         for unit in &units {
-            let files = unit
-                .file_paths
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.line(format_args!(
-                "{}",
-                style(
-                    format!("running {} ({} item(s))", files, unit.tests.len()),
-                    "2",
-                    use_color
-                )
-            ));
+            output.progress(TestProgress::UnitStarting {
+                files: unit.file_paths.iter().cloned().collect(),
+                tests: unit.tests.len(),
+            });
         }
     }
 
@@ -1846,14 +1808,12 @@ pub(crate) fn execute_tests_with_owner(
         stop_on_fail,
         no_capture,
         verbose,
-        report_format == TestOutputFormat::Console,
         output.clone(),
     );
-    if report_format == TestOutputFormat::Console && verbose {
-        output.line(format_args!(
-            "generated harness execution phase completed in {:.2}s",
-            start_time.elapsed().as_secs_f64()
-        ));
+    if verbose {
+        output.progress(TestProgress::ExecutionCompleted {
+            elapsed: start_time.elapsed(),
+        });
     }
     drop(stage);
     let _reporting = trace_test_stage("reporting");
