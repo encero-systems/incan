@@ -578,7 +578,7 @@ On Unix, test commands automatically connect to the same compatible project owne
 | `-x`, `--exitfirst` | Stop after the first failure. |
 | `--slow` | Include tests marked `@slow`. |
 | `--strict-markers` | Refuse unknown marker names at collection, unless registered in `TEST_MARKERS`. |
-| `-j <N>`, `--jobs <N>` | Total test worker budget; defaults to CPU parallelism available to the process. Incan batches each use one worker. A compatible shared Rust root reserves the budget and uses up to `N` libtest threads. |
+| `-j <N>`, `--jobs <N>` | Total test worker budget; defaults to four workers. Incan batches each use one worker. A compatible shared Rust root reserves the budget and uses up to `N` libtest threads. |
 | `--isolate` | Execute Rust cases in separate processes. Incan fixture groups retain their existing scope. |
 | `--feature <NAME>` | Enable the collection-time `std.testing.feature("NAME")` probe for `skipif` and `xfailif`. |
 | `--timeout <DURATION>` | Time limit for each test batch, such as `250ms`, `5s` or `2m`. A test's `@timeout(...)` overrides it. A batch that exceeds its limit is stopped and fails. |

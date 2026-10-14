@@ -138,7 +138,45 @@ pub fn select_declared_native_loaf_plan(
 pub(super) struct RetainedNativeLoafPlan {
     store: Option<(PathBuf, oven_store::store::OvenStoreLimits)>,
     preparation: Option<NativeLoafConsumerPreparation>,
-    plans: BTreeMap<PathBuf, RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>>>,
+    plans: BTreeMap<PathBuf, RetainedNativeConsumerPlan>,
+}
+
+/// The original consumer plan and its already selected immutable forward graph share one owner entry.
+struct RetainedNativeConsumerPlan {
+    plan: RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>>,
+    consumer: Option<RetainedNativeConsumerClosure>,
+}
+
+/// Retained declaration projection, usable only inside the same freshly reconciled producer graph.
+/// This is metadata attached to the existing plan, not independent dependency or disk authority.
+struct RetainedNativeConsumerClosure {
+    dependencies: Vec<oven_model::manifest::DependencySpec>,
+    declaration_owner: PathBuf,
+    domain: String,
+    closure: NativeLoafClosure,
+}
+
+impl RetainedNativeConsumerClosure {
+    /// Compare the complete declaration and original sealed vertex owners after producer reconciliation.
+    /// Equal digests or coordinates alone cannot substitute new owners. The complete forward closure was checked
+    /// when selected; unchanged private vertices preserve its edges while the producer rechecks physical inputs.
+    fn matches(
+        &self,
+        request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+        prepared: &NativeLoafConsumerPreparation,
+    ) -> bool {
+        self.dependencies == request.dependencies
+            && self.declaration_owner == request.declaration_owner
+            && self.domain == request.domain
+            && self.closure.graph().units().iter().all(|(identity, unit)| {
+                prepared
+                    .closure()
+                    .graph()
+                    .units()
+                    .get(identity)
+                    .is_some_and(|current| Arc::ptr_eq(unit, current))
+            })
+    }
 }
 
 impl RetainedNativeLoafPlan {
@@ -170,7 +208,7 @@ impl RetainedNativeLoafPlan {
             self.store = Some(store_key);
         }
         // Consume this consumer's plan and the group preparation before fallible reconciliation.
-        let previous_plan = self.plans.remove(consumer.output);
+        let mut previous_plan = self.plans.remove(consumer.output);
         let previous = self
             .preparation
             .take()
@@ -182,19 +220,35 @@ impl RetainedNativeLoafPlan {
             Some(prepared) => prepared,
             None => oven_rustc::native_loaf::prepare_declared_native_loafs_in_store(request, store).map_err(failure)?,
         };
-        let selected;
-        let closure = if std::ptr::eq(request, consumer) {
-            prepared.closure()
+        let selected = if std::ptr::eq(request, consumer) {
+            None
+        } else if let Some(retained) = previous_plan
+            .as_mut()
+            .and_then(|previous| previous.consumer.take())
+            .filter(|retained| retained.matches(consumer, &prepared))
+        {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_native_consumer_closure");
+            Some(retained)
         } else {
             let graph = prepared.closure().graph();
             let roots = graph
                 .select_dependency_roots(consumer.dependencies, consumer.declaration_owner, consumer.domain)
                 .map_err(failure)?;
-            selected = graph.select(&roots).map_err(failure)?;
-            &selected
+            let closure = graph.select(&roots).map_err(failure)?;
+            Some(RetainedNativeConsumerClosure {
+                dependencies: consumer.dependencies.to_vec(),
+                declaration_owner: consumer.declaration_owner.to_path_buf(),
+                domain: consumer.domain.to_string(),
+                closure,
+            })
         };
+        let closure = selected
+            .as_ref()
+            .map_or(prepared.closure(), |selected| &selected.closure);
         let receipt = native_loaf_receipt(source_receipt, closure)?;
-        let previous = previous_plan.filter(|plan| plan.matches_receipt(&receipt) && plan.native_inputs_current());
+        let previous = previous_plan
+            .map(|previous| previous.plan)
+            .filter(|plan| plan.matches_receipt(&receipt) && plan.native_inputs_current());
         let plan_reused = previous.is_some();
         let plan = match previous {
             Some(plan) => plan,
@@ -206,7 +260,13 @@ impl RetainedNativeLoafPlan {
         let report = serde_json::to_string(prepared.report()).map_err(failure)?;
         let selection = Arc::clone(&plan.selection);
         if plan.native_inputs_current() {
-            self.plans.insert(consumer.output.to_path_buf(), plan);
+            self.plans.insert(
+                consumer.output.to_path_buf(),
+                RetainedNativeConsumerPlan {
+                    plan,
+                    consumer: selected,
+                },
+            );
             self.preparation = Some(prepared);
         }
         tracing::trace!(target: "incan::invocation", decision = if plan_reused { "reuse_ordinary_native_plan" } else { "select_ordinary_native_plan" });

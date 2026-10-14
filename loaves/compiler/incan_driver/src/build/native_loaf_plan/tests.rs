@@ -485,6 +485,109 @@ fn grouped_native_consumers_prepare_once_and_keep_distinct_imports() -> TestResu
     Ok(())
 }
 
+/// A retained group projection cannot preserve removed imports or admit corrupt original native members.
+#[test]
+fn retained_group_projection_reconciles_requirements_and_native_members() -> TestResult {
+    if std::env::var_os("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE").is_some() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "build::native_loaf_plan::tests::retained_group_projection_reconciles_requirements_and_native_members",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
+            .output()?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return Ok(());
+    }
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path().canonicalize()?;
+    write_checkout(&root)?;
+    let manifest = oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))?;
+    let dependencies = manifest.rust_dependency_values();
+    let rustc = resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let store = OvenStore::new(
+        root.join("store"),
+        OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+    );
+    let source = root.join("src/main.rs");
+    let receipt = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            &root,
+            "consumer",
+            "1.0.0",
+            &target,
+            rustc_identity(&rustc)?,
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("compiler-main", &source),
+    )?;
+    let group = oven_rustc::native_loaf::NativeLoafConsumerRequest {
+        graph: &root.join("graph.json"),
+        index: &root,
+        blobs: &root,
+        output: &root.join("group"),
+        rustc: &rustc,
+        target: &target,
+        profile: "debug",
+        dependencies: &dependencies,
+        declaration_owner: &root,
+        domain: "target",
+    };
+    let mut consumer = oven_rustc::native_loaf::NativeLoafConsumerRequest {
+        output: &root.join("consumer"),
+        ..group
+    };
+    let mut owner = super::RetainedNativeLoafPlan::default();
+    let (_, first, _, reused) = owner.select_group(&store, &receipt, &group, &consumer)?;
+    assert!(!reused);
+    let (_, repeat, _, reused) = owner.select_group(&store, &receipt, &group, &consumer)?;
+    assert!(reused && std::sync::Arc::ptr_eq(&first, &repeat));
+
+    // ---- Consumer requirements: an unchanged producer must not lend removed imports ----
+    consumer.dependencies = &[];
+    let (_, empty, _, reused) = owner.select_group(&store, &receipt, &group, &consumer)?;
+    assert!(!reused);
+    assert!(empty.source_artifact_plan("compiler-main")?.externs.is_empty());
+    consumer.dependencies = &dependencies;
+    let (_, restored, _, reused) = owner.select_group(&store, &receipt, &group, &consumer)?;
+    assert!(!reused);
+    assert_eq!(restored.source_artifact_plan("compiler-main")?.externs.len(), 1);
+    assert!(owner.select_group(&store, &receipt, &group, &consumer)?.3);
+
+    // ---- Original native owner: metadata reconciliation must refuse changed leased bytes ----
+    let inspection = store.inspect()?;
+    let native = inspection
+        .entries
+        .iter()
+        .find(|entry| entry.manifest.domain == "sdk-source-unit-target")
+        .ok_or("native dependency missing")?;
+    let member = native
+        .manifest
+        .materialized_files
+        .iter()
+        .find(|member| member.relative_path.ends_with(".rlib"))
+        .ok_or("native archive missing")?;
+    let path = native.path.join("artifacts").join(&member.relative_path);
+    let original = std::fs::read(&path)?;
+    let replacement = root.join("replacement");
+    std::fs::write(&replacement, b"corrupt retained dependency")?;
+    std::fs::rename(&replacement, &path)?;
+    assert!(owner.select_group(&store, &receipt, &group, &consumer).is_err());
+    assert!(owner.preparation.is_none() && !owner.plans.contains_key(consumer.output));
+    std::fs::write(&replacement, original)?;
+    std::fs::rename(&replacement, &path)?;
+    let (_, restored, _, reused) = owner.select_group(&store, &receipt, &group, &consumer)?;
+    assert!(!reused);
+    assert_eq!(restored.source_artifact_plan("compiler-main")?.externs.len(), 1);
+    assert!(owner.select_group(&store, &receipt, &group, &consumer)?.3);
+    Ok(())
+}
+
 /// Author an ordinary native dependency and consumer without Cargo manifests or registry units.
 fn write_checkout(root: &Path) -> TestResult {
     std::fs::create_dir_all(root.join("dependency/src"))?;
