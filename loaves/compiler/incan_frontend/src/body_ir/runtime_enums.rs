@@ -106,6 +106,9 @@ fn outcome(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<b
         native_type_arguments: Vec::new(),
         variants,
         derives: Vec::new(),
+        // This source-verified native alias grants only linked-runtime pattern access. It does not publish a
+        // source-authored payload context or invent identities for its runtime-owned fields.
+        named_type_identities: std::collections::BTreeMap::new(),
     })
 }
 

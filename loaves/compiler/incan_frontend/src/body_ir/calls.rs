@@ -303,7 +303,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
         let slots = declared.ok_or("checked SDK factory without retained parameter slots")?;
-        if slots.iter().any(|slot| slot.is_rest) {
+        if slots.iter().any(|slot| slot.kind != IncanCallableParamKind::Normal) {
             return Err("unsupported SDK factory with rest parameters".to_owned());
         }
         let planned = plan_declared_args(callee, &slots, args)?;
