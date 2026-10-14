@@ -375,6 +375,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Refuse factory calls whose legacy parameter-order evaluation differs from Body IR's written-order facts.
+    ///
+    /// The selected factory supplies exact slots. A reordered named call needs its own retained evaluation policy;
+    /// reordering statements here would contradict ArgumentBinding's ownership contract. Ordered supplied arguments
+    /// keep the ordinary binder and declaration-owned defaults, with no extra source evaluation.
+    fn bind_checked_factory_args(
+        &mut self,
+        callee: &str,
+        declared: Option<Vec<DeclaredSlot>>,
+        args: &[ast::CallArg],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
+        let slots = declared
+            .as_deref()
+            .ok_or("checked constructor factory without retained parameter slots")?;
+        let planned = plan_declared_args(callee, slots, args)?;
+        if planned.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+            return Err("checked constructor factory argument evaluation outside declaration order".to_owned());
+        }
+        self.bind_declared_args(callee, declared, args, scope, out)
+    }
+
     /// Bind a call's arguments against a declared parameter surface, falling back to positional lowering when there
     /// is none to bind against.
     ///
@@ -1477,13 +1500,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         });
         let legacy_enumerate_argument = legacy_enumerate_argument(declaration.builtin, args);
         let args = legacy_enumerate_argument.as_deref().unwrap_or(args);
-        let (mut operands, binding) =
-            match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
-                Ok(bound) => bound,
-                Err(description) => {
-                    return self.unsupported_operand(description, scope, hir_span_value, out);
+        let factory = self.checked_nominal_factory_declaration(callee.span, span).is_some();
+        let bound = if factory {
+            self.bind_checked_factory_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
+        } else {
+            self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
+        };
+        let (mut operands, binding) = match bound {
+            Ok(bound) => bound,
+            Err(description) => {
+                if factory {
+                    return self.unsupported_typed_operand(
+                        description,
+                        self.resolve_ty(span),
+                        scope,
+                        hir_span_value,
+                        out,
+                    );
                 }
-            };
+                return self.unsupported_operand(description, scope, hir_span_value, out);
+            }
+        };
         if declaration.builtin == Some(BuiltinFnId::Print) {
             self.display_type_parameter_arguments(args, &mut operands, scope, out);
         }
