@@ -50,8 +50,16 @@ fn source_digest(
     if !visiting.insert(project.clone()) {
         return Err("authored native path dependency source graph contains a cycle".into());
     }
+    // Registry declarations remain hashed below; only path edges can contribute a local source tree.
+    let mut local_manifest = sources.manifest.clone();
+    if let Some(dependencies) = local_manifest
+        .get_mut("dependencies")
+        .and_then(toml::Value::as_table_mut)
+    {
+        dependencies.retain(|_, declaration| declaration.get("path").is_some() || declaration.is_array());
+    }
     let mut demands = BTreeMap::new();
-    for demand in local_dependency_demands(&sources.manifest, &features)? {
+    for demand in local_dependency_demands(&local_manifest, &features, &[])? {
         if demands.insert(demand.alias.clone(), demand).is_some() {
             return Err("authored native dependencies repeat a normalized Rust alias".into());
         }
@@ -283,4 +291,26 @@ mod tests {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+/// Local source identity retains conditional registry intent without requiring a native registry selection.
+#[test]
+fn authored_native_dependency_digest_retains_conditional_registry_declarations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    std::fs::create_dir(fixture.path().join("src"))?;
+    std::fs::write(fixture.path().join("src/lib.rs"), "pub fn ready() {}")?;
+    let declaration = "[project]\nname='local'\nversion='1.0.0'\n[rust]\ntype='lib'\nedition='2024'\n[dependencies]\nconditional={loaf='crates-io/web-time',version='1',target='cfg(any())'}\n";
+    std::fs::write(fixture.path().join("loaf.toml"), declaration)?;
+    let before = local_native_dependency_source_digest(fixture.path(), &[], true)?;
+    std::fs::write(
+        fixture.path().join("loaf.toml"),
+        declaration.replace("cfg(any())", "cfg(all())"),
+    )?;
+    assert_ne!(
+        before,
+        local_native_dependency_source_digest(fixture.path(), &[], true)?
+    );
+    Ok(())
 }

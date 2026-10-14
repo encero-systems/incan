@@ -56,6 +56,8 @@ impl Fixture {
             lock,
             output,
             facets: ["probe_leaf", "unselected_leaf"].map(|name| NativeLoafFacet {
+                target_predicates: Vec::new(),
+                target: None,
                 project: name.into(),
                 features: Vec::new(),
                 domain: "target".to_string(),

@@ -25,6 +25,26 @@ pub struct NativeLoafFacet {
     pub features: Vec<String>,
     /// Exact selected host or target compilation domain.
     pub domain: String,
+    /// Resolver-owned target decisions, matched against original declaration positions before consumption.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_predicates: Vec<crate::native_loaf::NativeLoafPredicate>,
+    /// Exact target for these decisions; required whenever conditional declarations are selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+/// Bind caller-resolved conditions to the actual native target before output lookup or compilation.
+pub(super) fn validate_local_facet_targets(facets: &[NativeLoafFacet], target: &str) -> Result<()> {
+    for facet in facets {
+        if facet.target.as_deref().is_some_and(|selected| selected != target)
+            || (!facet.target_predicates.is_empty() && facet.target.is_none())
+        {
+            return Err(refused(
+                "local predicate selection does not bind the requested native target",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Explicit physical inputs for native-only preparation; no ambient SDK discovery supplies missing authority.
@@ -215,6 +235,7 @@ fn prepare_native_loafs_with_document(
             "local native preparation currently requires the explicit compiler host target",
         ));
     }
+    validate_local_facet_targets(request.facets, request.target)?;
     let actual_request = ProducerRequest::capture(request, document)?;
     let mut closure = prepare_closure_in_store(
         &ClosureCompileRequest {
@@ -238,6 +259,8 @@ fn prepare_native_loafs_with_document(
             project: facet.project.clone(),
             features: facet.features.clone(),
             domain: facet.domain.clone(),
+            target_predicates: facet.target_predicates.clone(),
+            target: facet.target.clone(),
         })
         .collect::<Vec<_>>();
     compile_local_native_facets_for_profile(
@@ -312,6 +335,8 @@ mod tests {
             std::fs::write(project.join("src/lib.rs"), source)?;
         }
         let facets = ["consumer", "leaf", "marker"].map(|name| NativeLoafFacet {
+            target_predicates: Vec::new(),
+            target: None,
             project: name.into(),
             features: Vec::new(),
             domain: if name == "marker" {
@@ -436,4 +461,26 @@ mod tests {
         assert_ne!(first_identities[0].1.digest, first_identities[1].1.digest);
         Ok(())
     }
+}
+
+#[cfg(test)]
+/// New graph target evidence must match before either cold preparation or retained-output lookup.
+#[test]
+fn local_target_predicates_bind_explicit_graph_target() {
+    use crate::native_loaf::NativeLoafPredicate;
+    let mut facet = NativeLoafFacet {
+        project: "unused".into(),
+        features: vec![],
+        domain: "target".into(),
+        target: None,
+        target_predicates: vec![NativeLoafPredicate {
+            declaration: 0,
+            target: "cfg(unix)".into(),
+            matches: true,
+        }],
+    };
+    assert!(validate_local_facet_targets(&[facet.clone()], "aarch64-apple-darwin").is_err());
+    facet.target = Some("aarch64-apple-darwin".into());
+    assert!(validate_local_facet_targets(&[facet.clone()], "aarch64-apple-darwin").is_ok());
+    assert!(validate_local_facet_targets(&[facet], "x86_64-unknown-linux-gnu").is_err());
 }

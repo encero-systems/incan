@@ -72,6 +72,8 @@ fn library_rust_abi_ignores_loaded_downstream_trait_impls_issue924() -> Result<(
         let facets = projects
             .iter()
             .map(|(project, _)| NativeLoafFacet {
+                target_predicates: Vec::new(),
+                target: None,
                 project: (*project).clone(),
                 features: Vec::new(),
                 domain: "target".to_string(),

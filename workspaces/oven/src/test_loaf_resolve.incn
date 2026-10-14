@@ -356,3 +356,53 @@ def shard_array(document: JsonValue, field: str) -> list[JsonValue]:
             Ok(entries) => return entries
             Err(error) => return fail_t[list[JsonValue]](error.message())
     return fail_t[list[JsonValue]](f"missing shard field {field}")
+
+
+pub def test_selected_host_requests_survive_shard_resolution() -> None:
+    """Partial target resolution must retain host requests and keep their features independent."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    target = "[{\"name\":\"absent\",\"loaf\":\"test/absent\",\"req\":\"1\",\"features\":[],\"default-features\":false,\"optional\":false},{\"name\":\"target\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[\"extra\"],\"default-features\":false,\"optional\":false}]"
+    host = "[{\"name\":\"host\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[],\"default-features\":true,\"optional\":false}]"
+    match resolve_shard(records, target, synthetic_context(), host):
+        Err(error) => fail(error)
+        Ok(document) =>
+            assert len(shard_array(document, "units")) == 2
+            assert len(shard_array(document, "refused")) == 1
+            for unit in shard_array(document, "units"):
+                match unit.get("domain"):
+                    None => fail("resolved unit lost its domain")
+                    Some(domain) =>
+                        match domain.expect_str():
+                            Err(error) => fail(error.message())
+                            Ok(value) =>
+                                features = shard_array(unit, "features")
+                                mut names: list[str] = []
+                                for feature in features:
+                                    match feature.expect_str():
+                                        Err(error) => fail(error.message())
+                                        Ok(name) => names.append(name)
+                                if value == "host":
+                                    assert names == ["default", "std"]
+                                else:
+                                    assert value == "target"
+                                    assert names == ["extra"]
+
+
+pub def test_selected_host_exchange_refuses_ambiguous_sources() -> None:
+    """A selected host array passes unchanged; mixing it with legacy manifest discovery is refused."""
+    for source in ["{\"host-roots\":{}}", "{\"host-roots\":{},\"host-projects\":[]}", "{\"host-roots\":[],\"host-projects\":[]}"]:
+        match parse(source):
+            Err(error) => fail(error.message())
+            Ok(document) =>
+                match host_roots(document, "roots.json"):
+                    Ok(_) => fail("ambiguous host inputs were accepted")
+                    Err(_) => pass
+    match parse("{\"host-roots\":[{\"name\":\"leaf\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[],\"default-features\":true,\"optional\":false}]}"):
+        Err(error) => fail(error.message())
+        Ok(document) =>
+            match host_roots(document, "roots.json"):
+                Err(error) => fail(error)
+                Ok(source) =>
+                    selected = require_ok(read_root_requests(source, "host"))
+                    assert len(selected) == 1
+                    assert selected[0].package == "test/leaf"

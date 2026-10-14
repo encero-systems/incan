@@ -1,0 +1,103 @@
+"""Root test overlays and host transitives share existing activation and local graph selection."""
+
+from std import toml
+from std.fs import Path
+from std.json import JsonValue
+from std.testing import fail_t
+from loaf_local_graph import LocalDemand, select
+from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration
+
+
+def checked[T](result: Result[T, str]) -> T:
+    """Keep graph assertion failures in the existing test result channel."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error)
+
+
+def field(value: JsonValue, name: str) -> JsonValue:
+    """Require an exchange field before checking its shape."""
+    match value.get(name):
+        Some(item) => return item
+        None => return fail_t[JsonValue](f"missing {name}")
+
+
+def array(value: JsonValue, name: str) -> list[JsonValue]:
+    """Read a required graph array through the standard JSON shape check."""
+    return checked(field(value, name).expect_array().map_err((e) => e.message()))
+
+
+def text(value: JsonValue, name: str) -> str:
+    """Read a required graph string without accepting a missing or differently typed field."""
+    return checked(field(value, name).expect_str().map_err((e) => e.message()))
+
+
+def root(defaults: bool) -> LocalDemand:
+    """Use an authored local root whose test environment and host macro reach different children."""
+    path = checked(Path("tests/fixtures/local-test-graph/root").resolve().map_err((e) => e.message()))
+    return LocalDemand(project=path.0, domain=DependencyDomain.Target, features=[], defaults=defaults)
+
+
+def configuration() -> TargetConfiguration:
+    """Supply complete fixture cfg explicitly so a Windows-only missing child remains inactive."""
+    return TargetConfiguration(triple="x86_64-unknown-linux-gnu", cfg=Some(CfgSnapshot(flags=["unix"], values={"target_os":["linux"]})))
+
+
+pub def test_local_graph_test_overlay_is_root_only() -> None:
+    """The root gains test support; transitive test requirements stay excluded and host helpers remain host."""
+    source = checked(Path("tests/fixtures/local-test-graph/resolved-test.toml").read_text("utf-8", "strict").map_err((e) => e.message()))
+    environment = checked(toml.parse(source).map_err((e) => e.message()))
+    result = checked(select(root(true), configuration(), Some(environment)))
+    facets = array(result, "facets")
+    assert len(facets) == 5
+    for facet in facets:
+        project = text(facet, "project")
+        domain = text(facet, "domain")
+        if project.endswith("/macro") or project.endswith("/helper"):
+            assert domain == "host"
+        else:
+            assert domain == "target"
+        if project.endswith("/leaf"):
+            selected = [checked(value.expect_str().map_err((e) => e.message())) for value in array(facet, "features")]
+            assert selected == ["extra", "test-only"]
+    target = array(result, "roots")
+    host = array(result, "host-roots")
+    assert len(target) == 1
+    assert len(host) == 1
+    assert text(target[0], "loaf") == "test/leaf"
+    assert checked(field(target[0], "default-features").expect_bool().map_err((e) => e.message())) == false
+    assert checked(field(host[0], "default-features").expect_bool().map_err((e) => e.message())) == true
+
+
+pub def test_local_graph_normal_selection_excludes_root_test_environment() -> None:
+    """Without explicit root environment or defaults, optional and development-only children do not enter the graph."""
+    result = checked(select(root(false), configuration()))
+    assert len(array(result, "facets")) == 3
+    assert len(array(result, "roots")) == 0
+    assert len(array(result, "host-roots")) == 1
+
+
+pub def test_local_graph_overlay_does_not_invent_root_features() -> None:
+    """An environment makes the dependency mandatory without enabling the root's optional default feature."""
+    source = checked(Path("tests/fixtures/local-test-graph/resolved-test.toml").read_text("utf-8", "strict").map_err((e) => e.message()))
+    environment = checked(toml.parse(source).map_err((e) => e.message()))
+    result = checked(select(root(false), configuration(), Some(environment)))
+    for facet in array(result, "facets"):
+        if text(facet, "project").endswith("/leaf"):
+            selected = [checked(value.expect_str().map_err((e) => e.message())) for value in array(facet, "features")]
+            assert selected == ["test-only"]
+
+
+pub def test_local_graph_retains_inactive_original_target_decisions() -> None:
+    """The graph retains the absent child's original predicate position without trying to read its source."""
+    result = checked(select(root(false), configuration()))
+    for facet in array(result, "facets"):
+        assert text(facet, "target") == "x86_64-unknown-linux-gnu"
+        decisions = array(facet, "target_predicates")
+        if text(facet, "project").endswith("/root"):
+            assert len(decisions) == 1
+            assert checked(field(decisions[0], "declaration").expect_int().map_err((e) => e.message())) == 0
+            assert text(decisions[0], "target") == "cfg(windows)"
+            assert checked(field(decisions[0], "matches").expect_bool().map_err((e) => e.message())) == false
+        else:
+            assert len(decisions) == 0
