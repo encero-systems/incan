@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3586 | 246 | 431 |
+| keep | 3588 | 246 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1978 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8558** | **702** | **1494** |
+| **Total** | **8560** | **702** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1819,19 +1819,19 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `assignment_preserves_move_and_copy_without_clone` | retire | `dies` | asserts the assignment conversion policy over hand-built IR moves and Copy reads; a conversion-policy invariant of the dying emitter. | legacy_ir | - |
 | `assignment_preserves_string_and_borrowed_materialization_precedence` | retire | `dies` | asserts the assignment conversion policy's precedence over hand-built IR literals and borrows; a conversion-policy invariant of the dying emitter. | legacy_ir | - |
 
-### `loaves/compiler/incan_format` (193 tests in 9 files: keep 193)
+### `loaves/compiler/incan_format` (195 tests in 9 files: keep 195)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_format/src/config.rs` | 24 | 275 | 206 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/formatter/tests.rs` | 11 | 327 | 327 | keep | - | - | - | #1561 | parser 7, formatter 11 | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 20 | 488 | 488 | keep | - | - | - | #1561 | formatter 18 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 22 | 556 | 556 | keep | - | - | - | #1561 | formatter 20 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/declarations.rs` | 28 | 755 | 755 | keep | - | - | - | #1561 | formatter 28 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs` | 27 | 455 | 455 | keep | - | - | - | #1561 | checker 1, parser 1, formatter 21 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 24 | 658 | 658 | keep | - | - | - | #1561 | parser 2, formatter 24 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 15 | 306 | 306 | keep | - | - | - | #1561 | formatter 15 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 358 | 334 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
 ### `loaves/compiler/incan_frontend` (2203 tests in 121 files: keep 2190, unaffected 13)
 
