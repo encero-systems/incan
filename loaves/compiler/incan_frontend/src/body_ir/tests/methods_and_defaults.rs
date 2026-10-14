@@ -61,11 +61,11 @@ fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// A consuming carrier read is materialized before a default can mutate the original mutable parameter.
+/// A consuming carrier field is materialized before a default can mutate its owner in place.
 #[test]
 fn carrier_receiver_snapshot_precedes_default_effects() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "def reset(mut value: Option[str]) -> str:\n  value = Some(\"new\")\n  return \"fallback\"\n\ndef choose(mut value: Option[str]) -> str:\n  return value.unwrap_or(reset(value))\n",
+        "model Holder:\n  value: Option[str]\n\ndef reset(mut holder: Holder) -> str:\n  holder.value = Some(\"new\")\n  return \"fallback\"\n\ndef choose(mut holder: Holder) -> str:\n  return holder.value.unwrap_or(reset(holder))\n",
         &["app", "carrier_order"],
     )?;
     let body = body_named(&module, "choose")?;
