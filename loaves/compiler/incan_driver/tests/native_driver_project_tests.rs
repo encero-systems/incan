@@ -650,36 +650,19 @@ fn newtype_union_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
-/// Capturing callbacks advance past unresolved channels and retain the separate closure-result carrier refusal.
+/// Capturing callbacks preserve all six Result combinators with the complete original's legacy output.
 #[test]
 fn capturing_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let root = fixture.scratch("capturing-result-callbacks")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("capturing-result-callbacks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_as_result_combinator_callbacks.incn"
         ),
-    )?;
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &root.join("native"),
-        &fixture.sysroot,
-        &closure,
     )
-    .output()?;
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains(
-            "unsupported Body IR closure result outside scalars, owned text, collections and retained model values"
-        ),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    Ok(())
 }
 
 /// Explicitly typed Result constructor rebindings keep their local carrier and repeated receiver use.
@@ -1787,6 +1770,18 @@ def main() -> None:
     )
 }
 
+/// Captured environments transfer either Result payload and remain usable on subsequent calls.
+#[test]
+fn captured_result_values_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("captured-result-values")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n    factor = 2\n    suffix = \"!\"\n    good: (int) -> Result[int, str] = (value) => Ok(value * factor)\n    bad: (str) -> Result[int, str] = (message) => Err(message + suffix)\n    println(good(21).unwrap_or(0))\n    println(good(1).unwrap_or(0))\n    match bad(\"x\"):\n        Ok(value) => println(value)\n        Err(message) => println(message)\n",
+    )
+}
 /// Free and method factories evaluate once before their returned callable's arguments and retain their captures.
 #[test]
 fn returned_callable_evaluation_order_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
