@@ -1,0 +1,59 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_format = { loaf = "incan_format", path = "../incan_format" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", optional = true, path = "../incan_semantics_stdlib" }
+incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
+quote = { loaf = "crates-io/quote", version = "1.0" }
+rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../rust_inspect" }
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+syn = { features = ["full", "parsing", "printing"], loaf = "crates-io/syn", version = "2.0" }
+tempfile = { loaf = "crates-io/tempfile", optional = true, version = "3" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+wasmtime = { default-features = false, features = ["cranelift", "runtime", "std"], loaf = "crates-io/wasmtime", version = "36.0.17" }
+wasmtime-wasi = { default-features = false, features = ["preview1"], loaf = "crates-io/wasmtime-wasi", version = "36.0.17" }
+
+[project]
+description = "The Incan compiler frontend: parsed modules, symbols, the typechecker, Body IR and the provider contract"
+license = "Apache-2.0"
+name = "incan_frontend"
+private = true
+version = "0.6.0-dev.6"
+
+[project.features]
+default = [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators",
+]
+rust_inspect = ["rust_inspect/inspector"]
+std_async = [
+    "dep:incan_semantics_stdlib",
+    "incan_semantics_stdlib/std_async",
+]
+std_decorators = [
+    "dep:incan_semantics_stdlib",
+    "incan_semantics_stdlib/std_decorators",
+]
+std_testing = [
+    "dep:incan_semantics_stdlib",
+    "incan_semantics_stdlib/std_testing",
+]
+test_support = [
+    "dep:tempfile",
+    "rust_inspect/test_fixtures",
+]
+
+[rust]
+edition = "2024"
+name = "incan_frontend"
+type = "lib"

@@ -3,7 +3,7 @@
 from rust::std::fs import File as RustFile, OpenOptions
 from rust::std::io import ErrorKind
 from rust::std::path import Path as RustPath
-from rust::rustix::fs @ "1.1" with ["fs"] import FlockOperation, flock
+from rust::rustix::fs import FlockOperation, flock
 
 
 pub type FileLock = newtype RustFile:

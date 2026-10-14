@@ -1547,7 +1547,9 @@ mod tests {
             toolchain: graph.graph().selection.intent.toolchain.clone(),
             executable_owner: selected_graph_sha256(b"compiler owner"),
             executable_digest: selected_graph_sha256(b"compiler"),
+            virtual_toolchain: None,
             objects: vec![PublisherExecutionObjectReceipt {
+                reads: Vec::new(),
                 name: "fixture.o".to_string(),
                 logical_argv: vec!["input:source".to_string(), "output:fixture.o".to_string()],
                 digest: selected_graph_sha256(b"fixture object"),

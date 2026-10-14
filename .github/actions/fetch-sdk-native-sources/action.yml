@@ -1,0 +1,63 @@
+name: Fetch SDK native sources
+description: >-
+  Provide SDK preparation with the incan.pub index the compiler pins and the source Loaf archives its resolution locks
+  name (the standard library's seed, its vocabulary companions, the compiler suite and its foundation), then export
+  their locations as INCAN_SDK_NATIVE_INDEX and INCAN_SDK_NATIVE_BLOBS.
+runs:
+  using: composite
+  steps:
+    # The compiler pins exact index commits and reads them through Git, so the checkout keeps the branch's history.
+    - name: Check out the incan.pub index
+      uses: actions/checkout@v5
+      with:
+        repository: encero-systems/incan.pub
+        ref: index
+        fetch-depth: 0
+        path: target/incan_sdk_native_index
+        persist-credentials: false
+    - name: Restore source Loaf archives
+      uses: actions/cache@v5
+      with:
+        path: target/incan_sdk_native_blobs
+        key: >-
+          incan-sdk-native-blobs-v1-${{ hashFiles('loaves/stdlib/sdk-lock.json', 'loaves/stdlib/vocab-wasm-lock.json',
+          'workspaces/oven/compiler-suite-native-lock.json',
+          'loaves/oven/oven_rustc/src/fixtures/compiler_suite_foundation.lock.json') }}
+    # Archives are public GHCR blobs addressed by the digest the seed records. Each one is checked against that digest
+    # here, and preparation verifies it again before reading it.
+    - name: Fetch missing source Loaf archives
+      shell: bash
+      run: |
+        set -euo pipefail
+        blobs="$GITHUB_WORKSPACE/target/incan_sdk_native_blobs/sha256"
+        mkdir -p "$blobs"
+        fetched=0
+        while IFS=$'\t' read -r loaf digest; do
+          destination="$blobs/${digest#sha256:}.tar"
+          [ -f "$destination" ] && continue
+          repository="$(printf 'encero-systems/incan.pub/%s' "$loaf" | tr '[:upper:]' '[:lower:]')"
+          token="$(curl -fsS --retry 5 --retry-all-errors \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${repository}:pull" | jq -r .token)"
+          curl -fsSL --retry 5 --retry-all-errors -H "Authorization: Bearer ${token}" -o "$destination.partial" \
+            "https://ghcr.io/v2/${repository}/blobs/${digest}"
+          observed="sha256:$(shasum -a 256 "$destination.partial" | awk '{print $1}')"
+          if [ "$observed" != "$digest" ]; then
+            echo "::error::${loaf}: GHCR returned bytes other than ${digest}"
+            exit 1
+          fi
+          mv "$destination.partial" "$destination"
+          fetched=$((fetched + 1))
+        done < <(
+          jq -r '.units[] | [.loaf, .archive_digest] | @tsv' \
+            loaves/stdlib/sdk-lock.json \
+            loaves/stdlib/vocab-wasm-lock.json \
+            workspaces/oven/compiler-suite-native-lock.json \
+            loaves/oven/oven_rustc/src/fixtures/compiler_suite_foundation.lock.json \
+            | sort -u
+        )
+        echo "fetched ${fetched} source Loaf archives into ${blobs}"
+    - name: Export the native source locations
+      shell: bash
+      run: |
+        printf 'INCAN_SDK_NATIVE_INDEX=%s\n' "$GITHUB_WORKSPACE/target/incan_sdk_native_index" >> "$GITHUB_ENV"
+        printf 'INCAN_SDK_NATIVE_BLOBS=%s\n' "$GITHUB_WORKSPACE/target/incan_sdk_native_blobs/sha256" >> "$GITHUB_ENV"

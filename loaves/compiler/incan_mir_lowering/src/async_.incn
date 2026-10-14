@@ -1,0 +1,252 @@
+"""Deferred source futures whose entire admitted call graph completes in its first poll."""
+
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import (
+    PlanType,
+    EnumDeclaration,
+    EnumVariant,
+    Function,
+    ExternalFunction,
+    Local,
+    Statement,
+    BasicBlock,
+    SourceSpan,
+    Place,
+    Projection,
+    Operand,
+    RvalueKind,
+    CalleeKind,
+    Constant,
+    BinaryOp,
+    TerminatorKind,
+    Unwind,
+    Callee,
+)
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
+from classes import function_name, frame_type
+from frame import Builder, temporary, read_place, literal, forget_moved_arguments, forget_owned, terminate_call
+from models import place_type
+
+
+def outputs(module: &BodyIrModule) -> list[RustType]:
+    """Retain each source future output once, independently of any call site's spelling."""
+    mut retained: list[RustType] = []
+    for body in module.bodies:
+        if body.is_async and str(body.name) != "main" and body.return_type.clone() not in retained:
+            retained.append(body.return_type.clone())
+    return retained
+
+
+def carriers(module: &BodyIrModule, output: &RustType) -> list[int]:
+    """Select constructor variants in the canonical retained body order."""
+    mut retained: list[int] = []
+    for index in range(len(module.bodies)):
+        body = module.bodies[index]
+        if body.is_async and str(body.name) != "main" and body.return_type == output.clone():
+            retained.append(index)
+    return retained
+
+
+pub def future_type(
+    module: &BodyIrModule,
+    ty: &RustType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[Option[PlanType], str]:
+    """Map frontend-owned Awaitable carriers to deferred captures; external futures stay refused."""
+    match ty:
+        RustType.Generic(base=base, args=args) =>
+            if str(base) != "Awaitable":
+                return Ok(None)
+            if len(args) != 1:
+                return Err("unsupported Body IR async future output arity")
+            for index in range(len(outputs(module))):
+                if outputs(module)[index] == args[0]:
+                    offset = len(module.enum_declarations) + len(intrinsics)
+                    return Ok(Some(PlanType.Enum(offset + index, f"__incan_ready_future_{index}")))
+            return Err("unsupported Body IR external async future")
+        _ => return Ok(None)
+
+
+pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
+    """Keep deferred evaluation symbols separate from the synchronous process entrypoint."""
+    name = function_name(module, body)
+    if body.is_async:
+        return f"__incan_ready_body_{name}"
+    return name
+
+
+def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
+    """Retain by-value captures; caller borrows need a native future lifetime and are refused."""
+    mut fields: list[PlanType] = []
+    for parameter in body.params:
+        ty = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+        match ty:
+            PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR async borrowed receiver capture")
+            PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR async mutable receiver capture")
+            PlanType.List(_leaf, _depth) => return Err("unsupported Body IR async borrowed list capture")
+            PlanType.Set(_leaf) => return Err("unsupported Body IR async borrowed set capture")
+            PlanType.Dict(_key, _value) => return Err("unsupported Body IR async borrowed dictionary capture")
+            _ => pass
+        if parameter.mutable and ty == PlanType.String:
+            return Err("unsupported Body IR async mutable string capture")
+        fields.append(ty)
+    return Ok(fields)
+
+
+pub def future_declarations(
+    module: &BodyIrModule,
+    file: str,
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[EnumDeclaration], str]:
+    """Inject capture layouts without Clone: a source future is owned and consumed once."""
+    for body in module.bodies:
+        if not body.is_async:
+            continue
+        match body.canonical:
+            Some(identity) =>
+                if identity.kind != SemanticSourceTargetKind.Function:
+                    return Err("unsupported Body IR async method future")
+            None => return Err("unsupported Body IR async body without canonical identity")
+    mut declarations: list[EnumDeclaration] = []
+    for index in range(len(outputs(module))):
+        mut variants: list[EnumVariant] = []
+        for body_index in carriers(module, outputs(module)[index]):
+            variants.append(
+                EnumVariant(name=f"F{body_index}", fields=capture_types(module, module.bodies[body_index], intrinsics)?),
+            )
+        declarations.append(
+            EnumDeclaration(
+                name=f"__incan_ready_future_{index}",
+                public=false,
+                variants=variants,
+                derives=[],
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(declarations)
+
+
+pub def construct_future(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    body: &Body,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Capture evaluated arguments now, keeping every source body effect deferred until await."""
+    if str(body.name) == "main":
+        return Err("unsupported Body IR calling async main")
+    _ = capture_types(module, body, builder.intrinsics)?
+    for index in range(len(outputs(module))):
+        if outputs(module)[index] != body.return_type.clone():
+            continue
+        bodies = carriers(module, body.return_type)
+        for variant in range(len(bodies)):
+            if module.bodies[bodies[variant]].canonical == body.canonical:
+                owner = len(module.enum_declarations) + len(builder.intrinsics) + index
+                forget_moved_arguments(builder, arguments)
+                builder.emit(plan_assign(destination, RvalueKind.Enum(owner, variant, arguments), span))
+                builder.owned.append(destination.local)
+                return Ok(None)
+    return Err("unsupported Body IR unretained async call identity")
+
+
+pub def await_future(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    future: Place,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch a first-poll-ready future by its native discriminant, consuming its retained captures."""
+    match place_type(builder.locals, future):
+        PlanType.Enum(owner, _name) =>
+            index = owner - len(module.enum_declarations) - len(builder.intrinsics)
+            if index < 0 or index >= len(outputs(module)):
+                return Err("unsupported Body IR Await outside source future")
+            bodies = carriers(module, outputs(module)[index])
+            tag = temporary(builder, PlanType.EnumTag, span)
+            builder.emit(plan_assign(tag, RvalueKind.Discriminant(future), span))
+            number = temporary(builder, PlanType.Int, span)
+            builder.emit(plan_assign(number, RvalueKind.TagToInt(read_place(tag, false, span)), span))
+            forget_owned(builder, future.local)
+            after = builder.new_block(span)
+            for variant in range(len(bodies)):
+                selected = builder.new_block(span)
+                next_variant = builder.new_block(span)
+                condition = temporary(builder, PlanType.Bool, span)
+                builder.emit(
+                    plan_assign(
+                        condition,
+                        RvalueKind.Binary(
+                            BinaryOp.Equal,
+                            read_place(number, false, span),
+                            literal(Constant.Int(variant), span),
+                        ),
+                        span,
+                    ),
+                )
+                builder.finish(
+                    TerminatorKind.SwitchBool(read_place(condition, false, span), next_variant, selected),
+                    span,
+                )
+                builder.current = selected
+                body = module.bodies[bodies[variant]]
+                mut arguments: list[Operand] = []
+                fields = capture_types(module, body, builder.intrinsics)?
+                for slot in range(len(fields)):
+                    arguments.append(
+                        read_place(
+                            Place(
+                                local=future.local,
+                                projection=Projection.VariantField(variant, slot, fields[slot]),
+                                span=span,
+                            ),
+                            true,
+                            span,
+                        ),
+                    )
+                terminate_call(builder, CalleeKind.Planned(evaluator_name(module, body)), arguments, destination, span)
+                builder.finish(TerminatorKind.Goto(after), span)
+                builder.current = next_variant
+            builder.finish(TerminatorKind.Unreachable, span)
+            builder.current = after
+            match place_type(builder.locals, destination):
+                PlanType.String => builder.owned.append(destination.local)
+                PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
+                PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
+                PlanType.List(_leaf, _depth) => builder.owned.append(destination.local)
+                PlanType.Set(_leaf) => builder.owned.append(destination.local)
+                PlanType.Dict(_key, _value) => builder.owned.append(destination.local)
+                _ => pass
+            return Ok(None)
+        _ => return Err("unsupported Body IR Await without future carrier")
+
+
+pub def async_entry(body: Function) -> tuple[Function, ExternalFunction]:
+    """Build the process shim that runs the native body inside legacy's executor and error boundary."""
+    span = body.span
+    callback = plan_place(1, span)
+    mut blocks: list[BasicBlock] = []
+    callee = Callee(kind=CalleeKind.External("incan_native_runtime::run_async_entry"), span=span)
+    call = TerminatorKind.Call(callee, [read_place(callback, false, span)], plan_place(0, span), 1, Unwind.Continue)
+    statements = [plan_assign(callback, RvalueKind.UnitFunction(body.name), span)]
+    blocks.append(plan_block(statements, call, span))
+    blocks.append(plan_block([], TerminatorKind.Return, span))
+    entry = Function(
+        name="main",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=span), Local(ty=PlanType.UnitFunction, span=span)],
+        blocks=blocks,
+        span=span,
+    )
+    external = ExternalFunction(
+        path="incan_native_runtime::run_async_entry",
+        parameters=[PlanType.UnitFunction],
+        return_type=PlanType.Unit,
+        span=span,
+    )
+    return (entry, external)

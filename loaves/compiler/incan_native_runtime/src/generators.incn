@@ -1,0 +1,13 @@
+"""Safe polling of the existing lazy runtime generator."""
+
+from std.derives.collection import Iterator
+from std.derives.copying import Clone
+
+
+pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[T]) -> bool:
+    """Poll once, appending one owned item on success and leaving output unchanged on exhaustion."""
+    match values.__next__():
+        Some(value) =>
+            output.append(value)
+            return true
+        None => return false

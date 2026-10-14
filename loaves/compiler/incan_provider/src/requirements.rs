@@ -15,7 +15,7 @@ use incan_lang::lang::stdlib::{StdlibExtraCrateDep, StdlibExtraCrateSource};
 
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::error::{ProviderError, ProviderResult};
-use crate::vocab_extraction::collect_library_vocab_metadata_for_parser;
+use crate::vocab_extraction::{collect_library_vocab_metadata_for_check, collect_library_vocab_metadata_for_parser};
 use crate::{PackageFeaturePlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_frontend::ast::ImportKind;
 use incan_frontend::library_manifest::LibraryManifest;
@@ -65,6 +65,8 @@ pub enum DependencyManifestMode {
     /// Materialize direct-Rustc caller-owned libraries for a normal Oven consumer.
     OvenArtifacts,
     ParserOnly,
+    /// Read checked source context and prepared vocabulary metadata without creating native artifacts.
+    CheckMetadata,
 }
 
 impl DependencyManifestMode {
@@ -73,7 +75,7 @@ impl DependencyManifestMode {
         match self {
             Self::FullArtifacts => Some(LibraryDependencyPreparation::LegacyManifestOnly),
             Self::OvenArtifacts => Some(LibraryDependencyPreparation::OvenDirectRustc),
-            Self::ParserOnly => None,
+            Self::ParserOnly | Self::CheckMetadata => None,
         }
     }
 
@@ -92,11 +94,11 @@ pub enum LibraryDependencyPreparation {
     OvenDirectRustc,
 }
 
-/// Decide whether session construction is inside the explicitly named legacy-Cargo provider publisher.
+/// Decide whether session construction may prepare a missing native SDK inventory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SdkInventorySource {
-    /// Existing compatibility behavior for commands that still explicitly own legacy artifact preparation.
-    PrepareLegacyCargoIfAbsent,
+    /// Prepare the sealed native SDK publication when no current inventory exists.
+    PrepareNativeIfAbsent,
     /// Oven consumer mode: read an installed/prepared inventory only and never create Cargo state on a cache miss.
     DiscoverOnly,
 }
@@ -113,6 +115,23 @@ pub enum SdkInventorySource {
 pub fn parser_only_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
+) -> ProviderResult<LibraryManifestIndex> {
+    source_library_manifest_index(manifest, active_dependencies, false)
+}
+
+/// Load source parser context for check using only compatible already-prepared vocabulary metadata.
+pub fn checked_source_library_manifest_index(
+    manifest: &ProjectManifest,
+    active_dependencies: &BTreeSet<String>,
+) -> ProviderResult<LibraryManifestIndex> {
+    source_library_manifest_index(manifest, active_dependencies, true)
+}
+
+/// Share dependency authority selection while distinguishing parser preparation from cache-only checking.
+fn source_library_manifest_index(
+    manifest: &ProjectManifest,
+    active_dependencies: &BTreeSet<String>,
+    cache_only: bool,
 ) -> ProviderResult<LibraryManifestIndex> {
     let existing_index = LibraryManifestIndex::from_project_manifest_dependencies(
         manifest,
@@ -137,7 +156,7 @@ pub fn parser_only_library_manifest_index(
             {
                 entries.insert(
                     dependency_key.clone(),
-                    parser_only_library_manifest_entry(dependency_key, &dependency.path)?,
+                    parser_only_library_manifest_entry(dependency_key, &dependency.path, cache_only)?,
                 );
             }
             Some(entry) => {
@@ -154,6 +173,7 @@ pub fn parser_only_library_manifest_index(
 fn parser_only_library_manifest_entry(
     dependency_key: &str,
     dependency_root: &Path,
+    cache_only: bool,
 ) -> ProviderResult<LibraryManifestIndexEntry> {
     let dependency_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
     let manifest_path = dependency_root.join(LOAF_MANIFEST_FILENAME);
@@ -183,7 +203,12 @@ fn parser_only_library_manifest_entry(
     let generated_cargo_target_dir = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
-    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(
+    let collect = if cache_only {
+        collect_library_vocab_metadata_for_check
+    } else {
+        collect_library_vocab_metadata_for_parser
+    };
+    if let Some(vocab_extraction) = collect(
         &dependency_manifest,
         &project_root,
         generated_cargo_target_dir.as_deref(),
@@ -477,7 +502,7 @@ pub fn collect_project_requirements(
             continue;
         };
         for dep in namespace.extra_crate_deps {
-            let spec = dependency_spec_from_stdlib_dep(dep);
+            let spec = dependency_spec_from_stdlib_dep(dep)?;
             if matches!(spec.source, DependencySource::Path { .. }) {
                 merge_sdk_path_dependency(
                     &mut requirements.sdk_path_dependencies,
@@ -539,6 +564,15 @@ pub fn collect_project_requirements(
 /// or features.
 pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
+    // Native provider receipts already bind the complete SDK support closure. Its source Cargo packages cannot
+    // become another semantic authority or be read to establish the same support identity a second time.
+    if dependencies.iter().any(|dependency| {
+        matches!(&dependency.source,
+        DependencySource::Path { path } if path.join("native-provider.json").is_file())
+    }) {
+        dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+        return dependencies;
+    }
     let toolchain_crates = incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
         .into_iter()
         .chain(requirements.stdlib_facets.iter().map(String::as_str));
@@ -579,37 +613,67 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> ProviderResult<D
             "stdlib dependency metadata for `{crate_name}` is missing from the registry"
         ))
     })?;
-    Ok(dependency_spec_from_stdlib_dep(dep))
+    dependency_spec_from_stdlib_dep(dep)
 }
 
 /// Build the exact dependency specification one stdlib dependency requirement contributes to a generated root.
 ///
 /// Checked publisher manifests that declare the same crate must agree with this specification by dependency meaning.
 /// Equivalent version-range spellings unify to one stable spelling; every other identity field must agree exactly.
-pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
+pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> ProviderResult<DependencySpec> {
     match dep.source {
-        StdlibExtraCrateSource::Version(version) => DependencySpec {
-            crate_name: dep.crate_name.to_string(),
-            version: Some(version.to_string()),
-            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: stdlib::extra_crate_package_alias(dep.crate_name).map(str::to_string),
-        },
-        StdlibExtraCrateSource::Path(relative_path) => DependencySpec {
+        StdlibExtraCrateSource::Declared => declared_stdlib_dependency(dep.crate_name)?.ok_or_else(|| {
+            ProviderError::failure(format!("stdlib Loaf manifests do not declare `{}`", dep.crate_name))
+        }),
+        StdlibExtraCrateSource::Path(relative_path) => Ok(DependencySpec {
             crate_name: dep.crate_name.to_string(),
             version: None,
-            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
+            features: Vec::new(),
             default_features: true,
             source: DependencySource::Path {
                 path: oven_model::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
             },
             optional: false,
             package: None,
-        },
+        }),
     }
-    .normalized()
+}
+
+/// Resolve a namespace's named registry dependency from embedded component Loaf declarations.
+///
+/// Shared dependencies union their declared features. Incompatible requirements or policy refuse rather than
+/// silently selecting whichever component happens to precede another in the embedded inventory.
+/// Local facets are selected separately from admitted native units; registry lookup never probes their source paths.
+pub fn declared_stdlib_dependency(crate_name: &str) -> ProviderResult<Option<DependencySpec>> {
+    let mut merged: Vec<DependencySpec> = Vec::new();
+    for (component, content) in stdlib::COMPONENT_MANIFESTS {
+        let dependencies =
+            oven_model::manifest::registry_loaf_dependencies_from_str(content, Path::new("loaf.toml"))
+                .map_err(|error| ProviderError::failure(format!("stdlib component `{component}`: {error}")))?;
+        if let Some(entries) = dependencies.get(crate_name) {
+            let [entry] = entries.as_slice() else {
+                return Err(ProviderError::failure(format!(
+                    "stdlib component `{component}` dependency `{crate_name}` requires target selection"
+                )));
+            };
+            if entry.target.is_some() {
+                return Err(ProviderError::failure(format!(
+                    "stdlib component `{component}` dependency `{crate_name}` requires target selection"
+                )));
+            }
+            let mut candidate = entry.spec.clone();
+            if let Some(existing) = merged.first_mut() {
+                let mut features = existing.features.clone();
+                features.extend(candidate.features.iter().cloned());
+                features.sort();
+                features.dedup();
+                existing.features = features.clone();
+                candidate.features = features;
+            }
+            merge_requirement_dependency(&mut merged, candidate, format!("stdlib component `{component}`"))?;
+        }
+    }
+    Ok(merged.into_iter().next())
 }
 
 /// Merge a dependency requirement into a collection of requirements.
@@ -645,6 +709,24 @@ fn retain_canonical_requirement_spelling(existing: &mut DependencySpec, candidat
 #[cfg(test)]
 mod semantic_requirement_identity_tests {
     use super::*;
+    /// Dependency policy comes from the converted component manifests, including adopted package aliases.
+    #[test]
+    fn amended_loaf_stdlib_requirements_use_declared_policy() -> ProviderResult<()> {
+        let serde = declared_stdlib_dependency("serde")?.ok_or_else(|| ProviderError::failure("missing serde"))?;
+        assert_eq!(serde.source, DependencySource::Registry);
+        assert!(serde.features.iter().any(|feature| feature == "derive"));
+        assert!(declared_stdlib_dependency("incan_std_core")?.is_none());
+        let bzip = declared_stdlib_dependency("bzip2")?.ok_or_else(|| ProviderError::failure("missing bzip2"))?;
+        assert_eq!(bzip.version.as_deref(), Some("0.6"));
+        let md5 = declared_stdlib_dependency("md5")?.ok_or_else(|| ProviderError::failure("missing md5"))?;
+        assert_eq!(md5.package.as_deref(), Some("md-5"));
+        let hmac = declared_stdlib_dependency("hmac")?.ok_or_else(|| ProviderError::failure("missing hmac"))?;
+        assert_eq!(hmac.features, ["reset"]);
+        let tokio = declared_stdlib_dependency("tokio")?.ok_or_else(|| ProviderError::failure("missing tokio"))?;
+        assert_eq!(tokio.features, ["macros", "net", "rt-multi-thread", "sync", "time"]);
+        assert!(declared_stdlib_dependency("not_declared")?.is_none());
+        Ok(())
+    }
 
     #[test]
     fn equivalent_requirement_merges_choose_one_stable_spelling() -> ProviderResult<()> {

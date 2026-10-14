@@ -3,7 +3,7 @@
 use crate::error::PlanError;
 use crate::plan::SourceSpan;
 use rustc_span::source_map::SourceMap;
-use rustc_span::{BytePos, SourceFile, Span, SyntaxContext};
+use rustc_span::{BytePos, DUMMY_SP, SourceFile, Span, SyntaxContext};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -25,7 +25,12 @@ impl<'a> Sources<'a> {
     }
 
     /// Map a character column into its source line's byte offset, refusing out-of-range coordinates.
+    /// Published package identities have no source file; preserve that absence with a dummy span instead of loading
+    /// a canonical identity as a path or attributing the declaration to the consumer.
     pub fn span(&self, location: &SourceSpan) -> Result<Span, PlanError> {
+        if location.file.starts_with("pub::") {
+            return Ok(DUMMY_SP);
+        }
         let invalid = || PlanError::Invalid {
             function: location.file.clone(),
             reason: "source coordinate is outside the retained file".into(),

@@ -10,6 +10,8 @@ inputs:
 runs:
   using: composite
   steps:
+    # Reusing a handed-off SDK still reads the pinned index and source archives to validate the native units it holds.
+    - uses: ./.github/actions/fetch-sdk-native-sources
     - name: Download this run's SDK provider store
       uses: actions/download-artifact@v7
       with:

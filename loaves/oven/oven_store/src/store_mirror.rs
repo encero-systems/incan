@@ -83,7 +83,8 @@ where
         if !mirror.join("entries").is_dir() {
             continue;
         }
-        let mut candidates = PublishedOvenStore::new(mirror).select_payloads_matching_for_execution(&matches)?;
+        let mut candidates =
+            PublishedOvenStore::new(mirror).select_payloads_matching_for_execution(&matches, |_, _| true)?;
         if candidates.is_empty() {
             continue;
         }
@@ -151,9 +152,10 @@ where
             continue;
         }
         let mut candidates = PublishedOvenStore::new(mirror)
-            .select_payloads_matching_for_execution(|manifest| {
-                manifest.kind == kind && manifest.intent == receipt.intent
-            })?
+            .select_payloads_matching_for_execution(
+                |manifest| manifest.kind == kind && manifest.intent == receipt.intent,
+                |_, _| true,
+            )?
             .into_iter()
             .filter(|candidate| matches(&candidate.manifest, &candidate.payload))
             .collect::<Vec<_>>();
@@ -321,13 +323,14 @@ mod tests {
         let published = publish_into_mirror(mirror_root.path(), project.path(), b"closure payload")?;
         let local = OvenStore::new(local_root.path(), limits());
 
-        let before = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let before = local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert!(before.is_empty(), "the local store starts empty");
 
         let imported = import_matching_from_mirrors(&local, &[mirror_root.path().to_path_buf()], None, |m| {
             m.identity == published.identity
         })?;
-        let selected = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let selected =
+            local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert_eq!(imported.len(), 1, "one entry was imported");
         assert_eq!(imported[0].mirror, mirror_root.path());
         assert_eq!(
@@ -350,7 +353,7 @@ mod tests {
         })?;
         assert_eq!(imported_again.len(), 1);
         assert_eq!(imported_again[0].manifest.identity, published.identity);
-        let again = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let again = local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert_eq!(again.len(), 1);
         Ok(())
     }
@@ -376,7 +379,7 @@ mod tests {
             matches!(result, Err(OvenStoreError::Integrity { .. })),
             "got {result:?}"
         );
-        let after = local.select_payloads_matching_for_execution(|m| m.identity == published.identity)?;
+        let after = local.select_payloads_matching_for_execution(|m| m.identity == published.identity, |_, _| true)?;
         assert!(after.is_empty(), "a refused import leaves no entry behind");
         Ok(())
     }
@@ -489,7 +492,8 @@ mod tests {
                 .is_file(),
             "the materialized closure was copied"
         );
-        let selected = local.select_payloads_matching_for_execution(|m| m.identity == admitted.identity)?;
+        let selected =
+            local.select_payloads_matching_for_execution(|m| m.identity == admitted.identity, |_, _| true)?;
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].payload, br#"{"key":"k1"}"#);
 
@@ -550,7 +554,7 @@ mod tests {
             "one content is imported once, whatever it was republished as"
         );
         assert_eq!(imported[0].manifest.receipt_identity, receipt.identity);
-        let held = local.select_payloads_matching_for_execution(|_| true)?;
+        let held = local.select_payloads_matching_for_execution(|_| true, |_, _| true)?;
         assert_eq!(held.len(), 1);
         Ok(())
     }
@@ -580,7 +584,7 @@ mod tests {
             matches!(result, Err(OvenStoreError::Integrity { .. })),
             "got {result:?}"
         );
-        let after = local.select_payloads_matching_for_execution(|_| true)?;
+        let after = local.select_payloads_matching_for_execution(|_| true, |_, _| true)?;
         assert!(after.is_empty(), "a refused import leaves no entry behind");
         Ok(())
     }

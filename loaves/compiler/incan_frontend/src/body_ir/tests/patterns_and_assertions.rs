@@ -80,6 +80,41 @@ fn nominal_pattern_without_checker_identity_stays_an_unresolved_fallback() -> Re
     Ok(())
 }
 
+/// An RFC 021 alias names a model pattern's field the way the pattern wrote it; Body IR records the declared canonical
+/// field name, selected by the field identity the checker resolved, in both the pattern and its field place.
+#[test]
+fn nominal_pattern_names_an_aliased_field_canonically() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "model Plan:\n",
+        "  type_ [alias=\"type\"]: str\n",
+        "  name: str\n",
+        "\n",
+        "def describe(plan: Plan) -> str:\n",
+        "  match plan:\n",
+        "    Plan(type=\"premium\") => return \"premium\"\n",
+        "    _ => return \"other\"\n",
+    );
+    let module = build(source, &["m", "aliased_pattern_field"])?;
+    let pattern = body_named(&module, "describe")?
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => arms.first().map(|arm| &arm.pattern),
+            _ => None,
+        })
+        .ok_or("fixture must lower the match pattern")?;
+    let bir::Pattern::Nominal { fields, .. } = pattern else {
+        return Err(format!("a checked model pattern must lower to its nominal target: {pattern:?}").into());
+    };
+    let names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["type_"]);
+    Ok(())
+}
+
 #[test]
 fn lowers_an_enum_variant_pattern_that_binds_a_field() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(

@@ -1,0 +1,69 @@
+"""Decimal values retain the frontend's exact coefficient and written scale."""
+
+from rust::incan_semantics_core::body_ir import TypedNumericConstant, BinOp
+from pub::incan_mir_plan import Constant, Operand, PlanType, SourceSpan
+from frame import Builder, temporary, literal, read_place, external_call
+
+
+pub def is_decimal_literal(value: &TypedNumericConstant) -> bool:
+    """Retain the Rust enum import through a typed boundary; legacy drops pattern-only imports until dev.8."""
+    match value:
+        TypedNumericConstant.Decimal(precision=_p, scale=_s, coefficient=_c, literal_scale=_l) => return true
+        _ => return false
+
+
+pub def decimal_literal(mut builder: Builder, value: &TypedNumericConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize the existing legacy carrier from the checker-owned exact payload."""
+    match value:
+        TypedNumericConstant.Decimal(precision=_precision, scale=_scale, coefficient=coefficient, literal_scale=scale) =>
+            output = temporary(builder, PlanType.Decimal, span)
+            external_call(
+                builder,
+                "incan_native_runtime::decimal_from_parts",
+                [PlanType.I128, PlanType.U8],
+                PlanType.Decimal,
+                [literal(Constant.Numeric(str(coefficient), PlanType.I128), span), literal(
+                    Constant.Numeric(str(scale), PlanType.U8),
+                    span,
+                )],
+                output,
+                span,
+            )
+            return Ok(read_place(output, false, span))
+        _ => return Err("unsupported Body IR nondecimal literal at decimal boundary")
+
+
+pub def decimal_comparison(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: Operand,
+    right: Operand,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Use the canonical Decimal128 value comparison, never rustc scalar arithmetic."""
+    mut name = ""
+    match operator:
+        BinOp.Eq =>
+            name = "equal_decimal"
+        BinOp.Ne =>
+            name = "unequal_decimal"
+        BinOp.Lt =>
+            name = "less_decimal"
+        BinOp.Le =>
+            name = "less_equal_decimal"
+        BinOp.Gt =>
+            name = "greater_decimal"
+        BinOp.Ge =>
+            name = "greater_equal_decimal"
+        _ => return Err("unsupported Body IR decimal arithmetic: legacy comparison-only carrier")
+    output = temporary(builder, PlanType.Bool, span)
+    external_call(
+        builder,
+        f"incan_native_runtime::{name}",
+        [PlanType.Decimal, PlanType.Decimal],
+        PlanType.Bool,
+        [left, right],
+        output,
+        span,
+    )
+    return Ok(read_place(output, false, span))

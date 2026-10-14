@@ -1,0 +1,73 @@
+# behavior: nested Option/union/newtype carriers retain their original owners across list get/pop and field replacement
+# expect-stdout:
+#   kind first
+#   kind first
+#   missing
+#   SECOND
+#   REPLACED
+#   kind first
+#   FIELD
+#   missing
+#   deep
+#   wrong
+#   reverse
+#   kind listed
+
+@derive(Clone)
+type Kind = newtype str
+type Choice = Kind | str
+
+model Holder:
+    value: Option[Choice]
+
+def describe(value: Option[Choice]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        if isinstance(value, Kind):
+            return f"kind {value.0}"
+    return "missing"
+
+def nested(value: Option[Result[Option[str], str]]) -> str:
+    if value is not None:
+        match value:
+            Ok(inner) =>
+                if inner is not None:
+                    return inner
+                return "none"
+            Err(error) => return error
+    return "absent"
+
+def reversed(value: Option[Kind] | str) -> str:
+    if isinstance(value, str):
+        return value
+    return "optional"
+
+def first(values: Option[List[Result[Choice, str]]]) -> str:
+    if values is not None:
+        if len(values) != 1:
+            return "bad length"
+        match values[0]:
+            Ok(inner) => return describe(Some(inner))
+            Err(error) => return error
+    return "empty"
+
+
+def main() -> None:
+    mut values: List[Option[Choice]] = [Some(Kind("first")), Some("second"), None]
+    println(describe(values[0]))
+    println(describe(values[0]))
+    println(describe(values.pop()))
+    println(describe(values.pop()))
+    values.append(Some("replaced"))
+    values[1] = Some("replaced")
+    println(describe(values.pop()))
+    println(describe(values[0]))
+    mut holder = Holder(value=Some("field"))
+    println(describe(holder.value))
+    holder.value = None
+    println(describe(holder.value))
+    println(nested(Some(Ok(Some("deep")))))
+    println(nested(Some(Err("wrong"))))
+    println(reversed("reverse"))
+    println(first(Some([Ok(Kind("listed"))])))

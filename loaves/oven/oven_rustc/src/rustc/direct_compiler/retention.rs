@@ -200,11 +200,14 @@ pub fn retain_direct_rustc_compiler(
         return Err(OvenRustcError::IntentMismatch);
     }
     let toolchain = receipt.intent.toolchain.clone();
-    let mut selected = match store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::NativeCompilerClosure
-            && manifest.intent.target == target
-            && manifest.intent.toolchain == toolchain
-    }) {
+    let mut selected = match store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::NativeCompilerClosure
+                && manifest.intent.target == target
+                && manifest.intent.toolchain == toolchain
+        },
+        |_, _| true,
+    ) {
         Ok(mut selected) => {
             selected.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
             selected

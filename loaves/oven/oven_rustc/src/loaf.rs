@@ -292,8 +292,10 @@ pub fn prove_release_runtime_closure_member(
         message,
     })?;
     let store_root = generation.join(&member.store_relative_path);
-    let mut selected = PublishedOvenStore::new(&store_root)
-        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    let mut selected = PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(
+        |candidate| candidate.identity == member.artifact_identity,
+        |_, _| true,
+    )?;
     if selected.len() != 1 {
         return Err(OvenLoafError::InvalidLoaf {
             path: store_root,
@@ -2234,8 +2236,10 @@ pub(crate) fn prove_release_store_member_payload(
             message: "release store member resolves outside its held generation".to_string(),
         });
     }
-    let mut selected = PublishedOvenStore::new(&canonical_store_root)
-        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    let mut selected = PublishedOvenStore::new(&canonical_store_root).select_payloads_matching_for_execution(
+        |candidate| candidate.identity == member.artifact_identity,
+        |_, _| true,
+    )?;
     if selected.len() != 1 {
         return Err(OvenLoafError::InvalidLoaf {
             path: canonical_store_root,
@@ -2366,10 +2370,10 @@ pub fn acquire_committed_release_runtime_foundation(
         let store_root = loaf_root
             .join(generation_directory_path(&manifest.generation_identity))
             .join(&closure_member.store_relative_path);
-        let mut candidates =
-            PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(|candidate| {
-                candidate.identity == closure_member.artifact_identity
-            })?;
+        let mut candidates = PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(
+            |candidate| candidate.identity == closure_member.artifact_identity,
+            |_, _| true,
+        )?;
         if candidates.len() != 1 {
             return Err(OvenLoafError::InvalidLoaf {
                 path: store_root,
@@ -3805,7 +3809,10 @@ mod tests {
         fs::create_dir_all(&generation)?;
         let member = publish_release_store_fixture(&generation, OvenArtifactKind::ProjectOutput, 1)?;
         let selected = PublishedOvenStore::new(generation.join(&member.store_relative_path))
-            .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+            .select_payloads_matching_for_execution(
+                |candidate| candidate.identity == member.artifact_identity,
+                |_, _| true,
+            )?;
         let executable = selected[0].artifact_root.join("bin/engine-0");
         drop(selected);
         fs::remove_file(&executable)?;

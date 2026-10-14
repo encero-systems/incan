@@ -1,0 +1,26 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+oven_model = { loaf = "oven_model", path = "../oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../oven_rustc", version = "0.6.0-dev.5" }
+oven_store = { loaf = "oven_store", path = "../oven_store", version = "0.6.0-dev.5" }
+rustix = { features = ["fs"], loaf = "crates-io/rustix", version = "1.1.4" }
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+
+[project]
+description = "Oven's explicit Cargo-compatibility mode: the hidden legacy_cargo baker, compiler-suite publication and the Loaf bake that run Cargo, over oven_rustc"
+license = "Apache-2.0"
+name = "oven_cargo_compat"
+private = true
+version = "0.6.0-dev.5"
+
+[rust]
+edition = "2024"
+name = "oven_cargo_compat"
+type = "lib"

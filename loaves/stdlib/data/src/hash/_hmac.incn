@@ -16,7 +16,7 @@ leading bytes matched, and that timing signal lets an attacker search for a vali
 guessing the whole thing at once. Prefer `verify` over comparing `digest()` output yourself.
 """
 
-from rust::hmac with ["reset"] import Hmac, Mac
+from rust::hmac import Hmac, Mac
 from rust::incan_std_core::errors import raise_value_error
 from rust::sha2 import Sha256
 

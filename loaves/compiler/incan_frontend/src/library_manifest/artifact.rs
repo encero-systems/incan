@@ -17,6 +17,96 @@ use crate::library_manifest::{
     LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyMetadata,
 };
 
+/// Receipt-bound native SDK provider contract, separate from generated Cargo package metadata.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeProviderArtifact {
+    /// Current descriptor schema.
+    pub schema_version: u32,
+    /// Checked package name.
+    pub name: String,
+    /// Checked package version.
+    pub version: String,
+    /// Exact native bindings and compilation receipts retained by the enclosing SDK publication.
+    pub receipts: BTreeMap<String, String>,
+    /// Digest-bound generated facade compiled against these native units and checked dependency providers.
+    pub output: NativeProviderOutput,
+}
+
+/// One compiler-produced SDK facade artifact; its relative path cannot escape the checked provider root.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeProviderOutput {
+    /// Rust crate name exposed to the consumer.
+    pub crate_name: String,
+    /// Artifact-root-relative native library path.
+    pub relative_path: String,
+    /// Exact native output content digest.
+    pub digest: String,
+}
+
+/// Validate a native provider descriptor against its checked semantic manifest without consulting Cargo files.
+pub fn read_native_provider_artifact(
+    root: &Path,
+    manifest: &LibraryManifest,
+) -> Result<Option<NativeProviderArtifact>, ProviderArtifactDigestError> {
+    let path = root.join("native-provider.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&path).map_err(|source| ProviderArtifactDigestError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let native: NativeProviderArtifact =
+        serde_json::from_slice(&bytes).map_err(|error| ProviderArtifactDigestError::Normalization {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
+    if native.schema_version != 1
+        || native.name != manifest.name
+        || native.version != manifest.version
+        || manifest.contract_metadata.provider.semantic_source_digest.is_none()
+        || native.receipts.is_empty()
+        || native.receipts.values().any(|receipt| {
+            !receipt.starts_with("sha256:")
+                || receipt.len() != 71
+                || !receipt[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(ProviderArtifactDigestError::Normalization {
+            path,
+            message: "native provider identity or receipts are invalid".to_string(),
+        });
+    }
+    let output = Path::new(&native.output.relative_path);
+    if native.output.crate_name != manifest.name.replace('-', "_")
+        || output.is_absolute()
+        || output
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        || output.extension().and_then(|extension| extension.to_str()) != Some("rlib")
+    {
+        return Err(ProviderArtifactDigestError::Normalization {
+            path,
+            message: "native provider output has invalid coordinates".to_string(),
+        });
+    }
+    let output_path = root.join(output);
+    let bytes = fs::read(&output_path).map_err(|source| ProviderArtifactDigestError::Io {
+        path: output_path,
+        source,
+    })?;
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+    if digest != native.output.digest {
+        return Err(ProviderArtifactDigestError::Normalization {
+            path,
+            message: "native provider output digest mismatch".to_string(),
+        });
+    }
+    Ok(Some(native))
+}
+
 /// Hash every declared manifest, generated source, native output, and generated-project input in one provider
 /// artifact tree.
 ///
@@ -416,23 +506,39 @@ fn digest_provider_semantic_artifact_inner(
             path: manifest_path.to_path_buf(),
             message: error.to_string(),
         })?;
-    let cargo_bytes = fs::read(cargo_toml_path).map_err(|source| ProviderArtifactDigestError::Io {
-        path: cargo_toml_path.to_path_buf(),
-        source,
-    })?;
-    let normalized_cargo_bytes = normalize_cargo_delivery_coordinates(
-        cargo_toml_path,
-        &cargo_bytes,
-        &delivery_coordinates,
-        &toolchain_dependencies,
-    )?;
+    let native = read_native_provider_artifact(root, manifest)?;
+    let normalized_cargo_bytes = if let Some(native) = native.as_ref() {
+        canonical_json_bytes(native).map_err(|error| ProviderArtifactDigestError::Normalization {
+            path: root.join("native-provider.json"),
+            message: error.to_string(),
+        })?
+    } else {
+        let cargo_bytes = fs::read(cargo_toml_path).map_err(|source| ProviderArtifactDigestError::Io {
+            path: cargo_toml_path.to_path_buf(),
+            source,
+        })?;
+        normalize_cargo_delivery_coordinates(
+            cargo_toml_path,
+            &cargo_bytes,
+            &delivery_coordinates,
+            &toolchain_dependencies,
+        )?
+    };
 
     let mut hasher = Sha256::new();
     if let Some(source_digest) = &normalized_manifest.contract_metadata.provider.semantic_source_digest {
         hasher.update(b"incan-provider-semantic-artifact-v2\0");
         hash_named_bytes(&mut hasher, "authored-source", source_digest.as_bytes());
         hash_named_bytes(&mut hasher, "provider-manifest", &normalized_manifest_bytes);
-        hash_named_bytes(&mut hasher, "Cargo.toml", &normalized_cargo_bytes);
+        hash_named_bytes(
+            &mut hasher,
+            if native.is_some() {
+                "native-receipts"
+            } else {
+                "Cargo.toml"
+            },
+            &normalized_cargo_bytes,
+        );
     } else {
         let normalization = SemanticArtifactNormalization {
             manifest_path,
@@ -683,7 +789,7 @@ struct ArtifactEntry {
 fn artifact_directory_entries(
     root: &Path,
     directory: &Path,
-    skip_root_cargo_lock: bool,
+    skip_root_generated_lock_state: bool,
     exclude_nested_targets: bool,
 ) -> Result<Vec<ArtifactEntry>, ProviderArtifactDigestError> {
     let mut entries = fs::read_dir(directory)
@@ -711,8 +817,11 @@ fn artifact_directory_entries(
         // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
         // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
         // Cargo.lock, while the first locked build materializes one from oven.lock and would otherwise change the
-        // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
-        if skip_root_cargo_lock && relative == Path::new("Cargo.lock") {
+        // provider's semantic identity. Its manifest witness is the same generated bookkeeping and can remain stale
+        // after a direct build. Both still participate in physical integrity; nested files remain semantic inputs.
+        if skip_root_generated_lock_state
+            && matches!(relative.to_str(), Some("Cargo.lock" | ".incan-cargo-lock-manifest"))
+        {
             continue;
         }
         let file_name = path.file_name().and_then(|name| name.to_str());
@@ -751,6 +860,62 @@ mod tests {
     use oven_model::digest::digest_toolchain_source_tree;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Native semantic identities ignore poisoned Cargo files and change with the retained compilation receipts.
+    #[test]
+    fn native_provider_semantics_bind_receipts_without_cargo_metadata() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let mut manifest = LibraryManifest::new("native_provider".to_string(), "1.0.0".to_string());
+        manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "a".repeat(64)));
+        let path = root.path().join("native_provider.incnlib");
+        manifest.write_to_path(&path)?;
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(root.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }")?;
+        fs::write(root.path().join("Cargo.toml"), "invalid Cargo declaration")?;
+        fs::write(root.path().join("Cargo.lock"), "invalid Cargo lock")?;
+        fs::write(root.path().join("build.rs"), "compile_error!(\"must remain inert\");")?;
+        fs::create_dir_all(root.path().join("native"))?;
+        fs::write(root.path().join("native/provider.rlib"), b"fixture facade")?;
+        let mut native = NativeProviderArtifact {
+            schema_version: 1,
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            receipts: BTreeMap::from([("retained-binding".to_string(), format!("sha256:{}", "b".repeat(64)))]),
+            output: NativeProviderOutput {
+                crate_name: manifest.name.clone(),
+                relative_path: "native/provider.rlib".to_string(),
+                digest: format!("sha256:{}", hex::encode(Sha256::digest(b"fixture facade"))),
+            },
+        };
+        fs::write(root.path().join("native-provider.json"), serde_json::to_vec(&native)?)?;
+        let digest = || {
+            digest_provider_semantic_artifact_with_context_and_cache(
+                root.path(),
+                &path,
+                &root.path().join("Cargo.toml"),
+                &manifest,
+                &BTreeMap::new(),
+                &[],
+                &mut BTreeMap::new(),
+            )
+        };
+        let original = digest()?;
+        fs::write(root.path().join("Cargo.toml"), "another poisoned declaration")?;
+        assert_eq!(original, digest()?);
+        assert!(matches!(
+            crate::library_manifest_index::load_provider_dependency_artifact("native_provider", root.path()),
+            crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { .. }
+        ));
+        native
+            .receipts
+            .insert("retained-binding".to_string(), format!("sha256:{}", "c".repeat(64)));
+        fs::write(root.path().join("native-provider.json"), serde_json::to_vec(&native)?)?;
+        assert_ne!(original, digest()?);
+        native.version = "2.0.0".to_string();
+        fs::write(root.path().join("native-provider.json"), serde_json::to_vec(&native)?)?;
+        assert!(digest().is_err());
+        Ok(())
+    }
 
     #[test]
     fn a_repeated_digest_of_an_unchanged_tree_is_served_from_the_stamp_memo_and_any_change_misses_issue1556()

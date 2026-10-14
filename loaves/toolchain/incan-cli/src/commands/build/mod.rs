@@ -12,7 +12,9 @@ use std::{env, fs};
 use crate::commands::build_report::{emit_build_report, emit_rust_inspection_report, emit_workspace_build_report};
 use crate::{CliError, CliResult, ExitCode};
 use incan_driver::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
-use incan_driver::build::bake::{bake_oven_library, bake_oven_project, select_default_executable_project_output};
+use incan_driver::build::bake::{
+    bake_oven_library, bake_oven_project, publish_ordinary_project_output, select_default_executable_project_output,
+};
 use incan_driver::build::inline_command::{inline_command_project, wrap_inline_command_source};
 use incan_driver::build::library_exports::resolve_library_project_root;
 use incan_driver::build::library_outputs::{
@@ -51,6 +53,28 @@ fn print_build_progress(report_options: &BuildReportOptions, message: impl AsRef
     } else {
         println!("{}", message.as_ref());
     }
+}
+
+/// Capture the default project's publication inputs before frontend work for ordinary build and run.
+///
+/// Both commands publish through the same completed-output Loaf boundary. Non-default feature/provider selections
+/// and standalone sources retain their existing preparation behavior until that boundary represents their inputs.
+fn ordinary_project_output_authority(
+    file_path: &str,
+    package_features: &FeatureSelection,
+    sdk_profile: Option<&str>,
+) -> CliResult<Option<(String, String)>> {
+    if package_features != &FeatureSelection::default() || sdk_profile.is_some() {
+        return Ok(None);
+    }
+    project_root_for_completed_output(&normalized_project_entrypoint(file_path)?)?
+        .map(|root| {
+            Ok((
+                incan_driver::build::source_authority::digest_baked_project_source_authority(&root)?,
+                incan_driver::build::source_authority::ordinary_preparation_identity_digest()?,
+            ))
+        })
+        .transpose()
 }
 
 #[allow(dead_code)]
@@ -176,6 +200,12 @@ pub(crate) fn build_file_report(
         );
         return completed_executable_output_report(&project_root, &selected, &backend_receipt, total_start);
     }
+    // Retain authority before any frontend work; the same existing loaf selector consumes this on the next command.
+    let completed_authority = if output_dir.is_none() {
+        ordinary_project_output_authority(file_path, &options.package_features, options.sdk_profile.as_deref())?
+    } else {
+        None
+    };
     let prepare_start = Instant::now();
     let prepared = prepare_oven_project(
         file_path,
@@ -218,6 +248,15 @@ pub(crate) fn build_file_report(
     timings_ms.insert("oven_build".to_string(), oven_build_ms);
     timings_ms.insert("total".to_string(), elapsed_ms(total_start));
     let report = report_draft.finish(timings_ms);
+    if let Some((source_authority, preparation_identity)) = completed_authority {
+        publish_ordinary_project_output(
+            &prepared,
+            &bake.output,
+            &source_authority,
+            &preparation_identity,
+            &report,
+        )?;
+    }
     serde_json::to_value(report)
         .map_err(|error| CliError::failure(format!("failed to serialize Oven build report: {error}")))
 }
@@ -549,6 +588,7 @@ pub fn run_file(
         })?;
         return Ok(ExitCode(status.code().unwrap_or(ExitCode::FAILURE.0)));
     }
+    let completed_authority = ordinary_project_output_authority(file_path, &package_features, sdk_profile.as_deref())?;
     let prepared = prepare_oven_project(
         file_path,
         None,
@@ -562,7 +602,7 @@ pub fn run_file(
         OvenProjectPlanMode::ConsumeOnly,
         None,
     )?;
-    run_oven_prepared_project(prepared, profile, &program_args)
+    run_oven_prepared_project(prepared, profile, &program_args, completed_authority)
 }
 
 /// Build and run inline Incan source from `incan run -c`.
@@ -621,7 +661,9 @@ pub fn run_inline_source(
         OvenProjectPlanMode::ConsumeOnly,
         None,
     )
-    .and_then(|prepared| run_oven_prepared_project(prepared, if release { "release" } else { "debug" }, &program_args));
+    .and_then(|prepared| {
+        run_oven_prepared_project(prepared, if release { "release" } else { "debug" }, &program_args, None)
+    });
     let _ = fs::remove_file(&source_path);
     result
 }
@@ -631,8 +673,21 @@ fn run_oven_prepared_project(
     prepared: OvenPreparedProject,
     profile: &str,
     program_args: &[String],
+    completed_authority: Option<(String, String)>,
 ) -> CliResult<ExitCode> {
     let bake = bake_oven_project(&prepared, profile, None)?;
+    if let Some((source_authority, preparation_identity)) = completed_authority {
+        let mut report = prepared.report.clone();
+        report.artifacts.push(artifact_report("binary", &bake.output));
+        let report = report.finish(prepared.prepare_timings.clone());
+        publish_ordinary_project_output(
+            &prepared,
+            &bake.output,
+            &source_authority,
+            &preparation_identity,
+            &report,
+        )?;
+    }
     let mut command = Command::new(&bake.output);
     command.current_dir(&prepared.project_root);
     clear_inherited_cargo_environment(&mut command);

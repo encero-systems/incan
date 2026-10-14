@@ -166,7 +166,8 @@ pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], I
     @staticmethod
     def string(value: str) -> Self:
         """Construct a JSON string."""
-        return JsonValue(RustJsonValue.string(value))
+        construct_string = RustJsonValue.string
+        return JsonValue(construct_string(value))
 
     @staticmethod
     def str(value: str) -> Self:
@@ -186,7 +187,8 @@ pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], I
     @staticmethod
     def parse(source: str) -> Result[Self, JsonError]:
         """Parse JSON text."""
-        return _wrap_raw_result(RustJsonValue.parse(source))
+        parse_native = RustJsonValue.parse
+        return _wrap_raw_result(parse_native(source))
 
     @staticmethod
     def loads(source: str) -> Result[Self, JsonError]:
