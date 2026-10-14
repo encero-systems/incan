@@ -13,3 +13,13 @@ edition = "2024"
 syn = { loaf = "crates-io/syn", version = "2", features = ["full"], default-features = true }
 quote = { loaf = "crates-io/quote", version = "1", features = [], default-features = true }
 proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1", features = [], default-features = true }
+
+# Runtime consumers of the procedural macros use ordinary test dependencies.
+[envs.test.dependencies]
+axum = { loaf = "crates-io/axum", version = "0.8" }
+incan_std_web = { loaf = "incan_std_web", path = "../../web" }
+inventory = { loaf = "crates-io/inventory", version = "0.3" }
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+tokio = { loaf = "crates-io/tokio", version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { loaf = "crates-io/tower", version = "0.5", features = ["util"] }

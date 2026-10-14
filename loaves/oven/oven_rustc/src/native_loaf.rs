@@ -946,6 +946,29 @@ fn failed(error: impl std::error::Error + 'static) -> NativeLoafError {
     NativeLoafError::Failed(Box::new(error))
 }
 
+/// Preserve the failing native input coordinate and original error chain without changing admission classification.
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} {}: {source}", path.display())]
+struct NativeInputFailure {
+    operation: &'static str,
+    path: PathBuf,
+    #[source]
+    source: Box<dyn std::error::Error>,
+}
+
+/// Add an operation and path at the input boundary; the error remains a definitive admission failure.
+fn input_failure(
+    operation: &'static str,
+    path: &Path,
+    source: impl Into<Box<dyn std::error::Error>>,
+) -> NativeLoafError {
+    failed(NativeInputFailure {
+        operation,
+        path: path.to_path_buf(),
+        source: source.into(),
+    })
+}
+
 /// Construct a definitive semantic or physical authority refusal.
 fn refused(message: &str) -> NativeLoafError {
     NativeLoafError::Refused(message.to_string())

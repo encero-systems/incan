@@ -221,7 +221,7 @@ impl ExecutableBuildOwner {
     ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
         self.authority.begin_request();
         if !root.join(oven_model::manifest::LOAF_MANIFEST_FILENAME).is_file() {
-            return Ok(std::sync::Arc::new(match purpose {
+            let mut session = match purpose {
                 SessionPurpose::Collection => {
                     crate::session::CompilationSession::discover_for_collection_with_selections(
                         entry,
@@ -235,7 +235,9 @@ impl ExecutableBuildOwner {
                 SessionPurpose::CheckMetadata => {
                     return Err(CliError::failure("metadata-only checks cannot prepare a test session"));
                 }
-            }));
+            };
+            session.vocab_runtime = std::sync::Arc::clone(&self.authority.retained_inputs.vocab_runtime);
+            return Ok(std::sync::Arc::new(session));
         }
         self.authority
             .compilation_session(root, entry, features, sdk_profile, purpose)

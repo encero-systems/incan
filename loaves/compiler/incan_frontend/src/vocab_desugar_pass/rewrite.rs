@@ -29,14 +29,28 @@ pub fn desugar_program_vocab_blocks(
     module_path: Option<&str>,
     library_manifest_index: &LibraryManifestIndex,
 ) -> Result<(), Vec<CompileError>> {
-    let mut runtime = match WasmDesugarerRuntime::new() {
-        Ok(runtime) => runtime,
-        Err(err) => {
-            return Err(vec![CompileError::new(
-                format!("failed to initialize vocab wasm runtime: {err}"),
-                ast::Span::default(),
-            )]);
-        }
+    desugar_program_vocab_blocks_with_runtime(program, module_path, library_manifest_index, &mut None)
+}
+
+/// Rewrite fresh source using the caller's retained runtime; every vocabulary invocation still uses a fresh guest.
+/// Only compiled artifact modules are retained. Diagnostics, source AST and helper imports remain request-local.
+pub fn desugar_program_vocab_blocks_with_runtime(
+    program: &mut ast::Program,
+    module_path: Option<&str>,
+    library_manifest_index: &LibraryManifestIndex,
+    retained: &mut Option<WasmDesugarerRuntime>,
+) -> Result<(), Vec<CompileError>> {
+    let runtime = match retained {
+        Some(runtime) => runtime,
+        None => match WasmDesugarerRuntime::new() {
+            Ok(runtime) => retained.insert(runtime),
+            Err(err) => {
+                return Err(vec![CompileError::new(
+                    format!("failed to initialize vocab wasm runtime: {err}"),
+                    ast::Span::default(),
+                )]);
+            }
+        },
     };
     let mut errors = Vec::new();
     let mut helper_imports = HelperImportAccumulator::default();
@@ -45,7 +59,7 @@ pub fn desugar_program_vocab_blocks(
         &mut program.declarations,
         module_path,
         library_manifest_index,
-        &mut runtime,
+        runtime,
         &mut helper_imports,
         &mut errors,
     );

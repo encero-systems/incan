@@ -253,6 +253,8 @@ struct RetainedLock {
 /// The existing lock model retained by one serial executable owner, never across compiler generations.
 #[derive(Default)]
 pub(super) struct RetainedProjectInputs {
+    /// One compiled-vocabulary runtime for this compiler owner; current bytes authenticate every module lookup.
+    pub(super) vocab_runtime: Arc<std::sync::Mutex<Option<incan_frontend::vocab_desugar_pass::WasmDesugarerRuntime>>>,
     locks: HashMap<PathBuf, RetainedLock>,
     projects: HashMap<PathBuf, ObservedProject>,
     #[cfg(test)]
@@ -374,7 +376,9 @@ impl RetainedProjectInputs {
         for warning in &check_warnings {
             crate::diagnostics::emit_warning_output(warning.clone());
         }
-        let session = Arc::new(discovered?);
+        let mut session = discovered?;
+        session.vocab_runtime = Arc::clone(&self.vocab_runtime);
+        let session = Arc::new(session);
         let mut inputs = ModelInputs::default();
         if let Some(inventory) = &session.sdk_inventory() {
             inputs.observe(&inventory.root.join(incan_provider::SDK_INVENTORY_FILE));

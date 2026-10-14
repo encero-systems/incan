@@ -1334,3 +1334,61 @@ fn dev7_native_loaf_explicit_empty_closure_does_not_select_or_prepare() -> TestR
     assert!(NativeLoafClosure::admit(&native, &[missing]).is_err());
     Ok(())
 }
+
+/// A missing authored dependency reports the actual owner-relative coordinate and preserves its I/O cause.
+#[test]
+fn native_missing_declared_path_preserves_input_context() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let owner = temp.path().canonicalize()?;
+    let relative = PathBuf::from("missing-dependency");
+    let path = owner.join(&relative);
+    let dependency = dependency(
+        "missing",
+        oven_model::manifest::DependencySource::Path { path: relative },
+    );
+    let mut sources = super::selection::LocalSources::default();
+    let error = super::selection::declared_root_demands(&[dependency], &owner, &mut sources)
+        .err()
+        .ok_or("missing declared dependency was accepted")?;
+    assert!(error.to_string().contains(&path.display().to_string()));
+    let NativeLoafError::Failed(source) = error else {
+        return Err("missing input changed its definitive failure classification".into());
+    };
+    let context = source
+        .downcast_ref::<super::NativeInputFailure>()
+        .ok_or("input context missing")?;
+    assert_eq!(context.operation, "canonicalize declared dependency");
+    let io = context
+        .source
+        .downcast_ref::<std::io::Error>()
+        .ok_or("original I/O cause missing")?;
+    assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+    Ok(())
+}
+
+/// Source-mapping failures name the selected project without converting a malformed source into a cache miss.
+#[test]
+fn native_missing_source_tree_preserves_mapping_context() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().canonicalize()?;
+    std::fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname='missing_source'\nversion='1.0.0'\n",
+    )?;
+    let mut sources = super::selection::LocalSources::default();
+    let error = sources.get(&project).err().ok_or("missing source tree was accepted")?;
+    assert!(error.to_string().contains(&project.display().to_string()));
+    let NativeLoafError::Failed(source) = error else {
+        return Err("missing source changed its definitive failure classification".into());
+    };
+    let context = source
+        .downcast_ref::<super::NativeInputFailure>()
+        .ok_or("mapping context missing")?;
+    assert_eq!(context.operation, "map local source");
+    let io = context
+        .source
+        .downcast_ref::<std::io::Error>()
+        .ok_or("original I/O cause missing")?;
+    assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+    Ok(())
+}

@@ -16,6 +16,36 @@ mod protocol;
 #[cfg(unix)]
 mod unix;
 
+/// Binding inspection uses the same compatible owner and ordinary dependency session as build/test.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BindingInspectionIntent {
+    binding_inspection: crate::binding_inspect::BindingInspectionRequest,
+}
+
+/// Submit fresh checked binding analysis through the existing owner; clients retain stdout presentation.
+pub(crate) fn inspect_bindings(request: crate::binding_inspect::BindingInspectionRequest) -> CliResult<String> {
+    #[cfg(unix)]
+    {
+        let result = unix::submit(
+            &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
+            serde_json::to_value(BindingInspectionIntent {
+                binding_inspection: request,
+            })
+            .map_err(|error| CliError::failure(error.to_string()))?,
+            |_| {},
+        )?;
+        serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))
+    }
+    #[cfg(not(unix))]
+    {
+        crate::binding_inspect::execute_request(
+            &request,
+            &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
+        )
+    }
+}
+
 /// One metadata-only check addressed to the same compatible project owner as build and test.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

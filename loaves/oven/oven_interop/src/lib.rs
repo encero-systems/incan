@@ -2973,7 +2973,11 @@ fn main() {
         assert!(baked.archive_names.contains(&"llama".to_string()));
         let selected_plan = select_direct_rustc_plan_for_execution(&store, &baked.receipt)?
             .ok_or("llama.cpp interop bake did not publish a selected plan")?;
-        let provenance = fs::read_to_string(selected_plan.artifact_root.join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH))?;
+        let provenance = fs::read_to_string(
+            selected_plan
+                .artifact_root()
+                .join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH),
+        )?;
         assert!(provenance.contains("apple.library.c++"));
         let direct = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
             store: &store,
@@ -3222,7 +3226,11 @@ fn main() {
         assert!(baked.archive_names.contains(&"curl".to_string()));
         let selected_plan = select_direct_rustc_plan_for_execution(&store, &baked.receipt)?
             .ok_or("curl interop bake did not publish a selected plan")?;
-        let provenance = fs::read_to_string(selected_plan.artifact_root.join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH))?;
+        let provenance = fs::read_to_string(
+            selected_plan
+                .artifact_root()
+                .join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH),
+        )?;
         assert!(provenance.contains("https://github.com/curl/curl"));
         assert!(provenance.contains("apple.framework.SystemConfiguration"));
         let direct = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
@@ -3732,13 +3740,17 @@ fn main() {
         assert!(baked.archive_names.contains(&"tflite_bridge".to_string()));
         let selected_plan = select_direct_rustc_plan_for_execution(&store, &baked.receipt)?
             .ok_or("TensorFlow Lite interop bake did not publish a selected plan")?;
-        let stored_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected_plan.payload)?;
+        let stored_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(selected_plan.payload())?;
         assert!(
             stored_plan
                 .native_search_paths
                 .contains(&"interop-bundled/tensorflowlite_c".to_string())
         );
-        let provenance = fs::read_to_string(selected_plan.artifact_root.join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH))?;
+        let provenance = fs::read_to_string(
+            selected_plan
+                .artifact_root()
+                .join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH),
+        )?;
         assert!(provenance.contains("https://github.com/tensorflow/tensorflow"));
         assert!(provenance.contains(TENSORFLOW_REVISION));
         let direct = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
