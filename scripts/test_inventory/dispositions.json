@@ -6304,6 +6304,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_ordinal_dispatch.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK scalar Self receivers and associated trait signatures; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
       "disposition": "keep",
       "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",

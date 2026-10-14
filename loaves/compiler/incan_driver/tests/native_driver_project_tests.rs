@@ -86,6 +86,54 @@ fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error:
     )
 }
 
+/// Scalar SDK ordinal implementations preserve their checked Self type and match the unchanged legacy route.
+#[test]
+fn sdk_scalar_ordinal_calls_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-scalar-ordinal")?,
+        &fixture.sysroot,
+        &closure,
+        r#"from std.collections import OrdinalKey
+
+def key_bytes[T with OrdinalKey](value: T) -> bytes:
+    return value.ordinal_bytes()
+
+def key_encoding[T with OrdinalKey](_value: T) -> str:
+    return T.ordinal_encoding()
+
+def main() -> None:
+    println(len(key_bytes("paid")))
+    narrow: i32 = 7
+    println(len(key_bytes(narrow)))
+    println(key_encoding(true))
+    price: decimal[5, 2] = 19.99d
+    println(len(key_bytes(price)))
+    println(key_encoding(price))
+"#,
+    )
+}
+
+/// The original ordinal fixture keeps both scalar and value-enum calls as its live legacy contract.
+#[test]
+fn sdk_ordinal_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-ordinal-fixture")?,
+        &fixture.sysroot,
+        &closure,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/ordinal_key_builtin_impls.incn"
+        ),
+    )
+}
+
 /// The original SDK reader loop uses the stdlib trait's checked initializer and poll declarations.
 #[test]
 fn sdk_reader_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
