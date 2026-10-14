@@ -24,6 +24,10 @@ The example was compiled against the host-library source at PR #2211 head `06159
 
 The public operation owns the retained session and delegates to that private collector. Making the collector public would expose the wrong ownership boundary; calling the older stateless collector would discard retained state. Mutable Rust interop is supported: the positive example exercises it directly.
 
-## Remaining migration scope
+## Policy and host ownership
 
-The host adapter and transport are implemented in Rust. Moving their orchestration to Incan remains tracked under [#1034](https://github.com/encero-systems/incan/issues/1034#issuecomment-6173949508), within the broader [toolchain workflow](https://github.com/encero-systems/incan/issues/1698). That migration is still open; this PR delivers the working retained-lock operation and its Incan-facing API, not the entire control-plane migration.
+The production lock decision lives in `workspaces/oven/src/lock_preparation.incn`, dispatched by the existing compiler-bound Incan policy engine. It selects canonical fallback, reuse, publication and retention from explicit observations. Both CLI entrypoints reach that policy through the same project owner. The positive example above exercises the public owner API; the example is not the policy implementation.
+
+The Rust host gathers physical observations, retains the original session and leases, validates the engine and response binding, and performs the selected canonical operation. It checks the observations again after the exchange so an answer cannot apply to inputs that changed during evaluation. Missing, malformed or incompatible policy responses fail; there is no Rust policy fallback or second cache.
+
+The broader Oven migration remains [#1034](https://github.com/encero-systems/incan/issues/1034), within the [toolchain workflow](https://github.com/encero-systems/incan/issues/1698). This slice moves lock preparation decisions into Incan; it does not claim that every Oven policy has migrated.

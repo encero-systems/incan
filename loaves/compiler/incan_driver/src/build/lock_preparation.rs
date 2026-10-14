@@ -1,7 +1,9 @@
 //! Canonical explicit lock preparation in the existing executable owner.
 //!
-//! Resolution and publication stay in `crate::lock`; this host adapter retains their successful evidence beside the
-//! original session. It adds no resolver, source detector or persisted cache.
+//! Resolution and publication stay in `crate::lock`. Incan's `lock_preparation` policy selects fallback, reuse and
+//! retention; this host observes physical inputs and executes those operations with the original session.
+
+mod policy;
 
 use super::retained_inputs::SessionPurpose;
 use crate::error::{CliError, CliResult};
@@ -36,16 +38,17 @@ pub(super) struct CompletedLockPreparation {
 }
 
 impl CompletedLockPreparation {
-    /// Exact reconciled inputs and writer-owned bytes must still match; a changed lock never authorizes reuse.
-    fn matches(&self, request: &str, source: &str) -> bool {
-        self.request == request
-            && self.source == source
-            && self
-                .test_discovery
-                .as_ref()
-                .is_some_and(|inputs| inputs.supports_retention() && inputs.current())
-            && super::file_freshness::digest_file(&self.publication.canonical_path)
-                .is_ok_and(|digest| digest == self.publication.content_digest)
+    /// Report only the original discovery observer's physical result; Incan combines it with semantic inputs.
+    fn discovery_current(&self) -> bool {
+        self.test_discovery
+            .as_ref()
+            .is_some_and(|inputs| inputs.supports_retention() && inputs.current())
+    }
+
+    /// Report whether the original writer-owned bytes still exist unchanged, including restoration after damage.
+    fn publication_current(&self) -> bool {
+        super::file_freshness::digest_file(&self.publication.canonical_path)
+            .is_ok_and(|digest| digest == self.publication.content_digest)
     }
 }
 
@@ -54,6 +57,34 @@ fn entries_belong_to_project(root: &Path, entries: &[PathBuf]) -> bool {
     entries
         .iter()
         .all(|entry| std::fs::canonicalize(entry).is_ok_and(|path| path.starts_with(root)))
+}
+
+/// Capture the original retained slot's observations without interpreting whether they permit reuse.
+fn reuse_facts(request: &str, source: Option<&str>, retained: Option<&CompletedLockPreparation>) -> serde_json::Value {
+    serde_json::json!({
+        "session_available": true, "request": request, "source": source,
+        "retained_request": retained.map(|value| &value.request),
+        "retained_source": retained.map(|value| &value.source),
+        "discovery_current": retained.is_some_and(CompletedLockPreparation::discovery_current),
+        "publication_current": retained.is_some_and(CompletedLockPreparation::publication_current),
+    })
+}
+
+/// Capture physical post-publication evidence; the Incan policy owns generation and retention decisions.
+fn retention_facts(
+    source_before: Option<&str>,
+    source_after: Option<&str>,
+    discovery: Option<&oven_model::observed_inputs::InputObservations>,
+    publication: &crate::lock::PublishedLockFile,
+    session_bound: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "source_before": source_before, "source_after": source_after,
+        "discovery_current": discovery.is_some_and(|inputs| inputs.supports_retention() && inputs.current()),
+        "publication_current": super::file_freshness::digest_file(&publication.canonical_path)
+            .is_ok_and(|digest| digest == publication.content_digest),
+        "session_bound": session_bound,
+    })
 }
 
 /// Run the existing collector once per unchanged standalone session and retain only stable successful publications.
@@ -76,17 +107,30 @@ pub(super) fn execute_request(
         oven_model::workspace::WorkspaceGraph::discover(&root).map_err(|error| CliError::failure(error.to_string()))?;
     let entries = crate::lock::workspace::project_lock_entry_paths(&manifest, request.entry.as_deref());
     let entries_owned = entries_belong_to_project(&root, &entries);
-    // The current source reconciler owns standalone project trees. Preserve canonical collection for workspace
-    // members and external entrypoints rather than rejecting an existing lock command or retaining partial inputs.
-    if workspace.is_some() || !entries_owned {
-        crate::lock::resolution::prepare_sdk_and_publish_project_lock(
-            &manifest,
-            request.entry.as_deref(),
-            &request.cargo_features,
-            &request.features,
-            request.sdk_profile.as_deref(),
-        )?;
-        return Ok(());
+    match policy::decide(
+        "route",
+        &serde_json::json!({
+            "paths_absolute": true, "workspace": workspace.is_some(),
+            "entries_owned": entries_owned, "has_entry": !entries.is_empty(),
+        }),
+    )? {
+        policy::Action::CanonicalPrepared => {
+            crate::lock::resolution::prepare_sdk_and_publish_project_lock(
+                &manifest,
+                request.entry.as_deref(),
+                &request.cargo_features,
+                &request.features,
+                request.sdk_profile.as_deref(),
+            )?;
+            return Ok(());
+        }
+        policy::Action::MissingEntry => {
+            return Err(CliError::failure(
+                "incan lock requires a FILE argument or at least one [project.scripts] entry",
+            ));
+        }
+        policy::Action::Observe => {}
+        _ => return Err(CliError::failure("lock policy returned an invalid route operation")),
     }
     let entry = entries.into_iter().next().ok_or_else(|| {
         CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry")
@@ -94,6 +138,7 @@ pub(super) fn execute_request(
     // ---- Reuse: reconcile the original session and successful publication ----
     let _inventory = super::native_sdk::prepare_or_discover_sdk_inventory()?;
     authority.begin_request();
+    let selection = serde_json::to_string(request).map_err(|error| CliError::failure(error.to_string()))?;
     let session = match authority.compilation_session(
         &root,
         &entry,
@@ -103,8 +148,21 @@ pub(super) fn execute_request(
     ) {
         Ok(session) => session,
         Err(reason) => {
-            // Session identity also reconciles source topology. Canonical discovery owns unsupported layouts
-            // and their diagnostics; an acceleration failure must neither reject nor bless such a request.
+            match policy::decide(
+                "reuse",
+                &serde_json::json!({
+                    "session_available": false, "request": selection, "source": null,
+                    "retained_request": null, "retained_source": null,
+                    "discovery_current": false, "publication_current": false,
+                }),
+            )? {
+                policy::Action::CanonicalCollect => {}
+                _ => {
+                    return Err(CliError::failure(
+                        "lock policy returned an invalid unavailable-session operation",
+                    ));
+                }
+            }
             tracing::trace!(target: "incan::invocation", decision = "lock_session_unretained", reason = %reason.message);
             crate::lock::resolution::collect_and_publish_project_lock(
                 &manifest,
@@ -119,18 +177,38 @@ pub(super) fn execute_request(
     // Source reconciliation is an acceleration boundary, not a new restriction on canonical lock inputs.
     // For example, the collector accepts linked modules that the build source digester cannot retain safely.
     let source = authority.digest(&root).ok();
-    let selection = serde_json::to_string(request).map_err(|error| CliError::failure(error.to_string()))?;
-    if let Some(slot) = authority.retained_inputs.lock_preparation(&root, &session) {
-        if entries_owned
-            && slot.as_ref().is_some_and(|retained| {
-                source
-                    .as_deref()
-                    .is_some_and(|source| retained.matches(&selection, source))
-            })
-        {
+    let retained = authority
+        .retained_inputs
+        .lock_preparation(&root, &session)
+        .and_then(|slot| slot.as_ref());
+    let facts = reuse_facts(&selection, source.as_deref(), retained);
+    let action = policy::decide("reuse", &facts)?;
+    // The external policy can authorize only the observations it received. Reconcile through the original
+    // observer after the exchange as well, refusing a changed request rather than applying a stale answer.
+    authority.begin_request();
+    let current = authority.digest(&root).ok();
+    let slot = authority.retained_inputs.lock_preparation(&root, &session);
+    if reuse_facts(&selection, current.as_deref(), slot.as_deref().and_then(Option::as_ref)) != facts {
+        if let Some(slot) = slot {
+            *slot = None;
+        }
+        return Err(CliError::failure(
+            "lock inputs changed during policy evaluation; retry the command",
+        ));
+    }
+    match action {
+        policy::Action::Reuse => {
             tracing::trace!(target: "incan::invocation", decision = "reuse_lock_preparation", input = %root.display());
             return Ok(());
         }
+        policy::Action::Publish => {}
+        _ => {
+            return Err(CliError::failure(
+                "lock policy returned an invalid publication operation",
+            ));
+        }
+    }
+    if let Some(slot) = authority.retained_inputs.lock_preparation(&root, &session) {
         *slot = None;
     }
     // ---- Publication: retain only an unchanged, successful generation ----
@@ -142,28 +220,45 @@ pub(super) fn execute_request(
         request.sdk_profile.as_deref(),
         Some(&session),
     )?;
-    let Some(source) = source else {
-        return Ok(());
-    };
     authority.begin_request();
-    let Ok(current) = authority.digest(&root) else {
-        return Ok(());
-    };
+    let current = authority.digest(&root).ok();
+    let facts = retention_facts(
+        source.as_deref(),
+        current.as_deref(),
+        context.test_discovery.as_ref(),
+        &publication,
+        authority.retained_inputs.lock_preparation(&root, &session).is_some(),
+    );
+    let action = policy::decide("retain", &facts)?;
+    authority.begin_request();
+    let current = authority.digest(&root).ok();
+    let slot = authority.retained_inputs.lock_preparation(&root, &session);
+    if retention_facts(
+        source.as_deref(),
+        current.as_deref(),
+        context.test_discovery.as_ref(),
+        &publication,
+        slot.is_some(),
+    ) != facts
+    {
+        return Err(CliError::failure(
+            "lock publication inputs changed during policy evaluation; retry the command",
+        ));
+    }
+    match action {
+        policy::Action::Complete => return Ok(()),
+        policy::Action::Retain => {}
+        _ => return Err(CliError::failure("lock policy returned an invalid retention operation")),
+    }
+    let source = source.ok_or_else(|| CliError::failure("lock policy retained unavailable source evidence"))?;
+    let slot = slot.ok_or_else(|| CliError::failure("lock policy retained an unbound session"))?;
     let completed = CompletedLockPreparation {
         request: selection,
         test_discovery: context.test_discovery,
         source,
         publication,
     };
-    // A newly published semantic generation or racing input is not retained as the earlier generation. The next
-    // request reconciles it normally. Explicit external entrypoints also keep canonical collection.
-    if current == completed.source
-        && entries_owned
-        && completed.matches(&completed.request, &current)
-        && let Some(slot) = authority.retained_inputs.lock_preparation(&root, &session)
-    {
-        *slot = Some(completed);
-    }
+    *slot = Some(completed);
     Ok(())
 }
 
@@ -305,9 +400,9 @@ mod tests {
         Ok(())
     }
 
-    /// Original publication bytes, source identity and command selection independently gate a retained hit.
+    /// Original publication bytes are observed without replacing the source and request decisions owned by Incan.
     #[test]
-    fn changed_lock_or_request_cannot_reuse_preparation() -> Result<(), Box<dyn std::error::Error>> {
+    fn changed_lock_bytes_are_observed_before_policy() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
         let path = project.path().join("oven.lock");
         std::fs::write(&path, "original publication")?;
@@ -320,15 +415,13 @@ mod tests {
                 content_digest: oven_store::digest_bytes(b"original publication"),
             },
         };
-        assert!(completed.matches("original request", "original source"));
-        assert!(!completed.matches("changed request", "original source"));
-        assert!(!completed.matches("original request", "changed source"));
+        assert!(completed.publication_current());
         std::fs::write(&path, "modified publication")?;
-        assert!(!completed.matches("original request", "original source"));
+        assert!(!completed.publication_current());
         std::fs::write(&path, "original publication")?;
-        assert!(completed.matches("original request", "original source"));
+        assert!(completed.publication_current());
         std::fs::remove_file(&path)?;
-        assert!(!completed.matches("original request", "original source"));
+        assert!(!completed.publication_current());
         Ok(())
     }
 }

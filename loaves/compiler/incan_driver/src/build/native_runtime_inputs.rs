@@ -691,7 +691,7 @@ fn exchange(
 }
 
 /// Execute only the caller-owned request/response files through the already verified engine.
-fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, bytes: &[u8]) -> CliResult<T> {
+pub(super) fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, bytes: &[u8]) -> CliResult<T> {
     let directory = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
     let request_path = directory.path().join("request.json");
     let response_path = directory.path().join("response.json");

@@ -13,11 +13,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
 | keep | 3652 | 257 | 432 |
-| re-point | 1488 | 91 | 1060 |
+| re-point | 1488 | 91 | 1061 |
 | retire | 1508 | 153 | 0 |
 | unaffected | 2136 | 222 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8784** | **723** | **1497** |
+| **Total** | **8784** | **723** | **1498** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -121,7 +121,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `workspaces/benchmarks` | `**/*.incn` | 9 | re-point | #1561 | benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not. |
 | `workspaces/docs-site/docs/_snippets/language/examples` | `verified_*.incn` | 8 | re-point | #1561 | verified documentation examples checked by scripts/check_docs_examples.sh. |
 | `workspaces/oven` | `src/developer_workflow_acceptance.incn` | 1 | keep | #1337 | Explicit developer-workflow CLI contract driver; run nine named scenarios separately. Missing capabilities fail visibly; this is not the default green unit suite. |
-| `workspaces/oven/src` | `test_*.incn` | 18 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
+| `workspaces/oven/src` | `test_*.incn` | 19 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
 | `workspaces/oven/tests/fixtures` | `**/*.incn` | 4 | re-point | #1561 | fixtures of the Oven release-policy project's tests. |
 
 ## Test files by crate
@@ -162,7 +162,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/lock_transition/tests.rs` | 6 | 279 | 279 | keep | - | - | - | #1698 | checker 2 | Exact canonical lock publication re-seals unchanged checked outputs while preserving source, feature, Rust and writer authority, including workspace locks outside member source trees. |
 | `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 5 | 205 | 205 | keep | - | - | - | #1698 | checker 1 | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
 | `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 668 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/lock_preparation.rs` | 8 | 335 | 165 | unaffected | - | - | - | #1337 | - | Existing-owner lock publication reuse guards; backend-neutral request/source/publication invalidation. |
+| `loaves/compiler/incan_driver/src/build/lock_preparation.rs` | 8 | 428 | 163 | unaffected | - | - | - | #1337 | - | Existing-owner lock publication reuse guards; backend-neutral request/source/publication invalidation. |
 | `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 988 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 5 | 616 | 616 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
 | `loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs` | 3 | 195 | 195 | unaffected | - | - | - | #1337 | - | Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority. |
