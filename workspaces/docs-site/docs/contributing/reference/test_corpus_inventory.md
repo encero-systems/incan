@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3633 | 252 | 431 |
 | re-point | 1488 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2066 | 219 | 5 |
+| unaffected | 2068 | 219 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8695** | **715** | **1494** |
+| **Total** | **8697** | **715** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -140,7 +140,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/project/runner.rs` | 18 | 1031 | 449 | re-point | - | - | - | #1561 | codegen 2, run 14 | project runner: builds and runs the generated project; the run contract (profiles, rebuild triggers) is re-pointed at the replacement route. |
 | `loaves/compiler/incan_driver/src/backend/project/tests/codegen_generator.rs` | 6 | 490 | 490 | retire | 0/6 | 6 | - | #1561 | codegen 5, text 2, run 6, checker 2, parser 3, legacy_ir 1 | codegen into a generated project; asserts generated Rust text. |
 | `loaves/compiler/incan_driver/src/backend/project/tests/lock_payload.rs` | 1 | 26 | 26 | retire | 0/1 | 1 | - | #1561 | codegen 1, run 1 | generated Cargo project shape; dies with the generated-project route |
-| `loaves/compiler/incan_driver/src/build/bake.rs` | 10 | 2897 | 462 | unaffected | - | - | - | #1561 | codegen 1, run 2, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/bake.rs` | 10 | 2903 | 468 | unaffected | - | - | - | #1561 | codegen 1, run 2, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/bake/admitted_publication_tests.rs` | 1 | 193 | 193 | unaffected | - | - | - | #1337 | checker 1 | Actual admitted ordinary publication with both profiles, metadata replay, changed source, canonical lock and original generation owners; temporary native SDK context remains explicit. |
 | `loaves/compiler/incan_driver/src/build/bake/ordinary_native_publication_tests.rs` | 8 | 1259 | 1259 | unaffected | - | - | - | #1337 | checker 7 | Actual ordinary native library publication, metadata replay and source edit with real debug/release producer requests and compiler-bound identity; legacy SDK discovery is hostile and no generated Cargo invocation is admitted. |
 | `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 7 | 500 | 165 | keep | - | - | - | #1337 | replacement 6, checker 6, parser 6 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
@@ -2518,7 +2518,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/types.rs`:
 | `external_union_member_matching_is_provider_aware_issue892` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892` | - | legacy_ir | The `widgets::Widget` versus `other::Widget` spelling test dies with the carrier. The fixture's two providers each export a `Widget` (`name: str` in `widgets`, `value: int` in `other`); the consumer imports the second as `OtherWidget`, narrows `widgets`' union by `Widget` and `other`'s by `OtherWidget`, and hands each locally constructed Widget to its own union: the two same-spelled models are distinct members of distinct unions, which is the negative half of the test (`other::Widget` is no member of `widgets`' union). |
 | `provider_localization_preserves_foreign_external_union_issue892` | retire | - | - | legacy_ir | open (harness-deps): asserts, on a hand-built union owned by `other` whose member is `widgets::Widget`, that localizing `widgets` leaves the foreign union untouched. The program is a provider `other` that imports `widgets`' `Widget` and exports a union carrying it, narrowed in a consumer of both: `other` is then a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README), so the harness cannot bake it Cargo-free; the program shape is the `transitive_provider_chain/` candidate under the `dependencies/` behavior-candidates group. Waits for a Cargo-free bake, under the compiler suite, of a provider that declares `[dependencies]`. loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892/ keeps two dependency-free providers' unions apart in one consumer, the same-spelled-member half of #892, not this test's foreign-member half. |
 
-### `loaves/compiler/incan_test_support` (30 tests in 5 files: retire 3, unaffected 27)
+### `loaves/compiler/incan_test_support` (32 tests in 5 files: retire 3, unaffected 29)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2526,7 +2526,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/types.rs`:
 | `loaves/compiler/incan_test_support/src/behavior_roots.rs` | 3 | 315 | 79 | unaffected | - | - | - | #1337 | text 1 | test-support generator for the behavior roots: renders one root per declared behavior area with one case per fixture, and checks the checked-in roots against that rendering (`make behavior-roots` rewrites them). Its tests read the tree and render text; no compiler call. |
 | `loaves/compiler/incan_test_support/src/builtin_stdlib.rs` | 1 | 75 | 16 | unaffected | - | - | - | #1561 | - | test-support helper for the builtin stdlib inventory. |
 | `loaves/compiler/incan_test_support/src/emitted_symbol_artifact.rs` | 3 | 421 | 50 | retire (retire 3) | 0/3 | 3 | - | #1561 | - | helpers over emitted symbol projections (RFC 120 physical names). |
-| `loaves/compiler/incan_test_support/src/lib.rs` | 2 | 409 | 67 | unaffected | - | - | - | #1698 | run 1 | Test-harness helpers; native checkout anchors are validated exactly, and fixture bakes retain consumer authority without Cargo. |
+| `loaves/compiler/incan_test_support/src/lib.rs` | 4 | 466 | 91 | unaffected | - | - | - | #1698 | run 1 | Test-harness helpers; native checkout anchors are validated exactly, and fixture bakes retain consumer authority without Cargo. |
 
 Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_artifact.rs`:
 
@@ -2683,14 +2683,14 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/toolchain/incan-cli/src/bin/generate_feature_inventory.rs` | 1 | 85 | 23 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/commands/build/mod.rs` | 11 | 1308 | 658 | keep (keep 8, retire 3) | 0/3 | 3 | - | #1561 | replacement 2, checker 4, parser 1 | build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build. |
+| `loaves/toolchain/incan-cli/src/commands/build/mod.rs` | 11 | 1326 | 676 | keep (keep 8, retire 3) | 0/3 | 3 | - | #1561 | replacement 2, checker 4, parser 1 | build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build. |
 | `loaves/toolchain/incan-cli/src/commands/cache.rs` | 2 | 131 | 17 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/debug.rs` | 1 | 178 | 22 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/diagnostics.rs` | 11 | 626 | 449 | keep | - | - | - | #1698 | checker 7 | Check-only public dependency metadata, source and graph invalidation, exact feature selection, nominal authority and missing-metadata refusal; no native execution authority. |
 | `loaves/toolchain/incan-cli/src/commands/init.rs` | 16 | 755 | 316 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/lifecycle.rs` | 4 | 924 | 104 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/representation_inspect.rs` | 4 | 503 | 126 | keep | - | - | - | #1561 | checker 4 | representation inspection from checked facts. |
-| `loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs` | 1 | 116 | 116 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
+| `loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs` | 1 | 122 | 122 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/workspace.rs` | 1 | 428 | 45 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/lib.rs` | 37 | 3091 | 1131 | unaffected | - | - | - | #1561 | codegen 1 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs` | 28 | 182 | 182 | re-point | - | - | - | #1561 | - | generated by `make behavior-roots`: one case per behavior fixture of the cli_dependencies area, each run as a program (or checked, for a refused program) and compared with its header; a pending fixture's case is ignored with its reason. A project fixture's in-fixture providers are baked first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities). The route changes under it, the fixtures do not. |
