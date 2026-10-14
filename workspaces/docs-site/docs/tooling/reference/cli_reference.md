@@ -649,6 +649,7 @@ Adopts selected Cargo workspace libraries and their local dependency closure int
 | Ordinary dependencies | `[dependencies]`, including workspace inheritance and target predicates. |
 | Dev dependencies | `[envs.test.dependencies]`; they are required for tests without changing production optionality. Local dev packages are adopted too. Reimport replaces this dependency table, removing deleted imported requirements. |
 | Overlapping normal/dev dependencies | The existing test environment combines feature demands. Incompatible source/version identities, overlapping target alternatives, and optional production-only features that cannot be represented faithfully are refused. |
+| Package features | Preserve authored feature edges and expose implicit optional-dependency aliases as explicit Loaf features. A `dep:` reference suppresses an implicit alias, matching Cargo; explicitly declared features remain visible. Reimport replaces imported feature definitions. |
 | Build dependencies | Adoption inventory only; conversion does not execute build scripts or establish build facts. |
 | Unsupported inputs | Git dependencies without registered Loaf adaptation and nonconventional library roots are refused. All converted declarations are validated before publication. |
 

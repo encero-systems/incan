@@ -11833,6 +11833,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/convert_cargo/features.rs": {
+      "disposition": "keep",
+      "notes": "Explicit Cargo adoption preserves optional dependency feature visibility and removes stale implicit features on reimport.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/convert_cargo/test_dependencies.rs": {
       "disposition": "keep",
       "notes": "Cargo-free adoption of test dependencies preserves production optionality, feature demands, local closure adoption, and fail-closed unsupported edges.",
