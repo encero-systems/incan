@@ -2394,6 +2394,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// the canonical identity, and when that method is declared in this module its declaration span is the
     /// `direct_call_id` the method's own [`bir::Body`] carries. A selection that is not a method (an enum variant
     /// constructor, say, or a member the checker did not resolve) refuses rather than being called by its spelling.
+    /// The checked method instantiation supplies only method binders; factory owner arguments are retained separately
+    /// in the applied receiver and must not be appended again as method arguments.
     #[allow(clippy::too_many_arguments)]
     fn lower_static_method_call(
         &mut self,
@@ -2426,7 +2428,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         };
-        let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
+        let method_arguments = self
+            .type_info
+            .calls
+            .call_site_monomorph_type_args
+            .get(&(span.start, span.end));
+        let resolved_type_args = match method_arguments
+            .map(|arguments| Ok(arguments.iter().map(|ty| self.checked_type(ty)).collect()))
+            .unwrap_or_else(|| self.call_site_type_arguments(span, type_args))
+        {
             Ok(resolved_type_args) => resolved_type_args,
             Err(_) => {
                 return self.unsupported_operand(
