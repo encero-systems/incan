@@ -38,6 +38,11 @@ const GREEN: &str = "1;32";
 const YELLOW: &str = "33";
 const BANNER_WIDTH: usize = 58;
 
+/// Attribute one existing test stage without opening a sink or constructing fields when tracing is disabled.
+fn trace_test_stage(stage: &'static str) -> tracing::span::EnteredSpan {
+    tracing::trace_span!(target: "incan::invocation", "incan_cli::test_stage", stage).entered()
+}
+
 #[cfg(test)]
 thread_local! {
     static TEST_COMMAND_SESSION_CONSTRUCTIONS: Cell<usize> = const { Cell::new(0) };
@@ -1217,7 +1222,9 @@ fn run_scheduled_execution_units(
                 serial: unit.serial,
             });
             launched += 1;
+            let trace_parent = tracing::Span::current();
             thread::spawn(move || {
+                let _parent = trace_parent.enter();
                 let unit_index = unit.index;
                 let results = run_execution_unit(
                     &unit,
@@ -1284,8 +1291,11 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         workspace_context,
     } = config;
 
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = path, list_only, jobs).entered();
     let start_time = Instant::now();
     let jobs = jobs.max(1);
+    let stage = trace_test_stage("discovery");
 
     let path = Path::new(path);
     enforce_test_path_toolchain_constraint(path)?;
@@ -1303,6 +1313,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let representative_test = candidates
         .representative_path(&authority_root)
         .ok_or_else(|| CliError::failure("test candidate inventory lost its representative source"))?;
+    drop(stage);
+    let stage = trace_test_stage("session");
     let session = prepare_test_command_session(
         representative_test,
         list_only,
@@ -1320,6 +1332,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             )));
         }
     }
+    drop(stage);
+    let stage = trace_test_stage("candidate_selection");
     let test_files = discover_test_files_with_session(&candidates, &authority_root, session.as_ref());
     if test_files.is_empty() {
         return Err(CliError::failure(format!(
@@ -1327,6 +1341,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             path.display()
         )));
     }
+    drop(stage);
+    let stage = trace_test_stage("lock_policy");
     validate_oven_test_lock_policy(
         session.as_ref(),
         &test_files[0],
@@ -1335,6 +1351,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         sdk_profile.as_deref(),
     )?;
 
+    drop(stage);
+    let stage = trace_test_stage("collection");
     let eval_context = CollectionEvalContext::new(test_features.into_iter().collect());
     let mut conftest_cache = ConftestDiscoveryCache::default();
     let inventory = collect_test_inventory(&test_files, path, &eval_context, session.as_ref(), &mut conftest_cache)
@@ -1361,6 +1379,9 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         }
         println!();
     }
+
+    drop(stage);
+    let stage = trace_test_stage("test_selection");
 
     // ---- Expand parametrized tests into individual variants ----
     let all_tests = expand_parametrized_tests(all_tests);
@@ -1409,7 +1430,11 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    drop(stage);
+    let stage = trace_test_stage("dependency_admission");
     let command_context = prepare_oven_test_command_context(Arc::clone(&session), &test_files[0], &test_files)?;
+    drop(stage);
+    let stage = trace_test_stage("scheduling");
 
     let shuffle_seed = if shuffle {
         let value = seed.unwrap_or_else(default_shuffle_seed);
@@ -1486,6 +1511,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             start_time.elapsed().as_secs_f64()
         );
     }
+    drop(stage);
+    let _reporting = trace_test_stage("reporting");
     raw_batch_results.sort_by_key(|(index, _)| *index);
     let mut raw_results_by_id: HashMap<String, TestResult> = HashMap::new();
     for (_, batch_results) in raw_batch_results {
