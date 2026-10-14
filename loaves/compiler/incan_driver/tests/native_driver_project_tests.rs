@@ -11678,8 +11678,7 @@ fn stdlib_web_path_payload_output_matches_legacy() -> Result<(), Box<dyn std::er
     )
 }
 
-/// Builtin text codecs retain named/default slots, dynamic policies and frozen receivers; native error Display stays
-/// separately refused while its original legacy output remains pinned.
+/// Builtin text codecs retain named/default slots, dynamic policies, frozen receivers and complete error Display.
 #[test]
 fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -11713,10 +11712,12 @@ fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::
             source,
         )?;
     }
-    check_builtin_refusal(
-        "stdlib_codec_error_display_frontier",
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-codec-original-error-display")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         original,
-        "unsupported Body IR model display without derived Display",
     )?;
     check_builtin_refusal(
         "stdlib_codec_observable_expression_frontier",

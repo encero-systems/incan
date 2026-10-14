@@ -7,6 +7,53 @@ use super::*;
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
 
+/// Public SDK arms retain their checked callback outputs through a nested variadic race call.
+#[test]
+fn public_sdk_nested_race_retains_callback_output() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"import std.async
+from std.async.race import arm, race
+from std.async.time import sleep_ms
+async def slow() -> int:
+    while true:
+        await sleep_ms(1)
+    return 1
+async def fast() -> int:
+    await sleep_ms(5)
+    return 2
+def describe(value: int) -> str:
+    return f"winner {value}"
+async def main() -> None:
+    println(await race(arm(slow(), describe), arm(fast(), describe)))
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .inferred_call_result_types
+            .values()
+            .any(|ty| matches!(ty,
+                crate::symbols::ResolvedType::Generic(name, outputs)
+                if name == "RaceArm" && outputs == &[crate::symbols::ResolvedType::Str]
+            )),
+        "retained calls: {:#?}",
+        checker.type_info().calls.inferred_call_result_types
+    );
+    let module = build(source, &["main"])?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// The exact SDK FnOnce bridge retains a checked zero-argument callable's output in native task storage.
 #[test]
 fn sdk_blocking_callback_retains_output() -> Result<(), Box<dyn std::error::Error>> {
