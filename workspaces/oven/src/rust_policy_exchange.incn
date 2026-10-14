@@ -464,7 +464,7 @@ def decode_context(value: JsonValue, path: list[str]) -> Result[ActivationContex
     )
 
 
-def decode_target(value: JsonValue, path: list[str]) -> Result[TargetConfiguration, SelectionError]:
+pub def decode_target(value: JsonValue, path: list[str]) -> Result[TargetConfiguration, SelectionError]:
     """Decode one target triple and optional authenticated cfg snapshot."""
     exact_object(value, ["triple", "cfg"], path)?
     cfg = field(value, "cfg", path)?

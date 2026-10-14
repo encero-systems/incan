@@ -1,5 +1,8 @@
 """Companion evidence for one selected unit, assembled only from what the source authority already retained."""
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from std.hash import sha256
 from manifest_errors import IntakeError, IntakeErrorKind
 from intake import ManifestEvidence

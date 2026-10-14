@@ -80,6 +80,8 @@ def build(arguments: list[str]) -> Result[None, str]:
     output = Path(arguments[2]).absolute().map_err((error) => error.message())?
     output.parent().mkdir(true, true).map_err((error) => error.message())?
     engine = prepare_runtime_engine(checkout, output.parent(), arguments[3], arguments[4])?
+    policy = prepare_runtime_engine(checkout, output.parent(), arguments[3], arguments[4],
+        "workspaces/oven", "src/plan_json_main.incn", "oven-policy-engine", "oven-policy-engine", "release")?
     rustc_text = arguments[3]
     rustc = RustPath.new(rustc_text)
     store = OvenStore.new(
@@ -102,7 +104,8 @@ def build(arguments: list[str]) -> Result[None, str]:
     root_request = request.with_generated_source("compiler-main", source_path)
     tree_request = root_request.with_generated_source_tree("compiler-cli-tree", cli.joinpath("src").0)
     engine_request = tree_request.with_generated_source("native-runtime-engine", RustPath.new(engine.0))
-    source_receipt = receipt_generated_project(engine_request).map_err((error) => str(error))?
+    policy_request = engine_request.with_generated_source("oven-policy-engine", RustPath.new(policy.0))
+    source_receipt = receipt_generated_project(policy_request).map_err((error) => str(error))?
     dependencies_path = checkout.joinpath("workspaces/compiler-bootstrap/loaf.toml")
     input_seconds = seconds_since(started)?
     owner = Path(arguments[0]).resolve().map_err((error) => error.message())?
@@ -163,10 +166,14 @@ def select_runtime_engine(
     stage_zero: str,
     rustc_text: str,
     store_text: str,
+    entrypoint_relative: str = "src/main.incn",
+    installed_name: str = "native-runtime-inputs",
+    report_prefix: str = "native-runtime-engine",
+    profile: str = "debug",
 ) -> Result[Option[Path], str]:
     """Select exact canonical source and dependency authority, retaining the lease through verified projection."""
     project_path = RustPath.new(project.0)
-    entrypoint = project.joinpath("src/main.incn")
+    entrypoint = project.joinpath(entrypoint_relative)
     source = digest_baked_project_source_authority(project_path).map_err((error) => str(error))?
     dependencies = digest_project_development_dependencies(project_path).map_err((error) => str(error))?
     compiler = digest_project_output_projection_file(RustPath.new(stage_zero)).map_err((error) => str(error))?
@@ -186,7 +193,7 @@ def select_runtime_engine(
         project_path,
         RustPath.new(entrypoint.0),
         OvenBakeProjectTarget.Executable,
-        "debug",
+        profile,
         source,
         target,
         toolchain,
@@ -197,7 +204,7 @@ def select_runtime_engine(
         Some(candidate) =>
             verify_stored_project_output_native(candidate).map_err((error) => str(error))?
             prepared = Path(candidate.native_output.to_string_lossy().into_owned())
-            installed = destination.joinpath("native-runtime-inputs")
+            installed = destination.joinpath(installed_name)
             bytes = prepared.read_bytes().map_err((error) => error.message())?
             mut copy_required = true
             if installed.exists() and installed.is_file() and not installed.is_symlink():
@@ -209,7 +216,7 @@ def select_runtime_engine(
                 staging = TemporaryDirectory
                     .try_new_with("engine-", "", Some(destination))
                     .map_err((error) => error.message())?
-                staged = staging.path().joinpath("native-runtime-inputs")
+                staged = staging.path().joinpath(installed_name)
                 prepared.copy(staged, false, true).map_err((error) => error.message())?
                 staged.chmod(false).map_err((error) => error.message())?
                 staged.replace(installed).map_err((error) => error.message())?
@@ -223,37 +230,49 @@ def select_runtime_engine(
                 ), "executable": JsonValue.string(prepared.0)},
             )
             destination
-                .joinpath("native-runtime-engine-selection.json")
+                .joinpath(f"{report_prefix}-selection.json")
                 .write_text(report.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
                 .map_err((error) => error.message())?
             return Ok(Some(installed))
 
 
-def prepare_runtime_engine(checkout: Path, destination: Path, rustc: str, store: str) -> Result[Path, str]:
+def prepare_runtime_engine(
+    checkout: Path, destination: Path, rustc: str, store: str,
+    project_relative: str = "workspaces/native-runtime-inputs",
+    entrypoint_relative: str = "src/main.incn",
+    installed_name: str = "native-runtime-inputs",
+    report_prefix: str = "native-runtime-engine",
+    profile: str = "debug",
+) -> Result[Path, str]:
     """Reuse a shared engine before preparing missing inputs, then admit the completed output under its exact authority."""
     variable: str = "INCAN_COMPILER_STAGE_ZERO"
     stage_zero = var(variable).map_err((error) => str(error))?
-    project_text = checkout.joinpath("workspaces/native-runtime-inputs").0
+    project_text = checkout.joinpath(project_relative).0
     project = Path(project_text)
-    match select_runtime_engine(project, destination, stage_zero, rustc, store)?:
+    match select_runtime_engine(project, destination, stage_zero, rustc, store, entrypoint_relative, installed_name, report_prefix, profile)?:
         Some(engine) => return Ok(engine)
         None => pass
     mut command = Command.new(stage_zero)
-    command.arg("oven").arg("bake").arg("--project").arg(project_text).arg("--format").arg("json")
+    if profile == "debug" and entrypoint_relative == "src/main.incn":
+        command.arg("oven").arg("bake").arg("--project").arg(project_text).arg("--format").arg("json")
+    elif profile == "release":
+        command.arg("build").arg(project.joinpath(entrypoint_relative).0).arg("--release").arg("--report").arg("json")
+    else:
+        return Err("unsupported engine entrypoint/profile preparation")
     result = command.output().map_err((error) => str(error))?
     destination
-        .joinpath("native-runtime-engine-preparation.json")
+        .joinpath(f"{report_prefix}-preparation.json")
         .write_bytes(result.stdout)
         .map_err((error) => error.message())?
     destination
-        .joinpath("native-runtime-engine-preparation.stderr")
+        .joinpath(f"{report_prefix}-preparation.stderr")
         .write_bytes(result.stderr)
         .map_err((error) => error.message())?
     if not result.status.success():
         return Err("native-runtime engine preparation failed; compiler output directory retains its diagnostics")
-    match select_runtime_engine(project, destination, stage_zero, rustc, store)?:
+    match select_runtime_engine(project, destination, stage_zero, rustc, store, entrypoint_relative, installed_name, report_prefix, profile)?:
         Some(engine) => return Ok(engine)
-        None => return Err("prepared native-runtime engine has no source-current receipt-bound shared output")
+        None => return Err(f"prepared {installed_name} has no source-current receipt-bound shared output")
 
 
 def inspect_runtime_engine(arguments: list[str]) -> Result[None, str]:
