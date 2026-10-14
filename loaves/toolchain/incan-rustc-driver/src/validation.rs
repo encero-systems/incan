@@ -2166,6 +2166,12 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         let mut fields = BTreeSet::new();
         for field in &declaration.fields {
             span(&field.span)?;
+            if matches!(field.ty, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
+                return Err(PlanError::Invalid {
+                    function: declaration.name.clone(),
+                    reason: "unsupported callable model field declaration".into(),
+                });
+            }
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
                 || !source_signature_type(&scalar(&field.ty))
