@@ -71,11 +71,11 @@ fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::er
         &source,
         &[],
         b"read failed: chunk_size must be greater than zero\n",
-        "unsupported Body IR noncallable assignment to function value",
+        "unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::map_err`: a type argument has no native impl for the callee's bounds",
     )
 }
 
-/// The complete original reader reaches callable storage and preserves all legacy chunk and completion bytes.
+/// The complete original reader reaches the native callee's bounds and preserves all legacy chunk and completion bytes.
 #[test]
 fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_refusal_case(
@@ -85,7 +85,7 @@ fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error:
         ),
         &[],
         b"16\n4\ndone\n",
-        "unsupported Body IR noncallable assignment to function value",
+        "unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::map_err`: a type argument has no native impl for the callee's bounds",
     )
 }
 

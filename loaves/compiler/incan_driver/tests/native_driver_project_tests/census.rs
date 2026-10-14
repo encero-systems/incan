@@ -58,7 +58,7 @@ fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dy
             "lowering_dependencies",
             "provider_nominal_types_and_unions_issue892",
             "refused",
-            "unsupported Body IR ambiguous project nominal carrier Widget",
+            "unsupported Body IR union member conversion",
         ),
     ] {
         let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
