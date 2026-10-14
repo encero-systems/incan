@@ -10,6 +10,7 @@ use crate::error::{CliError, CliResult};
 use incan_provider::ProviderPlan;
 use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::lock_semantics::{CheckedProviderSemanticIdentities, provider_semantic_identities};
+#[cfg(feature = "cli")]
 use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_dependencies};
 use oven_model::manifest::DependencySpec;
 
