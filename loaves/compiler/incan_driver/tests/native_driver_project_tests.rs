@@ -16396,31 +16396,29 @@ fn closed_sdk_race_calls_match_legacy() -> Result<(), Box<dyn std::error::Error>
     )
 }
 
-/// Payload-inferred generic newtypes keep their instance methods and static construction parity.
+/// Closed newtype locals retain the separate unproven field-layout refusal and unchanged legacy output.
 #[test]
 fn closed_generic_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("closed-generic-newtype")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "closed-generic-newtype",
         include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
+        &[],
+        b"Box\n42 42\ntext\n",
+        "unsupported Body IR unproven model field",
     )
 }
 
-/// Generated defaults retain the annotated generic model's concrete owner arguments.
+/// Closed default-call locals retain the distinct nominal-layout refusal and unchanged legacy output.
 #[test]
 fn closed_generic_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("closed-generic-defaults")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "closed-generic-defaults",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_default_takes_declared_field_defaults.incn"
         ),
+        &[],
+        b"dark\n14\n0\ndark\n1\n3\n5\n",
+        "unsupported Body IR nominal type Holder",
     )
 }
 
@@ -16490,18 +16488,17 @@ def main() -> None:
     )
 }
 
-/// A generic call through an adopted trait retains its closed result contract.
+/// Closed adopter results retain the distinct trait-method target refusal and unchanged legacy output.
 #[test]
 fn closed_generic_trait_return_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("closed-generic-trait-return")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "closed-generic-trait-return",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_bounds_return_type.incn"
         ),
+        &[],
+        b"5\n5\n",
+        "unsupported Body IR nonlocal or trait-object Method tag",
     )
 }
 
@@ -16523,12 +16520,14 @@ fn closed_imported_subtrait_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
-/// Standard testing helper calls preserve their concrete payload and comparison arguments.
+/// Closed testing helper targets retain the separate Option[Unit] layout refusal and unchanged legacy output.
 #[test]
 fn closed_testing_helper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_case(
+    check_project_modules_refusal_case(
         "closed-testing-helpers",
         include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn"),
+        &[],
         b"plain and messaged assert_eq passed\ncomparison operand passed\nassert_ne passed\nconstructor comparisons passed\nsome 5\nnone passed\nok 42\nerr boom\nraised from call expression\nraised from function reference\nassert_eq failure is an AssertionError\nempty message failure is an AssertionError\n",
+        "unsupported Body IR type Option[Unit]",
     )
 }
