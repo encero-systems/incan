@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3633 | 252 | 431 |
 | re-point | 1488 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2071 | 219 | 5 |
+| unaffected | 2075 | 219 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8700** | **715** | **1494** |
+| **Total** | **8704** | **715** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3161,7 +3161,7 @@ Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
 | `inject_file_test_harness_emits_tests_module` | retire | `dies` | asserts the injected `mod __incan_file_tests` text with one `fn incan_harness_<i>_<name>` per case and the `set_current_dir` guard; generated Rust text, dies with #654. The cwd guard is carried by `e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs` (re-point). | generated_text | libtest harness of the generated test crate |
 | `inject_file_test_harness_wraps_async_tests_and_fixtures` | retire | `dies` | asserts the injected harness text for an async test with a yield fixture (`__incan_async_block_on`, `__incan_run_teardown`); generated Rust text, dies with #654. Async tests and fixture teardown through `incan test` are the re-point `integration_tests.rs::e2e_fixture_lifetime_success_scenarios_share_one_project` and `e2e_fixture_teardown_failure_scenarios_share_one_project`. | - | libtest harness of the generated test crate |
 
-??? note "Unaffected crates (901 tests in 78 files)"
+??? note "Unaffected crates (905 tests in 78 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3241,7 +3241,7 @@ Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
     | `loaves/oven/oven_model/src/toolchain_layout/source_layout/tests.rs` | 9 | 284 | 284 | unaffected | - | - | - | #1337 | - | Original executable-relative source directory/member ownership, freshness, read-only access and ambient path refusal. |
     | `loaves/oven/oven_model/src/workspace.rs` | 21 | 2166 | 644 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_store` (161 tests in 13 files: unaffected 161)
+    #### `loaves/oven/oven_store` (165 tests in 13 files: unaffected 165)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3253,7 +3253,7 @@ Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
     | `loaves/oven/oven_store/src/publisher_owner.rs` | 3 | 444 | 192 | unaffected | - | - | - | #1561 | - | Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level. |
     | `loaves/oven/oven_store/src/publisher_owner/virtual_toolchain.rs` | 2 | 253 | 65 | unaffected | - | - | - | #1698 | - | Native toolchain virtual loaf: bounded version/compiler identity, relocation and refusal controls; system SDK descendants are trusted rather than recursively inventoried. |
     | `loaves/oven/oven_store/src/source_archive.rs` | 3 | 211 | 68 | unaffected | - | - | - | #1698 | - | Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted. |
-    | `loaves/oven/oven_store/src/store.rs` | 85 | 8768 | 3364 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/store.rs` | 89 | 8914 | 3485 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/store/payload_index.rs` | 5 | 340 | 176 | unaffected | - | - | - | #1337 | - | Retained payload request keys narrow the existing exact Store admission; controls preserve history, partitioning, external membership reconciliation, integrity and leases. |
     | `loaves/oven/oven_store/src/store/published_identity_tests.rs` | 6 | 223 | 223 | unaffected | - | - | - | #1337 | - | Exact original immutable-owner read-only selection preserves byte integrity, batch leases and complete bookkeeping while avoiding unrelated Store entries. |
     | `loaves/oven/oven_store/src/store_mirror.rs` | 9 | 641 | 375 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
