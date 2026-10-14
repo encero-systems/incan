@@ -132,13 +132,13 @@ pub fn select_declared_native_loaf_plan(
     Ok((receipt, selection, report))
 }
 
-/// One ordinary native preparation and original leased selection, owned by the existing serial command service.
+/// One ordinary native preparation and original leased consumer selections in the existing serial command service.
 /// Request reconciliation is supplied by the native producer; physical plan observations use the existing model.
 #[derive(Default)]
 pub(super) struct RetainedNativeLoafPlan {
     store: Option<(PathBuf, oven_store::store::OvenStoreLimits)>,
     preparation: Option<NativeLoafConsumerPreparation>,
-    plan: Option<RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>>>,
+    plans: BTreeMap<PathBuf, RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>>>,
 }
 
 impl RetainedNativeLoafPlan {
@@ -150,14 +150,27 @@ impl RetainedNativeLoafPlan {
         source_receipt: &OvenReceipt,
         request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
     ) -> CliResult<(OvenReceipt, Arc<OvenDirectRustcPlanSelection>, String, bool)> {
+        self.select_group(store, source_receipt, request, request)
+    }
+
+    /// Reconcile one selected dependency group, then retain each consumer's own forward closure and output plan.
+    /// The owner constructs the preparation request from the consumer request, changing only dependency demands
+    /// and staging coordinates. Group membership never grants another consumer's direct imports.
+    pub(super) fn select_group(
+        &mut self,
+        store: &OvenStore,
+        source_receipt: &OvenReceipt,
+        request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+        consumer: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+    ) -> CliResult<(OvenReceipt, Arc<OvenDirectRustcPlanSelection>, String, bool)> {
         let store_key = (store.root().to_path_buf(), *store.limits());
         if self.store.as_ref() != Some(&store_key) {
             self.preparation = None;
-            self.plan = None;
+            self.plans.clear();
             self.store = Some(store_key);
         }
-        // Consume both capabilities before fallible reconciliation so failures cannot retain stale authority.
-        let previous_plan = self.plan.take();
+        // Consume this consumer's plan and the group preparation before fallible reconciliation.
+        let previous_plan = self.plans.remove(consumer.output);
         let previous = self
             .preparation
             .take()
@@ -169,20 +182,31 @@ impl RetainedNativeLoafPlan {
             Some(prepared) => prepared,
             None => oven_rustc::native_loaf::prepare_declared_native_loafs_in_store(request, store).map_err(failure)?,
         };
-        let receipt = native_loaf_receipt(source_receipt, prepared.closure())?;
+        let selected;
+        let closure = if std::ptr::eq(request, consumer) {
+            prepared.closure()
+        } else {
+            let graph = prepared.closure().graph();
+            let roots = graph
+                .select_dependency_roots(consumer.dependencies, consumer.declaration_owner, consumer.domain)
+                .map_err(failure)?;
+            selected = graph.select(&roots).map_err(failure)?;
+            &selected
+        };
+        let receipt = native_loaf_receipt(source_receipt, closure)?;
         let previous = previous_plan.filter(|plan| plan.matches_receipt(&receipt) && plan.native_inputs_current());
         let plan_reused = previous.is_some();
         let plan = match previous {
             Some(plan) => plan,
             None => {
-                let selection = select_native_loaf_plan_for_receipt(store, &receipt, prepared.closure())?;
+                let selection = select_native_loaf_plan_for_receipt(store, &receipt, closure)?;
                 RetainedExecutableDependencies::admitted_native_plan(&receipt, selection)?.into_shared()
             }
         };
         let report = serde_json::to_string(prepared.report()).map_err(failure)?;
         let selection = Arc::clone(&plan.selection);
         if plan.native_inputs_current() {
-            self.plan = Some(plan);
+            self.plans.insert(consumer.output.to_path_buf(), plan);
             self.preparation = Some(prepared);
         }
         tracing::trace!(target: "incan::invocation", decision = if plan_reused { "reuse_ordinary_native_plan" } else { "select_ordinary_native_plan" });

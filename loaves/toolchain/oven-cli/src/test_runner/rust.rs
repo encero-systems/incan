@@ -90,16 +90,92 @@ pub(super) fn discover_roots(path: &Path) -> CliResult<Vec<PathBuf>> {
     Ok(roots.into_iter().collect())
 }
 
-/// Compile one authored Rust root through the existing receipt, native admission and direct-rustc plan selection.
-/// A sibling declaration may narrow integration-test dependencies; it never supplies ambient Cargo authority.
-pub(super) fn prepare(
-    source: &Path,
+/// Current declaration-selected inputs for one harness, before any shared dependency compilation starts.
+struct ResolvedRustRoot {
+    source: PathBuf,
+    declaration: PathBuf,
+    declaration_digest: String,
+    target_declaration: bool,
+    manifest: ProjectManifest,
+    features: Vec<String>,
+    dependencies: Vec<oven_model::manifest::DependencySpec>,
+    rustc: PathBuf,
+    target: String,
+}
+
+impl ResolvedRustRoot {
+    /// A declaration added or changed while another harness compiles invalidates this command's selected group.
+    fn verify_declaration(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.source.with_extension("loaf.toml").is_file() != self.target_declaration
+            || oven_store::store::digest_regular_file(&self.declaration)?.1 != self.declaration_digest
+        {
+            return Err("Rust test declaration changed during grouped preparation".into());
+        }
+        Ok(())
+    }
+}
+
+/// Compile the selected roots through one existing producer, preserving each harness's direct imports.
+/// Compatible requirements are united only after ordinary feature/environment/target selection. Conflicting
+/// declarations retain their independent preparation; no selected root or additional feature is invented here.
+pub(super) fn prepare_roots(
+    sources: &[PathBuf],
     context: &OvenTestCommandContext,
     features: &FeatureSelection,
     owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
-) -> CliResult<PreparedRustRoot> {
-    prepare_inner(source, context, features, owner)
-        .map_err(|e| CliError::failure(format!("Rust test {}: {e}", source.display())))
+) -> CliResult<Vec<(PathBuf, PreparedRustRoot)>> {
+    let roots = sources
+        .iter()
+        .map(|source| {
+            resolve_root(source, context, features, owner)
+                .map_err(|e| CliError::failure(format!("Rust test {}: {e}", source.display())))
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+    let shared = shared_dependencies(&roots);
+    let preparation_output = context.project_root.join("target/oven-tests/native-dependencies");
+    let mut prepared = Vec::new();
+    for root in &roots {
+        for observed in &roots {
+            observed
+                .verify_declaration()
+                .map_err(|e| CliError::failure(e.to_string()))?;
+        }
+        let result = prepare_inner(root, context, owner, shared.as_deref(), &preparation_output)
+            .map_err(|e| CliError::failure(format!("Rust test {}: {e}", root.source.display())))?;
+        prepared.push((root.source.clone(), result));
+    }
+    for root in &roots {
+        root.verify_declaration()
+            .map_err(|e| CliError::failure(e.to_string()))?;
+    }
+    Ok(prepared)
+}
+
+/// Unite identical authored aliases without expanding features or merging incompatible source/version requests.
+fn shared_dependencies(roots: &[ResolvedRustRoot]) -> Option<Vec<oven_model::manifest::DependencySpec>> {
+    let first = roots.first()?;
+    if roots.len() < 2 {
+        return None;
+    }
+    let mut dependencies = BTreeMap::new();
+    for root in roots {
+        if root.manifest.project_root() != first.manifest.project_root()
+            || root.rustc != first.rustc
+            || root.target != first.target
+        {
+            return None;
+        }
+        for dependency in &root.dependencies {
+            if let Some(previous) = dependencies.get(&dependency.crate_name) {
+                if previous != dependency {
+                    return None;
+                }
+            } else {
+                dependencies.insert(dependency.crate_name.clone(), dependency.clone());
+            }
+        }
+    }
+    Some(dependencies.into_values().collect())
 }
 
 /// Resolve public features against the authored dependency contract before applying test-only requirements.
@@ -176,16 +252,21 @@ fn test_dependencies(
     Ok(dependencies)
 }
 
-/// Preserve exact compilation inputs and leases while mapping real libtest metadata into common test records.
-fn prepare_inner(
+/// Resolve one root once using the canonical test manifest, feature and target-decision machinery.
+fn resolve_root(
     source: &Path,
     context: &OvenTestCommandContext,
     features: &FeatureSelection,
     owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
-) -> Result<PreparedRustRoot, Box<dyn std::error::Error>> {
-    let _stage = trace_test_stage("rust_test_preparation");
-    let declaration = source.with_extension("loaf.toml");
-    let owned_manifest = if declaration.is_file() {
+) -> Result<ResolvedRustRoot, Box<dyn std::error::Error>> {
+    let target_declaration = source.with_extension("loaf.toml").is_file();
+    let declaration = if target_declaration {
+        source.with_extension("loaf.toml")
+    } else {
+        context.project_root.join("loaf.toml")
+    };
+    let declaration_digest = oven_store::store::digest_regular_file(&declaration)?.1;
+    let owned_manifest = if target_declaration {
         Some(ProjectManifest::load(&declaration)?)
     } else {
         None
@@ -211,8 +292,38 @@ fn prepare_inner(
     {
         return Err("Rust test roots with build scripts require declared build facts in their native plan".into());
     }
-    let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
     let dependencies = test_dependencies(manifest, &selected_features, source, owned_manifest.is_some())?;
+    let root = ResolvedRustRoot {
+        source: source.to_path_buf(),
+        declaration,
+        declaration_digest,
+        target_declaration,
+        manifest: selected_manifest,
+        features: selected_features.active_features.into_iter().collect(),
+        dependencies,
+        rustc,
+        target,
+    };
+    root.verify_declaration()?;
+    Ok(root)
+}
+
+/// Preserve exact compilation inputs and leases while mapping real libtest metadata into common test records.
+fn prepare_inner(
+    root: &ResolvedRustRoot,
+    context: &OvenTestCommandContext,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    shared_dependencies: Option<&[oven_model::manifest::DependencySpec]>,
+    preparation_output: &Path,
+) -> Result<PreparedRustRoot, Box<dyn std::error::Error>> {
+    let _stage = trace_test_stage("rust_test_preparation");
+    let source = root.source.as_path();
+    let declaration = &root.declaration;
+    let manifest = &root.manifest;
+    let features = &root.features;
+    let dependencies = &root.dependencies;
+    let rustc = root.rustc.as_path();
+    let target = &root.target;
     let project = manifest
         .project
         .as_ref()
@@ -239,21 +350,14 @@ fn prepare_inner(
         &context.project_root,
         &name,
         version,
-        target,
-        rustc_identity(&rustc)?,
+        target.as_str(),
+        rustc_identity(rustc)?,
         "debug",
         features.clone(),
     )
     .with_generated_source("test-root", source)
     .with_generated_source_tree("test-modules", source.parent().ok_or("Rust root has no parent")?)
-    .with_generated_source(
-        "test-declaration",
-        if declaration.is_file() {
-            declaration
-        } else {
-            context.project_root.join("loaf.toml")
-        },
-    )
+    .with_generated_source("test-declaration", declaration)
     .with_build_unit_input("test-environment", serde_json::to_string(&compile_environment)?);
     let source_receipt = receipt_generated_project(&request)?;
     let native = incan_driver::build::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?
@@ -261,22 +365,30 @@ fn prepare_inner(
     let root_key = hex::encode(Sha256::digest(source.to_string_lossy().as_bytes()));
     let directory = context.project_root.join("target/oven-tests").join(root_key);
     std::fs::create_dir_all(&directory)?;
-    let (receipt, selection, _, _) = owner.native_loaf_plan(
-        &context.store,
-        &source_receipt,
-        &oven_rustc::native_loaf::NativeLoafConsumerRequest {
-            graph: &native.graph,
-            index: &native.index,
-            blobs: &native.blobs,
-            output: &directory.join("native-hints"),
-            rustc: &rustc,
-            target: &source_receipt.intent.target,
-            profile: &source_receipt.intent.profile,
-            dependencies: &dependencies,
-            declaration_owner: manifest.project_root(),
-            domain: "target",
-        },
-    )?;
+    let native_hints = directory.join("native-hints");
+    let native_request = oven_rustc::native_loaf::NativeLoafConsumerRequest {
+        graph: &native.graph,
+        index: &native.index,
+        blobs: &native.blobs,
+        output: &native_hints,
+        rustc,
+        target: &source_receipt.intent.target,
+        profile: &source_receipt.intent.profile,
+        dependencies,
+        declaration_owner: manifest.project_root(),
+        domain: "target",
+    };
+    let (receipt, selection, _, _) = if let Some(dependencies) = shared_dependencies {
+        owner.native_loaf_plan_in_group(
+            &context.store,
+            &source_receipt,
+            &native_request,
+            dependencies,
+            preparation_output,
+        )?
+    } else {
+        owner.native_loaf_plan(&context.store, &source_receipt, &native_request)?
+    };
     let mut plan = selection.source_artifact_plan("test-root")?;
     plan.compile_environment.extend(compile_environment.clone());
     let mut artifacts = selection.artifacts().clone();
@@ -293,13 +405,13 @@ fn prepare_inner(
             artifacts: &artifacts,
             artifact_root: selection.output_guard_root(),
             artifact_plan: Some(&plan),
-            rustc: &rustc,
+            rustc,
             source,
             output: &executable,
             crate_name: &name,
             edition,
             source_evidence_key: "test-root",
-            features: &features,
+            features,
             prefer_dynamic: proc_macro_test_root(manifest, source)?,
         },
         &context.store,
@@ -324,7 +436,7 @@ fn prepare_inner(
             oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
             oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV,
         ],
-        &rustc,
+        rustc,
         &plan,
     )?;
     let collection = owner.native_test_collection(
@@ -410,6 +522,76 @@ pub(super) fn execute(
 #[cfg(test)]
 mod tests {
     use super::discover_roots;
+
+    /// Grouping preserves authored feature/source choices and notices declaration changes during preparation.
+    #[test]
+    fn native_harness_group_keeps_conflicts_separate_and_refuses_changed_declarations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        let declaration = root.join("loaf.toml");
+        std::fs::create_dir_all(root.join("leaf/src"))?;
+        std::fs::write(root.join("leaf/src/lib.rs"), "pub const VALUE: u8 = 1;")?;
+        std::fs::write(
+            root.join("leaf/loaf.toml"),
+            "[project]\nname='leaf'\n[rust]\ntype='lib'\n",
+        )?;
+        std::fs::write(
+            &declaration,
+            "[project]\nname='grouped'\n[dependencies]\nleaf={loaf='leaf',path='leaf',features=['base']}\n",
+        )?;
+        let manifest = oven_model::manifest::ProjectManifest::load(&declaration)?;
+        let dependencies = manifest.rust_dependency_values();
+        let inputs = |name: &str| -> Result<super::ResolvedRustRoot, Box<dyn std::error::Error>> {
+            Ok(super::ResolvedRustRoot {
+                source: root.join(name),
+                declaration: declaration.clone(),
+                declaration_digest: oven_store::store::digest_regular_file(&declaration)?.1,
+                target_declaration: false,
+                manifest: manifest.clone(),
+                features: Vec::new(),
+                dependencies: dependencies.clone(),
+                rustc: "selected-rustc".into(),
+                target: "selected-target".into(),
+            })
+        };
+        let mut roots = vec![inputs("first.rs")?, inputs("second.rs")?];
+        assert_eq!(super::shared_dependencies(&roots), Some(dependencies.clone()));
+        roots[1]
+            .dependencies
+            .first_mut()
+            .ok_or("native leaf dependency missing")?
+            .features
+            .push("different".into());
+        assert!(
+            super::shared_dependencies(&roots).is_none(),
+            "grouping must not expand an authored feature set"
+        );
+        roots[1].dependencies = dependencies;
+        roots[1]
+            .dependencies
+            .first_mut()
+            .ok_or("native leaf dependency missing")?
+            .source = oven_model::manifest::DependencySource::Path {
+            path: root.join("different-leaf"),
+        };
+        assert!(
+            super::shared_dependencies(&roots).is_none(),
+            "same alias must not hide a different source"
+        );
+        roots[0].verify_declaration()?;
+        std::fs::write(root.join("first.loaf.toml"), "[project]\nname='target-contract'\n")?;
+        assert!(
+            roots[0].verify_declaration().is_err(),
+            "new target declaration was ignored"
+        );
+        std::fs::write(&declaration, "[project]\nname='changed'\n")?;
+        assert!(
+            roots[1].verify_declaration().is_err(),
+            "changed package declaration was ignored"
+        );
+        Ok(())
+    }
 
     /// A test-only requirement cannot turn a valid authored optional-feature edge into a feature error.
     #[test]

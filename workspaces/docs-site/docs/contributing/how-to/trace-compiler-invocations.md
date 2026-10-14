@@ -64,6 +64,8 @@ Within `oven_rustc::prepare_native_loafs`, `prepare_registry_sources` measures r
 
 Compare the dependency decisions for consecutive harnesses before calling their preparation redundant. An integration harness can need the project's ordinary library even when its library-test harness did not. Report subprocess, publication and validation costs separately; their nested durations must not be added twice. Measure normal build latency again with tracing disabled.
 
+For multiple compatible Rust roots selected in one test command, the owner prepares their combined dependency requirements once. Each harness still selects only its own direct imports and forward dependencies from those original owners. An added integration root can therefore increase the first preparation's required units while removing a second complete preparation. Conflicting aliases, source selections or feature requirements remain independent. Changed declarations during the grouped operation refuse; unchanged repeats still reconcile the existing lock, sources, compiler and physical inputs before reusing plans. Compare both complete-preparation counts and compiled-unit counts to distinguish eliminated work from over-compilation.
+
 ## Check native SDK traversal
 
 On an unchanged command, inspect file-observation paths beneath the native compiler installation. Cached native archives are selected by the pinned source and fact receipt and their stored bytes are checked under lease. Reusing them needs no installed native compiler and must not read its SDK tree. Check that native preparation and compilation counts are zero as well as checking file paths; a short elapsed time alone does not establish reuse.

@@ -355,6 +355,34 @@ impl ExecutableBuildOwner {
             .select(store, receipt, request)
     }
 
+    /// Prepare the union of already selected consumers once, while each consumer keeps its own imports and plan.
+    /// The caller supplies only current, compatible declarations from the same owner; this operation never expands
+    /// features or resolves dependencies. The original producer reconciles the union on every handoff, and distinct
+    /// output plans retain their own receipt and physical-input checks under the same original execution leases.
+    pub fn native_loaf_plan_in_group(
+        &mut self,
+        store: &oven_store::store::OvenStore,
+        receipt: &oven_store::OvenReceipt,
+        consumer: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+        dependencies: &[oven_model::manifest::DependencySpec],
+        preparation_output: &Path,
+    ) -> CliResult<(
+        oven_store::OvenReceipt,
+        std::sync::Arc<oven_rustc::plan::OvenDirectRustcPlanSelection>,
+        String,
+        bool,
+    )> {
+        let preparation = oven_rustc::native_loaf::NativeLoafConsumerRequest {
+            dependencies,
+            output: preparation_output,
+            ..*consumer
+        };
+        self.native_plans
+            .entry(preparation_output.to_path_buf())
+            .or_default()
+            .select_group(store, receipt, &preparation, consumer)
+    }
+
     /// Select and execute a receipt-bound native executable through existing Oven operations, retaining the same
     /// declared preparation across requests. A Store/configuration change drops that retained selection. Every
     /// execution still verifies source, selected plan, compiler and output; this is not a second native executor.
