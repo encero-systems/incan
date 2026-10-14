@@ -34,17 +34,15 @@ fn original_sdk_graph_output_matches_legacy() -> Result<(), Box<dyn std::error::
 /// Checked serde derive propagation preserves byte parity for a model's list of enum payloads.
 #[test]
 fn serde_list_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("serde-list-payload")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_source_modules_case(
+        "serde-list-payload",
         "from std.serde.json import Serialize\n\n@derive(Serialize)\nmodel Payload:\n    tags: list[Tag]\n\nenum Tag:\n    A\n    B\n\ndef main() -> None:\n    println(Payload(tags=[Tag.A]).to_json())\n",
+        &[],
+        b"{\"tags\":[\"A\"]}\n",
     )
 }
 
-/// The forced reader error pins the missing SDK chunks default and preserves the legacy mapper's error bytes.
+/// The forced reader error reaches callable storage after SDK chunks admission and preserves legacy error bytes.
 #[test]
 fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let original = include_str!(
@@ -57,12 +55,11 @@ fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::er
         &source,
         &[],
         b"read failed: chunk_size must be greater than zero\n",
-        "unsupported Body IR nonlocal or trait-object Method chunks",
+        "unsupported Body IR noncallable assignment to function value",
     )
 }
 
-/// The complete original reader pins its missing SDK chunks default and preserves all legacy chunk and completion
-/// bytes.
+/// The complete original reader reaches callable storage and preserves all legacy chunk and completion bytes.
 #[test]
 fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_refusal_case(
@@ -72,7 +69,7 @@ fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error:
         ),
         &[],
         b"16\n4\ndone\n",
-        "unsupported Body IR nonlocal or trait-object Method chunks",
+        "unsupported Body IR noncallable assignment to function value",
     )
 }
 
@@ -193,7 +190,7 @@ def main() -> None:
     )
 }
 
-/// The original SDK iterator reaches the remaining nonlocal collect method while its unchanged legacy oracle executes.
+/// The original SDK iterator reaches native collect bound admission while its unchanged legacy oracle executes.
 #[test]
 fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -216,7 +213,8 @@ fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::erro
     .output()?;
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR nonlocal or trait-object Method collect"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::collect`"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -16075,35 +16073,19 @@ fn integer_constant_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
-/// The original's constant reads reach the separate, still unretained error type argument in assert_raises.
+/// The complete overflow-checking original preserves live legacy values and both raised errors.
 #[test]
 fn constant_abs_sum_original_keeps_error_type_argument_refusal() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let root = fixture.scratch("constant-abs-sum-original")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constant-abs-sum-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/abs_and_sum_are_overflow_checked.incn"
         ),
-    )?;
-    let output = root.join("refused");
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &output,
-        &fixture.sysroot,
-        &corpus::runtime_closure(&fixture.formatting)?,
     )
-    .output()?;
-    assert!(!refused.status.success());
-    let diagnostic = String::from_utf8_lossy(&refused.stderr);
-    assert!(
-        diagnostic.contains("unsupported Body IR unbound type parameter ValueError"),
-        "{diagnostic}"
-    );
-    assert!(!output.exists());
-    Ok(())
 }
 
 /// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
@@ -16466,15 +16448,14 @@ fn closed_sdk_race_calls_match_legacy() -> Result<(), Box<dyn std::error::Error>
     )
 }
 
-/// Closed newtype locals retain the separate unproven field-layout refusal and unchanged legacy output.
+/// Closed newtype locals and their fields preserve the complete original's live legacy output.
 #[test]
 fn closed_generic_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
+    check_project_modules_case(
         "closed-generic-newtype",
         include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
         &[],
         b"Box\n42 42\ntext\n",
-        "unsupported Body IR unproven model field",
     )
 }
 
@@ -16558,17 +16539,16 @@ def main() -> None:
     )
 }
 
-/// Closed adopter results retain the distinct trait-method target refusal and unchanged legacy output.
+/// Closed adopter results retain their trait-method targets and preserve the complete live legacy output.
 #[test]
 fn closed_generic_trait_return_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
+    check_project_modules_case(
         "closed-generic-trait-return",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_bounds_return_type.incn"
         ),
         &[],
         b"5\n5\n",
-        "unsupported Body IR nonlocal or trait-object Method tag",
     )
 }
 
