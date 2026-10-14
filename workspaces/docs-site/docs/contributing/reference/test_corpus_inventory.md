@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4310 | 289 | 431 |
+| keep | 4311 | 289 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **9281** | **745** | **1494** |
+| **Total** | **9282** | **745** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1834,7 +1834,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2551 tests in 163 files: keep 2538, unaffected 13)
+### `loaves/compiler/incan_frontend` (2552 tests in 163 files: keep 2539, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1886,7 +1886,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/sdk_factory_defaults.rs` | 3 | 174 | 174 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Checked SDK factory identity and source-owned default frame, absent selection refusal and source shadowing. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs` | 1 | 35 | 35 | keep | - | - | - | #1337 | checker 1, parser 1 | Checked SDK iteration hook identities retain native declarations independently of written call facts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/sdk_ordinal_dispatch.rs` | 2 | 76 | 76 | keep | - | - | - | #1337 | - | Checked SDK scalar Self receivers and associated trait signatures; frontend-only contract coverage. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/static_publication.rs` | 3 | 112 | 112 | keep | - | - | - | #1337 | replacement 3, checker 3, parser 3 | Public storage publication retains canonical initialization and requires the reader's exact storage context; frontend-only contracts. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/static_publication.rs` | 4 | 150 | 150 | keep | - | - | - | #1337 | replacement 4, checker 4, parser 4 | Public storage publication retains canonical initialization and requires the reader's exact storage context; frontend-only contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs` | 5 | 179 | 179 | keep | - | - | - | #1337 | - | Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/task_handles.rs` | 2 | 69 | 69 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Registered opaque task storage and native argument identity; unrelated Rust paths remain unprojected. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs` | 5 | 138 | 138 | keep | - | - | - | #1337 | - | Builtin codec slots and registry defaults retained in Body IR; source-owned members keep their own contract. |
