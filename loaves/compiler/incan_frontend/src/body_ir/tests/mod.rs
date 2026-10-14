@@ -37,6 +37,7 @@ mod newtype_hooks;
 mod newtype_json;
 mod newtype_sum;
 mod newtypes;
+mod nominal_factories;
 mod nominal_parameters;
 mod opaque_returns;
 mod operators_literals_and_assignment;
