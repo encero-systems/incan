@@ -42,6 +42,19 @@ fn serde_list_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::
     )
 }
 
+/// Reordered fully supplied SDK factory arguments preserve the frozen legacy order of observable effects.
+#[test]
+fn reordered_sdk_factory_effects_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("reordered-sdk-factory-effects")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.regex import Regex, RegexError\n\ndef flag(label: str, value: bool) -> bool:\n    println(label)\n    return value\n\ndef probe() -> Result[None, RegexError]:\n    regex = Regex(\"x+\", verbose=flag(\"verbose\", false), ignore_case=flag(\"ignore\", true), multiline=false, dotall=false)?\n    println(regex.is_match(\"aXXb\"))\n    return Ok(None)\n\ndef main() -> None:\n    match probe():\n        Ok(_) => pass\n        Err(error) => println(error.message())\n",
+    )
+}
+
 /// The forced reader error reaches callable storage after SDK chunks admission and preserves legacy error bytes.
 #[test]
 fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

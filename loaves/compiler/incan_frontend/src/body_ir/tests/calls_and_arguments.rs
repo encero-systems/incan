@@ -47,6 +47,32 @@ fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), B
     Ok(())
 }
 
+/// An imported type-constructor factory retains declaration-order effects separately from ordinary written-order calls.
+#[test]
+fn sdk_factory_argument_effects_retain_declaration_order() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.regex import Regex, RegexError\n\ndef flag(label: str, value: bool) -> bool:\n    println(label)\n    return value\n\ndef build() -> Result[Regex, RegexError]:\n    return Regex(\"x+\", verbose=flag(\"verbose\", false), ignore_case=flag(\"ignore\", true), multiline=false, dotall=false)\n";
+    let module = build(source, &["factory_effect_order"])?;
+    let body = body_named(&module, "build")?;
+    let mut effects = Vec::new();
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+            && target.name == "flag"
+        {
+            effects.push(
+                source
+                    .get(statement.span.start..statement.span.end)
+                    .ok_or("factory effect lacks its original source span")?,
+            );
+        }
+    }
+    assert_eq!(effects, ["flag(\"ignore\", true)", "flag(\"verbose\", false)"]);
+    assert!(body.render_snapshot().contains("factory_order=declaration"));
+    Ok(())
+}
+
 /// An SDK constructor factory retains its checked applied owner and the associated call's closed owner argument.
 #[test]
 fn sdk_constructor_factory_retains_applied_owner() -> Result<(), Box<dyn std::error::Error>> {
