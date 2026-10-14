@@ -840,10 +840,13 @@ fn compile_direct_rustc_output(
     for (crate_name, path) in &plan.externs {
         command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
     }
-    let output_result = command.output().map_err(|source_error| OvenRustcError::Io {
-        path: rustc.to_path_buf(),
-        source: source_error,
-    })?;
+    let output_result = {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::compile_native_process", input = %source.display(), crate_name, test_harness, output_kind = ?output_kind).entered();
+        command.output().map_err(|source_error| OvenRustcError::Io {
+            path: rustc.to_path_buf(),
+            source: source_error,
+        })?
+    };
     if !output_result.status.success() {
         return Err(OvenRustcError::CompilationFailed {
             report: parse_rustc_diagnostics(&output_result.stdout, &output_result.stderr).with_invocation(&command),
