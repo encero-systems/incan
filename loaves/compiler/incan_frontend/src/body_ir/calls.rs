@@ -211,6 +211,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::Operand>, bir::ArgumentBinding), String> {
+        self.lower_planned_args_with_factory_order(planned, slot_count, mut_slots, slot_types, scope, out, false)
+    }
+
+    /// Evaluate a checked binding in its recorded order, preserving source coordinates separately from ownership.
+    ///
+    /// Ordinary calls retain written order. An authenticated imported SDK factory follows the frozen method emitter's
+    /// declaration order and records that compatibility fact explicitly; its ownership decisions follow the actual
+    /// visit order, never a later lowering permutation of ordinary facts.
+    fn lower_planned_args_with_factory_order(
+        &mut self,
+        planned: &[(usize, &ast::Spanned<ast::Expr>)],
+        slot_count: usize,
+        mut_slots: &[bool],
+        slot_types: &[IncanType],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+        factory: bool,
+    ) -> Result<(Vec<bir::Operand>, bir::ArgumentBinding), String> {
         // Both planners derive their slots from the same declaration surface they report the count of, so an
         // out-of-range slot is unreachable. It is still refused rather than skipped: dropping the operand while
         // leaving the statements that computed it in `out` would produce a silently wrong call, which is the worst
@@ -221,7 +239,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ));
         }
         let mut lowered: Vec<Option<(bir::Operand, usize)>> = (0..slot_count).map(|_| None).collect();
-        for (written_position, (slot, expr)) in planned.iter().enumerate() {
+        let evaluation = factory.then(|| {
+            let mut order = planned.iter().enumerate().collect::<Vec<_>>();
+            order.sort_by_key(|(_, (slot, _))| *slot);
+            order
+        });
+        for position in 0..planned.len() {
+            let (written_position, (slot, expr)) = match &evaluation {
+                Some(order) => order[position],
+                None => (position, &planned[position]),
+            };
             let mut operand = if mut_slots.get(*slot).copied().unwrap_or(false) {
                 self.lower_expr_to_operand(expr, scope, out)
             } else {
@@ -249,13 +276,42 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 None => defaulted_slots.push(slot),
             }
         }
-        Ok((
-            operands,
+        let binding = if factory {
+            bir::ArgumentBinding::ResolvedFactory {
+                arguments,
+                defaulted_slots,
+            }
+        } else {
             bir::ArgumentBinding::Resolved {
                 arguments,
                 defaulted_slots,
-            },
-        ))
+            }
+        };
+        Ok((operands, binding))
+    }
+
+    /// Bind only a checked imported SDK factory, with declaration-order effects and ownership from the frozen route.
+    ///
+    /// Declared slots and the canonical factory selection are already authenticated by the caller. Dynamic or rest
+    /// arguments cannot substitute for that surface, so unsupported shapes stay refused before evaluation.
+    fn bind_sdk_factory_args(
+        &mut self,
+        callee: &str,
+        declared: Option<Vec<DeclaredSlot>>,
+        args: &[ast::CallArg],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
+        let slots = declared.ok_or("checked SDK factory without retained parameter slots")?;
+        if slots.iter().any(|slot| slot.is_rest) {
+            return Err("unsupported SDK factory with rest parameters".to_owned());
+        }
+        let planned = plan_declared_args(callee, &slots, args)?;
+        let mutable = slots.iter().map(|slot| slot.is_mut).collect::<Vec<_>>();
+        let types = slots.iter().map(|slot| slot.ty.clone()).collect::<Vec<_>>();
+        let (operands, binding) =
+            self.lower_planned_args_with_factory_order(&planned, slots.len(), &mutable, &types, scope, out, true)?;
+        Ok((fixed_elements(operands), binding))
     }
 
     /// Resolve the declaration surface and exact local identity for a direct named call.
@@ -373,29 +429,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // site, never re-derived here from module path plus spelling.
             canonical,
         })
-    }
-
-    /// Refuse factory calls whose legacy parameter-order evaluation differs from Body IR's written-order facts.
-    ///
-    /// The selected factory supplies exact slots. A reordered named call needs its own retained evaluation policy;
-    /// reordering statements here would contradict ArgumentBinding's ownership contract. Ordered supplied arguments
-    /// keep the ordinary binder and declaration-owned defaults, with no extra source evaluation.
-    fn bind_checked_factory_args(
-        &mut self,
-        callee: &str,
-        declared: Option<Vec<DeclaredSlot>>,
-        args: &[ast::CallArg],
-        scope: bir::ScopeId,
-        out: &mut Vec<bir::Statement>,
-    ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
-        let slots = declared
-            .as_deref()
-            .ok_or("checked constructor factory without retained parameter slots")?;
-        let planned = plan_declared_args(callee, slots, args)?;
-        if planned.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
-            return Err("checked constructor factory argument evaluation outside declaration order".to_owned());
-        }
-        self.bind_declared_args(callee, declared, args, scope, out)
     }
 
     /// Bind a call's arguments against a declared parameter surface, falling back to positional lowering when there
@@ -1501,8 +1534,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let legacy_enumerate_argument = legacy_enumerate_argument(declaration.builtin, args);
         let args = legacy_enumerate_argument.as_deref().unwrap_or(args);
         let factory = self.checked_nominal_factory_declaration(callee.span, span).is_some();
-        let bound = if factory {
-            self.bind_checked_factory_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
+        let sdk_factory = factory
+            && self
+                .type_info
+                .resolved_identity(callee.span)
+                .is_some_and(|owner| super::library_nominals::sdk_identity(owner).is_some());
+        let bound = if sdk_factory {
+            self.bind_sdk_factory_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
         } else {
             self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
         };

@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4290 | 283 | 431 |
+| keep | 4291 | 283 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **9261** | **739** | **1494** |
+| **Total** | **9262** | **739** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1833,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2539 tests in 158 files: keep 2526, unaffected 13)
+### `loaves/compiler/incan_frontend` (2540 tests in 158 files: keep 2527, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1842,7 +1842,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/library_calls/tests.rs` | 8 | 308 | 308 | keep | - | - | - | #1337 | checker 1 | Body IR-only stdlib crate-call defaults retain literal and declaration-owned const values and refuse computed defaults. |
 | `loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs` | 1 | 143 | 28 | keep | - | - | - | #1337 | checker 1 | Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 42 | 1242 | 1242 | keep | - | - | - | #1561 | replacement 1, checker 15, parser 14 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 107 | 3050 | 3050 | keep | - | - | required | #1561 | replacement 5, checker 6, parser 6 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 108 | 3103 | 3103 | keep | - | - | required | #1561 | replacement 5, checker 6, parser 6 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs` | 4 | 95 | 95 | keep | - | - | - | #1337 | - | Checked channel value arguments close send-error payload types without changing legacy inference. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/class_inheritance.rs` | 4 | 164 | 164 | keep | - | - | - | #1337 | - | Checked parent-first layout, canonical override selection and malformed inheritance admission; frontend-only Body IR contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closed_callback_types.rs` | 6 | 83 | 83 | keep | - | - | - | #1337 | - | Checked callback return contracts and original fixture local types retained for direct-route execution without modifying legacy inference. |
@@ -2619,7 +2619,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_semantics_core/src/authority.rs` | 9 | 344 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
-| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 5370 | 1111 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 5392 | 1111 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/closure_digest.rs` | 12 | 430 | 226 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/dependencies.rs` | 4 | 317 | 155 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/emitted_symbol.rs` | 7 | 559 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
