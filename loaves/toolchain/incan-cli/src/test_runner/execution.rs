@@ -52,12 +52,14 @@ use incan_driver::testing::types::{FixtureScope, TestInfo, TestResult};
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
 const INCAN_SESSION_FIXTURE_MOD: &str = "__incan_session_fixtures";
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct TestExecutionOptions {
     pub no_capture: bool,
     pub timeout: Option<Duration>,
     pub verbose: bool,
     pub emit_progress: bool,
+    /// Output destination belonging to this request, including parallel workers.
+    pub output: super::output::TestOutputSink,
 }
 
 /// Store and immutable source authority opened once for one `incan test` command.
@@ -76,6 +78,7 @@ pub(super) fn prepare_oven_test_command_context(
     session: Arc<incan_driver::session::CompilationSession>,
     representative_test: &Path,
     planned_test_files: &[PathBuf],
+    retained_native_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
 ) -> crate::CliResult<Arc<OvenTestCommandContext>> {
     let project_root = absolute_project_root(
         &session
@@ -88,7 +91,10 @@ pub(super) fn prepare_oven_test_command_context(
     let store = incan_driver::oven_store::open_default_oven_store()?;
     drop(stage);
     let stage = trace_test_stage("admit_test_native_inputs");
-    let native_sdk_context = incan_driver::build::NativeSdkCommandContext::discover()?;
+    let native_sdk_context = match retained_native_context {
+        Some(context) => Some(context),
+        None => incan_driver::build::NativeSdkCommandContext::discover()?,
+    };
     drop(stage);
     let _authority = trace_test_stage("test_project_authority");
     let has_conventional_target =
@@ -2931,7 +2937,7 @@ fn run_file_tests_batch_oven(
     };
     let execute_elapsed = execute_start.elapsed();
     if options.verbose && options.emit_progress {
-        println!(
+        options.output.line(format_args!(
             "Oven test phases for {}: front-end {:.2}s, generation {:.2}s, receipt {:.2}s, selection {:.2}s, native {} {:.2}s, execution {:.2}s",
             first.file_path.display(),
             frontend_elapsed.as_secs_f64(),
@@ -2941,10 +2947,10 @@ fn run_file_tests_batch_oven(
             if native_reused { "reuse" } else { "bake" },
             bake_elapsed.as_secs_f64(),
             execute_elapsed.as_secs_f64(),
-        );
+        ));
     }
     if options.no_capture && !report.output.trim().is_empty() {
-        print!("{}", report.output);
+        options.output.stdout(report.output.clone());
     }
     drop(stage);
     let _results = trace_test_stage("test_outcomes");

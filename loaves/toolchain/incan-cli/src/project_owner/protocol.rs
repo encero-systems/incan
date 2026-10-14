@@ -25,6 +25,8 @@ pub(super) struct Request {
 pub(super) enum Reply {
     /// Human progress, rendered by this request's client only.
     Progress { message: String },
+    /// Request-local stderr, kept separate from console and JSON stdout records.
+    Diagnostic { message: String },
     /// Completed result, including serving-process identity for lifecycle verification.
     Complete { pid: u32, result: serde_json::Value },
     /// Explicit rejection or compiler failure; never an instruction to run a second route.
@@ -86,9 +88,16 @@ mod tests {
                 result: serde_json::json!({"status":"success"}),
             },
         )?;
+        write(
+            &mut bytes,
+            &Reply::Diagnostic {
+                message: "diagnostic\n".to_string(),
+            },
+        )?;
         let mut reader = bytes.as_slice();
         assert!(matches!(read::<Reply>(&mut reader)?, Reply::Progress { message } if message == "a\nλ"));
         assert!(matches!(read::<Reply>(&mut reader)?, Reply::Complete { pid: 7, .. }));
+        assert!(matches!(read::<Reply>(&mut reader)?, Reply::Diagnostic { message } if message == "diagnostic\n"));
         assert!(reader.is_empty());
         Ok(())
     }

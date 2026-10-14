@@ -7,16 +7,17 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use super::protocol::{self, Reply, Request};
-use super::{BuildIntent, NativeBuildIntent, TestListIntent};
+use super::{BuildIntent, NativeBuildIntent, TestExecutionIntent, TestListIntent};
 use incan_driver::error::{CliError, CliResult};
 use sha2::{Digest, Sha256};
 
 const INTERNAL_COMMAND: &str = "--internal-project-owner";
-const PROTOCOL: &str = "incan.project-owner/2";
+const PROTOCOL: &str = "incan.project-owner/3";
 
 /// Convert a transport failure into the existing command failure contract.
 fn transport_error(error: impl std::fmt::Display) -> CliError {
@@ -196,14 +197,25 @@ pub(super) fn submit(
 ) -> CliResult<serde_json::Value> {
     let (path, generation) = coordinates(executable).map_err(transport_error)?;
     let mut stream = ensure_connection(executable, &path, &generation).map_err(transport_error)?;
+    configure_reply_timeout(&stream, &intent).map_err(transport_error)?;
     protocol::write(&mut stream, &Request { generation, intent }).map_err(transport_error)?;
     loop {
         match protocol::read::<Reply>(&mut stream).map_err(transport_error)? {
             Reply::Progress { message } => progress(message),
+            Reply::Diagnostic { message } => eprint!("{message}"),
             Reply::Complete { result, .. } => return Ok(result),
             Reply::Failure { message, exit_code } => return Err(CliError::with_code(message, exit_code)),
         }
     }
+}
+
+/// Let the runner own test deadlines; a quiet valid test must not fail because the build transport timed out.
+/// Other commands keep the existing bounded reply wait, and all requests retain bounded writes and frames.
+fn configure_reply_timeout(stream: &UnixStream, intent: &serde_json::Value) -> io::Result<()> {
+    if intent.get("test_execute").is_some() {
+        stream.set_read_timeout(None)?;
+    }
+    Ok(())
 }
 
 /// Execute a request only after generation validation, streaming driver progress on its own connection.
@@ -233,6 +245,45 @@ fn dispatch(
             },
         )?;
         return Ok(stop);
+    }
+    if request.intent.get("test_execute").is_some() {
+        let output_stream = Arc::new(Mutex::new(stream.try_clone()?));
+        let disconnected = Arc::new(AtomicBool::new(false));
+        let output_disconnected = Arc::clone(&disconnected);
+        let output = crate::test_runner::output::TestOutputSink::new(move |event| {
+            if output_disconnected.load(Ordering::Relaxed) {
+                return;
+            }
+            let reply = match event {
+                crate::test_runner::output::TestOutput::Stdout(message) => Reply::Progress { message },
+                crate::test_runner::output::TestOutput::Stderr(message) => Reply::Diagnostic { message },
+            };
+            let written = output_stream
+                .lock()
+                .ok()
+                .is_some_and(|mut stream| protocol::write(&mut *stream, &reply).is_ok());
+            if !written {
+                output_disconnected.store(true, Ordering::Relaxed);
+            }
+        });
+        let result = serde_json::from_value::<TestExecutionIntent>(request.intent)
+            .map_err(transport_error)
+            .and_then(|intent| crate::test_runner::execute_tests_with_owner(&intent.test_execute, owner, output));
+        if disconnected.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        let reply = match result {
+            Ok(exit) => Reply::Complete {
+                pid: std::process::id(),
+                result: serde_json::json!(exit.0),
+            },
+            Err(error) => Reply::Failure {
+                message: error.message,
+                exit_code: error.exit_code.0,
+            },
+        };
+        protocol::write(stream, &reply)?;
+        return Ok(false);
     }
     if request.intent.get("test_list").is_some() {
         let mut disconnected = false;
@@ -417,6 +468,18 @@ mod tests {
         Ok(())
     }
 
+    /// Test execution leaves timeout enforcement to its scheduler while build replies stay bounded.
+    #[test]
+    fn test_execution_uses_runner_deadlines() -> Result<(), Box<dyn std::error::Error>> {
+        let (client, _server) = UnixStream::pair()?;
+        client.set_read_timeout(Some(Duration::from_secs(600)))?;
+        configure_reply_timeout(&client, &serde_json::json!({"operation": "ping"}))?;
+        assert_eq!(client.read_timeout()?, Some(Duration::from_secs(600)));
+        configure_reply_timeout(&client, &serde_json::json!({"test_execute": {}}))?;
+        assert_eq!(client.read_timeout()?, None);
+        Ok(())
+    }
+
     /// A stale owner's generation must refuse before an invalid intent could enter the compiler.
     #[test]
     fn incompatible_generation_refuses_before_dispatch() -> Result<(), Box<dyn std::error::Error>> {
@@ -500,6 +563,12 @@ mod tests {
             matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { message, .. }
             if message.contains("absolute test collection path"))
         );
+        let invalid_execution = Request {
+            generation: "current".to_string(),
+            intent: serde_json::json!({"test_execute": {"unrecognized": true}}),
+        };
+        assert!(!dispatch(&mut server, "current", invalid_execution, &mut owner)?);
+        assert!(matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { .. }));
         let ping = Request {
             generation: "current".to_string(),
             intent: serde_json::json!({"operation":"ping"}),

@@ -129,6 +129,46 @@ pub(crate) fn list_tests(config: &crate::test_runner::TestRunConfig<'_>) -> CliR
     Ok(crate::ExitCode::SUCCESS)
 }
 
+/// One owned execution request addressed to the same project owner as build and collection.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestExecutionIntent {
+    test_execute: crate::test_runner::TestExecutionRequest,
+}
+
+/// Submit actual test execution and render only this request's framed output in its invoking CLI.
+/// The existing runner remains the only implementation; non-Unix clients call that operation in process.
+pub(crate) fn execute_tests(config: &crate::test_runner::TestRunConfig<'_>) -> CliResult<crate::ExitCode> {
+    let mut request = crate::test_runner::TestExecutionRequest::from_config(config);
+    request.collection.path = absolute_path(&request.collection.path)?;
+    request.junit_path = request
+        .junit_path
+        .as_ref()
+        .map(std::path::absolute)
+        .transpose()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    request.validate_paths()?;
+    #[cfg(unix)]
+    {
+        let result = unix::submit(
+            &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
+            serde_json::to_value(TestExecutionIntent { test_execute: request })
+                .map_err(|error| CliError::failure(error.to_string()))?,
+            |message| print!("{message}"),
+        )?;
+        let exit: i32 = serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(crate::ExitCode(exit))
+    }
+    #[cfg(not(unix))]
+    {
+        crate::test_runner::execute_tests_with_owner(
+            &request,
+            &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
+            crate::test_runner::output::TestOutputSink::default(),
+        )
+    }
+}
+
 /// Resolve paths once at the client boundary without changing the owner's working directory.
 fn absolute_path(path: &str) -> CliResult<String> {
     let path = PathBuf::from(path);
