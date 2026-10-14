@@ -147,15 +147,14 @@ fn explicit_regex_factory_output_matches_legacy() -> Result<(), Box<dyn std::err
     )
 }
 
-/// The original regex source reaches the library-owned default binding boundary after factory selection.
+/// The original regex source preserves its omitted factory defaults and complete legacy output.
 #[test]
-fn original_regex_constructor_reaches_default_binding() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
+fn original_regex_constructor_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
         "original_regex_constructor_defaults",
         include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_regex.incn"),
         &[],
         b"true false\nrefused\n",
-        "unsupported Body IR defaulted or incomplete ArgumentBinding",
     )
 }
 
@@ -591,18 +590,16 @@ def main() -> None:
     )
 }
 
-/// The original constructor presets reach the library-owned stdlib default while their frozen legacy output stays
-/// fixed.
+/// The original constructor presets retain SDK constant defaults and complete legacy output.
 #[test]
 fn constructor_presets_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
+    check_project_modules_case(
         "constructor_presets_original",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn"
         ),
         &[],
         b"bronze orders delta\nbronze orders csv\n1 2\nUserId(7) UserId(8)\nUserId(9)\n-6\n65537\n65537\n1\n3\n0.5\n",
-        "unsupported Body IR unretained global storage `DEFAULT_CHUNK_SIZE`",
     )
 }
 
@@ -2534,32 +2531,15 @@ fn imported_model_field_defaults_output_matches_legacy() -> Result<(), Box<dyn s
     )
 }
 
-/// The original advances past expression hooks and retains its separately unproven iteration method identity.
+/// The original truthiness, length, membership and iteration hooks preserve complete legacy output.
 #[test]
 fn protocol_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    let root = fixture.scratch("protocol-hooks")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    check_project_modules_case(
+        "protocol_hooks_original",
         include_str!("../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/protocol_hooks.incn"),
-    )?;
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &root.join("native"),
-        &fixture.sysroot,
-        &closure,
+        &[],
+        b"ready\n3\ntrue false\n9\n1 2 3\n",
     )
-    .output()?;
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR Method without canonical identity"),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    Ok(())
 }
 
 /// Length dispatch evaluates fresh receivers once and preserves shared and mutable source receivers.
@@ -8192,7 +8172,7 @@ fn published_generic_sdk_bound_output_matches_legacy() -> Result<(), Box<dyn std
     fs::create_dir_all(provider.join("src"))?;
     fs::write(
         project.join("loaf.toml"),
-        "[project]\nname = 'probe'\nversion = '0.1.0'\n[project.scripts]\nprobe = 'probe.incn'\n[dependencies]\nbounded_items = { path = 'deps/bounded_items' }\n",
+        "[project]\nname = 'main'\nversion = '0.1.0'\n[project.scripts]\nmain = 'main.incn'\n[dependencies]\nbounded_items = { path = 'deps/bounded_items' }\n",
     )?;
     fs::write(
         provider.join("loaf.toml"),
