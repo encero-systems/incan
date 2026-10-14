@@ -279,6 +279,15 @@ impl SelectedNativeLoaf {
         verify_native_inventory(&self.native_owner, NativeInventory::Execution)
     }
 
+    /// Return only the original owner's Store coordinate, without consuming its native output.
+    ///
+    /// The producer uses this sealed location to compare physical destinations before publication. This metadata
+    /// accessor grants no freshness exemption: publication still verifies children and every output handoff checks
+    /// current bytes through `verify` or `output`.
+    pub(crate) fn native_store(&self) -> Result<PathBuf> {
+        original_store(&self.native_owner)
+    }
+
     /// Return the native output only after revalidating its original held owner.
     pub fn output(&self) -> Result<PathBuf> {
         self.verify()?;

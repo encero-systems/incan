@@ -1446,15 +1446,7 @@ fn publish_native_loaf_units(
                         && child.record().source == source
                 })
                 .ok_or("ordinary native record is missing its exact producer-selected dependency")?;
-            let child_owner_store = child
-                .output()?
-                .parent()
-                .and_then(Path::parent)
-                .and_then(Path::parent)
-                .and_then(Path::parent)
-                .ok_or("ordinary native child has no Store coordinate")?
-                .to_path_buf();
-            if child_owner_store != edge.store() {
+            if child.native_store()? != edge.store() {
                 return Err("ordinary native dependency Store differs from its producer-selected destination".into());
             }
             dependencies.push(NativeLoafDependency {

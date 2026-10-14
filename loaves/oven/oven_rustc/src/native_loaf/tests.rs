@@ -136,6 +136,40 @@ fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
     Ok(())
 }
 
+/// Store coordinate projection consumes no output, while publication and execution still reject changed children.
+#[test]
+fn dev7_native_loaf_store_coordinate_preserves_publication_integrity() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let child = publish(temp.path(), &native, &mut graph, "child", &[], &[])?;
+    let selected = Arc::clone(graph.units.get(&child).ok_or("child missing")?);
+    let output = selected.output()?;
+    let original = std::fs::read(&output)?;
+    let checks = InventoryChecks::default();
+    let coordinate = tracing::subscriber::with_default(checks.clone(), || selected.native_store())?;
+    assert_eq!(coordinate, std::fs::canonicalize(native.root())?);
+    assert_eq!(checks.count(), 0, "location metadata must not consume native files");
+    let first = publish(temp.path(), &native, &mut graph, "first", &[], &[("child", &child)])?;
+    assert!(graph.units.contains_key(&first));
+
+    replace_owned_fixture(&output, b"changed child bytes")?;
+    assert_eq!(
+        selected.native_store()?,
+        coordinate,
+        "location is not a freshness claim"
+    );
+    assert!(selected.output().is_err());
+    assert!(publish(temp.path(), &native, &mut graph, "second", &[], &[("child", &child)]).is_err());
+    assert_eq!(graph.units.len(), 2, "failed publication must not enter the graph");
+
+    replace_owned_fixture(&output, &original)?;
+    let second = publish(temp.path(), &native, &mut graph, "second", &[], &[("child", &child)])?;
+    assert!(graph.units.contains_key(&second));
+    assert_eq!(std::fs::read(selected.output()?)?, original);
+    Ok(())
+}
+
 /// Publish a real native Engine recipe and its ordinary record, retaining original leases.
 fn publish(
     root: &Path,
