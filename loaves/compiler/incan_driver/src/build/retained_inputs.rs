@@ -34,6 +34,11 @@ pub(super) struct RetainedProject {
 }
 
 impl RetainedProject {
+    /// Borrow the same observed workspace topology used to compute effective member declarations.
+    pub(super) fn workspace(&self) -> Option<&WorkspaceGraph> {
+        self.workspace.as_ref()
+    }
+
     /// Borrow the original member declaration for policies that precede effective dependency inheritance.
     pub(super) fn authored_manifest(&self) -> &ProjectManifest {
         self.workspace
