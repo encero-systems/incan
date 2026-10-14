@@ -6085,7 +6085,7 @@
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
       "split_required": true,
-      "split_target": "module identities and published import identities",
+      "split_target": "module identities and canonical imported call contracts",
       "twin": ""
     },
     "loaves/compiler/incan_frontend/src/body_ir/tests/inferred_clone.rs": {
