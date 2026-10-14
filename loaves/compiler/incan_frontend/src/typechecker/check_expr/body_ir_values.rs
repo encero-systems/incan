@@ -213,13 +213,6 @@ impl TypeChecker {
         let Some(expected) = expected.filter(|ty| Self::is_settled_type_argument(ty)) else {
             return;
         };
-        if self
-            .body_ir_checked_value_type(expression.span)
-            .is_some_and(|actual| !self.types_compatible(actual, expected))
-        {
-            self.refuse_body_ir_factory_result(expression.span);
-            return;
-        }
         let (ResolvedType::Generic(owner, _), ResolvedType::Generic(destination, _)) = (recorded, expected) else {
             return;
         };
@@ -227,6 +220,13 @@ impl TypeChecker {
             || self.type_info.resolved_identity(expression.span).is_none()
             || !self.types_compatible(recorded, expected)
         {
+            return;
+        }
+        if self
+            .body_ir_checked_value_type(expression.span)
+            .is_some_and(|actual| !self.types_compatible(actual, expected))
+        {
+            self.refuse_body_ir_factory_result(expression.span);
             return;
         }
         let actual = self.body_ir_close_value_parts(recorded, expected);
