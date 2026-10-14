@@ -1998,7 +1998,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
         let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
 
-        let receiver_operand = self.lower_method_receiver(recv, span, scope, out);
+        let intrinsic_carrier = self.checked_intrinsic_carrier(recv, name);
+        let receiver_operand = self.lower_method_receiver(recv, name, intrinsic_carrier.as_deref(), span, scope, out);
 
         let (mut arg_operands, binding) =
             match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
@@ -2043,15 +2044,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
-                intrinsic_carrier: match self.resolve_ty(recv.span) {
-                    IncanType::Generic { base, .. }
-                        if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
-                            || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
-                    {
-                        Some(base)
-                    }
-                    _ => None,
-                },
+                intrinsic_carrier,
                 reflection: self.checked_reflection_operation(span),
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one
                 // the program's implementation records and the SDK's published bodies carry.
@@ -2091,16 +2084,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Read a method receiver before its arguments, retaining existing enum construction and collection borrowing. A
-    /// checked static decorator factory uses the checker's selected mut-self fact; every other source receiver keeps
-    /// the existing borrow policy, matching the legacy ownership planner.
+    /// Retain the existing checked standard-carrier method profile once for both receiver evaluation and dispatch.
+    /// User-defined methods and other carriers keep their canonical source method path.
+    fn checked_intrinsic_carrier(&self, receiver: &ast::Spanned<ast::Expr>, name: &str) -> Option<String> {
+        match self.resolve_ty(receiver.span) {
+            IncanType::Generic { base, .. }
+                if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
+                    || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
+            {
+                Some(base)
+            }
+            _ => None,
+        }
+    }
+
+    /// Read consuming frame carriers before their defaults and retain ordinary receivers as borrowed places. Global
+    /// carriers stay delayed: legacy evaluates a static wrapper's arguments before locking and cloning storage. A
+    /// checked static decorator factory keeps the checker's selected mut-self fact.
     fn lower_method_receiver(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
+        name: &str,
+        intrinsic_carrier: Option<&str>,
         call_span: ast::Span,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        if intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or") {
+            return self.lower_consumed_carrier_receiver(receiver, scope, out);
+        }
         if let ast::Expr::Field(base, member) = &receiver.node
             && self
                 .local_value_enum_variant_target(base, member, receiver.span)
@@ -2126,6 +2138,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             bir::OwnershipFact::Borrow
         };
         bir::Operand::place(place, fact, false)
+    }
+
+    /// Materialize a consuming local, field or mutable-parameter carrier under its checked ownership facts, so later
+    /// argument effects cannot change its read. A field cannot move out of its owner, so the retained value is a clone,
+    /// as legacy's consumed-receiver policy requires. Global reads retain their static access boundary instead.
+    fn lower_consumed_carrier_receiver(
+        &mut self,
+        receiver: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let ty = self.resolve_ty(receiver.span);
+        let mut value = self.lower_expr_to_operand(receiver, scope, out);
+        if let bir::Operand::Place(read) = &mut value {
+            if read.place.global().is_some() {
+                read.fact = bir::OwnershipFact::Borrow;
+                return value;
+            }
+            if read.fact == bir::OwnershipFact::Borrow {
+                read.fact = bir::OwnershipFact::Clone;
+            }
+        }
+        self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(receiver.span), out)
     }
 
     /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.
