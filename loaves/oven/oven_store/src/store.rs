@@ -3303,7 +3303,7 @@ fn write_staged_entry(
 ) -> Result<BTreeMap<String, MaterializedFileDigest>, OvenStoreError> {
     let _staging = tracing::trace_span!(target: "incan::invocation", "oven_store::write_staged_entry", input = %manifest.identity, files = materialized_files.len()).entered();
     let mut written_files = BTreeMap::new();
-    write_synced_file(&root.join(PAYLOAD_FILE), payload, false)?;
+    write_staged_file(&root.join(PAYLOAD_FILE), payload, false)?;
     let materialized_root = root.join(MATERIALIZED_DIRECTORY);
     fs::create_dir(&materialized_root).map_err(|source| OvenStoreError::Io {
         path: materialized_root.clone(),
@@ -3393,8 +3393,7 @@ fn write_staged_entry(
                 {
                     return Err(changed_before_storage(file));
                 }
-                let written = write_synced_file_handle(&destination, &bytes, false)?;
-                set_materialized_executable(&destination, file.manifest.executable)?;
+                let written = write_staged_file_handle(&destination, &bytes, false, Some(file.manifest.executable))?;
                 // Only this private, newly written handle supplies observations; links remain canonical reads.
                 if let Ok(stamp) = materialized_file_stamp(&written)
                     && stamp.supports_retention()
@@ -3414,15 +3413,15 @@ fn write_staged_entry(
             shared_materialized_files.insert(shared_key, destination.clone());
         }
     }
-    sync_directory_tree(&materialized_root)?;
+    sync_directory_tree_with(&materialized_root, &mut sync_staged_directory)?;
     if let Some(bytes) = native_receipt_bytes {
-        write_synced_file(&root.join(NATIVE_RECEIPT_FILE), bytes, false)?;
+        write_staged_file(&root.join(NATIVE_RECEIPT_FILE), bytes, false)?;
     }
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| OvenStoreError::Manifest {
         path: root.join(manifest_file_name(manifest.kind)),
         message: error.to_string(),
     })?;
-    write_synced_file(&root.join(manifest_file_name(manifest.kind)), &manifest_bytes, true)?;
+    write_staged_file(&root.join(manifest_file_name(manifest.kind)), &manifest_bytes, true)?;
     OpenOptions::new()
         .create_new(true)
         .read(true)
@@ -3432,11 +3431,13 @@ fn write_staged_entry(
             path: root.join(ACTIVE_LOCK_FILE),
             source,
         })?;
-    write_synced_file(
+    write_staged_file(
         &root.join(ACCESS_FILE),
         now_unix_seconds()?.to_string().as_bytes(),
         true,
     )?;
+    // Every staged inode has reached the device. Commit its volatile cache once before exposing the tree; the
+    // publisher separately synchronizes the entries directory after rename. No partially staged entry is admitted.
     sync_directory(root.to_path_buf())?;
     Ok(written_files)
 }
@@ -5326,19 +5327,24 @@ fn set_materialized_executable(path: &Path, executable: bool) -> Result<(), Oven
     })
 }
 
-/// Non-Unix hosts retain the platform default after the file contents have been synchronized.
+/// Non-Unix hosts retain the platform default before staged data is synchronized.
 #[cfg(not(unix))]
 fn set_materialized_executable(_path: &Path, _executable: bool) -> Result<(), OvenStoreError> {
     Ok(())
 }
 
-/// Persist one file and its data before its containing directory is renamed into the published store.
-fn write_synced_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<(), OvenStoreError> {
-    write_synced_file_handle(path, bytes, trailing_newline).map(drop)
+/// Submit private staged bytes; the containing transaction must complete its full barrier before publication.
+fn write_staged_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<(), OvenStoreError> {
+    write_staged_file_handle(path, bytes, trailing_newline, None).map(drop)
 }
 
-/// Return the exact newly written, synchronized handle so private publication can observe its final generation.
-fn write_synced_file_handle(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<File, OvenStoreError> {
+/// Return the written handle after submitting bytes and final permissions, before the transaction's full barrier.
+fn write_staged_file_handle(
+    path: &Path,
+    bytes: &[u8],
+    trailing_newline: bool,
+    executable: Option<bool>,
+) -> Result<File, OvenStoreError> {
     let _write = tracing::trace_span!(target: "incan::invocation", "oven_store::write_synced_file", bytes = bytes.len(), trailing_newline).entered();
     let mut file = OpenOptions::new()
         .create_new(true)
@@ -5358,12 +5364,47 @@ fn write_synced_file_handle(path: &Path, bytes: &[u8], trailing_newline: bool) -
             source,
         })?;
     }
-    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_published_file").entered();
-    file.sync_all().map_err(|source| OvenStoreError::Io {
+    if let Some(executable) = executable {
+        set_materialized_executable(path, executable)?;
+    }
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_staged_file").entered();
+    sync_staged_file(&file).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
     })?;
     Ok(file)
+}
+
+/// Submit a private inode's data and metadata without a drive-wide barrier for every file on Apple platforms.
+///
+/// Apple's fsync moves this inode's changes to the device; F_FULLFSYNC additionally flushes its volatile cache.
+/// The staged tree's full barrier and the post-rename parent barrier remain mandatory. This helper must never be
+/// used as a replacement for synchronizing independently published data. Other platforms retain sync_all.
+fn sync_staged_file(file: &File) -> std::io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::fd::AsRawFd;
+        loop {
+            // SAFETY: this live borrowed File owns the descriptor throughout the synchronous system call.
+            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    file.sync_all()
+}
+
+/// Submit a private directory's entries before the containing staged tree receives its full durability barrier.
+fn sync_staged_directory(path: PathBuf) -> Result<(), OvenStoreError> {
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_staged_directory").entered();
+    File::open(&path)
+        .and_then(|directory| sync_staged_file(&directory))
+        .map_err(|source| OvenStoreError::Io { path, source })
 }
 
 /// Synchronize a directory entry after atomic store publication where the host supports directory handles.
@@ -5376,6 +5417,14 @@ pub fn sync_directory(path: PathBuf) -> Result<(), OvenStoreError> {
 
 /// Synchronize nested materialized directories from leaves to root before their entry becomes visible.
 pub fn sync_directory_tree(directory: &Path) -> Result<(), OvenStoreError> {
+    sync_directory_tree_with(directory, &mut sync_directory)
+}
+
+/// Traverse the same link-refusing directory tree with the caller's staging or complete durability boundary.
+fn sync_directory_tree_with(
+    directory: &Path,
+    synchronize: &mut impl FnMut(PathBuf) -> Result<(), OvenStoreError>,
+) -> Result<(), OvenStoreError> {
     for child in fs::read_dir(directory).map_err(|source| OvenStoreError::Io {
         path: directory.to_path_buf(),
         source,
@@ -5396,10 +5445,10 @@ pub fn sync_directory_tree(directory: &Path) -> Result<(), OvenStoreError> {
             });
         }
         if metadata.is_dir() {
-            sync_directory_tree(&path)?;
+            sync_directory_tree_with(&path, synchronize)?;
         }
     }
-    sync_directory(directory.to_path_buf())
+    synchronize(directory.to_path_buf())
 }
 
 /// Return the current Unix timestamp for mutable access metadata, not immutable artifact identity.
@@ -5519,6 +5568,60 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Staged files include final executable permissions before observations and refuse replacement of prior data.
+    #[cfg(unix)]
+    #[test]
+    fn staged_file_permissions_precede_retained_observation() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("program");
+        let file = super::write_staged_file_handle(&path, b"program", true, Some(true))?;
+        let stamp = super::materialized_file_stamp(&file)?;
+        assert_eq!(fs::read(&path)?, b"program\n");
+        assert_eq!(file.metadata()?.permissions().mode() & 0o777, 0o555);
+        super::sync_directory(root.path().to_path_buf())?;
+        assert_eq!(stamp, super::materialized_file_stamp(&file)?);
+        assert!(super::write_staged_file_handle(&path, b"replacement", false, None).is_err());
+        assert_eq!(fs::read(&path)?, b"program\n");
+        Ok(())
+    }
+
+    /// A failed child synchronization stops before any parent commit barrier can run.
+    #[test]
+    fn staged_directory_failure_stops_before_parent_barrier() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let child = root.path().join("child");
+        fs::create_dir(&child)?;
+        let mut calls = Vec::new();
+        let error = super::sync_directory_tree_with(root.path(), &mut |path| {
+            calls.push(path.clone());
+            Err(OvenStoreError::Io {
+                path,
+                source: std::io::Error::other("injected synchronization failure"),
+            })
+        });
+        assert!(matches!(error, Err(OvenStoreError::Io { .. })));
+        assert_eq!(calls, std::slice::from_ref(&child));
+        calls.clear();
+        super::sync_directory_tree_with(root.path(), &mut |path| {
+            calls.push(path);
+            Ok(())
+        })?;
+        assert_eq!(calls, [child, root.path().to_path_buf()]);
+        Ok(())
+    }
+
+    /// Staging synchronization propagates the operating system's refusal for an unsupported file descriptor.
+    #[cfg(unix)]
+    #[test]
+    fn staged_sync_rejects_non_file_descriptor() -> Result<(), Box<dyn std::error::Error>> {
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair()?;
+        let descriptor: std::os::fd::OwnedFd = socket.into();
+        let file = fs::File::from(descriptor);
+        assert!(super::sync_staged_file(&file).is_err());
+        Ok(())
+    }
+
     /// A private write changed before commitment cannot seed an old digest under its new file generation.
     #[cfg(unix)]
     #[test]
@@ -5527,7 +5630,7 @@ pub(crate) mod tests {
         let staged = root.path().join("staging");
         fs::create_dir_all(staged.join("artifacts"))?;
         let source = staged.join("artifacts/program");
-        let written = super::write_synced_file_handle(&source, b"original", false)?;
+        let written = super::write_staged_file_handle(&source, b"original", false, None)?;
         let record = super::MaterializedFileDigest {
             stamp: super::materialized_file_stamp(&written)?,
             digest: crate::digest_bytes(b"original"),
