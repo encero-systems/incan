@@ -121,7 +121,7 @@ impl TypeChecker {
 
     /// Retain a checked factory contradiction once, clearing only supplemental native results. Legacy inference and
     /// signatures stay unchanged; neither nominal member propagation nor destination filling may reopen this call.
-    fn refuse_body_ir_factory_result(&mut self, span: Span) {
+    pub(in crate::typechecker::check_expr) fn refuse_body_ir_factory_result(&mut self, span: Span) {
         let key = (span.start, span.end);
         self.type_info.calls.body_ir_factory_result_conflicts.insert(key);
         self.type_info.calls.body_ir_call_result_types.remove(&key);

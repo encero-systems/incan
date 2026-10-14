@@ -94,6 +94,24 @@ fn static_factory_conflicting_context_publishes_no_closed_result() -> Result<(),
     let start = source.find("Holder.from_value(3)").ok_or("factory call missing")?;
     let span = crate::ast::Span::new(start, start + "Holder.from_value(3)".len());
     let facts = checker.type_info();
+    assert!(
+        facts
+            .calls
+            .body_ir_factory_result_conflicts
+            .contains(&(span.start, span.end))
+    );
+    assert!(
+        !facts
+            .calls
+            .body_ir_call_result_types
+            .contains_key(&(span.start, span.end))
+    );
+    assert!(
+        !facts
+            .expressions
+            .body_ir_expr_types
+            .contains_key(&(span.start, span.end))
+    );
     let module = super::build_body_ir_module_v0(&program, &path, facts);
     let body = body_named(&module, "choose")?;
     assert!(
