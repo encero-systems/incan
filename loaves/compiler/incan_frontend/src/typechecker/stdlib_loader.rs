@@ -234,6 +234,12 @@ impl StdlibAstCache {
         self.source_inputs.verify()
     }
 
+    /// Whether all source lookups have retained authority that can be rechecked before skipping analysis/emission.
+    /// Ambient legacy lookups, including unsuccessful discovery, keep canonical preparation instead.
+    pub fn supports_generation_reuse(&self) -> bool {
+        self.source_inputs.supports_generation_reuse()
+    }
+
     /// Look up a function binding while preserving a same-name overload set.
     pub fn lookup_function_symbol(&mut self, module_path: &[String], function_name: &str) -> Option<SymbolKind> {
         self.ensure_loaded(module_path);
