@@ -150,10 +150,15 @@ fn prepare_inner(
         .cloned()
         .collect::<Vec<_>>();
     let requirements = incan_provider::requirements::ProjectRequirements::default();
-    let inputs = incan_driver::build_unit::oven_build_unit_inputs_with_native_sdk(
+    let semantic_identities = context.session.provider_semantic_identities(
+        &context.session.provider_plan,
+        &incan_provider::requirements::semantic_sdk_path_dependencies(&requirements),
+    )?;
+    let inputs = incan_driver::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
         &context.session.provider_plan,
         &requirements,
         &resolved,
+        &semantic_identities,
         context.native_sdk_context.as_deref(),
     )?;
     let rustc = resolve_active_rustc()?;

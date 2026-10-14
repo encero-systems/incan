@@ -2433,6 +2433,7 @@ fn run_file_tests_batch_oven(
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
     drop(stage);
     let stage = trace_test_stage("test_native_inputs");
+    let compiler_identity_trace = trace_test_stage("test_compiler_identity");
     let rustc = match resolve_active_rustc() {
         Ok(rustc) => rustc,
         Err(error) => return failure(error.to_string()),
@@ -2445,6 +2446,7 @@ fn run_file_tests_batch_oven(
         Ok(identity) => identity,
         Err(error) => return failure(error.to_string()),
     };
+    drop(compiler_identity_trace);
     // Attach package outputs only after the consumer's target and toolchain are known. Ordinary namespace owners
     // use the same checked library boundary as public imports; an absent output never authorizes a Cargo path.
     let mut caller_owned_libraries = match incan_driver::build::caller_owned::oven_caller_owned_libraries(
@@ -2457,15 +2459,24 @@ fn run_file_tests_batch_oven(
         Ok(libraries) => libraries,
         Err(error) => return failure(error.message),
     };
-    let mut build_unit_inputs = match incan_driver::build_unit::oven_build_unit_inputs_with_native_sdk(
+    let semantic_identities = match session.provider_semantic_identities(
         &provider_plan,
-        &requirements,
-        &resolved,
-        command_context.native_sdk_context.as_deref(),
+        &incan_provider::requirements::semantic_sdk_path_dependencies(&requirements),
     ) {
-        Ok(inputs) => inputs,
+        Ok(identities) => identities,
         Err(error) => return failure(error.message),
     };
+    let mut build_unit_inputs =
+        match incan_driver::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
+            &provider_plan,
+            &requirements,
+            &resolved,
+            &semantic_identities,
+            command_context.native_sdk_context.as_deref(),
+        ) {
+            Ok(inputs) => inputs,
+            Err(error) => return failure(error.message),
+        };
     if let Err(error) = incan_driver::build::caller_owned::append_oven_interop_execution_build_inputs(
         &mut build_unit_inputs,
         manifest.as_ref(),
@@ -2486,6 +2497,7 @@ fn run_file_tests_batch_oven(
     }
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
+        let _trace = trace_test_stage("test_inspection_workspace");
         let metadata_query_paths =
             incan_driver::rust_inspect_workspace::collect_rust_inspect_query_paths(&dependency_modules);
         match incan_driver::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(

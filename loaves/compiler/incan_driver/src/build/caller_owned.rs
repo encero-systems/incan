@@ -37,6 +37,7 @@ pub fn append_oven_interop_execution_build_inputs(
     manifest: Option<&ProjectManifest>,
     target: &str,
 ) -> CliResult<()> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::interop_execution_inputs").entered();
     let Some(manifest) = manifest else {
         return Ok(());
     };
@@ -104,6 +105,7 @@ pub fn oven_caller_owned_libraries(
     toolchain: &str,
     checked_profiles: Option<&[CheckedPackagedProviderProfile]>,
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::caller_owned_libraries").entered();
     let mut libraries = Vec::new();
     for provider in provider_plan.active_records().filter(|provider| {
         matches!(
