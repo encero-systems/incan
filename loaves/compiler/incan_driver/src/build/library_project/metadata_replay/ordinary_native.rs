@@ -121,11 +121,13 @@ impl OrdinaryNativeMetadataAuthority {
     }
 
     /// Revalidate full requests, exact compiler/profile intent and genuine mandatory forward root selections.
+    #[track_caller]
     pub(crate) fn verify(&self) -> CliResult<()> {
         self.verified_requests().map(|_| ())
     }
 
     /// Produce deterministic full-request semantic inputs, preserving compile-time coordinates and unselected units.
+    #[track_caller]
     pub(super) fn semantic_inputs(&self) -> CliResult<serde_json::Value> {
         Ok(serde_json::json!({
             "contract": "ordinary-native-full-producer-requests-v2",
@@ -165,6 +167,7 @@ impl OrdinaryNativeMetadataAuthority {
     ///
     /// Metadata identity still calls `verified_requests` for every supplied profile. A debug-only physical plan does
     /// not consume release bytes, but never narrows the selected profile's complete request to its linked roots.
+    #[track_caller]
     pub(crate) fn verify_profile(&self, intent: &OvenBuildIntent) -> CliResult<&NativeLoafRequestObservation> {
         self.verify_compiler()?;
         if intent.target != self.target || intent.toolchain != self.toolchain {
@@ -194,7 +197,10 @@ impl OrdinaryNativeMetadataAuthority {
     }
 
     /// Verify every profile's original request and support selection, returning only validated complete digests.
+    #[track_caller]
     fn verified_requests(&self) -> CliResult<BTreeMap<String, String>> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::verify_ordinary_metadata_requests", profiles = self.observations.len(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         self.verify_compiler()?;
         #[cfg(feature = "rust_inspect")]
         self.inspection_toolchain
@@ -267,6 +273,12 @@ impl OrdinaryNativeMetadataAuthority {
 thread_local! {
     /// Actual full-profile request verification attempts made by this test thread's metadata authority.
     static METADATA_REQUEST_VERIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Read the existing verification-work counter without resetting the surrounding publication measurement.
+#[cfg(test)]
+pub(crate) fn metadata_request_verifications() -> usize {
+    METADATA_REQUEST_VERIFICATIONS.with(std::cell::Cell::get)
 }
 
 /// Take measured complete-request verification work without caching authority or changing refusal policy.

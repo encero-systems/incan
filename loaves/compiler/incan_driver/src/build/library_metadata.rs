@@ -813,27 +813,74 @@ pub(crate) fn validate_required_rust_abi(
     Ok(())
 }
 
-/// Reject conflicting aliases or definitions across the complete admitted checked dependency surface.
+/// Reject conflicting queried surfaces or structural definitions across the complete admitted dependency surface.
+/// Trait proofs remain attached to the queried path: a re-export's dependency closure can legitimately expose
+/// additional traits for the same definition. Those proofs are neither merged nor granted to another surface.
 pub(crate) fn validate_rust_fact_agreement<'a>(
     manifests: impl IntoIterator<Item = &'a LibraryManifest>,
 ) -> CliResult<()> {
-    let mut facts = BTreeMap::new();
+    let mut surfaces = BTreeMap::new();
+    let mut definitions = BTreeMap::new();
     for manifest in manifests {
         if let Some(abi) = manifest.rust_abi.as_ref() {
             for item in &abi.items {
-                for path in std::iter::once(&item.canonical_path).chain(item.definition_path.as_ref()) {
-                    if let Some(previous) = facts.insert(path, &item.kind)
-                        && previous != &item.kind
-                    {
-                        return Err(CliError::failure(format!(
-                            "checked library ABI has competing facts for `{path}`"
-                        )));
-                    }
+                let path = &item.canonical_path;
+                if let Some(previous) = surfaces.insert(path, item)
+                    && previous != item
+                {
+                    return Err(CliError::failure(format!(
+                        "checked library ABI has competing facts for `{path}`"
+                    )));
+                }
+                let path = item.definition_path.as_ref().unwrap_or(&item.canonical_path);
+                if let Some(previous) = definitions.insert(path, item)
+                    && !rust_fact_surfaces_agree(previous, item)
+                {
+                    return Err(CliError::failure(format!(
+                        "checked library ABI has competing facts for `{path}`"
+                    )));
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Compare exact facts for one queried path, or definition-owned facts for distinct re-export surfaces.
+fn rust_fact_surfaces_agree(
+    left: &incan_lang::interop::RustItemMetadata,
+    right: &incan_lang::interop::RustItemMetadata,
+) -> bool {
+    if left.canonical_path == right.canonical_path {
+        return left == right;
+    }
+    let (RustItemKind::Type(left), RustItemKind::Type(right)) = (&left.kind, &right.kind) else {
+        return left.kind == right.kind;
+    };
+    // Exhaustive destructuring makes a new metadata field require an explicit authority decision here.
+    let incan_lang::interop::RustTypeInfo {
+        type_params,
+        type_param_defaults,
+        mutable_reference_type_params,
+        expanded_derive_traits,
+        has_const_params,
+        alias_target,
+        metadata_completeness,
+        methods,
+        implemented_traits: _,
+        fields,
+        variants,
+    } = left;
+    type_params == &right.type_params
+        && type_param_defaults == &right.type_param_defaults
+        && mutable_reference_type_params == &right.mutable_reference_type_params
+        && expanded_derive_traits == &right.expanded_derive_traits
+        && has_const_params == &right.has_const_params
+        && alias_target == &right.alias_target
+        && metadata_completeness == &right.metadata_completeness
+        && methods == &right.methods
+        && fields == &right.fields
+        && variants == &right.variants
 }
 
 /// Inventory every regular generated source file using safe relative paths and exact content digests.

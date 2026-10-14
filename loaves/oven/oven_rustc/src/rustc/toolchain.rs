@@ -248,6 +248,7 @@ pub type RustcFileStamp = (PathBuf, String);
 
 /// Probe one regular Rust compiler with `-vV`, sharing identity/host/commit under its current observed bytes.
 pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::probe_compiler_identity", input = %rustc.display()).entered();
     let rustc = verified_regular_file(rustc, "rustc")?;
     let rustc = rustc.canonicalize().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
@@ -257,10 +258,12 @@ pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
     if let Ok(memo) = rustc_probe_memo().lock()
         && let Some(probe) = memo.get(&key)
     {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_rustc_version_probe", subprocesses = 0_u64);
         return Ok(probe.clone());
     }
     let mut command = rustc_probe_command(&rustc);
     command.arg("-vV");
+    tracing::trace!(target: "incan::invocation", decision = "run_rustc_version_probe", subprocesses = 1_u64);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,

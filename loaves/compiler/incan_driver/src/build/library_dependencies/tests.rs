@@ -176,6 +176,145 @@ fn ordinary_admission_source_free_repeat_and_profiles() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Current source dependency resolution selects exact checked owners and retains them across later mutations.
+#[test]
+fn resolved_source_dependencies_bind_checked_publication_and_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    let (provider, _artifact, _input) = checked_package()?;
+    let consumer = tempfile::tempdir()?;
+    fs::write(
+        consumer.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='consumer'\n[dependencies]\ngeometry={{path={:?}}}\nalias={{path={:?}}}\n",
+            provider.path().to_string_lossy(),
+            provider.path().to_string_lossy(),
+        ),
+    )?;
+    let manifest = ProjectManifest::load(&consumer.path().join("loaf.toml"))?;
+    let features = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+    let admitted = PreparedLibraryDependencies::from_source_feature_plan(&features, TARGET, TOOLCHAIN, limits())?;
+    assert_eq!(admitted.direct_aliases().len(), 2);
+    assert_eq!(admitted.checked_packages().count(), 1);
+    admitted.validate_feature_plan(&features)?;
+    assert!(
+        admitted
+            .validate_module_usage(&BTreeSet::from([vec!["std".into(), "unselected".into()]]))
+            .is_err()
+    );
+    fs::write(
+        provider.path().join("src/lib.incn"),
+        "def changed() -> int:\n    return 2\n",
+    )?;
+    assert!(admitted.verify().is_err());
+    assert!(PreparedLibraryDependencies::from_source_feature_plan(&features, TARGET, TOOLCHAIN, limits()).is_err());
+    Ok(())
+}
+
+/// Public dependency facts require their original checked catalog; altered contracts and unselected demands refuse.
+#[test]
+fn ordinary_native_public_demands_require_exact_checked_owners() -> Result<(), Box<dyn std::error::Error>> {
+    let (provider, _artifact, input) = checked_package()?;
+    let consumer = tempfile::tempdir()?;
+    fs::create_dir(consumer.path().join("src"))?;
+    fs::write(
+        consumer.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='consumer'\n[dependencies]\ngeometry={{path={:?}}}\n",
+            provider.path().to_string_lossy(),
+        ),
+    )?;
+    let project = ProjectManifest::load(&consumer.path().join("loaf.toml"))?;
+    let owners = PreparedLibraryDependencies::admit(&[input], TARGET, TOOLCHAIN, limits())?;
+    let source = "from pub::geometry import provider as root_provider\nfrom pub::geometry::core import provider\npub def answer() -> int:\n    return 1\n";
+    fs::write(consumer.path().join("src/lib.incn"), source)?;
+    let tokens = incan_frontend::lexer::lex(source).map_err(|error| format!("lex: {error:?}"))?;
+    let ast = incan_frontend::parser::parse(&tokens).map_err(|error| format!("parse: {error:?}"))?;
+    let module = incan_frontend::ParsedModule {
+        name: "lib".into(),
+        path_segments: vec!["lib".into()],
+        file_path: consumer.path().join("src/lib.incn"),
+        source: source.into(),
+        ast,
+    };
+    let plan = owners.provider_plan().project_module_usage(BTreeSet::from([vec![
+        "pub".into(),
+        "geometry".into(),
+        "core".into(),
+    ]]));
+    let requirements = owners.source_requirements(&plan)?;
+    let package_projection = plan
+        .public_artifacts()
+        .next()
+        .ok_or("checked package projection missing")?
+        .artifact
+        .to_dependency_spec();
+    assert!(
+        owners
+            .physical_native_dependencies(&plan, std::slice::from_ref(&package_projection))?
+            .is_empty()
+    );
+    let mut changed_projection = package_projection.clone();
+    changed_projection.features.push("unadmitted".into());
+    assert_eq!(
+        owners.physical_native_dependencies(&plan, std::slice::from_ref(&changed_projection))?,
+        vec![changed_projection]
+    );
+    assert!(
+        owners
+            .physical_native_dependencies(&ProviderPlan::default(), &[package_projection])
+            .is_err()
+    );
+    let demands = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        &project,
+        &[module],
+        &requirements,
+        &plan,
+        &BTreeSet::new(),
+    )?;
+    assert!(demands.require_ordinary_source_inspection(None).is_err());
+    demands.require_ordinary_source_inspection(Some((&owners, &plan)))?;
+    assert!(
+        demands
+            .require_ordinary_source_inspection(Some((&owners, &ProviderPlan::default())))
+            .is_err()
+    );
+    let encoded = serde_json::to_value(&demands)?;
+    let mut unknown_module = encoded.clone();
+    unknown_module["observed"]["public_dependency_modules"] = serde_json::json!([["pub", "geometry", "unpublished"]]);
+    let unknown_module: crate::build::library_metadata::requirements::CheckedNativeDemands =
+        serde_json::from_value(unknown_module)?;
+    assert!(
+        unknown_module
+            .require_ordinary_source_inspection(Some((&owners, &plan)))
+            .is_err()
+    );
+    for field in ["provider_contracts", "public_dependency_modules", "dependency_aliases"] {
+        let mut changed = encoded.clone();
+        changed["observed"][field] = match field {
+            "provider_contracts" => serde_json::json!({}),
+            "public_dependency_modules" => serde_json::json!([["pub", "unselected"]]),
+            _ => serde_json::json!(["unselected_native"]),
+        };
+        let decoded: crate::build::library_metadata::requirements::CheckedNativeDemands =
+            serde_json::from_value(changed)?;
+        assert!(
+            decoded
+                .require_ordinary_source_inspection(Some((&owners, &plan)))
+                .is_err(),
+            "{field}"
+        );
+    }
+    fs::write(
+        provider.path().join("src/lib.incn"),
+        "pub def changed() -> int:\n    return 2\n",
+    )?;
+    assert!(
+        demands
+            .require_ordinary_source_inspection(Some((&owners, &plan)))
+            .is_err()
+    );
+    Ok(())
+}
+
 /// Session discovery consumes admitted checked metadata, retains the catalog, and revalidates even cached usage.
 #[test]
 fn ordinary_admitted_session_reuses_projection_and_refuses_changed_source() -> Result<(), Box<dyn std::error::Error>> {
@@ -432,7 +571,7 @@ fn ordinary_admitted_session_refuses_alias_or_coordinate_substitution() -> Resul
 #[test]
 fn ordinary_admission_refuses_missing_original_dependency_owner() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, mut input) = checked_package()?;
-    let baseline = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let baseline = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let owner = &baseline.nodes.values().next().ok_or("fixture owner absent")?.metadata;
     let mut recipe = owner.recipe().clone();
     recipe.dependencies.insert(
@@ -568,7 +707,7 @@ fn ordinary_admission_shares_exact_owner_across_aliases() -> Result<(), Box<dyn 
 #[test]
 fn ordinary_admission_refuses_stale_checked_generation() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, mut input) = checked_package()?;
-    let admitted = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let admitted = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let metadata = &admitted.nodes.values().next().ok_or("metadata absent")?.metadata;
     fs::write(
         root.path().join("src/lib.incn"),
@@ -589,7 +728,7 @@ fn ordinary_admission_refuses_stale_checked_generation() -> Result<(), Box<dyn s
     package.source_authority_digest = current;
     write_packaged_library_loaf_manifest(&artifact.crate_root, &package)?;
     input.handoff_digest = handoff_digest(&artifact)?;
-    assert!(PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits()).is_err());
+    assert!(PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits()).is_err());
     fs::remove_file(root.path().join("loaf.toml"))?;
     fs::remove_file(root.path().join("src/lib.incn"))?;
     assert!(PreparedLibraryDependencies::admit(&[input], TARGET, TOOLCHAIN, limits()).is_err());
@@ -740,7 +879,7 @@ fn ordinary_alias_sharing_refuses_different_physical_owners() -> Result<(), Box<
         fs::canonicalize(&second_artifact.crate_root)?,
     );
     let original = PreparedLibraryDependencies::admit(std::slice::from_ref(&first), TARGET, TOOLCHAIN, limits())?;
-    let transported = PreparedLibraryDependencies::admit(&[second.clone()], TARGET, TOOLCHAIN, limits())?;
+    let transported = PreparedLibraryDependencies::admit(std::slice::from_ref(&second), TARGET, TOOLCHAIN, limits())?;
     assert_eq!(
         original.nodes.keys().collect::<Vec<_>>(),
         transported.nodes.keys().collect::<Vec<_>>()
@@ -761,7 +900,7 @@ fn ordinary_alias_sharing_refuses_different_physical_owners() -> Result<(), Box<
 fn ordinary_generation_refuses_substitution_and_missing_authority() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, mut input) = checked_package()?;
     let (_other_root, _other_artifact, other_input) = checked_package()?;
-    let first = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let first = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let other = PreparedLibraryDependencies::admit(&[other_input], TARGET, TOOLCHAIN, limits())?;
     let first_node = first.nodes.values().next().ok_or("first node absent")?;
     let other_node = other.nodes.values().next().ok_or("other node absent")?;
@@ -786,7 +925,7 @@ fn ordinary_generation_refuses_substitution_and_missing_authority() -> Result<()
         package.checked_generation = replacement;
         write_packaged_library_loaf_manifest(&artifact.crate_root, &package)?;
         input.handoff_digest = handoff_digest(&artifact)?;
-        assert!(PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits()).is_err());
+        assert!(PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits()).is_err());
     }
     fs::remove_file(root.path().join("loaf.toml"))?;
     fs::remove_file(root.path().join("src/lib.incn"))?;

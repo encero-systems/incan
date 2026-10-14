@@ -11,7 +11,7 @@ use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use oven_model::project_lifecycle::toolchain::ToolchainConstraintSet;
 /// Cargo execution policy resolved from CLI inputs and environment defaults.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CargoPolicy {
     pub offline: bool,
     pub locked: bool,

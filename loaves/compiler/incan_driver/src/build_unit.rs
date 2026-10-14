@@ -13,6 +13,15 @@ use incan_provider::lock_semantics::{CheckedProviderSemanticIdentities, provider
 use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_dependencies};
 use oven_model::manifest::DependencySpec;
 
+/// Shared compiler input for fresh ordinary checking, Rust inspection and checked metadata replay.
+/// Retain the same field on both routes so an unchanged metadata hit cannot silently change the native recipe.
+pub(crate) fn ordinary_library_build_unit_inputs() -> BTreeMap<String, String> {
+    BTreeMap::from([(
+        "compiler-version".to_string(),
+        incan_lang::version::INCAN_VERSION.to_string(),
+    )])
+}
+
 /// Checked logical inputs and original native producer requests retained until every profile is planned.
 #[cfg(feature = "cli")]
 pub(crate) struct OrdinaryLibraryRuntimeInputs {
@@ -33,11 +42,12 @@ impl OrdinaryLibraryRuntimeInputs {
         requirements: &ProjectRequirements,
         resolved: &ResolvedDependencies,
         semantic_identities: &CheckedProviderSemanticIdentities,
+        admitted: Option<&crate::build::library_dependencies::PreparedLibraryDependencies>,
     ) -> CliResult<Self> {
         native.verify()?;
         let provider_records = oven_native_provider_records_with_checked_identities(
             provider_plan,
-            &native.provider_semantic_dependencies(provider_plan, requirements)?,
+            &native.provider_semantic_dependencies(provider_plan, requirements, admitted)?,
             semantic_identities,
         )?;
         let mut dependencies = resolved.dependencies.clone();

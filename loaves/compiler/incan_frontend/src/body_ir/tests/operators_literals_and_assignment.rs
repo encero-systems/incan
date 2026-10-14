@@ -5,6 +5,38 @@
 
 use super::*;
 
+/// Result payload identities retain checked newtype leaves through aliases, collections and the error side.
+#[test]
+fn result_newtype_payloads_keep_complete_checked_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Clone)\ntype Kind = newtype str\ntype Choice = Kind | str\n\ndef wrapped() -> Result[Kind, str]:\n    return Ok(Kind(\"wrapped\"))\n\ndef choice() -> Result[Choice, str]:\n    return Ok(Kind(\"choice\"))\n\ndef nested() -> Result[list[Choice], str]:\n    return Ok([Kind(\"nested\")])\n\ndef failed() -> Result[int, Kind]:\n    return Err(Kind(\"failed\"))\n",
+        &["newtype_results"],
+    )?;
+    let mut constructors = 0;
+    for body in &module.bodies {
+        for statement in &body.block.stmts {
+            if let bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::ResultVariant(variant),
+                ..
+            } = &statement.kind
+            {
+                constructors += 1;
+                assert_eq!(variant.canonical_types.len(), 1, "{variant:?}");
+                let identity = variant
+                    .canonical_types
+                    .values()
+                    .next()
+                    .ok_or("missing newtype identity")?;
+                assert_eq!(identity.kind, incan_semantics_core::SemanticSourceTargetKind::Newtype);
+                assert_eq!(identity.declaration_name, "Kind");
+                assert!(variant.has_complete_canonical_types(), "{variant:?}");
+            }
+        }
+    }
+    assert_eq!(constructors, 4);
+    Ok(())
+}
+
 /// Annotation spellings and inferred tuple literals have one recursively shared semantic type identity.
 #[test]
 fn tuple_annotations_share_canonical_semantic_shape() {

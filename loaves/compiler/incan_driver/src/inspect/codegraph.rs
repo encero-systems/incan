@@ -765,6 +765,13 @@ fn codegraph_provider_provenance(provenance: &ProviderProvenance) -> CodegraphPr
             component_id: component_id.clone(),
             inventory_path: inventory_path.as_ref().map(|path| path_string(path)),
         },
+        ProviderProvenance::StandardPublication {
+            package_name,
+            manifest_path,
+        } => CodegraphProviderProvenance::StandardPublication {
+            package_name: package_name.clone(),
+            manifest_path: path_string(manifest_path),
+        },
         ProviderProvenance::Compiler => CodegraphProviderProvenance::Compiler,
     }
 }

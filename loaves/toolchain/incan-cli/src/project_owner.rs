@@ -1,0 +1,148 @@
+//! Shared ownership of ordinary executable builds.
+//!
+//! The command sends resolved intent to one compatible owner. The driver remains the sole build implementation;
+//! this module owns transport, readiness and request isolation. It introduces no artifact or source cache.
+
+use incan_driver::build::BuildCommandOptions;
+use incan_driver::error::{CliError, CliResult};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::path::PathBuf;
+
+#[cfg(unix)]
+mod protocol;
+#[cfg(unix)]
+mod unix;
+
+/// A build intent with explicit paths and the existing driver option model.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuildIntent {
+    file_path: String,
+    output_dir: Option<String>,
+    options: BuildCommandOptions,
+}
+
+/// Internal native executable envelope; the same driver owner retains its completed native preparation.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeBuildIntent {
+    native_build: incan_driver::build::executable::NativeExecutableBuildRequest,
+}
+
+/// Submit an explicit receipt-bound native executable to the selected compiler's existing project owner.
+///
+/// Compiler helpers must name an executable that hosts their linked owner protocol; the ordinary CLI and the compiler
+/// helper both implement that same internal host mode. This is a Rust interop transport for compiler tooling, not a new
+/// user command. The owner validates all paths and runs the same direct executor; serialized reports carry no execution
+/// leases or authority.
+#[allow(clippy::too_many_arguments)]
+pub fn build_native_executable(
+    owner_executable: &Path,
+    store: &oven_store::store::OvenStore,
+    source_receipt: &oven_store::OvenReceipt,
+    declaration: &Path,
+    rustc: &Path,
+    graph: &Path,
+    index: &Path,
+    blobs: &Path,
+    preparation_output: &Path,
+    source: &Path,
+    output: &Path,
+    crate_name: &str,
+    edition: &str,
+    source_key: &str,
+) -> CliResult<String> {
+    let intent = NativeBuildIntent {
+        native_build: incan_driver::build::executable::NativeExecutableBuildRequest {
+            store: std::path::absolute(store.root()).map_err(|error| CliError::failure(error.to_string()))?,
+            limits: *store.limits(),
+            source_receipt: source_receipt.clone(),
+            declaration: std::path::absolute(declaration).map_err(|error| CliError::failure(error.to_string()))?,
+            rustc: std::path::absolute(rustc).map_err(|error| CliError::failure(error.to_string()))?,
+            graph: std::path::absolute(graph).map_err(|error| CliError::failure(error.to_string()))?,
+            index: std::path::absolute(index).map_err(|error| CliError::failure(error.to_string()))?,
+            blobs: std::path::absolute(blobs).map_err(|error| CliError::failure(error.to_string()))?,
+            preparation_output: std::path::absolute(preparation_output)
+                .map_err(|error| CliError::failure(error.to_string()))?,
+            source: std::path::absolute(source).map_err(|error| CliError::failure(error.to_string()))?,
+            output: std::path::absolute(output).map_err(|error| CliError::failure(error.to_string()))?,
+            crate_name: crate_name.to_string(),
+            edition: edition.to_string(),
+            source_key: source_key.to_string(),
+        },
+    };
+    intent.native_build.validate_paths()?;
+    #[cfg(unix)]
+    let result = unix::submit(
+        owner_executable,
+        serde_json::to_value(intent).map_err(|error| CliError::failure(error.to_string()))?,
+        |_| {},
+    )?;
+    #[cfg(not(unix))]
+    let result = {
+        let _host = owner_executable;
+        incan_driver::build::executable::ExecutableBuildOwner::default().build_native(&intent.native_build)?
+    };
+    serde_json::to_string(&result).map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Resolve paths once at the client boundary without changing the owner's working directory.
+fn absolute_path(path: &str) -> CliResult<String> {
+    let path = PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .join(path)
+    };
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| CliError::failure("build path is not valid UTF-8"))
+}
+
+/// Submit an actual build to the compatible owner, streaming progress to this request's presentation sink.
+///
+/// Unix clients start the owner automatically. Other platforms keep the same extracted driver operation in process
+/// until their service transport is accepted; this is a platform boundary, not a fallback after a failed request.
+pub fn build(
+    file_path: &str,
+    output_dir: Option<&String>,
+    options: BuildCommandOptions,
+    progress: impl FnMut(String),
+) -> CliResult<serde_json::Value> {
+    let intent = BuildIntent {
+        file_path: absolute_path(file_path)?,
+        output_dir: output_dir.map(|path| absolute_path(path)).transpose()?,
+        options,
+    };
+    #[cfg(unix)]
+    {
+        unix::build(intent, progress)
+    }
+    #[cfg(not(unix))]
+    {
+        incan_driver::build::executable::build_executable(
+            &intent.file_path,
+            intent.output_dir.as_ref(),
+            intent.options,
+            progress,
+        )
+    }
+}
+
+/// Recognize only the internal owner invocation before ordinary CLI parsing.
+///
+/// Returns false for ordinary commands. The service host uses the normal compiler stack and tracing setup; startup
+/// never creates an alternative compiler route or suppresses a driver failure.
+pub fn run_internal() -> CliResult<bool> {
+    #[cfg(unix)]
+    {
+        unix::run_internal()
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(false)
+    }
+}
