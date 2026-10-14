@@ -5,11 +5,13 @@
 
 use super::retained_inputs::SessionPurpose;
 use crate::error::{CliError, CliResult};
+use crate::session::CompilationSession;
 use incan_provider::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Existing lock selections transported to the same owner as build, check and tests.
 #[derive(Serialize, Deserialize)]
@@ -31,7 +33,8 @@ pub struct LockPreparationRequest {
 pub(super) struct CompletedLockPreparation {
     request: String,
     source: String,
-    test_discovery: Option<oven_model::observed_inputs::InputObservations>,
+    test_discovery: Vec<oven_model::observed_inputs::InputObservations>,
+    members: Vec<(PathBuf, Arc<CompilationSession>)>,
     publication: crate::lock::PublishedLockFile,
 }
 
@@ -40,10 +43,11 @@ impl CompletedLockPreparation {
     fn matches(&self, request: &str, source: &str) -> bool {
         self.request == request
             && self.source == source
+            && !self.test_discovery.is_empty()
             && self
                 .test_discovery
-                .as_ref()
-                .is_some_and(|inputs| inputs.supports_retention() && inputs.current())
+                .iter()
+                .all(|inputs| inputs.supports_retention() && inputs.current())
             && super::file_freshness::digest_file(&self.publication.canonical_path)
                 .is_ok_and(|digest| digest == self.publication.content_digest)
     }
@@ -56,14 +60,56 @@ fn entries_belong_to_project(root: &Path, entries: &[PathBuf]) -> bool {
         .all(|entry| std::fs::canonicalize(entry).is_ok_and(|path| path.starts_with(root)))
 }
 
-/// Run the existing collector once per unchanged standalone session and retain only stable successful publications.
-/// Workspace collection keeps its canonical whole-workspace path until member sessions can be retained together.
+/// Compare original owner generations after every member has been reconciled for this request.
+fn same_member_sessions(
+    previous: &[(PathBuf, Arc<CompilationSession>)],
+    current: &[(PathBuf, Arc<CompilationSession>)],
+) -> bool {
+    previous.len() == current.len()
+        && previous
+            .iter()
+            .zip(current)
+            .all(|((left_root, left), (right_root, right))| left_root == right_root && Arc::ptr_eq(left, right))
+}
+
+/// Bind every selected member's source and local dependency graph using the existing reconciler.
+fn source_identity(roots: &[PathBuf], authority: &mut super::ProjectSourceAuthorityDigester) -> CliResult<String> {
+    let identities = roots
+        .iter()
+        .map(|root| authority.digest(root).map(|digest| (root, digest)))
+        .collect::<CliResult<Vec<_>>>()?;
+    serde_json::to_vec(&identities)
+        .map(|bytes| oven_store::digest_bytes(&bytes))
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Match the canonical workspace lock's scope: member location and transient package flags do not select its graph.
+/// An explicit entry remains bound to its invoking member; standalone requests retain their ordinary selections.
+fn selection_identity(
+    request: &LockPreparationRequest,
+    project_root: &Path,
+    workspace: Option<&oven_model::workspace::WorkspaceGraph>,
+) -> CliResult<String> {
+    let bytes = match workspace {
+        Some(workspace) => serde_json::to_string(&(
+            workspace.root(),
+            request.entry.as_ref().map(|entry| (project_root, entry)),
+            &request.cargo_features,
+            &request.sdk_profile,
+        )),
+        None => serde_json::to_string(request),
+    };
+    bytes.map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Retain the canonical publication only when every contributing member and its original session remain current.
+/// Unsupported source ownership keeps ordinary collection; no partial workspace generation can authorize reuse.
 pub(super) fn execute_request(
     request: &LockPreparationRequest,
     authority: &mut super::ProjectSourceAuthorityDigester,
 ) -> CliResult<()> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_project_lock").entered();
-    // ---- Request authority: paths, project and source ownership ----
+    // ---- Request authority: paths, original project model and whole workspace ----
     if !request.directory.is_absolute() || request.entry.as_ref().is_some_and(|path| !path.is_absolute()) {
         return Err(CliError::failure("owner requires absolute lock request paths"));
     }
@@ -72,95 +118,152 @@ pub(super) fn execute_request(
         .ok_or_else(|| CliError::failure("No loaf.toml found (run `incan init`)"))?;
     crate::cargo_policy::enforce_project_toolchain_constraint(&manifest)?;
     let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-    let workspace =
-        oven_model::workspace::WorkspaceGraph::discover(&root).map_err(|error| CliError::failure(error.to_string()))?;
-    let entries = crate::lock::workspace::project_lock_entry_paths(&manifest, request.entry.as_deref());
-    let entries_owned = entries_belong_to_project(&root, &entries);
-    // The current source reconciler owns standalone project trees. Preserve canonical collection for workspace
-    // members and external entrypoints rather than rejecting an existing lock command or retaining partial inputs.
-    if workspace.is_some() || !entries_owned {
+    let canonical = || {
         crate::lock::resolution::prepare_sdk_and_publish_project_lock(
             &manifest,
             request.entry.as_deref(),
             &request.cargo_features,
             &request.features,
             request.sdk_profile.as_deref(),
-        )?;
-        return Ok(());
-    }
-    let entry = entries.into_iter().next().ok_or_else(|| {
-        CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry")
-    })?;
-    // ---- Reuse: reconcile the original session and successful publication ----
-    let _inventory = super::native_sdk::prepare_or_discover_sdk_inventory()?;
-    authority.begin_request();
-    let session = match authority.compilation_session(
-        &root,
-        &entry,
-        &request.features,
-        request.sdk_profile.as_deref(),
-        SessionPurpose::Artifacts,
-    ) {
-        Ok(session) => session,
-        Err(reason) => {
-            // Session identity also reconciles source topology. Canonical discovery owns unsupported layouts
-            // and their diagnostics; an acceleration failure must neither reject nor bless such a request.
-            tracing::trace!(target: "incan::invocation", decision = "lock_session_unretained", reason = %reason.message);
-            crate::lock::resolution::collect_and_publish_project_lock(
-                &manifest,
-                request.entry.as_deref(),
-                &request.cargo_features,
-                &request.features,
-                request.sdk_profile.as_deref(),
-            )?;
-            return Ok(());
-        }
+        )
+        .map(|_| ())
     };
-    // Source reconciliation is an acceleration boundary, not a new restriction on canonical lock inputs.
-    // For example, the collector accepts linked modules that the build source digester cannot retain safely.
-    let source = authority.digest(&root).ok();
-    let selection = serde_json::to_string(request).map_err(|error| CliError::failure(error.to_string()))?;
-    if let Some(slot) = authority.retained_inputs.lock_preparation(&root, &session) {
-        if entries_owned
-            && slot.as_ref().is_some_and(|retained| {
-                source
+    authority.begin_request();
+    let project = match authority.retained_inputs.project(&root) {
+        Ok(project) => project,
+        Err(_) => return canonical(),
+    };
+    let workspace = project.workspace();
+    let manifests = match workspace {
+        Some(workspace) => workspace
+            .members()
+            .map(|member| workspace.effective_member_manifest(member))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CliError::failure(error.to_string()))?,
+        None => vec![project.manifest.clone()],
+    };
+    let roots = manifests
+        .iter()
+        .map(|manifest| manifest.project_root().to_path_buf())
+        .collect::<Vec<_>>();
+    let declared_features = FeatureSelection::default();
+    let features = if workspace.is_some() {
+        &declared_features
+    } else {
+        &request.features
+    };
+    let _inventory = super::native_sdk::prepare_or_discover_sdk_inventory()?;
+    let mut members = Vec::new();
+    for manifest in &manifests {
+        crate::cargo_policy::enforce_project_toolchain_constraint(manifest)?;
+        let member_root = manifest.project_root();
+        let entry = request.entry.as_deref().filter(|_| member_root == root);
+        let entries = crate::lock::workspace::project_lock_entry_paths(manifest, entry);
+        if !entries_belong_to_project(member_root, &entries) {
+            return canonical();
+        }
+        let Some(entry) = entries.first() else {
+            continue;
+        };
+        let session = match authority.compilation_session(
+            member_root,
+            entry,
+            features,
+            request.sdk_profile.as_deref(),
+            SessionPurpose::Artifacts,
+        ) {
+            Ok(session) => session,
+            Err(reason) => {
+                tracing::trace!(target: "incan::invocation", decision = "lock_session_unretained", reason = %reason.message);
+                return canonical();
+            }
+        };
+        members.push((member_root.to_path_buf(), session));
+    }
+    let Some(session) = members
+        .iter()
+        .find(|(member, _)| member == &root)
+        .map(|(_, session)| Arc::clone(session))
+    else {
+        return canonical();
+    };
+    // ---- Reuse: every member, test-discovery surface and original session must agree ----
+    let source = source_identity(&roots, authority).ok();
+    let selection = selection_identity(request, &root, workspace)?;
+    // Every workspace member reconciles the same ordered session set. Keep one publication in its first original
+    // member session so changing the command's working directory cannot create a second workspace result.
+    let (publication_root, publication_session) = members
+        .first()
+        .map(|(root, session)| (root.clone(), Arc::clone(session)))
+        .ok_or_else(|| CliError::failure("lock preparation lost its admitted member session"))?;
+    if authority
+        .retained_inputs
+        .ensure_current_project(&root, &project)
+        .is_err()
+    {
+        return canonical();
+    }
+    if let Some(slot) = authority
+        .retained_inputs
+        .lock_preparation(&publication_root, &publication_session)
+    {
+        if slot.as_ref().is_some_and(|retained| {
+            same_member_sessions(&retained.members, &members)
+                && source
                     .as_deref()
                     .is_some_and(|source| retained.matches(&selection, source))
-            })
-        {
+        }) {
             tracing::trace!(target: "incan::invocation", decision = "reuse_lock_preparation", input = %root.display());
             return Ok(());
         }
         *slot = None;
     }
-    // ---- Publication: retain only an unchanged, successful generation ----
-    let (context, publication) = crate::lock::resolution::collect_and_publish_project_lock_with_session(
-        &manifest,
-        request.entry.as_deref(),
-        &request.cargo_features,
-        &request.features,
-        request.sdk_profile.as_deref(),
-        Some(&session),
-    )?;
+    // ---- Publication: preserve the canonical member feature and root-lock policies ----
+    let (context, publication) = match workspace {
+        Some(workspace) => crate::lock::resolution::collect_and_publish_workspace_lock_with_sessions(
+            workspace,
+            &root,
+            request.entry.as_deref(),
+            &request.cargo_features,
+            request.sdk_profile.as_deref(),
+            &members,
+        )?,
+        None => crate::lock::resolution::collect_and_publish_project_lock_with_session(
+            &manifest,
+            request.entry.as_deref(),
+            &request.cargo_features,
+            &request.features,
+            request.sdk_profile.as_deref(),
+            Some(&session),
+        )?,
+    };
     let Some(source) = source else {
         return Ok(());
     };
     authority.begin_request();
-    let Ok(current) = authority.digest(&root) else {
+    let Ok(current) = source_identity(&roots, authority) else {
         return Ok(());
     };
+    if authority
+        .retained_inputs
+        .ensure_current_project(&root, &project)
+        .is_err()
+    {
+        return Ok(());
+    }
     let completed = CompletedLockPreparation {
         request: selection,
         test_discovery: context.test_discovery,
+        members,
         source,
         publication,
     };
-    // A newly published semantic generation or racing input is not retained as the earlier generation. The next
-    // request reconciles it normally. Explicit external entrypoints also keep canonical collection.
+    // A publication that changes the semantic lock or races a model/source change cannot bless its old generation.
     if current == completed.source
-        && entries_owned
         && completed.matches(&completed.request, &current)
-        && let Some(slot) = authority.retained_inputs.lock_preparation(&root, &session)
+        && let Some(slot) = authority
+            .retained_inputs
+            .lock_preparation(&publication_root, &publication_session)
     {
         *slot = Some(completed);
     }
@@ -305,6 +408,47 @@ mod tests {
         Ok(())
     }
 
+    /// Unchanged publication bytes cannot hide an edited sibling test or an unsupported member observation.
+    #[cfg(unix)]
+    #[test]
+    fn sibling_test_discovery_invalidates_workspace_publication() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let root = std::fs::canonicalize(directory.path())?;
+        let first = root.join("a");
+        let second = root.join("b");
+        for member in [&first, &second] {
+            std::fs::create_dir(member)?;
+            std::fs::write(member.join("loaf.toml"), "[project]\nname = 'probe'\n")?;
+            std::fs::write(member.join("test_value.incn"), "def test_value() -> None: pass")?;
+        }
+        let path = root.join("oven.lock");
+        std::fs::write(&path, "original publication")?;
+        let mut completed = CompletedLockPreparation {
+            request: "request".to_string(),
+            source: "sources".to_string(),
+            members: Vec::new(),
+            test_discovery: vec![observe_test_inputs(&first), observe_test_inputs(&second)],
+            publication: PublishedLockFile {
+                canonical_path: path,
+                content_digest: oven_store::digest_bytes(b"original publication"),
+            },
+        };
+        assert!(completed.matches("request", "sources"));
+        std::fs::write(second.join("test_value.incn"), "def test_other() -> None: pass")?;
+        assert!(!completed.matches("request", "sources"));
+        completed.test_discovery = vec![observe_test_inputs(&first), observe_test_inputs(&second)];
+        assert!(completed.matches("request", "sources"));
+        completed
+            .test_discovery
+            .last_mut()
+            .ok_or("missing sibling observation")?
+            .disable_retention();
+        assert!(!completed.matches("request", "sources"));
+        completed.test_discovery.clear();
+        assert!(!completed.matches("request", "sources"));
+        Ok(())
+    }
+
     /// Original publication bytes, source identity and command selection independently gate a retained hit.
     #[test]
     fn changed_lock_or_request_cannot_reuse_preparation() -> Result<(), Box<dyn std::error::Error>> {
@@ -313,7 +457,8 @@ mod tests {
         std::fs::write(&path, "original publication")?;
         let completed = CompletedLockPreparation {
             request: "original request".to_string(),
-            test_discovery: Some(oven_model::observed_inputs::InputObservations::default()),
+            test_discovery: vec![oven_model::observed_inputs::InputObservations::default()],
+            members: Vec::new(),
             source: "original source".to_string(),
             publication: PublishedLockFile {
                 canonical_path: path.clone(),

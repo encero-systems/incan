@@ -366,9 +366,9 @@ pub struct WorkspaceLockResolutionRequest<'a> {
 
 /// Fully collected dependency inputs that define a project or workspace lock's freshness surface.
 pub struct ProjectLockContext {
-    /// Actual standalone test discovery inputs; aggregate workspace contexts require member-wise observations.
+    /// Canonical test discovery observations for every contributing project, including all workspace members.
     #[cfg(feature = "cli")]
-    pub(crate) test_discovery: Option<oven_model::observed_inputs::InputObservations>,
+    pub(crate) test_discovery: Vec<oven_model::observed_inputs::InputObservations>,
     resolved: ResolvedDependencies,
     project_requirements: ProjectRequirements,
     semantic: SemanticLockState,
