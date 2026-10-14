@@ -44,6 +44,15 @@ impl TypeChecker {
         };
         let (parameters, result) = self.method_types_substituting_call_site_self(&declared, &template);
         let result = normalized(&result, &names, &self.type_info);
+        let fixed = match &template {
+            ResolvedType::Generic(_, arguments) => names
+                .iter()
+                .zip(arguments)
+                .filter(|(_, argument)| concrete(argument))
+                .map(|(name, argument)| (name.clone(), argument.clone()))
+                .collect::<HashMap<_, _>>(),
+            _ => HashMap::new(),
+        };
 
         // ---- Checked argument and destination constraints ----
         let mut bindings: HashMap<_, _> = legacy
@@ -61,6 +70,11 @@ impl TypeChecker {
             let actual = normalized(actual, &[], &self.type_info);
             let parameter = normalized(parameter, &names, &self.type_info);
             if !concrete(&actual) {
+                return;
+            }
+            let constrained = substitute_resolved_type(&parameter, &fixed);
+            if concrete(&constrained) && !self.types_compatible(&constrained, &actual) {
+                self.refuse_body_ir_factory_result(span);
                 return;
             }
             self.infer_type_param_bindings(&parameter, &actual, &mut bindings);
