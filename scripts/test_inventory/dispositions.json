@@ -9468,6 +9468,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/native_test/collection_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Request-owned native inventory, physical executable and invocation context guards, fresh outcomes and deadlines; no compiler backend dependency.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/native_test/evidence.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
