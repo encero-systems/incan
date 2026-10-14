@@ -157,11 +157,11 @@ impl ExecutableDependencyInputs {
 }
 
 /// One original leased plan under the same build-unit and intent match used by canonical Store selection.
-pub(super) struct RetainedExecutableDependencies<I = ExecutableDependencyInputs> {
+pub(super) struct RetainedExecutableDependencies<I = ExecutableDependencyInputs, S = OvenDirectRustcPlanSelection> {
     pub(super) inputs: I,
     build_unit: String,
     intent: oven_store::OvenBuildIntent,
-    pub(super) selection: OvenDirectRustcPlanSelection,
+    pub(super) selection: S,
 }
 
 impl RetainedExecutableDependencies {
@@ -180,7 +180,7 @@ impl RetainedExecutableDependencies {
     }
 }
 
-impl<I> RetainedExecutableDependencies<I> {
+impl<I, S> RetainedExecutableDependencies<I, S> {
     /// Apply the existing selector's identity contract to a freshly generated source receipt.
     pub(super) fn matches_receipt(&self, receipt: &oven_store::OvenReceipt) -> bool {
         self.build_unit == receipt.build_unit_identity && self.intent == receipt.intent
@@ -209,6 +209,18 @@ impl RetainedExecutableDependencies<ModelInputs> {
         })
     }
 
+    /// Share the original selected plan and its leases between worker requests without copying its authority.
+    pub(super) fn into_shared(self) -> RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>> {
+        RetainedExecutableDependencies {
+            inputs: self.inputs,
+            build_unit: self.build_unit,
+            intent: self.intent,
+            selection: Arc::new(self.selection),
+        }
+    }
+}
+
+impl<S> RetainedExecutableDependencies<ModelInputs, S> {
     /// Reconcile original plan inputs before reuse and after successful execution, preserving the same leases.
     /// This observation is not dependency authority: the existing native producer reconciles that independently.
     pub(super) fn native_inputs_current(&self) -> bool {

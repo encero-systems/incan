@@ -1293,6 +1293,21 @@ pub fn select_oven_direct_rustc_plan_with_native_sdk(
         .map(|selection| selection.map(|selection| selection.plan_selection))
 }
 
+/// Share a canonical plan through the existing admitted owner, retaining original leases across fresh test executions.
+/// Unsupported plan families and commands without an owner use the same canonical selector on every request.
+pub fn select_retained_oven_direct_rustc_plan(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    registry_dependencies: &[DependencySpec],
+    context: Option<&super::NativeSdkCommandContext>,
+) -> CliResult<Option<Arc<OvenDirectRustcPlanSelection>>> {
+    match context {
+        Some(context) => context.retained_plan(store, receipt, registry_dependencies),
+        None => select_oven_direct_rustc_plan_with_native_sdk(store, receipt, registry_dependencies, None)
+            .map(|selection| selection.map(Arc::new)),
+    }
+}
+
 /// Select a receipt-compatible direct-rustc plan and retain the user-visible local-store outcome.
 ///
 /// This is the one selector used by normal consumers and explicit project preparation. It deliberately keeps

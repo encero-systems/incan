@@ -1,7 +1,7 @@
 //! Receipt-bound consumer plans assembled only from an already published native SDK.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::build::{OvenDirectRustcPlanPreparation, OvenToolchainMaterialization};
@@ -23,6 +23,37 @@ pub struct NativeSdkCommandContext {
     selection: incan_provider::sdk_native::SdkNativeSelection,
     shared_owners: oven_rustc::plan::shared::OvenSharedNativeOwners,
     runtime_projections: Mutex<Vec<RuntimeInputProjection>>,
+    retained_plans: Mutex<Vec<RetainedNativePlan>>,
+}
+
+/// Selection inputs outside the receipt identity; environment is part of the existing command-owner generation.
+#[derive(PartialEq, Eq)]
+struct NativePlanRequest {
+    store: PathBuf,
+    dependencies: Vec<DependencySpec>,
+    compiler_suite: Option<std::ffi::OsString>,
+    toolchain_data: Option<std::ffi::OsString>,
+}
+
+impl NativePlanRequest {
+    /// Capture exact selection scope without discovering Store entries or reconstructing dependency graphs.
+    fn new(store: &OvenStore, dependencies: &[DependencySpec]) -> Self {
+        Self {
+            store: store.root().to_path_buf(),
+            dependencies: dependencies.to_vec(),
+            compiler_suite: std::env::var_os("INCAN_INTERNAL_OVEN_LOAF_EXECUTION"),
+            toolchain_data: std::env::var_os("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT"),
+        }
+    }
+}
+
+/// The existing retained-plan record, sharing its original leases with workers only after exact receipt matching.
+struct RetainedNativePlan {
+    request: NativePlanRequest,
+    plan: super::retained_inputs::RetainedExecutableDependencies<
+        super::retained_inputs::ModelInputs,
+        Arc<oven_rustc::plan::OvenDirectRustcPlanSelection>,
+    >,
 }
 
 /// One canonical runtime projection retained by the existing admitted owner, guarded by the shared input observer.
@@ -87,6 +118,7 @@ impl NativeSdkCommandContext {
             selection,
             shared_owners,
             runtime_projections: Mutex::default(),
+            retained_plans: Mutex::default(),
         }))
     }
 
@@ -155,6 +187,58 @@ impl NativeSdkCommandContext {
         }
         tracing::trace!(target: "incan::invocation", decision = "project_native_runtime_inputs");
         Ok(inputs)
+    }
+
+    /// Reuse the original leased plan for an exact request and fresh receipt, falling back to the canonical selector.
+    /// The mutex protects preparation only; returned workers share leases and execute tests without holding it.
+    pub(super) fn retained_plan(
+        &self,
+        store: &OvenStore,
+        receipt: &oven_store::OvenReceipt,
+        dependencies: &[DependencySpec],
+    ) -> CliResult<Option<Arc<oven_rustc::plan::OvenDirectRustcPlanSelection>>> {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::retained_test_plan").entered();
+        receipt
+            .verify_identity()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let request = NativePlanRequest::new(store, dependencies);
+        let mut retained = self
+            .retained_plans
+            .lock()
+            .map_err(|_| CliError::failure("native plan preparation was interrupted"))?;
+        if let Some(entry) = retained.iter().find(|entry| {
+            entry.request == request && entry.plan.matches_receipt(receipt) && entry.plan.native_inputs_current()
+        }) {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_test_dependency_plan");
+            return Ok(Some(Arc::clone(&entry.plan.selection)));
+        }
+
+        // ---- Canonical selection: preserve original owners and observe their physical generation ----
+        retained.retain(|entry| entry.plan.native_inputs_current());
+        let mut admission = super::retained_inputs::ModelInputs::default();
+        self.visit_retained_inputs(&mut |path| admission.observe(path));
+        let Some(selection) = super::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
+            store,
+            receipt,
+            dependencies,
+            Some(self),
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut plan =
+            super::retained_inputs::RetainedExecutableDependencies::admitted_native_plan(receipt, selection)?
+                .into_shared();
+        self.visit_retained_inputs(&mut |path| plan.inputs.observe(path));
+        let selection = Arc::clone(&plan.selection);
+        if admission.supports_retention() && !admission.current() {
+            return Err(CliError::failure("native admission changed during plan selection"));
+        }
+        if admission.supports_retention() && plan.native_inputs_current() {
+            retained.push(RetainedNativePlan { request, plan });
+        }
+        tracing::trace!(target: "incan::invocation", decision = "select_test_dependency_plan");
+        Ok(Some(selection))
     }
 
     /// Install the existing frozen SDK inspection projection while sharing its command-admitted source owners.
@@ -728,12 +812,13 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
 
-        let root = tempfile::tempdir()?;
-        let source = root.path().join("main.rs");
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        let source = root.as_path().join("main.rs");
         std::fs::write(&source, "fn main() {}\n")?;
         let unit_receipt = oven_store::receipt_generated_project(
             &oven_store::OvenGeneratedProjectRequest::new(
-                root.path(),
+                root.as_path(),
                 "envelope_owner",
                 "1.0.0",
                 "fixture-target",
@@ -752,10 +837,10 @@ mod tests {
             target_predicates: Vec::new(),
             edges: None,
         };
-        let output = root.path().join("libfixture.rlib");
+        let output = root.as_path().join("libfixture.rlib");
         std::fs::write(&output, b"opaque held owner control")?;
         let native_store = super::OvenStore::new(
-            root.path().join("native-store"),
+            root.as_path().join("native-store"),
             OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
         );
         let owner = native_store.publish(&OvenArtifactPublishRequest {
@@ -777,20 +862,20 @@ mod tests {
             digest: oven_store::digest_bytes(b"opaque held owner control"),
         };
         std::fs::write(
-            root.path().join(".sealed-native-units.json"),
+            root.as_path().join(".sealed-native-units.json"),
             serde_json::to_vec(&serde_json::json!({
                 "schema_version": 1, "store": native_store.root(), "units": [unit],
             }))?,
         )?;
         std::fs::write(
-            root.path().join(".sealed-native-receipts.json"),
+            root.as_path().join(".sealed-native-receipts.json"),
             serde_json::to_vec(&BTreeMap::from([(
                 serde_json::to_string(&binding.identity_binding())?,
                 unit_receipt.identity.clone(),
             )]))?,
         )?;
         let context = super::NativeSdkCommandContext::from_inventory(Arc::new(incan_provider::SdkInventory {
-            root: root.path().to_path_buf(),
+            root: root.as_path().to_path_buf(),
             sdk_id: "fixture".to_string(),
             sdk_version: "1.0.0".to_string(),
             compiler_requirement: "*".to_string(),
@@ -808,7 +893,7 @@ mod tests {
         let (mut manifest, files) = native_unit_manifest(&receipt, &context.selection, &[])?;
         seal_source_roles(&receipt, &mut manifest);
         let consumer_store = super::OvenStore::new(
-            root.path().join("consumer-store"),
+            root.as_path().join("consumer-store"),
             OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
         );
         // Match the production plan's held-owner coordinate, including canonicalized temporary-directory ancestors.
@@ -843,7 +928,7 @@ mod tests {
         let baseline_owners = Arc::strong_count(&context.selection.owners[0]);
         let envelope = crate::build::plan_selection::prepare_oven_test_dependency_envelope(
             &consumer_store,
-            root.path(),
+            root.as_path(),
             &incan_provider::dependency_resolver::ResolvedDependencies {
                 dependencies: Vec::new(),
                 dev_dependencies: Vec::new(),
@@ -860,6 +945,26 @@ mod tests {
         );
         drop(envelope);
         assert_eq!(Arc::strong_count(&context.selection.owners[0]), baseline_owners);
+        let first = context
+            .retained_plan(&consumer_store, &receipt, &[])?
+            .ok_or("missing retained plan")?;
+        let second = context
+            .retained_plan(&consumer_store, &receipt, &[])?
+            .ok_or("missing repeated plan")?;
+        #[cfg(unix)]
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unchanged selection must preserve original leases"
+        );
+        let mut malformed = receipt.clone();
+        malformed.intent.profile = "release".into();
+        assert!(context.retained_plan(&consumer_store, &malformed, &[]).is_err());
+        let catalog = root.join(".sealed-native-units.json");
+        let original = std::fs::read(&catalog)?;
+        std::fs::write(&catalog, b"malformed")?;
+        assert!(context.retained_plan(&consumer_store, &receipt, &[]).is_err());
+        std::fs::write(&catalog, original)?;
+        assert!(context.retained_plan(&consumer_store, &receipt, &[])?.is_some());
         Ok(())
     }
 
