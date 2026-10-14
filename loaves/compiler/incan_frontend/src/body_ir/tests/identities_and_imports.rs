@@ -408,6 +408,65 @@ fn imported_alias_method_rejects_a_different_provider_owner() -> Result<(), Box<
     Ok(())
 }
 
+/// The imported alias carrier, stored field and provider-owned receiver method remain closed together.
+#[test]
+fn imported_model_alias_keeps_carrier_with_method_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source =
+        "pub model Account:\n  pub type_ [alias=\"type\"]: str\n  def get_type(self) -> str:\n    return self.type\n";
+    let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"y\")\n";
+    let provider = build(provider_source, &["db", "schema"])?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        &[provider.clone()],
+    )?;
+    let source = "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef main() -> None:\n  println(make_aliased().get_type())\n  println(Account(type=\"z\").type)\n";
+    let module = build_with_published_imports(
+        source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let unknown = body
+        .locals
+        .iter()
+        .filter(|local| local.ty == IncanType::Unknown)
+        .map(|local| (local.span, source.get(local.span.start..local.span.end)))
+        .collect::<Vec<_>>();
+    let methods = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(unknown.is_empty(), "{unknown:#?}");
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].name, "get_type");
+    assert!(methods[0].canonical.is_some());
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("A".to_owned()))
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Account".to_owned()))
+    );
+    Ok(())
+}
+
 /// A user model with a builtin wrapper spelling keeps the field identity its providing module published.
 #[test]
 fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std::error::Error>> {
