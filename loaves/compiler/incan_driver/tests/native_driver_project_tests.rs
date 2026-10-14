@@ -18,6 +18,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Complete SDK graph construction and queries preserve the unchanged original's live legacy output.
+#[test]
+fn original_sdk_graph_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("original-sdk-graph")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_graph.incn"),
+    )
+}
+
 /// Checked serde derive propagation preserves byte parity for a model's list of enum payloads.
 #[test]
 fn serde_list_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
