@@ -52,7 +52,16 @@ struct ObservedProject {
     inputs: ModelInputs,
     overrides: [Option<OsString>; 2],
     project: Arc<RetainedProject>,
-    session: Option<RetainedSession>,
+    sessions: HashMap<SessionPurpose, RetainedSession>,
+}
+
+/// Preparation authority required by an entry in the existing retained-session cache.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+pub(super) enum SessionPurpose {
+    /// Parser/vocabulary collection without native execution preparation.
+    Collection,
+    /// Full Oven artifact preparation for actual compilation and execution.
+    Artifacts,
 }
 
 /// The existing compilation context and its provider projections for one reconciled dependency generation.
@@ -281,7 +290,7 @@ impl RetainedProjectInputs {
                 inputs,
                 overrides,
                 project: Arc::clone(&project),
-                session: None,
+                sessions: HashMap::new(),
             },
         );
         Ok(project)
@@ -292,6 +301,8 @@ impl RetainedProjectInputs {
     /// The caller supplies reconciled dependency, lock, compiler and selection identity, excluding the consumer's
     /// own Incan bodies. Physical provider inputs reuse the existing replacement-sensitive observations. A changed
     /// or failed generation drops the old session before discovery; source modules are never retained here.
+    /// Preparation mode keys this single cache so collection and artifact sessions cannot authorize each other or
+    /// evict one another merely because commands alternate. The caller's identity also binds that mode.
     pub(super) fn compilation_session(
         &mut self,
         root: &Path,
@@ -299,9 +310,10 @@ impl RetainedProjectInputs {
         identity: String,
         features: &FeatureSelection,
         sdk_profile: Option<&str>,
+        purpose: SessionPurpose,
     ) -> CliResult<Arc<CompilationSession>> {
         let project = self.project(root)?;
-        if let Some(retained) = self.projects.get(root).and_then(|record| record.session.as_ref())
+        if let Some(retained) = self.projects.get(root).and_then(|record| record.sessions.get(&purpose))
             && retained.identity == identity
             && retained.inputs.supports_retention()
             && retained.inputs.current()
@@ -310,10 +322,15 @@ impl RetainedProjectInputs {
             return Ok(Arc::clone(&retained.session));
         }
         if let Some(record) = self.projects.get_mut(root) {
-            record.session = None;
+            record.sessions.remove(&purpose);
         }
         tracing::trace!(target: "incan::invocation", decision = "reload_dependency_session", input = %root.display());
-        let session = Arc::new(CompilationSession::discover_for_oven(entry, features, sdk_profile)?);
+        let session = Arc::new(match purpose {
+            SessionPurpose::Collection => {
+                CompilationSession::discover_for_collection_with_selections(entry, features, sdk_profile)?
+            }
+            SessionPurpose::Artifacts => CompilationSession::discover_for_oven(entry, features, sdk_profile)?,
+        });
         let mut inputs = ModelInputs::default();
         if let Some(inventory) = &session.sdk_inventory {
             inputs.observe(&inventory.root.join(incan_provider::SDK_INVENTORY_FILE));
@@ -343,12 +360,15 @@ impl RetainedProjectInputs {
             .projects
             .get_mut(root)
             .ok_or_else(|| CliError::failure("observed project disappeared during session discovery"))?;
-        record.session = Some(RetainedSession {
-            identity,
-            inputs,
-            session: Arc::clone(&session),
-            executable: None,
-        });
+        record.sessions.insert(
+            purpose,
+            RetainedSession {
+                identity,
+                inputs,
+                session: Arc::clone(&session),
+                executable: None,
+            },
+        );
         Ok(session)
     }
 
@@ -357,7 +377,12 @@ impl RetainedProjectInputs {
         let _trace =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::take_retained_native_dependencies")
                 .entered();
-        self.projects.get_mut(root)?.session.as_mut()?.executable.take()
+        self.projects
+            .get_mut(root)?
+            .sessions
+            .get_mut(&SessionPurpose::Artifacts)?
+            .executable
+            .take()
     }
 
     /// Return a completed original plan to the same observed dependency generation, without a second cache.
@@ -366,7 +391,11 @@ impl RetainedProjectInputs {
         root: &Path,
         dependencies: RetainedExecutableDependencies,
     ) {
-        if let Some(session) = self.projects.get_mut(root).and_then(|record| record.session.as_mut()) {
+        if let Some(session) = self
+            .projects
+            .get_mut(root)
+            .and_then(|record| record.sessions.get_mut(&SessionPurpose::Artifacts))
+        {
             session.executable = Some(dependencies);
         }
     }

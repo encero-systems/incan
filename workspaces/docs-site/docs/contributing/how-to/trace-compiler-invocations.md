@@ -47,6 +47,15 @@ Compare `session`, `test_dependency_requirements`, `admit_test_native_inputs` an
 
 Use tracing-disabled commands for performance measurements. These stages attribute the existing test implementation; they do not enable test-result caching or change which tests execute.
 
+On Unix, `incan test --list` uses the same automatically started project owner as ordinary builds. Capture two list requests with the same tracing directory to distinguish first session construction from retained session reuse:
+
+```sh
+INCAN_TRACE_DIR=/tmp/incan-test-list-invocations incan test tests --list
+INCAN_TRACE_DIR=/tmp/incan-test-list-invocations incan test tests --list
+```
+
+The owner retains the canonical parser-only session under the existing project, lock, compiler, feature/profile and provider-input checks. Test and conftest discovery, parsing and selection still run against current source on every request. The unchanged repeat should have no `incan_driver::discover_session`, provider reconstruction, Store manifest reads or native test batches. Collection sessions cannot authorize execution: artifact preparation uses a distinct retained identity. Other platforms invoke the same collection operation in process. Ordinary test execution still uses its existing preparation and scheduler; list timings do not describe execution performance.
+
 ## Check native SDK traversal
 
 On an unchanged command, inspect file-observation paths beneath the native compiler installation. Cached native archives are selected by the pinned source and fact receipt and their stored bytes are checked under lease. Reusing them needs no installed native compiler and must not read its SDK tree. Check that native preparation and compilation counts are zero as well as checking file paths; a short elapsed time alone does not establish reuse.
