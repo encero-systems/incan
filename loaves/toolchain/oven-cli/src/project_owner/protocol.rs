@@ -27,6 +27,10 @@ pub(super) struct Request {
 pub(super) enum Reply {
     /// Human progress, rendered by this request's client only.
     Progress { message: String },
+    /// Test progress facts; only the requesting CLI chooses their display format.
+    TestProgress {
+        event: incan_driver::testing::types::TestProgress,
+    },
     /// Request-local stderr, kept separate from console and JSON stdout records.
     Diagnostic { message: String },
     /// Completed result, including serving-process identity for lifecycle verification.
@@ -212,6 +216,49 @@ mod tests {
             &serde_json::json!({"generation":"test", "intent":{}, "unrecognized":true}),
         )?;
         assert!(read::<Request>(&mut bytes.as_slice()).is_err());
+        Ok(())
+    }
+    /// Typed progress is framed independently from raw output and completion, preserving arrival order.
+    #[test]
+    fn typed_progress_round_trip_preserves_frame_order() -> Result<(), Box<dyn std::error::Error>> {
+        let mut bytes = Vec::new();
+        write(
+            &mut bytes,
+            &Reply::Progress {
+                message: "raw\n".to_string(),
+            },
+        )?;
+        write(
+            &mut bytes,
+            &Reply::TestProgress {
+                event: incan_driver::testing::types::TestProgress::SessionStarted {
+                    collected: 669,
+                    shuffle_seed: Some(17),
+                    jobs: 4,
+                },
+            },
+        )?;
+        write(
+            &mut bytes,
+            &Reply::Complete {
+                pid: 42,
+                result: serde_json::json!({"done": true}),
+            },
+        )?;
+        let mut input = bytes.as_slice();
+        assert!(matches!(read::<Reply>(&mut input)?, Reply::Progress { message } if message == "raw\n"));
+        assert!(matches!(
+            read::<Reply>(&mut input)?,
+            Reply::TestProgress {
+                event: incan_driver::testing::types::TestProgress::SessionStarted {
+                    collected: 669,
+                    shuffle_seed: Some(17),
+                    jobs: 4
+                }
+            }
+        ));
+        assert!(matches!(read::<Reply>(&mut input)?, Reply::Complete { pid: 42, result } if result["done"] == true));
+        assert!(input.is_empty());
         Ok(())
     }
 }

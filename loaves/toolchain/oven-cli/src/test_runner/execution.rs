@@ -57,7 +57,6 @@ pub(super) struct TestExecutionOptions {
     pub no_capture: bool,
     pub timeout: Option<Duration>,
     pub verbose: bool,
-    pub emit_progress: bool,
     /// Output destination belonging to this request, including parallel workers.
     pub output: super::output::TestOutputSink,
 }
@@ -2997,18 +2996,17 @@ fn run_file_tests_batch_oven(
         Err(error) => return failure(error.to_string()),
     };
     let execute_elapsed = execute_start.elapsed();
-    if options.verbose && options.emit_progress {
-        options.output.line(format_args!(
-            "Oven test phases for {}: front-end {:.2}s, generation {:.2}s, receipt {:.2}s, selection {:.2}s, native {} {:.2}s, execution {:.2}s",
-            first.file_path.display(),
-            frontend_elapsed.as_secs_f64(),
-            generation_elapsed.as_secs_f64(),
-            receipt_elapsed.as_secs_f64(),
-            selection_elapsed.as_secs_f64(),
-            if native_reused { "reuse" } else { "bake" },
-            bake_elapsed.as_secs_f64(),
-            execute_elapsed.as_secs_f64(),
-        ));
+    if options.verbose {
+        options.output.progress(super::TestProgress::HarnessCompleted {
+            file: first.file_path.clone(),
+            frontend: frontend_elapsed,
+            generation: generation_elapsed,
+            receipt: receipt_elapsed,
+            selection: selection_elapsed,
+            native: bake_elapsed,
+            execution: execute_elapsed,
+            native_reused,
+        });
     }
     if options.no_capture && !report.output.trim().is_empty() {
         options.output.stdout(report.output.clone());

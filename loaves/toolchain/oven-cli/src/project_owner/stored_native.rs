@@ -104,6 +104,7 @@ pub(crate) fn prepare_stored_native(
         &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
         serde_json::to_value(intent).map_err(|error| CliError::failure(error.to_string()))?,
         |_| {},
+        None,
     )?;
     #[cfg(not(unix))]
     let result = intent

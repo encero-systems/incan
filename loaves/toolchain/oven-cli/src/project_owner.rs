@@ -37,6 +37,7 @@ pub(crate) fn inspect_bindings(request: crate::binding_inspect::BindingInspectio
             })
             .map_err(|error| CliError::failure(error.to_string()))?,
             |_| {},
+            None,
         )?;
         serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))
     }
@@ -77,6 +78,7 @@ pub fn check(
             serde_json::to_value(CheckIntent { check: request })
                 .map_err(|error| CliError::failure(error.to_string()))?,
             |_| {},
+            None,
         )?;
         serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))
     }
@@ -138,6 +140,7 @@ fn submit_format_batch(requests: Vec<source_format::SourceFormatRequest>) -> Cli
             })
             .map_err(|error| CliError::failure(error.to_string()))?,
             |_| {},
+            None,
         )?;
         let results: Vec<Result<String, String>> =
             serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))?;
@@ -252,6 +255,7 @@ pub fn build_native_executable(
         owner_executable,
         serde_json::to_value(intent).map_err(|error| CliError::failure(error.to_string()))?,
         |_| {},
+        None,
     )?;
     #[cfg(not(unix))]
     let result = {
@@ -283,13 +287,22 @@ pub(crate) fn list_tests(config: &crate::test_runner::TestRunConfig<'_>) -> CliR
         serde_json::to_value(TestListIntent { test_list: options })
             .map_err(|error| CliError::failure(error.to_string()))?,
         |message| print!("{message}"),
+        Some(config),
     )?)
     .map_err(|error| CliError::failure(error.to_string()))?;
     #[cfg(not(unix))]
     let report = crate::test_runner::list_tests_with_owner(
         &options,
         &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
-        |message| print!("{message}"),
+        |event| {
+            crate::test_runner::output::render_progress(
+                &event,
+                config.report_format,
+                config.verbose,
+                config.use_color,
+                &crate::test_runner::output::TestOutputSink::default(),
+            )
+        },
     )?;
     if report.ids.is_empty() {
         eprintln!("No tests collected");
@@ -331,6 +344,7 @@ pub(crate) fn execute_tests(config: &crate::test_runner::TestRunConfig<'_>) -> C
             serde_json::to_value(TestExecutionIntent { test_execute: request })
                 .map_err(|error| CliError::failure(error.to_string()))?,
             |message| print!("{message}"),
+            Some(config),
         )?;
         let report = serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))?;
         crate::test_runner::render_test_report(report, config, &crate::test_runner::output::TestOutputSink::default())
@@ -340,7 +354,11 @@ pub(crate) fn execute_tests(config: &crate::test_runner::TestRunConfig<'_>) -> C
         let report = crate::test_runner::execute_tests_with_owner(
             &request,
             &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
-            crate::test_runner::output::TestOutputSink::default(),
+            crate::test_runner::output::TestOutputSink::rendered(
+                config.report_format,
+                config.verbose,
+                config.use_color,
+            ),
         )?;
         crate::test_runner::render_test_report(report, config, &crate::test_runner::output::TestOutputSink::default())
     }
