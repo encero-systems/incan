@@ -76,7 +76,7 @@ impl BodyIrModule {
         {
             return false;
         }
-        static_initializer_matches(&declaration.ty, &declaration.initial)
+        static_initializer_matches_parts(&declaration.ty, &declaration.initial)
     }
 
     /// Prove an RFC 036 original and its replacement belong to the same physical source declaration and that the
@@ -110,7 +110,7 @@ impl BodyIrModule {
                             && params.iter().zip(&body.params).all(|(left, right)| decorated_parameter_matches(body, left, right))
                             && **return_type == body.return_type)
             })
-            && static_initializer_matches(&replacement.ty, &replacement.initial)
+            && static_initializer_matches_parts(&replacement.ty, &replacement.initial)
     }
 
     /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
@@ -654,7 +654,7 @@ fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
 /// Whether a static initializer's literals match its storage carrier: a primitive, or a list, dictionary or set of
 /// primitives whose hashed keys and members exclude floating point, as legacy hashed collections do. A computed
 /// initializer is a closed body with no parameters that returns exactly the storage carrier.
-fn static_initializer_matches(ty: &IncanType, initial: &StaticInitializer) -> bool {
+fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer) -> bool {
     match initial {
         StaticInitializer::Computed(body) => {
             body.params.is_empty()
@@ -717,6 +717,17 @@ fn primitive_static_carrier(ty: &IncanType) -> bool {
 /// A primitive hash key or set member: floating point lacks the Eq and Hash legacy hashed collections require.
 fn hashed_static_carrier(ty: &IncanType) -> bool {
     primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
+}
+
+/// Validate effect-free primitive or flat-list initialization; callers separately prove canonical storage ownership.
+///
+/// Local storage also admits checked computed bodies and hashed collections. Publication does not yet audit those
+/// initializer dependencies, so its boundary retains the narrower literal/list contract.
+pub(crate) fn static_initializer_matches(declaration: &crate::body_ir::StaticDeclaration) -> bool {
+    matches!(
+        &declaration.initial,
+        StaticInitializer::Literal(_) | StaticInitializer::List(_)
+    ) && static_initializer_matches_parts(&declaration.ty, &declaration.initial)
 }
 
 /// Validate a literal payload against its exact primitive storage or collection element carrier.

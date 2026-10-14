@@ -30,7 +30,7 @@ use crate::body_ir::{
 /// Bump this whenever the encoded shape changes in a way an older consumer would misread. A change that only adds an
 /// optional field a decoder can ignore does not need a bump; a change to an existing field's meaning or position
 /// does, because a consumer has no way to detect it.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 11;
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 12;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -199,6 +199,8 @@ pub enum ExecutableDeclaration {
     Constant(crate::body_ir::ConstantDeclaration),
     /// Alias-expanded public semantic type, including union members and their canonical dependencies.
     TypeAlias(crate::body_ir::TypeAliasDeclaration),
+    /// Canonical public storage and its checked effect-free initialization, loaded once for requiring bodies.
+    Static(crate::body_ir::StaticDeclaration),
 }
 
 impl ExecutableDeclaration {
@@ -214,6 +216,7 @@ impl ExecutableDeclaration {
             Self::NominalWithTraits(value, _) => Some(&value.canonical),
             Self::Constant(value) => Some(&value.canonical),
             Self::TypeAlias(value) => Some(&value.canonical),
+            Self::Static(value) => Some(&value.canonical),
         }
     }
 }
@@ -334,6 +337,25 @@ fn project_declarations(
 ) -> Result<BTreeMap<CanonicalSymbolId, AdmittedDeclaration>, ExecutableRepresentationError> {
     let mut admitted = BTreeMap::new();
     for module in modules {
+        for value in &module.static_declarations {
+            if !declarations.contains_key(&value.canonical) {
+                continue;
+            }
+            match publication::project_static(value, module, library, public) {
+                Ok((value, requirements)) => {
+                    admitted.insert(
+                        value.canonical.clone(),
+                        AdmittedDeclaration {
+                            declaration: ExecutableDeclaration::Static(value),
+                            requirements,
+                        },
+                    );
+                }
+                Err(reason) => {
+                    declarations.insert(value.canonical.clone(), DeclarationCoverage::Uncovered(reason));
+                }
+            }
+        }
         for value in &module.type_alias_declarations {
             if !declarations.contains_key(&value.canonical) {
                 continue;
@@ -604,6 +626,7 @@ fn record_type_context_members(
     declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
 ) {
     for (identity, entry) in admitted {
+        // Layouts own addressable members; bodies, traits, constants, aliases and storage are addressed directly.
         let members: Vec<&CanonicalSymbolId> = match &entry.declaration {
             ExecutableDeclaration::Nominal(value) | ExecutableDeclaration::NominalWithTraits(value, _) => {
                 value.field_identities.iter().collect()
@@ -615,11 +638,10 @@ fn record_type_context_members(
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
-            // A body owns no members; it is addressed directly.
             ExecutableDeclaration::Body(_) | ExecutableDeclaration::Trait(_) | ExecutableDeclaration::Constant(_) => {
                 Vec::new()
             }
-            ExecutableDeclaration::TypeAlias(_) => Vec::new(),
+            ExecutableDeclaration::TypeAlias(_) | ExecutableDeclaration::Static(_) => Vec::new(),
         };
         for member in members {
             declarations.insert(
@@ -1359,6 +1381,7 @@ mod tests {
                 fields: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
             }],
             derives: Vec::new(),
+            named_type_identities: BTreeMap::new(),
         };
         let mut module = module(Vec::new());
         module.enum_declarations.push(value);
