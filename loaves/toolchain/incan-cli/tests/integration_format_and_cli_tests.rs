@@ -656,7 +656,10 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         String::from_utf8_lossy(&list_json_output.stderr)
     );
     let list_json: serde_json::Value = serde_json::from_slice(&list_json_output.stdout)?;
-    assert_eq!(list_json, serde_json::json!(["default", "unit"]));
+    assert_eq!(
+        list_json,
+        serde_json::json!(["default", "dev", "docs", "lint", "test", "unit"])
+    );
 
     let show_output = incan_command()
         .args(["env", "show", "unit"])
@@ -707,9 +710,12 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     );
     let show_overview_json: serde_json::Value = serde_json::from_slice(&show_overview_json_output.stdout)?;
     let show_overview_array = show_overview_json.as_array().ok_or("expected array json output")?;
-    assert_eq!(show_overview_array.len(), 2);
-    assert!(show_overview_array.iter().any(|entry| entry["name"] == "default"));
-    assert!(show_overview_array.iter().any(|entry| entry["name"] == "unit"));
+    let mut overview_names = show_overview_array
+        .iter()
+        .map(|entry| entry["name"].as_str().ok_or("environment overview has no name"))
+        .collect::<Result<Vec<_>, _>>()?;
+    overview_names.sort_unstable();
+    assert_eq!(overview_names, ["default", "dev", "docs", "lint", "test", "unit"]);
 
     let show_json_output = incan_command()
         .args(["env", "show", "unit", "--format", "json"])

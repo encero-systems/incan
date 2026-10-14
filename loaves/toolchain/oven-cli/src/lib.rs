@@ -8,6 +8,7 @@
 //! frontend (`tools`), which is why this crate depends on both. `incan` keeps mounting every command here under its
 //! own spellings, so scripts, CI and tests that say `incan oven bake --project .` are unchanged.
 
+pub mod binding_inspect;
 pub mod cli;
 pub mod commands;
 pub mod invocation_trace;

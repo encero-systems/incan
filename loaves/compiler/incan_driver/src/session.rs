@@ -262,6 +262,8 @@ fn add_selected_standard_vocab_providers(
 /// ```
 #[derive(Debug, Clone)]
 pub struct CompilationSession {
+    /// Existing vocabulary module map shared across cloned sessions; fresh source and guest state remain local.
+    pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::WasmDesugarerRuntime>>>,
     pub manifest: Option<ProjectManifest>,
     pub source_root: PathBuf,
     pub library_manifest_index: LibraryManifestIndex,
@@ -641,6 +643,7 @@ impl CompilationSession {
         let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
             .map_err(|error| CliError::failure(error.to_string()))?;
         Ok(Self {
+            vocab_runtime: Arc::default(),
             source_root: resolve_source_root(&project_root, Some(&manifest)),
             manifest: Some(manifest),
             library_imported_vocab: library_manifest_index.library_imported_vocab(),
@@ -929,6 +932,7 @@ impl CompilationSession {
 
         drop(phase);
         Ok(Self {
+            vocab_runtime: Arc::default(),
             manifest,
             source_root,
             library_manifest_index,
@@ -1279,14 +1283,27 @@ impl CompilationSession {
         source: &str,
         materialize_models: bool,
     ) -> Result<Program, Vec<diagnostics::CompileError>> {
-        let parsed = self.parse_source_for_collection(file_path, source)?;
+        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::parse_desugar_source", input = %file_path.display()).entered();
+        let parsed = {
+            let _parse = tracing::trace_span!(target: "incan::invocation", "incan_driver::parse_source", input = %file_path.display()).entered();
+            self.parse_source_for_collection(file_path, source)?
+        };
         let mut ast = parsed;
         let file_path_display = file_path.to_string_lossy();
-        vocab_desugar_pass::desugar_program_vocab_blocks(
-            &mut ast,
-            Some(file_path_display.as_ref()),
-            &self.library_manifest_index,
-        )?;
+        {
+            let mut runtime = self.vocab_runtime.lock().map_err(|_| {
+                vec![diagnostics::CompileError::new(
+                    "vocabulary runtime owner is poisoned".to_string(),
+                    Span::default(),
+                )]
+            })?;
+            vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
+                &mut ast,
+                Some(file_path_display.as_ref()),
+                &self.library_manifest_index,
+                &mut runtime,
+            )?;
+        }
         if materialize_models && let Err(error) = materialize_contract_models(&mut ast, &self.contract_model_bundles) {
             return Err(vec![diagnostics::CompileError::new(
                 format!("Invalid checked contract metadata: {error}"),
@@ -1381,6 +1398,7 @@ mod tests {
         let library_manifest_index = LibraryManifestIndex::default();
         let provider_plan = Arc::new(ProviderPlan::default());
         let session = CompilationSession {
+            vocab_runtime: Arc::default(),
             manifest: None,
             source_root: PathBuf::from("fixture"),
             library_imported_vocab: library_manifest_index.library_imported_vocab(),
@@ -1691,6 +1709,7 @@ mod tests {
         let library_manifest_index = LibraryManifestIndex::default();
         let provider_plan = Arc::new(ProviderPlan::default());
         CompilationSession {
+            vocab_runtime: Arc::default(),
             manifest: None,
             source_root: project.join("src"),
             library_imported_vocab: library_manifest_index.library_imported_vocab(),

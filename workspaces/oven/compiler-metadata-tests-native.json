@@ -16,6 +16,7 @@
       "domain": "target",
       "features": [
         "cli",
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",
@@ -27,6 +28,7 @@
     {
       "domain": "target",
       "features": [
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",
@@ -43,6 +45,7 @@
     {
       "domain": "target",
       "features": [
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",
@@ -54,6 +57,7 @@
     {
       "domain": "target",
       "features": [
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",
@@ -69,6 +73,7 @@
     {
       "domain": "target",
       "features": [
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",
@@ -90,6 +95,7 @@
     {
       "domain": "target",
       "features": [
+        "default",
         "inspector",
         "test_fixtures"
       ],
@@ -161,6 +167,7 @@
       "project": "../../loaves/toolchain/oven-cli",
       "domain": "target",
       "features": [
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",
@@ -171,6 +178,7 @@
       "project": "../../loaves/toolchain/incan-cli",
       "domain": "target",
       "features": [
+        "default",
         "rust_inspect",
         "std_async",
         "std_decorators",

@@ -22,5 +22,5 @@ mod rewrite;
 mod runtime;
 
 pub use errors::VocabDesugarPassError;
-pub use rewrite::desugar_program_vocab_blocks;
+pub use rewrite::{desugar_program_vocab_blocks, desugar_program_vocab_blocks_with_runtime};
 pub use runtime::WasmDesugarerRuntime;

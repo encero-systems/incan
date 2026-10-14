@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use super::protocol::{self, Reply, Request};
-use super::{BuildIntent, CheckIntent, NativeBuildIntent, SourceFormatIntent, TestExecutionIntent, TestListIntent};
+use super::{
+    BindingInspectionIntent, BuildIntent, CheckIntent, NativeBuildIntent, SourceFormatIntent, TestExecutionIntent,
+    TestListIntent,
+};
 use incan_driver::error::{CliError, CliResult};
 use sha2::{Digest, Sha256};
 
@@ -327,6 +330,29 @@ fn dispatch(
                 .map_err(transport_error)
                 .map(|intent| super::source_format::execute_batch(&intent.source_format, owner))
                 .and_then(|results| serde_json::to_value(results).map_err(transport_error))
+        });
+        for message in warnings {
+            protocol::write(stream, &Reply::Diagnostic { message })?;
+        }
+        let reply = match result {
+            Ok(result) => Reply::Complete {
+                pid: std::process::id(),
+                result,
+            },
+            Err(error) => Reply::Failure {
+                message: error.message,
+                exit_code: error.exit_code.0,
+            },
+        };
+        protocol::write(stream, &reply)?;
+        return Ok(false);
+    }
+    if request.intent.get("binding_inspection").is_some() {
+        let (result, warnings) = incan_driver::diagnostics::capture_warning_output(|| {
+            serde_json::from_value::<BindingInspectionIntent>(request.intent)
+                .map_err(transport_error)
+                .and_then(|intent| crate::binding_inspect::execute_request(&intent.binding_inspection, owner))
+                .and_then(|rendered| serde_json::to_value(rendered).map_err(transport_error))
         });
         for message in warnings {
             protocol::write(stream, &Reply::Diagnostic { message })?;

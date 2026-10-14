@@ -261,3 +261,63 @@ fn owner_reconciliation_observes_context_and_missing_executable() -> TestResult 
     assert!(OvenNativeTestCollection::reconcile(Some(third), &fixture.executable, &environment, &other, None).is_err());
     Ok(())
 }
+
+/// Independent test groups cannot borrow a nested owner that another group's cleanup will terminate.
+/// Commands within one group still inherit the same identity, and retained inventory remains reusable.
+#[test]
+fn native_groups_scope_nested_owners_without_recollecting() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let harness = fs::read_to_string(&fixture.executable)?;
+    let recording = r#"printf '%s\n' "$INCAN_INTERNAL_TEST_OWNER_SCOPE" >> "$FIXTURE_ROOT/scopes"
+sh -c 'printf "%s\n" "$INCAN_INTERNAL_TEST_OWNER_SCOPE"' >> "$FIXTURE_ROOT/scopes"
+"#;
+    fs::write(
+        &fixture.executable,
+        harness.replace(
+            "printf x >> \"$FIXTURE_ROOT/executions\"",
+            &format!("{recording}printf x >> \"$FIXTURE_ROOT/executions\""),
+        ),
+    )?;
+    fixture
+        .environment
+        .insert("INCAN_INTERNAL_TEST_OWNER_SCOPE".into(), "parent-scope".into());
+    let collection = fixture.collect()?;
+    let request = fixture.request("selected");
+    for _ in 0..2 {
+        let report = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection))?;
+        assert!(report.success, "{}", report.output);
+    }
+    let scopes = fs::read_to_string(fixture.root.join("scopes"))?;
+    let scopes = scopes.lines().collect::<Vec<_>>();
+    assert_eq!(
+        scopes.len(),
+        4,
+        "each case and its nested command must record their scope"
+    );
+    assert_eq!(
+        scopes[0], scopes[1],
+        "nested commands share their supervising case's owner"
+    );
+    assert_eq!(
+        scopes[2], scopes[3],
+        "nested commands share their supervising case's owner"
+    );
+    assert_ne!(
+        scopes[0], scopes[2],
+        "independently reaped groups cannot share an owner"
+    );
+    for scope in scopes {
+        assert!(!scope.is_empty());
+        assert_ne!(scope, "parent-scope", "nested runner must own its lifetime");
+        assert!(
+            !Path::new(scope).exists(),
+            "completed groups release their lifetime token"
+        );
+    }
+    assert_eq!(
+        fixture.listings()?,
+        2,
+        "runtime lifetime does not invalidate retained inventory"
+    );
+    Ok(())
+}

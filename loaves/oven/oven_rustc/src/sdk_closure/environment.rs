@@ -192,7 +192,7 @@ pub(super) fn stable_sources(
         copy_sources(snapshot, staging.path())?;
         std::fs::rename(staging.path(), &root)?;
     } else {
-        verify_sources(snapshot, &root)?;
+        reconcile_sources(snapshot, &root)?;
     }
     lease.unlock()?;
     Ok((root, lease))
@@ -249,21 +249,55 @@ fn copy_sources(source: &Path, destination: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Refuse stale or modified source bytes before reusing a deterministic coordinate.
-fn verify_sources(source: &Path, destination: &Path) -> Result<(), Error> {
+/// Restore absent admitted files under the caller's source lease, refusing changed bytes and path substitutions.
+/// Existing files are only read. A missing file is published atomically without replacing any destination;
+/// partially reclaimed directories therefore remain recoverable from the original verified snapshot.
+fn reconcile_sources(source: &Path, destination: &Path) -> Result<(), Error> {
+    let destination_kind = std::fs::symlink_metadata(destination)?.file_type();
+    if !destination_kind.is_dir() || destination_kind.is_symlink() {
+        return Err(format!(
+            "stable source directory is not a regular directory: {}",
+            destination.display()
+        )
+        .into());
+    }
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
-        let target = destination.join(entry.file_name());
-        let target_kind = std::fs::symlink_metadata(&target)?.file_type();
-        if target_kind.is_symlink() || !(target_kind.is_dir() || target_kind.is_file()) {
-            return Err("stable source contains a link or special file".into());
+        let source_kind = entry.file_type()?;
+        if !(source_kind.is_dir() || source_kind.is_file()) {
+            return Err("stable source snapshot contains a link or special file".into());
         }
-        if entry.file_type()?.is_dir() {
-            verify_sources(&entry.path(), &target)?;
-        } else if entry.file_type()?.is_file() && std::fs::read(entry.path())? == std::fs::read(&target)? {
-            continue;
+        let target = destination.join(entry.file_name());
+        let target_kind = match std::fs::symlink_metadata(&target) {
+            Ok(metadata) => metadata.file_type(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if source_kind.is_dir() {
+                    std::fs::create_dir(&target)?;
+                } else {
+                    let temporary = tempfile::NamedTempFile::new_in(destination)?;
+                    std::fs::copy(entry.path(), temporary.path())?;
+                    temporary.persist_noclobber(&target)?;
+                }
+                std::fs::symlink_metadata(&target)?.file_type()
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if source_kind.is_dir() && target_kind.is_dir() {
+            reconcile_sources(&entry.path(), &target)?;
+        } else if source_kind.is_file() && target_kind.is_file() {
+            if std::fs::read(entry.path())? != std::fs::read(&target)? {
+                return Err(format!(
+                    "stable source bytes differ from the admitted archive: {}",
+                    target.display()
+                )
+                .into());
+            }
         } else {
-            return Err("stable source bytes differ from the admitted archive".into());
+            return Err(format!(
+                "stable source path differs from the admitted archive: {}",
+                target.display()
+            )
+            .into());
         }
     }
     Ok(())
@@ -365,6 +399,101 @@ mod tests {
         values.insert("CARGO_PKG_DESCRIPTION".into(), "second".into());
         let second = bind_environment(&receipt, &values)?;
         assert_ne!(first.identity, second.identity);
+        Ok(())
+    }
+    /// Missing files and whole subdirectories recover without replacing surviving admitted inputs.
+    #[test]
+    fn stable_sources_restore_missing_inputs_and_preserve_unchanged_files() -> Result<(), Error> {
+        let fixture = tempfile::tempdir()?;
+        let snapshot = fixture.path().join("snapshot");
+        let cached = fixture.path().join("cached");
+        std::fs::create_dir_all(snapshot.join("nested"))?;
+        std::fs::create_dir_all(&cached)?;
+        std::fs::write(snapshot.join("held.rs"), b"held")?;
+        std::fs::write(snapshot.join("missing.rs"), b"missing")?;
+        std::fs::write(snapshot.join("nested/lib.rs"), b"nested")?;
+        std::fs::write(cached.join("held.rs"), b"held")?;
+        let before = std::fs::metadata(cached.join("held.rs"))?.modified()?;
+        super::reconcile_sources(&snapshot, &cached)?;
+        assert_eq!(std::fs::read(cached.join("missing.rs"))?, b"missing");
+        assert_eq!(std::fs::read(cached.join("nested/lib.rs"))?, b"nested");
+        assert_eq!(std::fs::metadata(cached.join("held.rs"))?.modified()?, before);
+        let restored = std::fs::metadata(cached.join("missing.rs"))?.modified()?;
+        super::reconcile_sources(&snapshot, &cached)?;
+        assert_eq!(std::fs::metadata(cached.join("missing.rs"))?.modified()?, restored);
+        Ok(())
+    }
+
+    /// A corrupted surviving file remains an error, never an invitation to replace its bytes.
+    #[test]
+    fn stable_sources_refuse_modified_inputs() -> Result<(), Error> {
+        let fixture = tempfile::tempdir()?;
+        let snapshot = fixture.path().join("snapshot");
+        let cached = fixture.path().join("cached");
+        std::fs::create_dir_all(&snapshot)?;
+        std::fs::create_dir_all(&cached)?;
+        std::fs::write(snapshot.join("lib.rs"), b"original")?;
+        std::fs::write(cached.join("lib.rs"), b"modified")?;
+        let error = super::reconcile_sources(&snapshot, &cached)
+            .err()
+            .ok_or("modified input admitted")?;
+        assert!(error.to_string().contains("bytes differ"));
+        assert_eq!(std::fs::read(cached.join("lib.rs"))?, b"modified");
+        Ok(())
+    }
+
+    /// A directory in a file's place is refused rather than populated or replaced.
+    #[test]
+    fn stable_sources_refuse_changed_input_kinds() -> Result<(), Error> {
+        let fixture = tempfile::tempdir()?;
+        let snapshot = fixture.path().join("snapshot");
+        let cached = fixture.path().join("cached");
+        std::fs::create_dir_all(&snapshot)?;
+        std::fs::create_dir_all(cached.join("lib.rs"))?;
+        std::fs::write(snapshot.join("lib.rs"), b"original")?;
+        assert!(super::reconcile_sources(&snapshot, &cached).is_err());
+        assert!(cached.join("lib.rs").is_dir());
+        Ok(())
+    }
+
+    /// Existing links cannot redirect source restoration outside the admitted coordinate.
+    #[cfg(unix)]
+    #[test]
+    fn stable_sources_refuse_symlinked_inputs_and_root() -> Result<(), Error> {
+        let fixture = tempfile::tempdir()?;
+        let snapshot = fixture.path().join("snapshot");
+        let cached = fixture.path().join("cached");
+        let outside = fixture.path().join("outside");
+        std::fs::create_dir_all(&snapshot)?;
+        std::fs::create_dir_all(&cached)?;
+        std::fs::create_dir_all(&outside)?;
+        std::fs::write(snapshot.join("lib.rs"), b"original")?;
+        std::os::unix::fs::symlink(outside.join("missing.rs"), cached.join("lib.rs"))?;
+        assert!(super::reconcile_sources(&snapshot, &cached).is_err());
+        assert!(!outside.join("missing.rs").exists());
+        let linked = fixture.path().join("linked");
+        std::os::unix::fs::symlink(&outside, &linked)?;
+        assert!(super::reconcile_sources(&snapshot, &linked).is_err());
+        assert!(!outside.join("lib.rs").exists());
+        Ok(())
+    }
+    /// Recovery preserves the source snapshot's executable and access permission bits.
+    #[cfg(unix)]
+    #[test]
+    fn stable_sources_restore_original_file_permissions() -> Result<(), Error> {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = tempfile::tempdir()?;
+        let snapshot = fixture.path().join("snapshot");
+        let cached = fixture.path().join("cached");
+        std::fs::create_dir_all(&snapshot)?;
+        std::fs::create_dir_all(&cached)?;
+        std::fs::write(snapshot.join("tool.sh"), b"#!/bin/sh\nexit 0\n")?;
+        std::fs::set_permissions(snapshot.join("tool.sh"), std::fs::Permissions::from_mode(0o755))?;
+        super::reconcile_sources(&snapshot, &cached)?;
+        assert_eq!(
+            std::fs::metadata(cached.join("tool.sh"))?.permissions().mode() & 0o777,
+            0o755
+        );
         Ok(())
     }
 }

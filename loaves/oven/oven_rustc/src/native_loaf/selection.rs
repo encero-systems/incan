@@ -8,7 +8,7 @@ use oven_model::observed_inputs::InputObservations;
 
 use super::{
     NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, NativeLoafSource, Result, SelectedNativeLoaf,
-    failed, refused,
+    failed, input_failure, refused,
 };
 
 /// Match already active declarations without resolving, compiling, or granting undeclared graph namespaces.
@@ -53,7 +53,9 @@ impl LocalSources {
     /// Unsupported identities never authorize reuse across commands; repeated demands within one command still share
     /// their freshly mapped result. Final reconciliation rejects inputs changed during selection or handoff.
     pub(super) fn get(&mut self, path: &Path) -> Result<&(toml::Value, String)> {
-        let path = path.canonicalize().map_err(failed)?;
+        let path = path
+            .canonicalize()
+            .map_err(|error| input_failure("canonicalize local source", path, error))?;
         if !self.checked.contains(&path) {
             let retained = self
                 .selections
@@ -64,7 +66,7 @@ impl LocalSources {
                 let selected = crate::sdk_closure::local_native_source_selection_with_observer(&path, &mut |input| {
                     inputs.observe(input)
                 })
-                .map_err(NativeLoafError::Failed)?;
+                .map_err(|error| input_failure("map local source", &path, error))?;
                 if inputs.supports_retention() && !inputs.current() {
                     return Err(refused("local source changed during canonical selection"));
                 }
@@ -158,7 +160,9 @@ pub(super) fn declared_root_demands<'a>(
     declaration_owner: &Path,
     local: &mut LocalSources,
 ) -> Result<Vec<DeclaredRootDemand<'a>>> {
-    let owner = declaration_owner.canonicalize().map_err(failed)?;
+    let owner = declaration_owner
+        .canonicalize()
+        .map_err(|error| input_failure("canonicalize declaration owner", declaration_owner, error))?;
     if !owner.is_dir() {
         return Err(refused("native declaration owner must be a directory"));
     }
@@ -187,7 +191,10 @@ pub(super) fn declared_root_demands<'a>(
             DependencySource::Path { path } => {
                 // Parsed absolute declarations already contain their manifest owner. Raw relative paths are
                 // explicitly owner-relative; callers parsing a relative manifest must canonicalize it first.
-                let path = owner.join(path).canonicalize().map_err(failed)?;
+                let declared_path = owner.join(path);
+                let path = declared_path
+                    .canonicalize()
+                    .map_err(|error| input_failure("canonicalize declared dependency", &declared_path, error))?;
                 let selected = local.get(&path)?;
                 let loaf = project_string(&selected.0, "name")?;
                 if dependency.package.as_deref().is_some_and(|package| package != loaf) {
@@ -339,7 +346,8 @@ fn source_declaration_member(
     owner: &oven_store::store::OvenStoreExecutionPayload,
 ) -> Result<(PathBuf, &oven_store::store::OvenArtifactMaterializedFileManifest)> {
     let source_root = owner.artifact_root().join("source");
-    let source_metadata = std::fs::symlink_metadata(&source_root).map_err(failed)?;
+    let source_metadata = std::fs::symlink_metadata(&source_root)
+        .map_err(|error| input_failure("inspect admitted source directory", &source_root, error))?;
     if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
         return Err(refused(
             "native source declaration requires its original plain source directory",
@@ -351,7 +359,10 @@ fn source_declaration_member(
         .find(|member| member.relative_path == "source/loaf.toml")
         .ok_or_else(|| refused("native owner has no admitted source declaration"))?;
     let path = owner.artifact_root().join(&member.relative_path);
-    if !std::fs::symlink_metadata(&path).map_err(failed)?.is_file() {
+    if !std::fs::symlink_metadata(&path)
+        .map_err(|error| input_failure("inspect admitted source declaration", &path, error))?
+        .is_file()
+    {
         return Err(refused("native source declaration is not a plain file"));
     }
     Ok((path, member))
