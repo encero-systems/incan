@@ -6,10 +6,7 @@ use std::time::{Duration, Instant};
 
 use incan_provider::FeatureSelection;
 use oven_model::manifest::ProjectManifest;
-use oven_rustc::native_test::{
-    OvenNativeTestCollection, OvenNativeTestRequest, inventory_native_tests_for_collection,
-    run_native_tests_exact_for_request,
-};
+use oven_rustc::native_test::{OvenNativeTestCollection, OvenNativeTestRequest, run_native_tests_exact_for_request};
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
     OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_test_in_store, resolve_active_rustc,
@@ -28,7 +25,7 @@ pub(super) struct PreparedRustRoot {
     /// Actual libtest inventory mapped to the common selection model.
     pub(super) tests: Vec<TestInfo>,
     executable: PathBuf,
-    collection: OvenNativeTestCollection,
+    collection: Arc<OvenNativeTestCollection>,
     environment: BTreeMap<String, String>,
     working_directory: PathBuf,
     _selection: Arc<OvenDirectRustcPlanSelection>,
@@ -261,7 +258,7 @@ fn prepare_inner(
         &rustc,
         &plan,
     )?;
-    let collection = inventory_native_tests_for_collection(
+    let collection = owner.native_test_collection(
         &executable,
         &environment,
         &context.project_root,
