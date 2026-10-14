@@ -529,6 +529,9 @@ struct OvenDirectRustcOutputRecord {
     #[serde(flatten)]
     inputs: OvenDirectRustcOutputReceipt,
     output_digest: String,
+    /// Rustc-consumed test inputs; pre-observation records deliberately miss native-test reuse.
+    #[serde(default)]
+    consumed_inputs: Option<invocation::consumed_inputs::NativeTestInputs>,
 }
 
 /// Backwards-compatible name for a direct-rustc libtest bake.

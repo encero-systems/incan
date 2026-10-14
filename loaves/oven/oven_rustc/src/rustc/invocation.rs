@@ -1,5 +1,6 @@
 //! Invoking direct rustc and rustdoc consumers against admitted artifacts.
 
+pub(super) mod consumed_inputs;
 mod library_store;
 pub use library_store::{
     bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_run_in_store,
@@ -675,6 +676,14 @@ pub(super) fn bake_direct_rustc(
     features: &[String],
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
     let source = verified_regular_file(source, "source")?;
+    let source = if test_harness {
+        fs::canonicalize(&source).map_err(|error| OvenRustcError::Io {
+            path: source,
+            source: error,
+        })?
+    } else {
+        source
+    };
     let output = caller_output_path(output, artifact_root)?;
     let output_receipt = direct_rustc_output_recipe(
         &OvenTrustedDirectRustcTargetRequest {
@@ -705,7 +714,10 @@ pub(super) fn bake_direct_rustc(
         path: parent.to_path_buf(),
         source: source_error,
     })?;
-    if let Some(output_digest) = caller_output_reusable_digest(&output, &output_receipt) {
+    let environment = trusted_artifact_plan.map_or(&artifacts.compile_environment, |plan| &plan.compile_environment);
+    let isolated = receipt.sources.build_unit_inputs.contains_key("sdk-source-archive");
+    if let Some(output_digest) = caller_output_reusable_digest(&output, &output_receipt, &source, environment, isolated)
+    {
         return Ok(OvenDirectRustcBake {
             source_digest,
             output,
@@ -842,6 +854,16 @@ fn compile_direct_rustc_output(
     for (crate_name, path) in &plan.externs {
         command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
     }
+    let consumed_inputs = if test_harness {
+        Some(consumed_inputs::PendingNativeTestInputs::discover(
+            &mut command,
+            source,
+            &output_receipt.source_digest,
+            receipt.sources.build_unit_inputs.contains_key("sdk-source-archive"),
+        )?)
+    } else {
+        None
+    };
     let output_result = {
         let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::compile_native_process", input = %source.display(), crate_name, test_harness, output_kind = ?output_kind).entered();
         command.output().map_err(|source_error| OvenRustcError::Io {
@@ -854,6 +876,9 @@ fn compile_direct_rustc_output(
             report: parse_rustc_diagnostics(&output_result.stdout, &output_result.stderr).with_invocation(&command),
         });
     }
+    let consumed_inputs = consumed_inputs
+        .map(|pending| pending.finish(&output_result.stdout))
+        .transpose()?;
     verified_regular_file(output, "output")?;
     let output_digest = digest_regular_file(output, "output")?;
     write_caller_output_record(
@@ -861,6 +886,7 @@ fn compile_direct_rustc_output(
         &OvenDirectRustcOutputRecord {
             inputs: output_receipt,
             output_digest: output_digest.clone(),
+            consumed_inputs,
         },
     )?;
     Ok(output_digest)
@@ -910,12 +936,24 @@ pub(super) fn caller_output_receipt_path(output: &Path) -> Result<PathBuf, OvenR
 ///
 /// Missing, malformed, old or mismatched evidence is a cache miss. Returning the verified digest lets the caller
 /// report reuse without rereading the output. The caller must perform receipt/compiler/input admission first.
-pub(super) fn caller_output_reusable_digest(output: &Path, expected: &OvenDirectRustcOutputReceipt) -> Option<String> {
+pub(super) fn caller_output_reusable_digest(
+    output: &Path,
+    expected: &OvenDirectRustcOutputReceipt,
+    source: &Path,
+    environment: &std::collections::BTreeMap<String, String>,
+    isolated: bool,
+) -> Option<String> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_native_output", input = %output.display()).entered();
     let receipt_path = caller_output_receipt_path(output).ok()?;
     let bytes = fs::read(&receipt_path).ok()?;
     let record: OvenDirectRustcOutputRecord = serde_json::from_slice(&bytes).ok()?;
-    if record.inputs != *expected {
+    if record.inputs != *expected
+        || (expected.test_harness
+            && !record
+                .consumed_inputs
+                .as_ref()
+                .is_some_and(|inputs| inputs.current(source, environment, isolated)))
+    {
         return None;
     }
     let output_digest = digest_regular_file(output, "output").ok()?;

@@ -65,3 +65,9 @@ fn generated_binary_store_reuses_executable_bytes_across_outputs() -> Result<(),
 fn shared_native_plan_retains_multi_store_owners_and_refuses_substitution() -> Result<(), Box<dyn std::error::Error>> {
     generated_output_store_cases::shared_native_plan_retains_multi_store_owners_and_refuses_substitution()
 }
+
+/// External modules and include macros participate in native harness freshness and restored-output reuse.
+#[test]
+fn generated_test_store_tracks_external_consumed_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_test_store_tracks_external_consumed_inputs()
+}

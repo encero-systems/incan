@@ -196,6 +196,100 @@ pub(super) fn generated_test_store_keeps_harness_identity_and_restored_sources()
     Ok(())
 }
 
+/// Rustc-consumed modules and includes invalidate a native harness even when its root receipt is unchanged.
+pub(super) fn generated_test_store_tracks_external_consumed_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    // ---- External module and include fixtures ----
+    let project = tempfile::tempdir()?;
+    let root = project.path().canonicalize()?;
+    fs::create_dir(root.join("src"))?;
+    let source = root.join("src/lib.rs");
+    fs::write(
+        &source,
+        r#"#[path = "../helper.rs"] mod helper;
+#[test] fn selected_case() {
+    assert_eq!(helper::value(), 42);
+    assert_eq!(include_str!("../text"), "42");
+    assert_eq!(include_bytes!("../bytes"), b"42");
+}
+"#,
+    )?;
+    let fixtures = [
+        (
+            "helper.rs",
+            "pub fn value() -> u8 { 42 }",
+            "pub fn value() -> u8 { 43 }",
+        ),
+        ("text", "42", "43"),
+        ("bytes", "42", "43"),
+    ];
+    for (name, original, _) in &fixtures {
+        fs::write(root.join(name), original)?;
+    }
+    let artifacts_root = tempfile::tempdir()?;
+    let outputs = tempfile::tempdir()?;
+    let storage = tempfile::tempdir()?;
+    let store = OvenStore::new(
+        storage.path(),
+        OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+    );
+    let rustc = rustc_path()?;
+    let input = OvenGeneratedProjectRequest::new(
+        &root,
+        "external_inputs",
+        "0.1.0",
+        rustc_host_target(&rustc)?,
+        rustc_identity(&rustc)?,
+        "debug",
+        Vec::new(),
+    )
+    .with_generated_source("test-root", &source);
+    let receipt = receipt_generated_project(&input)?;
+    let artifacts = empty_manifest(&receipt);
+    let executable = outputs.path().join("harness");
+    let request = OvenTrustedDirectRustcTargetRequest {
+        receipt: &receipt,
+        artifacts: &artifacts,
+        artifact_root: artifacts_root.path(),
+        artifact_plan: None,
+        rustc: &rustc,
+        source: &source,
+        output: &executable,
+        crate_name: "external_inputs",
+        edition: "2024",
+        source_evidence_key: "test-root",
+        features: &[],
+        prefer_dynamic: false,
+    };
+    // ---- Unchanged, edited and restored consumers ----
+    let original = executor::bake_trusted_direct_rustc_test_in_store(&request, &store)?;
+    assert!(!original.reused);
+    assert!(Command::new(&executable).output()?.status.success());
+    assert!(executor::bake_trusted_direct_rustc_test_in_store(&request, &store)?.reused);
+    for (name, contents, changed) in fixtures {
+        fs::write(root.join(name), changed)?;
+        let edited = executor::bake_trusted_direct_rustc_test_in_store(&request, &store)?;
+        assert!(
+            !edited.reused,
+            "{name} was consumed by rustc but absent from the root receipt"
+        );
+        assert!(
+            !Command::new(&executable).output()?.status.success(),
+            "{name} edit did not reach the test"
+        );
+        fs::write(root.join(name), contents)?;
+        let restored = executor::bake_trusted_direct_rustc_test_in_store(&request, &store)?;
+        assert!(restored.reused);
+        assert_eq!(restored.output_digest, original.output_digest);
+        assert!(Command::new(&executable).output()?.status.success());
+    }
+    fs::remove_file(root.join("text"))?;
+    assert!(matches!(
+        executor::bake_trusted_direct_rustc_test_in_store(&request, &store),
+        Err(OvenRustcError::CompilationFailed { .. })
+    ));
+    Ok(())
+}
+
 /// Fresh caller directories reuse an admitted library, while changed source cannot borrow its cached bytes.
 pub(super) fn generated_library_store_reuses_across_outputs_and_refuses_stale_sources()
 -> Result<(), Box<dyn std::error::Error>> {
