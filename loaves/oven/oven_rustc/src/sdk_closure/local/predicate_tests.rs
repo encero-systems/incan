@@ -26,7 +26,7 @@ z = { loaf='z', version='1', optional=true, target='cfg(windows)' }
     )?;
     assert!(local_dependency_demands(&manifest, &[], &[]).is_err());
     let inactive = predicate(1, "cfg(windows)", false);
-    let demands = local_dependency_demands(&manifest, &[], &[inactive.clone()])?;
+    let demands = local_dependency_demands(&manifest, &[], std::slice::from_ref(&inactive))?;
     assert_eq!(demands.len(), 1);
     assert_eq!(demands[0].loaf, "a");
     for invalid in [
