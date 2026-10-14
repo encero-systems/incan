@@ -33,7 +33,8 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
     while cursor < len(pending):
         request = pending[cursor]
         cursor += 1
-        frame = instantiate(request.body, request.arguments)?
+        # This inventory closes layout types only; executable callable ownership is selected by call lowering.
+        frame = instantiate(request.body, request.arguments, [])?
         frames.append(frame.clone())
         match request.body.canonical:
             Some(identity) =>
