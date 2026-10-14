@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3652 | 257 | 432 |
+| keep | 3652 | 257 | 434 |
 | re-point | 1488 | 91 | 1061 |
 | retire | 1508 | 153 | 0 |
 | unaffected | 2136 | 222 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8784** | **723** | **1498** |
+| **Total** | **8784** | **723** | **1500** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -119,6 +119,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/oven/oven_rustc/src/fixtures` | `**/*.incn` | 4 | unaffected | #1561 | Oven rustc fixtures. |
 | `loaves/toolchain/incan-cli/tests/fixtures` | `**/*.incn` | 8 | re-point | #1561 | CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails). |
 | `workspaces/benchmarks` | `**/*.incn` | 9 | re-point | #1561 | benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not. |
+| `workspaces/compiler-bootstrap/repros/parallel-test-compiler-stack` | `test_*.incn` | 2 | keep | #2213 | Two Incan source modules exercise parallel compiler workers without a stack-size environment override; run through incan test with jobs 4 and 1. |
 | `workspaces/docs-site/docs/_snippets/language/examples` | `verified_*.incn` | 8 | re-point | #1561 | verified documentation examples checked by scripts/check_docs_examples.sh. |
 | `workspaces/oven` | `src/developer_workflow_acceptance.incn` | 1 | keep | #1337 | Explicit developer-workflow CLI contract driver; run nine named scenarios separately. Missing capabilities fail visibly; this is not the default green unit suite. |
 | `workspaces/oven/src` | `test_*.incn` | 19 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
@@ -3149,7 +3150,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/project_owner/stored_native.rs` | 1 | 172 | 55 | keep | - | - | - | #1337 | - | Stored native owner requests reject relative paths before Store or compiler access and refuse mixed request shapes. Real CLI handoff, invalidation and lease lifetime have separate runtime proof. |
 | `loaves/toolchain/oven-cli/src/project_owner/unix.rs` | 8 | 820 | 247 | keep | - | - | - | #1337 | - | Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately. |
 | `loaves/toolchain/oven-cli/src/test_runner/execution.rs` | 23 | 3881 | 756 | keep (keep 12, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
-| `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 20 | 2717 | 665 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
+| `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 20 | 2738 | 665 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
 | `loaves/toolchain/oven-cli/src/test_runner/output.rs` | 4 | 346 | 154 | unaffected | - | - | - | #1337 | - | Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend. |
 | `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 8 | 865 | 320 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
 | `loaves/toolchain/oven-cli/src/test_runner/tests/scheduling.rs` | 5 | 138 | 138 | unaffected | - | - | - | #1337 | - | Prepared Rust case concurrency and language boundaries; shared scheduler resource and serial constraints. |

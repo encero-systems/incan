@@ -12433,6 +12433,12 @@
       "owner": 1561,
       "pattern": "**/*.incn"
     },
+    "workspaces/compiler-bootstrap/repros/parallel-test-compiler-stack": {
+      "disposition": "keep",
+      "owner": 2213,
+      "notes": "Two Incan source modules exercise parallel compiler workers without a stack-size environment override; run through incan test with jobs 4 and 1.",
+      "pattern": "test_*.incn"
+    },
     "workspaces/docs-site/docs/_snippets/language/examples": {
       "disposition": "re-point",
       "notes": "verified documentation examples checked by scripts/check_docs_examples.sh.",
