@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3633 | 252 | 431 |
 | re-point | 1488 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2070 | 219 | 5 |
+| unaffected | 2071 | 219 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8699** | **715** | **1494** |
+| **Total** | **8700** | **715** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -146,7 +146,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 7 | 500 | 165 | keep | - | - | - | #1337 | replacement 6, checker 6, parser 6 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
 | `loaves/compiler/incan_driver/src/build/caller_owned.rs` | 7 | 1115 | 315 | unaffected | - | - | - | #1561 | checker 4 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/executable/tests.rs` | 3 | 134 | 134 | keep | - | - | - | #1337 | - | Native executable receipt reuse binds original source and output observations, refuses changed or linked receipt authority, and repairs current publication without Cargo. |
-| `loaves/compiler/incan_driver/src/build/file_freshness.rs` | 6 | 460 | 156 | unaffected | - | - | - | #1337 | - | Oven build-input freshness and content identity; shared by both compilation routes. |
+| `loaves/compiler/incan_driver/src/build/file_freshness.rs` | 6 | 463 | 156 | unaffected | - | - | - | #1337 | - | Oven build-input freshness and content identity; shared by both compilation routes. |
 | `loaves/compiler/incan_driver/src/build/inline_command.rs` | 5 | 129 | 75 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/inspection_snapshot.rs` | 6 | 436 | 223 | keep | - | - | - | #1337 | - | Completed ordinary loaves retain exact inspection metadata; whole-owner eviction recovery preserves receipt identities and refuses damaged owners, changed snapshots and missing native constituents. |
 | `loaves/compiler/incan_driver/src/build/library_dependencies/tests.rs` | 18 | 986 | 986 | keep | - | - | - | #1698 | checker 17, parser 17 | Ordinary checked dependency admission preserves original metadata and generation owners, exact aliases, features, namespace issuers and complete checked dependency closure. |
@@ -160,7 +160,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/library_project/admitted_preparation_tests.rs` | 6 | 275 | 275 | unaffected | - | - | - | #1337 | checker 6 | Original admitted ordinary dependency/session retention and refusal of project, feature and provider substitution; independent of generated Rust. |
 | `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/lock_transition/tests.rs` | 6 | 279 | 279 | keep | - | - | - | #1698 | checker 2 | Exact canonical lock publication re-seals unchanged checked outputs while preserving source, feature, Rust and writer authority, including workspace locks outside member source trees. |
 | `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 5 | 205 | 205 | keep | - | - | - | #1698 | checker 1 | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
-| `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 661 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 668 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 987 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 3 | 346 | 346 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
 | `loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs` | 3 | 195 | 195 | unaffected | - | - | - | #1337 | - | Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority. |
@@ -2536,11 +2536,11 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `host_bridge_match_rejects_path_and_identifier_lookalikes` | retire | `dies` | test-only demangled-symbol matcher for generated host-bridge evidence: accepting or rejecting host path lookalikes is not observable from Incan source once physical symbol inspection retires with #654. | - | - |
 | `generic_match_requires_exact_item_path_and_u64_suffix` | retire | `dies` | test-only demangled-symbol matcher for proving a generated generic host specialization: the item-path and host type-suffix evidence is not an Incan language observable and retires with physical symbol inspection under #654. | - | - |
 
-### `loaves/compiler/rust_inspect` (109 tests in 10 files: keep 1, unaffected 108)
+### `loaves/compiler/rust_inspect` (110 tests in 10 files: keep 1, unaffected 109)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-| `loaves/compiler/rust_inspect/src/cache_tests.rs` | 42 | 2930 | 2930 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/cache_tests.rs` | 43 | 2976 | 2976 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/digest/tests.rs` | 17 | 634 | 634 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/extractor.rs` | 21 | 4115 | 1898 | unaffected | - | - | required | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/extractor/trait_candidates_tests.rs` | 1 | 151 | 151 | keep | - | - | - | #1337 | - | Compatibility oracle for query-scoped trait candidate acquisition preserves aliases, generics, primitives, mutable receivers, built-in derives and unnamed-const implementations. Uses the existing analyzer index without a second candidate cache. |
@@ -2683,9 +2683,9 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/toolchain/incan-cli/src/bin/generate_feature_inventory.rs` | 1 | 85 | 23 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/commands/build/mod.rs` | 11 | 1326 | 676 | keep (keep 8, retire 3) | 0/3 | 3 | - | #1561 | replacement 2, checker 4, parser 1 | build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build. |
+| `loaves/toolchain/incan-cli/src/commands/build/mod.rs` | 11 | 1364 | 714 | keep (keep 8, retire 3) | 0/3 | 3 | - | #1561 | replacement 2, checker 3, parser 1 | build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build. |
 | `loaves/toolchain/incan-cli/src/commands/cache.rs` | 2 | 131 | 17 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/commands/debug.rs` | 1 | 178 | 22 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
+| `loaves/toolchain/incan-cli/src/commands/debug.rs` | 1 | 193 | 37 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/diagnostics.rs` | 11 | 626 | 449 | keep | - | - | - | #1698 | checker 7 | Check-only public dependency metadata, source and graph invalidation, exact feature selection, nominal authority and missing-metadata refusal; no native execution authority. |
 | `loaves/toolchain/incan-cli/src/commands/init.rs` | 16 | 755 | 316 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/lifecycle.rs` | 4 | 924 | 104 | unaffected | - | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |

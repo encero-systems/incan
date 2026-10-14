@@ -2358,9 +2358,9 @@ mod tests {
         for (compiler, host) in [
             (
                 "rustc incompatible-fixture-compiler",
-                owner.manifest.intent.target.as_str(),
+                owner.manifest().intent.target.as_str(),
             ),
-            (owner.manifest.intent.toolchain.as_str(), "incompatible-fixture-host"),
+            (owner.manifest().intent.toolchain.as_str(), "incompatible-fixture-host"),
         ] {
             let mut selected_graph = graph.clone();
             let rejected =
