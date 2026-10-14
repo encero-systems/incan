@@ -1259,48 +1259,74 @@ fn run_scheduled_execution_units(
     completed
 }
 
-/// Run all tests in the given path.
-pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
-    let TestRunConfig {
+/// Owned collection inputs carried by the existing owner transport; no compiler authority crosses the socket.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TestCollectionOptions {
+    /// Explicit client-resolved collection path.
+    pub(crate) path: String,
+    verbose: bool,
+    include_slow: bool,
+    filter: Option<String>,
+    marker_expr: Option<String>,
+    strict_markers: bool,
+    test_features: Vec<String>,
+    package_features: incan_provider::FeatureSelection,
+    sdk_profile: Option<String>,
+    timeout: Option<String>,
+    cargo_policy: CargoPolicy,
+}
+
+impl TestCollectionOptions {
+    /// Own the collection subset of the existing request configuration without changing selection semantics.
+    pub(crate) fn from_config(config: &TestRunConfig<'_>) -> Self {
+        Self {
+            path: config.path.to_string(),
+            verbose: config.verbose,
+            include_slow: config.include_slow,
+            filter: config.filter.map(str::to_string),
+            marker_expr: config.marker_expr.map(str::to_string),
+            strict_markers: config.strict_markers,
+            test_features: config.test_features.clone(),
+            package_features: config.package_features.clone(),
+            sdk_profile: config.sdk_profile.clone(),
+            timeout: config.timeout.map(str::to_string),
+            cargo_policy: config.cargo_policy.clone(),
+        }
+    }
+}
+
+/// Fresh collection and selection, retaining only the session's original compiler authority inside its owner.
+struct SelectedTestCollection {
+    session: Arc<CompilationSession>,
+    test_files: Vec<PathBuf>,
+    filtered_tests: Vec<TestInfo>,
+    stable_id_root: PathBuf,
+    default_timeout: Option<Duration>,
+}
+
+/// Run the single discovery/collection/selection implementation with a canonical or retained session supplier.
+fn collect_selected_tests(
+    options: &TestCollectionOptions,
+    prepare_session: impl FnOnce(&Path, &Path) -> CliResult<Arc<CompilationSession>>,
+    mut emit: impl FnMut(String),
+) -> CliResult<SelectedTestCollection> {
+    let TestCollectionOptions {
         path,
         verbose,
-        stop_on_fail,
         include_slow,
         filter,
-        use_color,
-        fail_on_empty,
-        list_only,
-        report_format,
-        junit_path,
-        durations,
-        shuffle,
-        seed,
-        run_xfail,
         marker_expr,
         strict_markers,
-        jobs,
         test_features,
         package_features,
         sdk_profile,
         timeout,
-        no_capture,
         cargo_policy,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-        workspace_context,
-    } = config;
-
-    let _invocation =
-        tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = path, list_only, jobs).entered();
-    let start_time = Instant::now();
-    let jobs = jobs.max(1);
+    } = options;
     let stage = trace_test_stage("discovery");
-
     let path = Path::new(path);
     enforce_test_path_toolchain_constraint(path)?;
-    // `incan test` builds and runs under Oven authority like `build` and `run`, so RFC 117 rule 11 applies here too.
-    incan_driver::project::warn_once_about_ignored_cargo_manifest(&incan_driver::project::resolve_project_root(path));
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
     if candidates.is_empty() {
@@ -1315,12 +1341,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         .ok_or_else(|| CliError::failure("test candidate inventory lost its representative source"))?;
     drop(stage);
     let stage = trace_test_stage("session");
-    let session = prepare_test_command_session(
-        representative_test,
-        list_only,
-        &package_features,
-        sdk_profile.as_deref(),
-    )?;
+    let session = prepare_session(&authority_root, representative_test)?;
     if let Some(manifest) = session.manifest.as_ref() {
         let session_root =
             std::fs::canonicalize(manifest.project_root()).unwrap_or_else(|_| manifest.project_root().to_path_buf());
@@ -1346,14 +1367,14 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     validate_oven_test_lock_policy(
         session.as_ref(),
         &test_files[0],
-        &cargo_policy,
-        &package_features,
+        cargo_policy,
+        package_features,
         sdk_profile.as_deref(),
     )?;
 
     drop(stage);
     let stage = trace_test_stage("collection");
-    let eval_context = CollectionEvalContext::new(test_features.into_iter().collect());
+    let eval_context = CollectionEvalContext::new(test_features.iter().cloned().collect());
     let mut conftest_cache = ConftestDiscoveryCache::default();
     let inventory = collect_test_inventory(&test_files, path, &eval_context, session.as_ref(), &mut conftest_cache)
         .map_err(CliError::failure)?;
@@ -1361,8 +1382,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let all_fixtures = inventory.fixtures;
     let known_markers = inventory.known_markers;
 
-    if verbose && !all_fixtures.is_empty() {
-        println!("Discovered {} fixture(s):", all_fixtures.len());
+    if *verbose && !all_fixtures.is_empty() {
+        emit(format!("Discovered {} fixture(s):\n", all_fixtures.len()));
         for (name, fixture) in &all_fixtures {
             let scope_str = match fixture.scope {
                 FixtureScope::Function => "function",
@@ -1372,21 +1393,21 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             let autouse_str = if fixture.autouse { " (autouse)" } else { "" };
             let async_str = if fixture.is_async { " async" } else { "" };
             let teardown_str = if fixture.has_teardown { " (with teardown)" } else { "" };
-            println!(
-                "  - {}: scope={}{}{}{}",
+            emit(format!(
+                "  - {}: scope={}{}{}{}\n",
                 name, scope_str, autouse_str, async_str, teardown_str
-            );
+            ));
         }
-        println!();
+        emit("\n".to_string());
     }
 
     drop(stage);
-    let stage = trace_test_stage("test_selection");
+    let _selection = trace_test_stage("test_selection");
 
     // ---- Expand parametrized tests into individual variants ----
     let all_tests = expand_parametrized_tests(all_tests);
 
-    let default_timeout = match timeout {
+    let default_timeout = match timeout.as_deref() {
         Some(raw) => Some(parse_duration_literal(raw).ok_or_else(|| {
             CliError::failure(format!(
                 "invalid --timeout value `{raw}`; use a duration like 250ms, 5s, or 2m"
@@ -1394,7 +1415,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         })?),
         None => None,
     };
-    let marker_tokens = match marker_expr {
+    let marker_tokens = match marker_expr.as_deref() {
         Some(expr) => {
             let tokens = tokenize_marker_expr(expr).map_err(CliError::failure)?;
             let _ = MarkerExprParser::parse(&tokens, &BTreeSet::new()).map_err(CliError::failure)?;
@@ -1405,15 +1426,119 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let marker_expr_names = marker_tokens
         .as_ref()
         .map_or_else(BTreeSet::new, |tokens| marker_expr_names(tokens));
-    validate_markers(&all_tests, &known_markers, strict_markers, &marker_expr_names).map_err(CliError::failure)?;
+    validate_markers(&all_tests, &known_markers, *strict_markers, &marker_expr_names).map_err(CliError::failure)?;
 
-    let mut filtered_tests = filter_collected_tests(
+    let filtered_tests = filter_collected_tests(
         all_tests,
-        filter,
-        include_slow,
+        filter.as_deref(),
+        *include_slow,
         marker_tokens.as_deref(),
         &stable_id_root,
     );
+
+    Ok(SelectedTestCollection {
+        session,
+        test_files,
+        filtered_tests,
+        stable_id_root,
+        default_timeout,
+    })
+}
+
+/// Only portable display identities leave the owner; sessions, provider state and leases stay server-side.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TestListReport {
+    /// Current selected test identities, recomputed from current source every request.
+    pub(crate) ids: Vec<String>,
+}
+
+/// Collect a list through the same operation as execution, borrowing the existing owner's parser-only session.
+pub(crate) fn list_tests_with_owner(
+    options: &TestCollectionOptions,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    emit: impl FnMut(String),
+) -> CliResult<TestListReport> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = %options.path, list_only = true, jobs = 1).entered();
+    let collected = collect_selected_tests(
+        options,
+        |root, entry| {
+            owner.test_collection_session(root, entry, &options.package_features, options.sdk_profile.as_deref())
+        },
+        emit,
+    )?;
+    Ok(TestListReport {
+        ids: collected
+            .filtered_tests
+            .iter()
+            .map(|test| stable_test_id(test, &collected.stable_id_root))
+            .collect(),
+    })
+}
+
+/// Run all tests in the given path.
+pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
+    incan_driver::project::warn_once_about_ignored_cargo_manifest(&incan_driver::project::resolve_project_root(
+        Path::new(config.path),
+    ));
+    if config.list_only {
+        return crate::project_owner::list_tests(&config);
+    }
+    run_tests_in_process(config)
+}
+
+/// Execute fresh tests through the existing scheduler; list requests use shared collection in the owner.
+fn run_tests_in_process(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
+    let collection_options = TestCollectionOptions::from_config(&config);
+    let TestRunConfig {
+        path,
+        verbose,
+        stop_on_fail,
+        include_slow: _,
+        filter: _,
+        use_color,
+        fail_on_empty,
+        list_only: _,
+        report_format,
+        junit_path,
+        durations,
+        shuffle,
+        seed,
+        run_xfail,
+        marker_expr: _,
+        strict_markers: _,
+        jobs,
+        test_features: _,
+        package_features,
+        sdk_profile,
+        timeout: _,
+        no_capture,
+        cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        workspace_context,
+    } = config;
+
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = path, list_only = false, jobs)
+            .entered();
+    let start_time = Instant::now();
+    let jobs = jobs.max(1);
+    let path_for_execution = Path::new(path);
+
+    let collected = collect_selected_tests(
+        &collection_options,
+        |_, entry| prepare_test_command_session(entry, false, &package_features, sdk_profile.as_deref()),
+        |message| print!("{message}"),
+    )?;
+    let SelectedTestCollection {
+        session,
+        test_files,
+        mut filtered_tests,
+        stable_id_root,
+        default_timeout,
+    } = collected;
 
     if filtered_tests.is_empty() {
         eprintln!("No tests collected");
@@ -1423,14 +1548,6 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         return Ok(ExitCode::SUCCESS); // "no tests collected" is not a failure
     }
 
-    if list_only {
-        for test in &filtered_tests {
-            println!("{}", stable_test_id(test, &stable_id_root));
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    drop(stage);
     let stage = trace_test_stage("dependency_admission");
     let command_context = prepare_oven_test_command_context(Arc::clone(&session), &test_files[0], &test_files)?;
     drop(stage);
@@ -1464,7 +1581,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let mut xpassed = 0;
 
     let planning_start = Instant::now();
-    let units = build_execution_units(&filtered_tests, path, default_timeout, stop_on_fail, jobs);
+    let units = build_execution_units(&filtered_tests, path_for_execution, default_timeout, stop_on_fail, jobs);
     if report_format == TestOutputFormat::Console && verbose {
         println!(
             "planned {} generated harness unit(s) in {:.2}s",
@@ -1808,8 +1925,8 @@ mod tests {
     }
 
     #[test]
-    fn list_only_uses_one_parser_session_without_preparing_execution_authority()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn list_only_retains_parser_session_without_preparing_execution_authority() -> Result<(), Box<dyn std::error::Error>>
+    {
         let project = tempfile::tempdir()?;
         let src = project.path().join("src");
         let tests = project.path().join("tests");
@@ -1825,12 +1942,26 @@ mod tests {
             "def test_list() -> None:\n    assert True\n",
         )?;
 
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| count.set(0));
         let path = project.path().to_str().ok_or("test project path is not UTF-8")?;
-        let exit = run_tests(list_test_config(path))?;
+        let options = TestCollectionOptions::from_config(&list_test_config(path));
+        let root = std::fs::canonicalize(project.path())?;
+        let entry = root.join("tests/test_list.incn");
+        let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+        let session = owner.test_collection_session(&root, &entry, &options.package_features, None)?;
+        let report = list_tests_with_owner(&options, &mut owner, |_| {})?;
+        assert_eq!(report.ids, ["tests/test_list.incn::test_list"]);
 
-        assert_eq!(exit, ExitCode::SUCCESS);
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
+        std::fs::write(
+            &entry,
+            "def test_list() -> None:\n    assert True\ndef test_added() -> None:\n    assert True\n",
+        )?;
+        let report = list_tests_with_owner(&options, &mut owner, |_| {})?;
+        assert_eq!(report.ids.len(), 2);
+        let repeated = owner.test_collection_session(&root, &entry, &options.package_features, None)?;
+        assert!(
+            Arc::ptr_eq(&session, &repeated),
+            "collection must retain its parser-only session"
+        );
         assert!(
             !project.path().join("target").exists(),
             "listing tests must not prepare generated execution artifacts"
@@ -1856,16 +1987,16 @@ mod tests {
             )?;
         }
 
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| count.set(0));
         let path = common.path().to_str().ok_or("common test path is not UTF-8")?;
-        let Err(error) = run_tests(list_test_config(path)) else {
+        let options = TestCollectionOptions::from_config(&list_test_config(path));
+        let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+        let Err(error) = list_tests_with_owner(&options, &mut owner, |_| {}) else {
             return Err("a common directory silently selected one sibling project".into());
         };
 
         assert!(error.message.contains("test path spans multiple Incan projects"));
         assert!(error.message.contains("alpha"));
         assert!(error.message.contains("beta"));
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 0));
         Ok(())
     }
 
