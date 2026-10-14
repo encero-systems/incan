@@ -301,6 +301,8 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
     let retained = tracing::subscriber::with_default(checks.clone(), || repeat.reconcile(&fixture.request()))?
         .ok_or("unchanged retained selection missed")?;
     assert_eq!(retained.report.current_local_sources, 0);
+    assert_eq!(retained.report.resolution_document_reads, 0);
+    assert_eq!(retained.report.resolution_document_reuses, 2);
     assert_eq!(
         checks.declarations(),
         0,
@@ -1316,5 +1318,125 @@ fn dev7_native_loaf_retained_inventory_rejects_owner_mutations() -> TestResult {
         }
         assert!(retained.reconcile(&fixture.request()).is_err(), "{change}");
     }
+    Ok(())
+}
+
+/// Unchanged documents retain their parsed allocations; all non-document authority is still reprobed.
+#[test]
+fn dev7_native_loaf_retains_parsed_resolution_documents() -> TestResult {
+    let fixture = Fixture::new()?;
+    let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    let facets = current.graph.facets.as_ptr();
+    let key = current.key.clone();
+    let mut report = NativeLoafConsumerReport::default();
+    let current = current.refresh(&fixture.request(), &mut report)?;
+    assert_eq!(current.graph.facets.as_ptr(), facets);
+    assert_eq!(current.key, key);
+    assert_eq!(report.resolution_document_reads, 0);
+    assert_eq!(report.resolution_document_reuses, 2);
+    assert_eq!(report.compiler_closure_checks, 1);
+    Ok(())
+}
+
+/// Content edits, atomic replacement and preserved-mtime edits must return to canonical document parsing.
+#[test]
+fn dev7_native_loaf_resolution_reloads_changed_documents() -> TestResult {
+    for change in ["graph", "lock", "replacement", "restored-mtime", "missing", "malformed"] {
+        let fixture = Fixture::new()?;
+        let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        let path = if matches!(change, "graph" | "restored-mtime") {
+            fixture.graph.clone()
+        } else {
+            fixture.root.path().join("lock.json")
+        };
+        let original = std::fs::read(&path)?;
+        let modified = std::fs::metadata(&path)?.modified()?;
+        match change {
+            "missing" => std::fs::remove_file(&path)?,
+            "malformed" => std::fs::write(&path, b"invalid document")?,
+            "replacement" => {
+                let pending = path.with_extension("pending");
+                std::fs::write(&pending, &original)?;
+                std::fs::rename(pending, &path)?;
+            }
+            _ => {
+                let mut changed = original;
+                if change == "restored-mtime" {
+                    let position = changed
+                        .iter()
+                        .position(|byte| *byte == b'0')
+                        .ok_or("fixture commit missing")?;
+                    changed[position] = b'1';
+                } else {
+                    changed.push(b' ');
+                }
+                std::fs::write(&path, changed)?;
+                if change == "restored-mtime" {
+                    std::fs::File::options()
+                        .write(true)
+                        .open(&path)?
+                        .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+                }
+            }
+        }
+        let mut report = NativeLoafConsumerReport::default();
+        let result = current.refresh(&fixture.request(), &mut report);
+        if matches!(change, "missing" | "malformed") {
+            assert!(result.is_err(), "{change}");
+        } else {
+            let refreshed = result?;
+            assert!(refreshed.documents_current());
+            assert_eq!(report.resolution_document_reads, 2, "{change}");
+        }
+        assert_eq!(report.resolution_document_reuses, 0, "{change}");
+    }
+    Ok(())
+}
+
+/// A requested graph or lock symlink may not keep the parsed model after its canonical target changes.
+#[test]
+fn dev7_native_loaf_resolution_rechecks_symlink_coordinates() -> TestResult {
+    use std::os::unix::fs::symlink;
+    for name in ["graph.json", "lock.json"] {
+        let fixture = Fixture::new()?;
+        let path = fixture.root.path().join(name);
+        let first = path.with_extension("first");
+        let second = path.with_extension("second");
+        std::fs::rename(&path, &first)?;
+        let mut bytes = std::fs::read(&first)?;
+        bytes.push(b' ');
+        std::fs::write(&second, bytes)?;
+        symlink(&first, &path)?;
+        let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        let mut report = NativeLoafConsumerReport::default();
+        let current = current.refresh(&fixture.request(), &mut report)?;
+        assert_eq!(report.resolution_document_reuses, 2);
+        std::fs::remove_file(&path)?;
+        symlink(&second, &path)?;
+        let mut report = NativeLoafConsumerReport::default();
+        let current = current.refresh(&fixture.request(), &mut report)?;
+        assert!(current.documents_current());
+        assert_eq!(report.resolution_document_reads, 2);
+        assert_eq!(report.resolution_document_reuses, 0);
+    }
+    Ok(())
+}
+
+/// Reconciliation cannot retain a parsed document that changes before the existing final handoff check.
+#[test]
+fn dev7_native_loaf_resolution_rejects_drift_before_handoff() -> TestResult {
+    let fixture = Fixture::new()?;
+    let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    std::fs::write(fixture.root.path().join("lock.json"), b"changed during request")?;
+    let closure = NativeLoafGraph::default().select(&[])?;
+    assert!(
+        super::finish_report(
+            &closure,
+            &current,
+            &mut NativeLoafConsumerReport::default(),
+            std::time::Instant::now()
+        )
+        .is_err()
+    );
     Ok(())
 }
