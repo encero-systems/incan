@@ -205,7 +205,7 @@ pub(crate) fn ordinary_runtime_inputs(
         ));
     }
     // ---- Bound executable response and final original-owner observation ----
-    let response = execute_exchange(&bound.engine, &bytes)?;
+    let response: Response = execute_exchange(&bound.engine, &bytes)?;
     let roots_digest = ordinary_roots_digest(selected.roots())?;
     let records_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.selected_records).map_err(failure)?);
     let features_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.consumer_features).map_err(failure)?);
@@ -455,6 +455,7 @@ struct BoundCompilerEngine {
     compiler: PathBuf,
     engine: PathBuf,
     engine_digest: String,
+    policy_engine: Option<(PathBuf, String)>,
     compiler_receipt: String,
     compiler_output: String,
     toolchain: String,
@@ -465,6 +466,63 @@ struct BoundCompilerEngine {
 /// compiler or accept a caller's ambient binary override when launched as Incan or Oven.
 pub fn bound_compiler_executable() -> CliResult<PathBuf> {
     Ok(compiler_engine_binding()?.compiler)
+}
+
+/// Select the policy executable bound into this compiler's source receipt; older toolchains refuse this capability.
+/// The caller observes this exact file before retaining a response, never an ambient executable override.
+pub(super) fn bound_policy_engine() -> CliResult<(PathBuf, String)> {
+    let bound = compiler_engine_binding()?;
+    let (engine, digest) = bound
+        .policy_engine
+        .ok_or_else(|| CliError::failure("compiler has no bound Oven policy engine"))?;
+    if super::file_freshness::digest_file(&engine).map_err(failure)? != digest {
+        return Err(CliError::failure(
+            "Oven policy engine differs from the bound compiler receipt",
+        ));
+    }
+    Ok((engine, digest))
+}
+
+/// Evaluate original conditions through the bound Incan policy; a response is useful only for these exact bytes.
+pub(super) fn target_predicates(
+    engine: &Path,
+    declaration: &str,
+    target: &str,
+    toolchain: &str,
+    cfg: oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot,
+    conditions: &[String],
+) -> CliResult<Vec<bool>> {
+    let request = serde_json::json!({
+        "schema":"incan.oven.target-predicates/1", "declaration":declaration, "toolchain":toolchain,
+        "target":{"triple":target,"cfg":cfg}, "conditions":conditions,
+    });
+    let bytes = serde_json::to_vec(&request).map_err(failure)?;
+    let response: TargetPredicateResponse = execute_exchange(engine, &bytes)?;
+    if response.schema != "incan.oven.target-predicates/1"
+        || response.request_digest != oven_store::digest_bytes(&bytes)
+    {
+        return Err(CliError::failure(
+            "target predicate response differs from its exact request",
+        ));
+    }
+    match (response.status.as_str(), response.matches, response.reason) {
+        ("selected", Some(matches), None) if matches.len() == conditions.len() => Ok(matches),
+        ("refused", None, Some(reason)) => Err(CliError::failure(format!("target predicate selection: {reason}"))),
+        _ => Err(CliError::failure(
+            "target predicate response is incomplete or contradictory",
+        )),
+    }
+}
+
+/// Closed target exchange envelope; false decisions remain explicit and never disappear from the ordered result.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetPredicateResponse {
+    schema: String,
+    request_digest: String,
+    status: String,
+    matches: Option<Vec<bool>>,
+    reason: Option<String>,
 }
 
 /// Resolve and verify the source-built compiler and its engine once during this compiler process.
@@ -551,7 +609,21 @@ fn resolve_compiler_engine() -> CliResult<BoundCompilerEngine> {
         .parent()
         .ok_or_else(|| CliError::failure("source compiler has no parent"))?
         .join(NATIVE_RUNTIME_ENGINE_FILE);
+    let policy_engine = receipt
+        .sources
+        .supplemental_digests
+        .get("oven-policy-engine")
+        .map(|digest| {
+            (
+                compiler
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("oven-policy-engine"),
+                digest.clone(),
+            )
+        });
     Ok(BoundCompilerEngine {
+        policy_engine,
         compiler,
         engine,
         engine_digest: digest,
@@ -606,7 +678,7 @@ fn exchange(
         runtime_units,
     };
     let bytes = serde_json::to_vec(&request).map_err(|error| CliError::failure(error.to_string()))?;
-    let response = execute_exchange(engine, &bytes)?;
+    let response: Response = execute_exchange(engine, &bytes)?;
     if response.schema != "incan.native-runtime-inputs.response/1"
         || response.request_digest != oven_store::digest_bytes(&bytes)
         || response.inputs.get("sdk-native-closure") != Some(&catalog_digest)
@@ -619,7 +691,7 @@ fn exchange(
 }
 
 /// Execute only the caller-owned request/response files through the already verified engine.
-fn execute_exchange(engine: &Path, bytes: &[u8]) -> CliResult<Response> {
+fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, bytes: &[u8]) -> CliResult<T> {
     let directory = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
     let request_path = directory.path().join("request.json");
     let response_path = directory.path().join("response.json");

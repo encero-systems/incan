@@ -415,6 +415,10 @@ pub(super) fn project_outputs_with_source_authority(
         Some(super::source_authority::ordinary_library_preparation_identity_digest(
             None,
         )?)
+    } else if let Some((compiler, _dependencies)) = required_authority {
+        Some(super::source_authority::ordinary_preparation_identity_for_compiler(
+            compiler.to_owned(),
+        )?)
     } else {
         super::source_authority::ordinary_preparation_identity_digest().ok()
     };
@@ -1137,7 +1141,7 @@ mod tests {
         payload.inspection_authority = None;
         payload.preparation_identity_digest =
             Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
-        let compiler_identity = digest_bytes(b"fixture compiler");
+        let compiler_identity = super::super::source_authority::current_compiler_identity_digest()?;
         let dependency_identity = digest_bytes(b"fixture dependencies");
         payload.compiler_identity_digest = Some(compiler_identity.clone());
         payload.dependency_authority_digest = Some(dependency_identity.clone());
@@ -1406,6 +1410,75 @@ mod tests {
             "rejected source generation became hot"
         );
         drop(compiler_lease);
+        Ok(())
+    }
+
+    /// A bootstrap client selects its exact publisher's preparation, never its own executable's identity.
+    #[test]
+    fn explicit_publisher_selection_preserves_preparation_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "publisher")?;
+        let publisher = digest_bytes(b"separate stage-zero compiler");
+        let dependencies = super::super::source_authority::digest_project_development_dependencies(project.path())?;
+        payload.compiler_identity_digest = Some(publisher.clone());
+        payload.dependency_authority_digest = Some(dependencies.clone());
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_for_compiler(publisher.clone())?);
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let select = |compiler: &str| {
+            super::super::native_runtime_inputs::select_project_output_for_incan(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                compiler,
+                &dependencies,
+            )
+        };
+        assert_eq!(
+            select(&publisher)?
+                .ok_or("publisher output was rejected by the client identity")?
+                .identity,
+            published.identity
+        );
+        assert!(select(&digest_bytes(b"another publisher"))?.is_none());
+        let wrong_preparation_root = tempfile::tempdir()?;
+        let wrong_preparation_store = OvenStore::new(
+            wrong_preparation_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let mut mismatched = payload.clone();
+        mismatched.preparation_identity_digest = Some(digest_bytes(b"changed preparation configuration"));
+        publish_project_output_loaf(&wrong_preparation_store, &receipt, &mismatched, &files)?;
+        assert!(
+            super::super::native_runtime_inputs::select_project_output_for_incan(
+                &wrong_preparation_store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                &publisher,
+                &dependencies,
+            )?
+            .is_none()
+        );
         Ok(())
     }
 

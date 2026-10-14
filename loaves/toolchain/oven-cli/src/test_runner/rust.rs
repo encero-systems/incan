@@ -204,7 +204,15 @@ fn prepare_inner(
         .or(context.session.manifest.as_ref())
         .ok_or("Rust tests require loaf.toml")?;
     let (effective_manifest, selected_features) = resolve_test_manifest(manifest, features)?;
-    let manifest = &effective_manifest;
+    let rustc = resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let selected_manifest = crate::commands::oven::native_compiler_tests::selected_test_manifest(
+        &effective_manifest,
+        owner,
+        &rustc,
+        &target,
+    )?;
+    let manifest = &selected_manifest;
     if manifest
         .rust_facet
         .as_ref()
@@ -214,7 +222,6 @@ fn prepare_inner(
     }
     let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
     let dependencies = test_dependencies(manifest, &selected_features, source, owned_manifest.is_some())?;
-    let rustc = resolve_active_rustc()?;
     let project = manifest
         .project
         .as_ref()
@@ -241,7 +248,7 @@ fn prepare_inner(
         &context.project_root,
         &name,
         version,
-        rustc_host_target(&rustc)?,
+        target,
         rustc_identity(&rustc)?,
         "debug",
         features.clone(),

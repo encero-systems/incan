@@ -40,7 +40,14 @@ pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
 /// and tracing switches are excluded because they do not affect generated code. No local observation is itself compiler
 /// authority.
 pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
-    ordinary_preparation_identity_from_values(current_compiler_identity_digest()?, |name| std::env::var_os(name))
+    ordinary_preparation_identity_for_compiler(current_compiler_identity_digest()?)
+}
+
+/// Bind a caller-selected publisher to the same preparation inputs used by ordinary commands.
+/// A bootstrap client is a different executable from the compiler that published its selected output;
+/// it must supply that exact compiler identity without changing the configuration or validation domain.
+pub(super) fn ordinary_preparation_identity_for_compiler(compiler: String) -> CliResult<String> {
+    ordinary_preparation_identity_from_values(compiler, |name| std::env::var_os(name))
 }
 
 /// Bind an ordinary library to its compiler and native producer inputs through the shared freshness store.

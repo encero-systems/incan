@@ -109,7 +109,13 @@ fn execute(
     )?;
     std::fs::create_dir_all(&output)?;
     let store = native_test_store(store_options)?;
-    let dependencies = native_test_dependencies(&manifest, &selected_features)?;
+    let effective = selected_test_manifest(
+        &manifest,
+        &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
+        &rustc,
+        &receipt.intent.target,
+    )?;
+    let dependencies = native_test_dependencies(&effective, &selected_features)?;
     let prepared = if dependencies.is_empty() {
         None
     } else {
@@ -187,6 +193,85 @@ fn execute(
         &features,
     )?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Project conditional alternatives only after the shared owner evaluates every original condition.
+/// The source manifest stays unchanged; this command-local effective view carries only exact selected edges.
+/// Missing decisions and incompatible simultaneously active alternatives refuse instead of silently dropping edges.
+pub(crate) fn selected_test_manifest(
+    manifest: &ProjectManifest,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    rustc: &Path,
+    target: &str,
+) -> Result<ProjectManifest, Box<dyn std::error::Error>> {
+    let conditions = manifest
+        .loaf_dependencies
+        .values()
+        .flatten()
+        .filter_map(|edge| edge.target.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if conditions.is_empty() {
+        return Ok(manifest.clone());
+    }
+    let declaration = format!("{}:{:?}", manifest.path().display(), manifest.loaf_dependencies);
+    let decisions = owner.target_predicates(&declaration, rustc, target, &conditions)?;
+    let decisions = conditions.into_iter().zip(decisions).collect::<BTreeMap<_, _>>();
+    project_selected_targets(manifest, &decisions)
+}
+
+/// Apply checked booleans to the original alternatives and reuse the existing effective-manifest projection.
+fn project_selected_targets(
+    manifest: &ProjectManifest,
+    decisions: &BTreeMap<String, bool>,
+) -> Result<ProjectManifest, Box<dyn std::error::Error>> {
+    let mut rust = manifest.rust_dependencies().clone();
+    let mut libraries = manifest.library_dependencies().clone();
+    let mut selected = manifest.loaf_dependencies.clone();
+    for (alias, alternatives) in &manifest.loaf_dependencies {
+        if !alternatives.iter().any(|edge| edge.target.is_some()) {
+            continue;
+        }
+        rust.remove(alias);
+        libraries.remove(alias);
+        selected.remove(alias);
+        let mut active: Option<oven_model::manifest::LoafDependency> = None;
+        for edge in alternatives {
+            if let Some(condition) = &edge.target
+                && !*decisions
+                    .get(condition)
+                    .ok_or_else(|| format!("missing evaluated target condition for {alias}"))?
+            {
+                continue;
+            }
+            if let Some(current) = &mut active {
+                if current.loaf != edge.loaf
+                    || current.spec.source != edge.spec.source
+                    || current.spec.version != edge.spec.version
+                    || current.spec.package != edge.spec.package
+                {
+                    return Err(format!("conditional dependency {alias} has incompatible active alternatives").into());
+                }
+                current.spec.features.extend(edge.spec.features.iter().cloned());
+                current.spec.features.sort();
+                current.spec.features.dedup();
+                current.spec.default_features |= edge.spec.default_features;
+                current.spec.optional &= edge.spec.optional;
+            } else {
+                let mut projected = edge.clone();
+                projected.target = None;
+                active = Some(projected);
+            }
+        }
+        if let Some(edge) = active {
+            rust.insert(alias.clone(), edge.spec.clone());
+            selected.insert(alias.clone(), vec![edge]);
+        }
+    }
+    let mut effective = manifest.with_effective_dependencies(libraries, rust, manifest.rust_dev_dependencies().clone());
+    effective.loaf_dependencies = selected;
+    Ok(effective)
 }
 
 /// Project declared Loaves into the explicit Rust test unit's native requests, including mixed Incan/Rust Loaves.
@@ -437,6 +522,64 @@ fn execute_cases(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keep physical fixture ownership alive while the normal manifest parser supplies conditional declarations.
+    fn conditional_manifest(
+        dependencies: &str,
+    ) -> Result<(tempfile::TempDir, ProjectManifest), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("loaf.toml");
+        std::fs::write(
+            &path,
+            format!("[project]\nname='conditional_fixture'\nversion='0.1.0'\n[dependencies]\n{dependencies}"),
+        )?;
+        let manifest = ProjectManifest::load(&path)?;
+        Ok((root, manifest))
+    }
+
+    /// Every false edge remains in the source but disappears from the command-local native request.
+    #[test]
+    fn target_projection_keeps_source_and_rejects_missing_decisions() -> Result<(), Box<dyn std::error::Error>> {
+        let (_root, manifest) =
+            conditional_manifest("web_time = {loaf='crates-io/web-time',version='1',target='cfg(wasm)'}\n")?;
+        assert!(project_selected_targets(&manifest, &BTreeMap::new()).is_err());
+        let false_view = project_selected_targets(&manifest, &BTreeMap::from([("cfg(wasm)".into(), false)]))?;
+        assert!(!false_view.rust_dependencies().contains_key("web_time"));
+        assert!(!false_view.loaf_dependencies.contains_key("web_time"));
+        assert_eq!(
+            manifest.loaf_dependencies["web_time"][0].target.as_deref(),
+            Some("cfg(wasm)")
+        );
+        let true_view = project_selected_targets(&manifest, &BTreeMap::from([("cfg(wasm)".into(), true)]))?;
+        assert!(true_view.rust_dependencies().contains_key("web_time"));
+        assert!(true_view.loaf_dependencies["web_time"][0].target.is_none());
+        Ok(())
+    }
+
+    /// Simultaneous compatible declarations union features/defaults, while incompatible source choices refuse.
+    #[test]
+    fn target_projection_merges_only_compatible_alternatives() -> Result<(), Box<dyn std::error::Error>> {
+        let (_root, manifest) = conditional_manifest(
+            "dep = [{loaf='crates-io/serde',version='1',target='cfg(unix)',features=['derive'],default-features=false},{loaf='crates-io/serde',version='1',target='cfg(macos)',features=['std']}]\n",
+        )?;
+        let decisions = BTreeMap::from([("cfg(unix)".into(), true), ("cfg(macos)".into(), true)]);
+        let selected = project_selected_targets(&manifest, &decisions)?;
+        let spec = selected
+            .rust_dependencies()
+            .get("dep")
+            .ok_or("missing selected alias")?;
+        assert_eq!(spec.features, ["derive", "std"]);
+        assert!(spec.default_features);
+        let mut conflict = manifest.clone();
+        conflict
+            .loaf_dependencies
+            .get_mut("dep")
+            .ok_or("missing alternatives")?[1]
+            .spec
+            .version = Some("2".into());
+        assert!(project_selected_targets(&conflict, &decisions).is_err());
+        Ok(())
+    }
 
     /// A versioned source compiler must survive the runtime handoff even if an older sibling `incan` exists.
     #[test]
