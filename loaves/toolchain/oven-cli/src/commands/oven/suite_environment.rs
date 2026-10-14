@@ -215,7 +215,7 @@ pub(crate) fn compiler_suite_environment_with_vocab(
     environment.insert(dynamic_library_environment_name, dynamic_library_environment_value);
     append_compiler_suite_direct_rustc_environment(
         &mut environment,
-        OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV,
+        &[OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV],
         rustc,
         vocab_extraction_artifacts,
     )?;
@@ -295,14 +295,14 @@ pub(crate) fn compiler_suite_environment_path(path: &Path) -> CliResult<PathBuf>
         })
 }
 
-/// Export a second, named direct-Rustc closure for compiler-internal vocab companion extraction.
+/// Export one checked direct-Rustc closure under its existing consumer capability names.
 ///
 /// The generated-code warning checker and the compiler CLI can legitimately use different dependency closures. Keep
 /// them separate instead of merging same-named Rust crates from independent receipt-bound foundations into an
 /// ambiguous `--extern` list.
 pub(crate) fn append_compiler_suite_direct_rustc_environment(
     environment: &mut BTreeMap<String, String>,
-    variable: &str,
+    variables: &[&str],
     rustc: &Path,
     artifacts: &oven_rustc::rustc::OvenRustcArtifactPlan,
 ) -> CliResult<()> {
@@ -319,7 +319,10 @@ pub(crate) fn append_compiler_suite_direct_rustc_environment(
             .map(|(crate_name, path)| Ok((crate_name.clone(), compiler_suite_environment_path(path)?)))
             .collect::<CliResult<BTreeMap<_, _>>>()?,
     );
-    environment.insert(variable.to_string(), capability.encode().map_err(CliError::failure)?);
+    let encoded = capability.encode().map_err(CliError::failure)?;
+    for variable in variables {
+        environment.insert((*variable).to_string(), encoded.clone());
+    }
     Ok(())
 }
 
