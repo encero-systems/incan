@@ -247,7 +247,8 @@ mod tests {
         let metadata = StdlibAstCache::default();
         let mut codegen_metadata = metadata.clone();
         assert!(metadata.supports_generation_reuse());
-        codegen_metadata.lookup_function_symbol(&["std".into(), "unprovided_generation_test_module".into()], "missing");
+        // A registered module reaches ambient discovery; unknown names are rejected before any source lookup.
+        codegen_metadata.lookup_function_symbol(&["std".into(), "math".into()], "missing");
         assert!(!metadata.supports_generation_reuse());
         let request = fixture.request();
         owner.remember(&fixture.output, &request, request.observe(), metadata);

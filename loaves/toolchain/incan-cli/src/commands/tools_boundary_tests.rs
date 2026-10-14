@@ -101,7 +101,7 @@ def private_function() -> None:
 
 /// Write the minimal `oven.lock` a library build expects beside the fixture's manifest.
 fn write_test_incan_lock(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let cargo_lock_payload = fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+    let cargo_lock_payload = fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
     let features = CargoFeatureSelection::default();
     let fingerprint = compute_deps_fingerprint(&[], &[], &features, Some(project_root));
     IncanLock::new(
