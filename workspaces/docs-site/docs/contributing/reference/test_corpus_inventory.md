@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3645 | 256 | 431 |
 | re-point | 1488 | 91 | 1060 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2116 | 221 | 5 |
+| unaffected | 2122 | 221 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8757** | **721** | **1496** |
+| **Total** | **8763** | **721** | **1496** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2621,7 +2621,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/oven/oven_rustc` (499 tests in 55 files: keep 13, unaffected 486)
+### `loaves/oven/oven_rustc` (503 tests in 55 files: keep 13, unaffected 490)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2634,10 +2634,10 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/native_loaf/producer/tests.rs` | 8 | 705 | 705 | unaffected | - | - | - | #1698 | - | Ordinary retained native source and fact projection verifies original owners, exact physical aliases, generated inputs and read-only installed admission; it grants no macro execution or semantic-world completeness. |
 | `loaves/oven/oven_rustc/src/native_loaf/request_observation/tests.rs` | 7 | 643 | 643 | unaffected | - | - | - | #1337 | - | Actual complete producer request, original native owners, facts, graph and source freshness; semantic observation refusals are distinct from physical preparation. |
 | `loaves/oven/oven_rustc/src/native_loaf/tests.rs` | 20 | 1429 | 1429 | unaffected | - | - | - | #1698 | - | Ordinary native record and forward physical closure admission: original leases, declared aliases, installed read-only handoff, source and edge substitution refusal, current local source restoration, feature and origin authority, and authenticated empty closures. Independent of generated Rust and SDK inventories. |
-| `loaves/oven/oven_rustc/src/native_test.rs` | 35 | 3160 | 1485 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/native_test.rs` | 35 | 3186 | 1485 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/native_test/case_slice.rs` | 5 | 174 | 87 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/native_test/collection_tests.rs` | 10 | 330 | 330 | unaffected | - | - | - | #1337 | - | Request-owned native inventory, physical executable and invocation context guards, fresh outcomes and deadlines; no compiler backend dependency. |
-| `loaves/oven/oven_rustc/src/native_test/evidence.rs` | 4 | 258 | 74 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/native_test/collection_tests.rs` | 14 | 467 | 467 | unaffected | - | - | - | #1337 | - | Request-owned native inventory, physical executable and invocation context guards, fresh outcomes and deadlines; no compiler backend dependency. |
+| `loaves/oven/oven_rustc/src/native_test/evidence.rs` | 4 | 266 | 74 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/plan/composition.rs` | 11 | 1914 | 894 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/plan/selection.rs` | 1 | 669 | 51 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/plan/shared.rs` | 6 | 877 | 375 | unaffected | - | - | - | #1698 | - | Command-held native owners retain exact original leases through pruning, refuse missing/substituted owners and changed witnesses, and preserve independent acquisition for other plan domains. Controls use real store publication without Cargo. |
@@ -3119,7 +3119,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-### `loaves/toolchain/oven-cli` (224 tests in 27 files: keep 63, retire 11, unaffected 150)
+### `loaves/toolchain/oven-cli` (226 tests in 27 files: keep 63, retire 11, unaffected 152)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3146,10 +3146,10 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/project_owner/stored_native.rs` | 1 | 171 | 55 | keep | - | - | - | #1337 | - | Stored native owner requests reject relative paths before Store or compiler access and refuse mixed request shapes. Real CLI handoff, invalidation and lease lifetime have separate runtime proof. |
 | `loaves/toolchain/oven-cli/src/project_owner/unix.rs` | 7 | 740 | 215 | keep | - | - | - | #1337 | - | Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately. |
 | `loaves/toolchain/oven-cli/src/test_runner/execution.rs` | 23 | 3883 | 756 | keep (keep 12, retire 11) | 0/11 | 11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
-| `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 18 | 2544 | 556 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
+| `loaves/toolchain/oven-cli/src/test_runner/mod.rs` | 18 | 2593 | 562 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
 | `loaves/toolchain/oven-cli/src/test_runner/output.rs` | 2 | 137 | 60 | unaffected | - | - | - | #1337 | - | Request-local output isolation and bounded Unicode-preserving protocol fragments; independent of compiler backend. |
-| `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 8 | 842 | 320 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
-| `loaves/toolchain/oven-cli/src/test_runner/tests/scheduling.rs` | 3 | 80 | 80 | unaffected | - | - | - | #1337 | - | Prepared Rust case concurrency and language boundaries; shared scheduler resource and serial constraints. |
+| `loaves/toolchain/oven-cli/src/test_runner/rust.rs` | 8 | 865 | 320 | unaffected | - | - | - | #1337 | - | Authored Rust test-root containment and selection; mixed scheduler and transport controls remain in the common runner. |
+| `loaves/toolchain/oven-cli/src/test_runner/tests/scheduling.rs` | 5 | 138 | 138 | unaffected | - | - | - | #1337 | - | Prepared Rust case concurrency and language boundaries; shared scheduler resource and serial constraints. |
 
 Per-test overrides in `loaves/toolchain/oven-cli/src/test_runner/execution.rs`:
 
