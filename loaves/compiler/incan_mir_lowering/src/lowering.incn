@@ -6724,6 +6724,7 @@ def lower_text_codec_method(
         if len(declaration.variants[1].fields) != 1:
             return Err("unsupported Body IR decode error carrier")
         match declaration.variants[1].fields[0]:
+            PlanType.ValidationError => pass
             PlanType.Model(owner, _name) =>
                 if builder.nominals[owner].native_item != "incan_std_core::validation::ValidationError":
                     return Err("unsupported Body IR decode error identity")
