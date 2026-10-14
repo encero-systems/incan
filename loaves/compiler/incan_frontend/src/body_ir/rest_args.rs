@@ -82,7 +82,8 @@ fn plan<'a>(
 impl BodyBuilder<'_, '_> {
     /// Freeze supplied values in written order, then materialize exactly one owned pack per declared rest role.
     /// Checked spreads and ordinary borrowed inputs retain the existing generalized planner; open or mutable pack
-    /// elements remain refused.
+    /// elements remain refused. Registry-owned immutable SDK task packs use that planner's existing homogeneous
+    /// storage retention; equal-spelled source types grant no such contract.
     pub(super) fn bind_rest_args(
         &mut self,
         callee: &str,
@@ -91,6 +92,21 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
+        let has_rest = parameters
+            .iter()
+            .any(|parameter| parameter.kind != IncanCallableParamKind::Normal);
+        if has_rest
+            && parameters
+                .iter()
+                .filter(|parameter| parameter.kind != IncanCallableParamKind::Normal)
+                .all(|parameter| {
+                    !parameter.is_mut
+                        && parameter.kind == IncanCallableParamKind::RestPositional
+                        && super::runtime_nominals::retains_task_storage(self.type_info, &parameter.ty)
+                })
+        {
+            return self.bind_general_rest_args(callee, parameters, arguments, scope, out);
+        }
         if parameters
             .iter()
             .filter(|parameter| parameter.kind != IncanCallableParamKind::Normal)
