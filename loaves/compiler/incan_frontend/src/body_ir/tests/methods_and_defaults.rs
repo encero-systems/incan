@@ -672,6 +672,32 @@ fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box
     Ok(())
 }
 
+/// Explicit and inferred method binders stay independent of an applied static owner.
+#[test]
+fn applied_static_call_preserves_independent_method_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @staticmethod\n  def echo[U](value: U) -> U:\n    return value\n\ndef main() -> None:\n  println(Box[int].echo[str](\"explicit\"))\n  println(Box[int].echo(\"inferred\"))\n",
+        &["independent_static"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let calls = targets
+        .iter()
+        .filter(|target| target.name.ends_with("echo"))
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    for target in calls {
+        assert_eq!(target.type_args, [IncanType::Primitive(IncanPrimitiveType::Str)]);
+        assert_eq!(
+            target.receiver_type,
+            Some(IncanType::Generic {
+                base: "Box".to_string(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            })
+        );
+    }
+    Ok(())
+}
+
 /// Method aliases, a newtype's short rebinding of its own method, and lint suppressions keep their declarations.
 #[test]
 fn retains_aliased_and_lint_suppressed_declarations() -> Result<(), Box<dyn std::error::Error>> {
