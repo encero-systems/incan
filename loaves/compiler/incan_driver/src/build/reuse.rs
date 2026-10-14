@@ -16,7 +16,8 @@ use crate::build::output_selection::{
     located_project_output, matching_baked_project_outputs_with_source_authority, remember_project_output,
 };
 use crate::build::package_loafs::{
-    copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
+    copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, has_complete_packaged_library_loaf,
+    validated_packaged_library_loaf_profile,
 };
 use crate::build::plan_authority::explicit_bake_profiles;
 use crate::build::source_authority::{digest_baked_project_source_authority, project_bake_receipt_path};
@@ -63,7 +64,7 @@ fn restore_reused_library_package(
     let manifest_path = packaged_library_loaf_manifest_path(&artifact_root);
     let bytes = match fs::read(&manifest_path) {
         Ok(bytes) => bytes,
-        Err(_) => return Ok(false),
+        Err(_) => return Ok(trace_package_reuse_miss()),
     };
     let manifest = match serde_json::from_slice::<OvenPackagedLibraryLoafManifest>(&bytes) {
         Ok(manifest)
@@ -73,23 +74,24 @@ fn restore_reused_library_package(
         {
             manifest
         }
-        Ok(_) | Err(_) => return Ok(false),
+        Ok(_) | Err(_) => return Ok(trace_package_reuse_miss()),
     };
     if manifest.profiles.len() != outputs.len() {
-        return Ok(false);
+        return Ok(trace_package_reuse_miss());
     }
     let package_store = OvenStore::new(packaged_library_loaf_store_root(&artifact_root), *store.limits());
-    if !restore_reused_library_metadata(
-        store,
-        &package_store,
-        manifest.checked_metadata.as_ref(),
-        &manifest.metadata_files,
-    )? {
-        return Ok(false);
-    }
+    // Retain both original checked owners while native profile exports may reclaim unleased Store entries.
+    let _checked_generation = if manifest.checked_metadata.is_some() || manifest.checked_generation.is_some() {
+        let Some(generation) = restore_reused_library_generation(store, &package_store, &manifest)? else {
+            return Ok(trace_package_reuse_miss());
+        };
+        Some(generation)
+    } else {
+        None
+    };
     for output in outputs {
         let Some(candidate) = manifest.profiles.get(&output.profile) else {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         };
         if candidate.receipt.verify_identity().is_err()
             || candidate.receipt.identity != output.payload.receipt_identity
@@ -102,7 +104,7 @@ fn restore_reused_library_package(
                 .get("compiler-version")
                 .is_none_or(|version| version != INCAN_VERSION)
         {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         let Some(native) = output
             .payload
@@ -110,18 +112,18 @@ fn restore_reused_library_package(
             .iter()
             .find(|file| file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH)
         else {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         };
         let expected_library_relative_path = match Path::new(&native.caller_relative_path).strip_prefix("target/lib") {
             Ok(path) => path.to_string_lossy().replace('\\', "/"),
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(trace_package_reuse_miss()),
         };
         if validated_project_output_relative_path(&candidate.library_relative_path, "package library").is_err()
             || candidate.library_relative_path != expected_library_relative_path
             || candidate.library_digest != native.digest
             || output.payload.package_loaf_store_relative_path.as_deref() != Some("target/lib/oven/loafs")
         {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         let mut candidate_entries = candidate.entries.clone();
         candidate_entries.sort_by(|left, right| {
@@ -132,49 +134,30 @@ fn restore_reused_library_package(
             (&left.identity, &left.receipt.identity).cmp(&(&right.identity, &right.receipt.identity))
         });
         if candidate_entries != output_entries {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         if candidate.entries.is_empty()
             && resolve_compiler_owned_loaf_for_registry_dependencies(&candidate.receipt, &[])
                 .map_or(true, |selected| selected.is_none())
         {
-            return Ok(false);
+            return Ok(trace_package_reuse_miss());
         }
         for entry in &candidate.entries {
             if entry.receipt.verify_identity().is_err() || entry.receipt.intent != candidate.receipt.intent {
-                return Ok(false);
+                return Ok(trace_package_reuse_miss());
             }
             if let Some(base_loaf_identity) = entry.base_loaf_identity.as_deref()
                 && resolve_compiler_owned_loaf_by_identity(&candidate.receipt, base_loaf_identity)
                     .map_or(true, |selected| selected.is_none())
             {
-                return Ok(false);
+                return Ok(trace_package_reuse_miss());
             }
-            let packaged = package_store.select_payloads_matching_for_execution(
-                |stored| {
-                    stored.identity == entry.identity
-                        && stored.kind == entry.kind
-                        && stored.receipt_identity == entry.receipt.identity
-                        && stored.build_unit_identity == entry.receipt.build_unit_identity
-                        && stored.intent == entry.receipt.intent
-                },
-                |_, _| true,
-            );
-            match packaged {
-                Ok(selected) if selected.len() == 1 => {}
-                Ok(selected) if selected.is_empty() => {
-                    let source = store.select_payloads_matching_for_execution(
-                        |stored| {
-                            stored.identity == entry.identity
-                                && stored.kind == entry.kind
-                                && stored.receipt_identity == entry.receipt.identity
-                                && stored.build_unit_identity == entry.receipt.build_unit_identity
-                                && stored.intent == entry.receipt.intent
-                        },
-                        |_, _| true,
-                    );
-                    if source.map_or(true, |selected| selected.len() != 1) {
-                        return Ok(false);
+            let pinned = std::slice::from_ref(entry);
+            match has_complete_packaged_library_loaf(&package_store, pinned) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if !has_complete_packaged_library_loaf(store, pinned).unwrap_or(false) {
+                        return Ok(trace_package_reuse_miss());
                     }
                     let copied = copy_receipted_oven_store_entry(
                         store,
@@ -190,11 +173,21 @@ fn restore_reused_library_package(
                         ));
                     }
                 }
-                Ok(_) | Err(_) => return Ok(false),
+                Err(_) => return Ok(trace_package_reuse_miss()),
             }
         }
     }
     Ok(true)
+}
+
+/// Report the exact package-validation refusal when optional reuse diagnostics are enabled.
+#[track_caller]
+fn trace_package_reuse_miss() -> bool {
+    if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
+        let caller = std::panic::Location::caller();
+        eprintln!("Oven reuse package miss: {}:{}", caller.file(), caller.line());
+    }
+    false
 }
 
 /// Restore a package's exact checked owner, declining reuse only when both original Store coordinates lost it.
@@ -231,6 +224,56 @@ fn restore_reused_library_metadata(
         }
     }
     Ok(true)
+}
+
+/// Restore a complete original metadata/generation pair, retaining destination leases through package publication.
+/// Whole-owner absence declines reuse so the normal producer can rebuild. Corrupt or substituted evidence refuses;
+/// restoration never remints a generation from the caller's current source.
+fn restore_reused_library_generation(
+    store: &OvenStore,
+    package_store: &OvenStore,
+    manifest: &OvenPackagedLibraryLoafManifest,
+) -> CliResult<Option<Arc<super::library_generation::SelectedLibraryGeneration>>> {
+    use super::library_generation::{
+        select_library_generation_reference, select_optional_library_generation_reference,
+    };
+    let (Some(metadata_reference), Some(generation_reference)) =
+        (&manifest.checked_metadata, &manifest.checked_generation)
+    else {
+        return Ok(None);
+    };
+    if !restore_reused_library_metadata(store, package_store, Some(metadata_reference), &manifest.metadata_files)? {
+        return Ok(None);
+    }
+    let metadata = super::library_metadata::select_library_metadata_reference(package_store, metadata_reference)?;
+    if let Some(generation) = select_optional_library_generation_reference(
+        package_store,
+        generation_reference,
+        Arc::clone(&metadata),
+        &manifest.source_authority_digest,
+        &manifest.metadata_files,
+    )? {
+        return Ok(Some(generation));
+    }
+    let Some(generation) = select_optional_library_generation_reference(
+        store,
+        generation_reference,
+        Arc::clone(&metadata),
+        &manifest.source_authority_digest,
+        &manifest.metadata_files,
+    )?
+    else {
+        return Ok(None);
+    };
+    generation.export_into(package_store)?;
+    select_library_generation_reference(
+        package_store,
+        generation_reference,
+        metadata,
+        &manifest.source_authority_digest,
+        &manifest.metadata_files,
+    )
+    .map(Some)
 }
 
 /// Return whether every compiler-shipped release Loaf a project inspection authority names is provided by the
@@ -676,6 +719,16 @@ pub fn try_reuse_baked_project(
     let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
     let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
     trace_reuse_timing(started, "source and compiler authority");
+    let ordinary_library_identity = if targets.len() == 1
+        && targets[0].0 == OvenBakeProjectTarget::Library
+        && super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_some()
+    {
+        Some(super::source_authority::ordinary_library_preparation_identity_digest(
+            None,
+        )?)
+    } else {
+        None
+    };
     let mut selected_outputs = Vec::new();
     let current = CurrentReuseAuthority {
         source_digest: &source_authority_digest,
@@ -688,6 +741,11 @@ pub fn try_reuse_baked_project(
         let Some(selected) = select_current_project_output(project_root, store, expected, located, &current)? else {
             return Ok(None);
         };
+        if let Some(identity) = ordinary_library_identity.as_deref()
+            && !super::output_selection::project_output_preparation_matches(&selected.1.payload, Some(identity), true)
+        {
+            return Ok(None);
+        }
         selected_outputs.push(selected);
     }
     trace_reuse_timing(started, "output selection");
@@ -717,7 +775,13 @@ pub fn try_reuse_baked_project(
     if !project_authority_release_loafs_available(&authority)? {
         return Ok(None);
     }
-    let native_sdk_context = authority_context.native_sdk_context()?;
+    // The exact ordinary preparation identity already selects the native producer route. Its stored inspection
+    // constituents validate themselves; discovering an SDK here would contaminate a later miss in output restoration.
+    let native_sdk_context = if ordinary_library_identity.is_some() {
+        None
+    } else {
+        authority_context.native_sdk_context()?
+    };
     let _validated_authority =
         crate::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(
             authority,
@@ -1097,7 +1161,7 @@ mod tests {
 
 #[cfg(test)]
 mod checked_metadata_restoration_tests {
-    use super::restore_reused_library_metadata;
+    use super::{restore_reused_library_generation, restore_reused_library_metadata};
     use crate::build::library_metadata::{
         LibraryMetadataRecipe, SelectedLibraryMetadata, publish_library_metadata, select_library_metadata_reference,
     };
@@ -1118,6 +1182,11 @@ mod checked_metadata_restoration_tests {
             source.path().join("loaf.toml"),
             "[project]\nname='restored'\nversion='1.0.0'\n",
         )?;
+        fs::create_dir(source.path().join("src"))?;
+        fs::write(
+            source.path().join("src/lib.incn"),
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
         fs::create_dir(output.path().join("src"))?;
         fs::write(output.path().join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
         let manifest_path = output.path().join("restored.incnlib");
@@ -1125,7 +1194,10 @@ mod checked_metadata_restoration_tests {
         let recipe = LibraryMetadataRecipe {
             name: "restored".into(),
             version: "1.0.0".into(),
-            source_digest: digest_bytes(b"source"),
+            source_digest: crate::build::library_project::metadata_replay::observe_library_source_digest(
+                source.path(),
+                &[],
+            )?,
             producer_digest: digest_bytes(b"producer"),
             semantic_authority_digest: digest_bytes(b"semantic"),
             dependencies: BTreeMap::new(),
@@ -1180,6 +1252,61 @@ mod checked_metadata_restoration_tests {
             owner.checked_files()
         )?);
         restored.replay(tempfile::tempdir()?.path())?;
+        Ok(())
+    }
+
+    /// Package loss restores the original metadata and generation together; absent or damaged authority is not success.
+    #[test]
+    fn completed_library_restores_original_checked_generation() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::build::library_generation::publish_library_generation;
+        use crate::build::source_authority::digest_baked_project_source_authority;
+        use crate::build::{OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenPackagedLibraryLoafManifest};
+        let original = tempfile::tempdir()?;
+        let package = tempfile::tempdir()?;
+        let absent = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let store = OvenStore::new(original.path(), limits);
+        let package_store = OvenStore::new(package.path(), limits);
+        let absent_store = OvenStore::new(absent.path(), limits);
+        let (source, metadata) = publish_owner(&store)?;
+        let authority = digest_baked_project_source_authority(source.path())?;
+        let generation = publish_library_generation(&store, source.path(), &authority, &metadata)?;
+        let manifest = OvenPackagedLibraryLoafManifest {
+            schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+            source_authority_digest: authority,
+            compiler_version: incan_lang::version::INCAN_VERSION.into(),
+            metadata_files: metadata.checked_files().to_vec(),
+            checked_metadata: Some(metadata.reference()),
+            checked_generation: Some(generation.reference()),
+            profiles: BTreeMap::new(),
+        };
+        assert!(restore_reused_library_generation(&absent_store, &package_store, &manifest)?.is_none());
+        let restored = restore_reused_library_generation(&store, &package_store, &manifest)?
+            .ok_or("original generation was not restored")?;
+        assert_eq!(
+            restored.reference().owner_identity,
+            generation.reference().owner_identity
+        );
+        assert_eq!(restored.reference().receipt, generation.reference().receipt);
+        // A restored package must stand on its own, without the preparation Store.
+        let repeated = restore_reused_library_generation(&absent_store, &package_store, &manifest)?
+            .ok_or("restored package still required the primary Store")?;
+        repeated.verify()?;
+        let mut mismatched = manifest.clone();
+        mismatched.source_authority_digest = digest_bytes(b"different authored generation");
+        assert!(restore_reused_library_generation(&store, &package_store, &mismatched).is_err());
+        mismatched = manifest.clone();
+        mismatched.checked_generation = None;
+        assert!(restore_reused_library_generation(&store, &package_store, &mismatched)?.is_none());
+        // Missing files inside a present owner are corruption, not permission to rebuild or substitute it.
+        let entry = package_store
+            .root()
+            .join("entries")
+            .join(generation.reference().owner_identity.replace(':', "-"));
+        fs::rename(entry.join("artifact.json"), entry.join("artifact.json.saved"))?;
+        assert!(restore_reused_library_generation(&store, &package_store, &manifest).is_err());
+        fs::rename(entry.join("artifact.json.saved"), entry.join("artifact.json"))?;
+        assert!(restore_reused_library_generation(&store, &package_store, &manifest)?.is_some());
         Ok(())
     }
 

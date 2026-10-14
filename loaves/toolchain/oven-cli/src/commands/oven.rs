@@ -96,11 +96,10 @@ use oven_rustc::rustc::{
     OvenCallerOwnedRustcLibrary, OvenDirectRustcBake, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
     OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
     OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, attach_caller_owned_rustc_libraries,
-    bake_stored_direct_rustc_run, bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib,
-    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_test, clear_inherited_cargo_environment, resolve_active_rustc,
-    resolve_compile_environment_value, run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target,
-    rustc_identity,
+    bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
+    bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
+    clear_inherited_cargo_environment, resolve_active_rustc, resolve_compile_environment_value,
+    run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target, rustc_identity,
 };
 use oven_store::compiler_suite_env::{
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
@@ -1044,9 +1043,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                     bake_planned_compiler_suite_workspace_libraries(
                         &shard.payload.workspace_libraries,
                         &shard.payload.artifact_closure,
-                        &shard.stored.manifest.intent,
+                        &shard.stored.manifest().intent,
                         &receipt,
-                        &shard.stored.artifact_root,
+                        shard.stored.artifact_root(),
                         &rustc,
                         &options.compiler_root,
                         &shard_output,
@@ -1060,9 +1059,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 let binary_outputs = bake_planned_compiler_suite_binaries(
                     &shard.payload.binary_targets,
                     &shard.payload.artifact_closure,
-                    &shard.stored.manifest.intent,
+                    &shard.stored.manifest().intent,
                     &receipt,
-                    &shard.stored.artifact_root,
+                    shard.stored.artifact_root(),
                     &rustc,
                     &options.compiler_root,
                     &shard_output,
@@ -1076,7 +1075,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 // A divided root runs one child per slice, each compiling and inventorying the root itself so
                 // that its slice is derived from the live inventory; every other root runs as one whole child.
                 let slices = case_slices
-                    .get(&shard.stored.manifest.identity)
+                    .get(&shard.stored.manifest().identity)
                     .map(|slices| slices.iter().map(|slice| Some(*slice)).collect::<Vec<_>>())
                     .unwrap_or_else(|| vec![None]);
                 for case_slice in slices {
@@ -1087,8 +1086,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                     prepared_children.push(prepare_compiler_suite_child(
                         &shard.payload.target,
                         &shard.payload.artifact_closure,
-                        &shard.stored.manifest.intent,
-                        &shard.stored.artifact_root,
+                        &shard.stored.manifest().intent,
+                        shard.stored.artifact_root(),
                         &rustc,
                         &options.compiler_root,
                         &child_output,
@@ -2047,9 +2046,9 @@ fn select_compiler_suite_shards(
     let selected = store.select_payloads_for_execution(&identities).map_err(oven_error)?;
     let mut shards = Vec::with_capacity(references.len());
     for (reference, stored) in references.iter().zip(selected) {
-        if stored.manifest.kind != OvenArtifactKind::CompilerTestSuiteShard
-            || stored.manifest.build_unit_identity != receipt.build_unit_identity
-            || stored.manifest.intent != receipt.intent
+        if stored.manifest().kind != OvenArtifactKind::CompilerTestSuiteShard
+            || stored.manifest().build_unit_identity != receipt.build_unit_identity
+            || stored.manifest().intent != receipt.intent
         {
             return Err(CliError::failure(format!(
                 "schema-9 Oven compiler-suite shard `{}` is not authorized by the current compiler receipt",
@@ -2057,7 +2056,7 @@ fn select_compiler_suite_shards(
             )));
         }
         let payload =
-            serde_json::from_slice::<OvenCompilerTestSuiteShardPayload>(&stored.payload).map_err(|error| {
+            serde_json::from_slice::<OvenCompilerTestSuiteShardPayload>(stored.payload()).map_err(|error| {
                 CliError::failure(format!(
                     "stored Oven compiler-suite shard `{}` payload is invalid: {error}",
                     reference.identity
@@ -2131,9 +2130,9 @@ fn select_compiler_suite_foundations(
         .map_err(oven_error)?;
     let mut foundations = BTreeMap::new();
     for (reference, stored) in references.iter().zip(selected) {
-        if stored.manifest.kind != OvenArtifactKind::CompilerTestSuiteFoundation
-            || stored.manifest.build_unit_identity != receipt.build_unit_identity
-            || stored.manifest.intent != receipt.intent
+        if stored.manifest().kind != OvenArtifactKind::CompilerTestSuiteFoundation
+            || stored.manifest().build_unit_identity != receipt.build_unit_identity
+            || stored.manifest().intent != receipt.intent
         {
             return Err(CliError::failure(format!(
                 "schema-10 Oven compiler-suite foundation `{}` is not authorized by the current compiler receipt",
@@ -2141,7 +2140,7 @@ fn select_compiler_suite_foundations(
             )));
         }
         let payload =
-            serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&stored.payload).map_err(|error| {
+            serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(stored.payload()).map_err(|error| {
                 CliError::failure(format!(
                     "stored Oven compiler-suite foundation `{}` payload is invalid: {error}",
                     reference.identity
@@ -2199,9 +2198,9 @@ fn select_compiler_suite_toolchain_data(
         .map_err(oven_error)?;
     let mut partitions = Vec::with_capacity(references.len());
     for (reference, stored) in references.iter().zip(selected) {
-        if stored.manifest.kind != OvenArtifactKind::CompilerTestSuiteToolchainData
-            || stored.manifest.build_unit_identity != receipt.build_unit_identity
-            || stored.manifest.intent != receipt.intent
+        if stored.manifest().kind != OvenArtifactKind::CompilerTestSuiteToolchainData
+            || stored.manifest().build_unit_identity != receipt.build_unit_identity
+            || stored.manifest().intent != receipt.intent
         {
             return Err(CliError::failure(format!(
                 "schema-13 Oven compiler-suite Loaf data `{}` is not authorized by the current compiler receipt",
@@ -2209,7 +2208,7 @@ fn select_compiler_suite_toolchain_data(
             )));
         }
         let payload =
-            serde_json::from_slice::<OvenCompilerTestSuiteToolchainDataPayload>(&stored.payload).map_err(|error| {
+            serde_json::from_slice::<OvenCompilerTestSuiteToolchainDataPayload>(stored.payload()).map_err(|error| {
                 CliError::failure(format!(
                     "stored Oven compiler-suite Loaf data `{}` payload is invalid: {error}",
                     reference.identity
@@ -2217,7 +2216,7 @@ fn select_compiler_suite_toolchain_data(
             })?;
         if payload.schema_version != OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION
             || payload.label != reference.label
-            || stored.manifest.materialized_files.is_empty()
+            || stored.manifest().materialized_files.is_empty()
         {
             return Err(CliError::failure(format!(
                 "stored Oven compiler-suite Loaf data `{}` does not match its index reference",
@@ -2252,7 +2251,7 @@ fn materialize_compiler_suite_toolchain_data(
     }
     let mut seen_paths = BTreeSet::new();
     for partition in partitions {
-        for file in &partition.stored.manifest.materialized_files {
+        for file in &partition.stored.manifest().materialized_files {
             if !seen_paths.insert(file.relative_path.clone()) {
                 return Err(CliError::failure(format!(
                     "schema-13 Oven compiler-suite Loaf partition `{}` overlaps another partition at `{}`",
@@ -2260,7 +2259,7 @@ fn materialize_compiler_suite_toolchain_data(
                 )));
             }
             let source = compiler_suite_file(
-                &partition.stored.artifact_root,
+                partition.stored.artifact_root(),
                 &file.relative_path,
                 &file.digest,
                 "Loaf data file",
@@ -2339,7 +2338,7 @@ fn compiler_suite_composed_artifact_plan(
             )));
         }
         roots.push(OvenTrustedRustcArtifactRoot {
-            artifact_root: &foundation.stored.artifact_root,
+            artifact_root: foundation.stored.artifact_root(),
             dependency_search_paths: &foundation.payload.artifact_closure.dependency_search_paths,
             native_search_paths: &foundation.payload.artifact_closure.native_search_paths,
             supporting_artifacts: &foundation.payload.artifact_closure.supporting_artifacts,
@@ -2723,10 +2722,10 @@ fn select_compiler_test_suite(
         .map_err(oven_error)?;
     let mut current_schema = Vec::new();
     for candidate in selected {
-        let payload = serde_json::from_slice::<OvenCompilerTestSuitePayload>(&candidate.payload).map_err(|error| {
+        let payload = serde_json::from_slice::<OvenCompilerTestSuitePayload>(candidate.payload()).map_err(|error| {
             CliError::failure(format!(
                 "stored Oven compiler suite {} has an invalid payload: {error}",
-                candidate.manifest.identity
+                candidate.manifest().identity
             ))
         })?;
         if payload.schema_version == OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION {
@@ -2744,7 +2743,7 @@ fn select_compiler_test_suite(
             "multiple current-schema Oven compiler test suites are prepared for one build unit: {}",
             current_schema
                 .iter()
-                .map(|entry| entry.manifest.identity.as_str())
+                .map(|entry| entry.manifest().identity.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),
@@ -3511,7 +3510,7 @@ pub fn oven_test(options: OvenTestCommandOptions) -> CliResult<ExitCode> {
 pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
     let receipt = read_receipt(&options.receipt)?;
     let store = open_store(&options.store)?;
-    let bake = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
+    let (bake, _execution_lease) = crate::project_owner::prepare_stored_native(OvenStoredDirectRustcRunRequest {
         store: &store,
         plan_identity: options.plan_identity,
         receipt,
@@ -3521,11 +3520,27 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
         crate_name: options.crate_name,
         edition: options.edition,
         source_evidence_key: options.source_evidence_key,
-    })
-    .map_err(oven_error)?;
-    let executable = bake.output.clone();
-    let mut command = std::process::Command::new(&executable);
-    command.args(&options.arguments);
+    })?;
+    run_prepared_native(
+        &bake.output,
+        &options.arguments,
+        options.format,
+        bake.cargo_process_started,
+        bake.reused,
+    )
+}
+
+/// Execute in the invoking process so stdin, stdout, stderr and program arguments never cross owner transport.
+/// The caller must retain its original Store execution lease until this function returns.
+fn run_prepared_native(
+    executable: &Path,
+    arguments: &[std::ffi::OsString],
+    format: OvenOutputFormat,
+    cargo_process_started: bool,
+    reused: bool,
+) -> CliResult<ExitCode> {
+    let mut command = std::process::Command::new(executable);
+    command.args(arguments);
     clear_inherited_cargo_environment(&mut command);
     let status = command.status().map_err(|error| {
         CliError::failure(format!(
@@ -3539,12 +3554,12 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
             executable.display(),
         )));
     }
-    match options.format {
+    match format {
         OvenOutputFormat::Text => println!("Oven ran {} without a Cargo consumer.", executable.display()),
         OvenOutputFormat::Json => print_json(&serde_json::json!({
             "executable": executable,
-            "cargo_process_started": bake.cargo_process_started,
-            "reused": bake.reused,
+            "cargo_process_started": cargo_process_started,
+            "reused": reused,
         }))?,
     }
     Ok(ExitCode::SUCCESS)
@@ -3563,8 +3578,8 @@ mod tests {
         DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
         DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
         DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES, OvenCompilerSuiteTargetCapabilities,
-        OvenImportCommandOptions, OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenRunCommandOptions,
-        OvenStoreCommandOptions, OvenTestCommandOptions, apply_compiler_suite_target_capabilities,
+        OvenImportCommandOptions, OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenStoreCommandOptions,
+        OvenTestCommandOptions, apply_compiler_suite_target_capabilities,
         attach_compiler_suite_target_workspace_libraries, bake_planned_compiler_suite_binaries,
         bake_planned_compiler_suite_workspace_libraries, compiler_suite_auto_parallel_jobs,
         compiler_suite_child_state_root, compiler_suite_cli_output, compiler_suite_completion_failures,
@@ -3577,10 +3592,10 @@ mod tests {
         loaf_envelope_compatibility_map, loaf_envelope_compatibility_map_with_release_member,
         loaf_envelope_default_limits, loaf_envelope_evidence, loaf_fixture_action_name,
         loaf_generation_identity_with_release_member, native_test_failure_summary, oven_import,
-        oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
+        oven_publish_direct_rustc_plan, oven_test, parse_named_path, prepare_compiler_suite_child,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
-        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
-        write_native_test_transcript,
+        run_prepared_compiler_suite_children, run_prepared_native, select_compiler_suite_shards,
+        write_compiler_suite_report, write_native_test_transcript,
     };
     use crate::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use incan_driver::oven_store::{default_store_root, resolve_limits_with_environment_and_defaults};
@@ -4364,7 +4379,7 @@ mod tests {
             materialized_directories: Vec::new(),
         })?;
         let selected = super::select_compiler_test_suite(&store, &receipt, compiler_root.path(), &rustc)?;
-        assert_eq!(selected.manifest.identity, current_manifest.identity);
+        assert_eq!(selected.manifest().identity, current_manifest.identity);
         let tools = tempfile::tempdir()?;
         let cargo_marker = tools.path().join("cargo-started");
         let cargo = tools.path().join("cargo");
@@ -5763,7 +5778,7 @@ mod tests {
             OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
         )?;
         assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].stored.manifest.identity, manifest.identity);
+        assert_eq!(selected[0].stored.manifest().identity, manifest.identity);
         assert_eq!(selected[0].payload, shard);
         let inspection = store.inspect()?;
         assert_eq!(inspection.active_lease_physical_bytes, inspection.physical_bytes);
@@ -6867,19 +6882,26 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             store: store.clone(),
             format: OvenOutputFormat::Json,
         })?;
-        oven_run(OvenRunCommandOptions {
-            receipt,
-            plan_identity: inspection.entries[0].manifest.identity.clone(),
-            rustc,
-            source,
-            output: output.path().join("command-surface-run"),
-            crate_name: "oven_command_surface_run".to_string(),
-            edition: "2024".to_string(),
-            source_evidence_key: "direct-rustc-source".to_string(),
-            arguments: vec![OsString::from("--oven-proof")],
-            store,
-            format: OvenOutputFormat::Json,
-        })?;
+        let selected_store = OvenStore::new(store_root.path(), limits);
+        let bake =
+            oven_rustc::rustc::bake_stored_direct_rustc_run(&oven_rustc::rustc::OvenStoredDirectRustcRunRequest {
+                store: &selected_store,
+                receipt: serde_json::from_slice(&fs::read(receipt)?)?,
+                plan_identity: inspection.entries[0].manifest.identity.clone(),
+                rustc,
+                source,
+                output: output.path().join("command-surface-run"),
+                crate_name: "oven_command_surface_run".to_string(),
+                edition: "2024".to_string(),
+                source_evidence_key: "direct-rustc-source".to_string(),
+            })?;
+        run_prepared_native(
+            &bake.output,
+            &[OsString::from("--oven-proof")],
+            OvenOutputFormat::Json,
+            bake.cargo_process_started,
+            bake.reused,
+        )?;
         Ok(())
     }
 

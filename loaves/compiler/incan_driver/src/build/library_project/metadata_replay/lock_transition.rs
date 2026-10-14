@@ -49,7 +49,7 @@ impl MetadataLockTransition {
         let lock = canonical_lock_coordinate(context.project.project_root())?;
         let features = context
             .session
-            .package_feature_plan
+            .package_feature_plan()
             .as_ref()
             .ok_or_else(|| invalid("lock transition lacks original feature graph"))?;
         let source = current_source_snapshot(context.project.project_root(), features)?;
@@ -66,7 +66,7 @@ impl MetadataLockTransition {
 
     /// Reobserve full current authority and re-seal original checked outputs only for a proven exact lock transition.
     ///
-    /// The candidate must come from the normal MetadataPreparation::observe with current session/native inputs.
+    /// The candidate must come from the normal MetadataPreparation observation with current session/native inputs.
     /// An unchanged recipe retains the original owner; this never reparses or rechecks the authored Incan source.
     pub fn finalize(
         self,
@@ -115,7 +115,7 @@ impl MetadataLockTransition {
         }
         let features = context
             .session
-            .package_feature_plan
+            .package_feature_plan()
             .as_ref()
             .ok_or_else(|| invalid("lock transition lacks current feature graph"))?;
         let source = current_source_snapshot(context.project.project_root(), features)?;

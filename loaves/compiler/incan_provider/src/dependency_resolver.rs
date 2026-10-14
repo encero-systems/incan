@@ -41,6 +41,54 @@ pub struct ResolvedDependencies {
     pub dev_dependencies: Vec<DependencySpec>,
 }
 
+impl ResolvedDependencies {
+    /// Project the canonical public feature closure onto already resolved native Loaf requirements.
+    /// Incan provider edges and legacy Rust interop declarations retain their own contracts. This projection
+    /// preserves aliases, versions, source identity, declared features and dev dependencies; it neither resolves
+    /// features again nor grants target-selection authority. Conditional native edges require an evaluated target.
+    pub fn apply_package_features(
+        &mut self,
+        manifest: &ProjectManifest,
+        features: &crate::ResolvedPackageFeatures,
+    ) -> Result<(), Vec<DependencyError>> {
+        let errors = manifest
+            .loaf_dependencies
+            .iter()
+            .filter_map(|(name, alternatives)| {
+                let active = alternatives.iter().any(|edge| !edge.spec.optional)
+                    || features.active_optional_dependencies.contains(name);
+                (active && alternatives.iter().any(|edge| edge.target.is_some())).then(|| DependencyError {
+                    file_path: manifest.path().to_path_buf(),
+                    error: CompileError::new(
+                        format!(
+                            "Loaf dependency `{name}` requires selected target cfg evidence before Rust projection"
+                        ),
+                        Span::default(),
+                    ),
+                })
+            })
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        self.dependencies.retain_mut(|dependency| {
+            if !manifest.loaf_dependencies.contains_key(&dependency.crate_name) {
+                return true;
+            }
+            if dependency.optional && !features.active_optional_dependencies.contains(&dependency.crate_name) {
+                return false;
+            }
+            if let Some(requested) = features.dependency_features.get(&dependency.crate_name) {
+                dependency.features.extend(requested.iter().cloned());
+                dependency.features.sort();
+                dependency.features.dedup();
+            }
+            true
+        });
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ManifestDependencyScope {
     All,
@@ -167,12 +215,20 @@ fn resolve_dependencies_with_scope(
 
     if errors.is_empty() {
         Ok(ResolvedDependencies {
-            dependencies: resolved_deps.into_values().collect(),
-            dev_dependencies: resolved_dev_deps.into_values().collect(),
+            dependencies: ordered_specs(resolved_deps),
+            dev_dependencies: ordered_specs(resolved_dev_deps),
         })
     } else {
         Err(errors)
     }
+}
+
+/// Preserve deterministic dependency request identity across independent parses of the same declarations.
+/// Sorting changes only order: versions, aliases, source paths and normalized feature requirements remain intact.
+fn ordered_specs(specs: HashMap<String, DependencySpec>) -> Vec<DependencySpec> {
+    let mut specs = specs.into_values().collect::<Vec<_>>();
+    specs.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    specs
 }
 
 // ============================================================================
@@ -744,6 +800,147 @@ mod tests {
         errors
             .first()
             .ok_or_else(|| std::io::Error::other("expected at least one dependency error").into())
+    }
+
+    /// Reopening identical authored dependencies must preserve ordered native preparation requests.
+    #[test]
+    fn reloaded_manifest_preserves_dependency_request_order() -> TestResult {
+        let source = r#"
+[project]
+name = "ordered_dependencies"
+version = "0.1.0"
+[dependencies]
+zeta = { loaf = "crates-io/zeta", version = "1" }
+alpha = { loaf = "crates-io/alpha", version = "2", features = ["second", "first"] }
+middle = { loaf = "crates-io/middle", version = "3", default-features = false }
+"#;
+        for _ in 0..16 {
+            let manifest = parse_manifest(source)?;
+            let resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+            let names = resolved
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["alpha", "middle", "zeta"]);
+            assert_eq!(resolved.dependencies[0].features, ["first", "second"]);
+            assert!(!resolved.dependencies[1].default_features);
+            let imports = [
+                inline("zeta_dev", Some("1"), &[], true),
+                inline("alpha_dev", Some("1"), &[], true),
+            ];
+            let resolved = resolve_ok(None, &imports, true, &default_cargo_features())?;
+            let names = resolved
+                .dev_dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["alpha_dev", "zeta_dev"]);
+        }
+        Ok(())
+    }
+
+    /// Public Loaf feature projection selects optional native requirements and unions forwarded features.
+    #[test]
+    fn native_loaf_features_preserve_resolved_dependency_identity() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[project.features]
+default = ["json"]
+json = ["dep:serializer", "serializer/derive", "serializer/alloc"]
+[dependencies]
+serializer = { loaf = "crates-io/serde", version = "1", optional = true, default-features = false, features = ["alloc"] }
+unused = { loaf = "crates-io/unused", version = "2", optional = true }
+"#,
+        )?;
+        let fixture = manifest_with_test_dependency()?;
+        let manifest = manifest.with_effective_dependencies(
+            [],
+            manifest
+                .rust_dependencies()
+                .iter()
+                .map(|(name, spec)| (name.clone(), spec.clone())),
+            fixture
+                .rust_dev_dependencies()
+                .iter()
+                .map(|(name, spec)| (name.clone(), spec.clone())),
+        );
+        let features =
+            crate::PackageFeatureGraph::from_manifest(&manifest)?.resolve(&crate::FeatureSelection::default())?;
+        let mut resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        let original = dependency(&resolved.dependencies, "serializer")?.clone();
+        resolved
+            .apply_package_features(&manifest, &features)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(resolved.dependencies.len(), 1);
+        let selected = dependency(&resolved.dependencies, "serializer")?;
+        assert_eq!(selected.features, ["alloc", "derive"]);
+        assert_eq!(selected.source, original.source);
+        assert_eq!(selected.version, original.version);
+        assert_eq!(selected.package, original.package);
+        assert!(!selected.default_features);
+        assert_eq!(
+            dependency(&resolved.dev_dependencies, "test_lib")?.version.as_deref(),
+            Some("0.5")
+        );
+        let mut disabled = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        let features = crate::PackageFeatureGraph::from_manifest(&manifest)?.resolve(&crate::FeatureSelection {
+            no_default_features: true,
+            ..crate::FeatureSelection::default()
+        })?;
+        disabled
+            .apply_package_features(&manifest, &features)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert!(disabled.dependencies.is_empty());
+        assert_eq!(disabled.dev_dependencies.len(), 1);
+        Ok(())
+    }
+
+    /// Unselected conditional edges stay inactive, while active ones cannot silently disappear without target facts.
+    #[test]
+    fn native_loaf_features_require_target_evidence() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[project.features]
+platform = ["dep:platform"]
+[dependencies]
+platform = [{ loaf = "crates-io/libc", version = "0.2", optional = true, target = "aarch64-apple-darwin" }]
+"#,
+        )?;
+        let graph = crate::PackageFeatureGraph::from_manifest(&manifest)?;
+        let mut resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        resolved
+            .apply_package_features(&manifest, &graph.resolve(&crate::FeatureSelection::default())?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let errors = resolved
+            .apply_package_features(&manifest, &graph.resolve(&crate::FeatureSelection::new(["platform"]))?)
+            .err()
+            .ok_or("active conditional native edge disappeared")?;
+        assert!(
+            first_error(&errors)?
+                .error
+                .message
+                .contains("selected target cfg evidence")
+        );
+        Ok(())
+    }
+
+    /// Public package features do not reinterpret optional legacy Rust interop requirements.
+    #[test]
+    fn native_loaf_feature_projection_preserves_legacy_requirements() -> TestResult {
+        let manifest = parse_manifest(
+            r#"
+[rust-dependencies]
+legacy = { version = "1", optional = true, features = ["explicit"] }
+"#,
+        )?;
+        let mut resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+        let before = resolved.dependencies.clone();
+        resolved
+            .apply_package_features(&manifest, &crate::ResolvedPackageFeatures::default())
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(resolved.dependencies, before);
+        Ok(())
     }
 
     // ---- Phase 2: Feature union across multiple import sites ----

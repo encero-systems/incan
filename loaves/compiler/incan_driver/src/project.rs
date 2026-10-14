@@ -65,11 +65,22 @@ pub fn effective_project_manifest_for_exact_root(project_root: &Path) -> CliResu
 
 /// Resolve one parsed manifest against its active RFC 077 workspace, if any.
 fn effective_project_manifest(manifest: ProjectManifest) -> CliResult<ProjectManifest> {
-    for diagnostic in &manifest.deprecations {
-        eprintln!("warning: {}: {diagnostic}", manifest.path().display());
-    }
     let workspace =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    effective_project_manifest_with_workspace(manifest, workspace.as_ref())
+}
+
+/// Apply the same RFC 077 inheritance boundary to an already observed workspace graph.
+///
+/// A retained owner supplies the existing graph rather than discovering a second one. The graph must describe the
+/// current manifest's canonical root; absent membership and dangling inheritance retain their ordinary diagnostics.
+pub(crate) fn effective_project_manifest_with_workspace(
+    manifest: ProjectManifest,
+    workspace: Option<&WorkspaceGraph>,
+) -> CliResult<ProjectManifest> {
+    for diagnostic in &manifest.deprecations {
+        crate::diagnostics::emit_warning_output(format!("warning: {}: {diagnostic}\n", manifest.path().display()));
+    }
     let Some(workspace) = workspace else {
         if manifest.has_workspace_inherited_dependencies() {
             return Err(CliError::failure(format!(

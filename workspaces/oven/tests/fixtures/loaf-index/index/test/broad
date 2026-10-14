@@ -1,0 +1,1 @@
+{"name":"test/broad","vers":"1.0.0","cksum":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","yanked":false,"rust":{"name":"broad","type":"lib","edition":"2021"},"deps":[{"name":"chosen","loaf":"test/versioned","req":"*","features":[],"default-features":false,"optional":false}],"features":{},"facts":[]}

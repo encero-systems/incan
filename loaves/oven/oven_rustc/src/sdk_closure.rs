@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 type Error = Box<dyn std::error::Error>;
 const INDEX_COMMIT: &str = "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87";
 
+mod compile;
 pub(crate) mod current_inputs;
 mod environment;
 mod index_batch;
@@ -27,11 +28,16 @@ mod local;
 mod native;
 mod physical_edges;
 
+use compile::compile_units;
+
 /// Actual process, protocol and blob work for one native preparation or validation reader.
 pub use index_batch::IndexBatchWork as NativeIndexReadWork;
 
+#[cfg(test)]
+pub(crate) use local::local_native_source_selection;
+
 pub(crate) use local::{
-    compile_local_native_facets_for_profile, local_native_source_selection, native_required_features,
+    compile_local_native_facets_for_profile, local_native_source_selection_with_observer, native_required_features,
 };
 
 pub use physical_edges::SdkPhysicalNativeEdge;
@@ -125,17 +131,8 @@ pub struct SdkLockedEdge {
     pub domain: String,
 }
 
-/// One evaluated dependency target condition from the seed.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SdkLockedPredicate {
-    /// Declaration position in the adopted dependency list.
-    pub declaration: usize,
-    /// Authored predicate text.
-    pub target: String,
-    /// Evaluation for this binding.
-    pub matches: bool,
-}
+/// Existing native source predicate record, retained under the seed boundary's historical name.
+pub type SdkLockedPredicate = crate::native_loaf::NativeLoafPredicate;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -259,7 +256,10 @@ pub(crate) fn prepare_closure_in_store(
     std::fs::create_dir_all(output)?;
     let toolchain = rustc_identity(rustc)?;
     let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
-    let (units, index_reads) = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
+    let (units, index_reads) = {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_registry_sources", units = seed.units.len(), profile).entered();
+        prepare_units(seed.units, scratch.path(), request, &toolchain)?
+    };
     let context = CompileContext {
         rustc,
         target,
@@ -308,118 +308,6 @@ fn validate_seed(seed: &Seed) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-/// Compile independent branches in dependency order, retaining every unavailable binding in the report.
-fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result<SdkCompiledClosure, Error> {
-    let mut selected_units: Vec<SdkCompiledUnit> = Vec::new();
-    let mut report = SdkClosureReport::default();
-    let mut pending: BTreeSet<usize> = (0..units.len()).collect();
-    let mut artifacts = BTreeMap::new();
-    let mut inspection_indices = BTreeMap::new();
-    let mut closures: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
-    while !pending.is_empty() {
-        let mut progressed = false;
-        for index in pending.clone() {
-            let unit = &units[index];
-            if unit.build_script && unit.fact.is_none() {
-                report.refused.push(binding_label(&unit.binding, context.profile));
-                pending.remove(&index);
-                progressed = true;
-                continue;
-            }
-            let edges = active_edges(unit, units)?;
-            if edges.iter().any(|(_, dependency)| pending.contains(dependency)) {
-                continue;
-            }
-            pending.remove(&index);
-            progressed = true;
-            if edges.iter().any(|(_, dependency)| !artifacts.contains_key(dependency)) {
-                report.failed.push(format!(
-                    "{}: dependency was refused or failed",
-                    binding_label(&unit.binding, context.profile)
-                ));
-                continue;
-            }
-            let externs = edges
-                .iter()
-                .filter_map(|(name, dependency)| {
-                    artifacts
-                        .get(dependency)
-                        .map(|path: &PathBuf| (name.clone(), path.clone()))
-                })
-                .collect();
-            let mut closure = BTreeSet::new();
-            for (_, dependency) in &edges {
-                closure.insert(*dependency);
-                if let Some(transitive) = closures.get(dependency) {
-                    closure.extend(transitive);
-                }
-            }
-            let searches = closure
-                .iter()
-                .filter_map(|index| {
-                    artifacts
-                        .get(index)
-                        .and_then(|path| path.parent())
-                        .map(Path::to_path_buf)
-                })
-                .collect();
-            let selected_dependencies = edges
-                .iter()
-                .map(|(name, dependency)| {
-                    inspection_indices
-                        .get(dependency)
-                        .and_then(|index| selected_units.get(*index))
-                        .map(|selected| (name.as_str(), selected))
-                        .ok_or("compiled dependency has no producer selection")
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let physical_bindings = selected_native_bindings(&selected_dependencies)?;
-            match compile_unit(unit, context, externs, searches, &physical_bindings) {
-                Ok((path, reused, owner, reproduced_receipt)) => {
-                    let physical_edges = physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
-                    let dependencies = edges
-                        .iter()
-                        .map(|(name, dependency)| {
-                            inspection_indices
-                                .get(dependency)
-                                .map(|index| serde_json::json!({"crate": index, "name": name}))
-                                .ok_or("compiled dependency has no inspection index")
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let inspection = inspection_unit(unit, &owner.artifact_root.join("source"), dependencies)?;
-                    inspection_indices.insert(index, selected_units.len());
-                    selected_units.push(SdkCompiledUnit {
-                        binding: unit.binding.clone(),
-                        output: path.clone(),
-                        owner,
-                        inspection,
-                        physical_edges,
-                        reproduced_receipt,
-                    });
-                    artifacts.insert(index, path);
-                    closures.insert(index, closure);
-                    if reused {
-                        report.reused.push(binding_label(&unit.binding, context.profile));
-                    } else {
-                        report.compiled.push(binding_label(&unit.binding, context.profile));
-                    }
-                }
-                Err(error) => report
-                    .failed
-                    .push(format!("{}: {error}", binding_label(&unit.binding, context.profile))),
-            }
-        }
-        if !progressed {
-            return Err("cycle in locked SDK closure".into());
-        }
-    }
-    Ok(SdkCompiledClosure {
-        report,
-        units: selected_units,
-        auxiliary_targets: BTreeMap::new(),
-    })
 }
 
 /// Freeze source inspection against the same selected facet, facts and active dependency indices as compilation.
@@ -766,6 +654,7 @@ fn compile_unit(
     searches: Vec<PathBuf>,
     physical_bindings: &[crate::native_loaf::NativeLoafPhysicalBinding],
 ) -> Result<(PathBuf, bool, OvenStoreExecutionPayload, oven_store::OvenReceipt), Error> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_native_unit", loaf = %unit.binding.loaf, version = %unit.binding.version, domain = %unit.binding.domain, profile = context.profile).entered();
     let _source_lease = unit
         ._source_lease
         .as_ref()
@@ -815,11 +704,12 @@ fn compile_unit(
     receipt = environment::bind_environment(&receipt, &plan.compile_environment)?;
     let native = native::prepare(unit, context, &receipt)?;
     for product in &native {
-        plan.native_search_paths.push(product.owner.artifact_root.clone());
+        plan.native_search_paths
+            .push(product.owner.artifact_root().to_path_buf());
         receipt = oven_store::receipt_with_build_unit_input(
             &receipt,
             format!("sdk-native:{}", product.name),
-            &product.owner.manifest.receipt_identity,
+            &product.owner.manifest().receipt_identity,
         )?;
     }
     if !native.is_empty() {
@@ -840,8 +730,10 @@ fn compile_unit(
     };
     let domain = format!("sdk-source-unit-{}", unit.binding.domain);
     if let Some(owner) = select_native_unit(store, &receipt, &domain)? {
-        return Ok((owner.artifact_root.join(&relative), true, owner, receipt));
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_unit", loaf = %unit.binding.loaf, domain = %unit.binding.domain);
+        return Ok((owner.artifact_root().join(&relative), true, owner, receipt));
     }
+    tracing::trace!(target: "incan::invocation", decision = "compile_native_unit", loaf = %unit.binding.loaf, domain = %unit.binding.domain);
     // Successful raw outputs have no lifetime beyond durable publication. Concurrent producers get independent
     // staging directories; the canonical Store remains the single retained byte cache.
     let directory = tempfile::Builder::new().prefix("native-unit-").tempdir_in(output)?;
@@ -866,7 +758,7 @@ fn compile_unit(
         bake_trusted_direct_rustc_library(&request)?
     };
     let owner = publish_staged_unit(unit, store, &receipt, domain, result.output, &relative, directory)?;
-    Ok((owner.artifact_root.join(relative), result.reused, owner, receipt))
+    Ok((owner.artifact_root().join(relative), result.reused, owner, receipt))
 }
 
 /// A failed durable publication keeps its task-private output and original sourced error for inspection.
@@ -931,7 +823,7 @@ fn select_native_unit(
     }
     let owner = selected.pop();
     if let Some(owner) = &owner {
-        let _verified = store.select(&owner.manifest.identity)?;
+        let _verified = store.select(&owner.manifest().identity)?;
     }
     Ok(owner)
 }
@@ -1017,6 +909,7 @@ fn publish_unit(
     output: PathBuf,
     relative: &str,
 ) -> Result<OvenStoreExecutionPayload, Error> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::publish_native_unit", loaf = %unit.binding.loaf, version = %unit.binding.version, domain = %unit.binding.domain).entered();
     let mut files = source_materializations(&unit.root, &unit.root)?;
     files.push(OvenArtifactMaterializedFile {
         source_path: output,
@@ -1429,7 +1322,7 @@ impl SdkCompiledUnit {
     pub fn native_artifact(&self) -> Result<SdkNativeArtifact, Error> {
         let relative = self
             .output
-            .strip_prefix(&self.owner.artifact_root)?
+            .strip_prefix(self.owner.artifact_root())?
             .to_string_lossy()
             .replace('\\', "/");
         let file = self
@@ -1440,7 +1333,7 @@ impl SdkCompiledUnit {
             .ok_or("native SDK output is absent from its admitted artifact manifest")?;
         Ok(SdkNativeArtifact {
             binding: self.binding.clone(),
-            store_identity: self.owner.manifest.identity.clone(),
+            store_identity: self.owner.manifest().identity.clone(),
             receipt_identity: self.compiled_identity().to_string(),
             relative_path: relative,
             digest: file.digest.clone(),
@@ -1448,12 +1341,12 @@ impl SdkCompiledUnit {
     }
     /// Receipt identity binding source, dependencies, facts, compiler and profile.
     pub fn compiled_identity(&self) -> &str {
-        &self.owner.manifest.receipt_identity
+        &self.owner.manifest().receipt_identity
     }
 
     /// Content-addressed Oven store entry holding this unit's compiled output, the coordinate an asset archive packs.
     pub fn entry_identity(&self) -> &str {
-        &self.owner.manifest.identity
+        &self.owner.manifest().identity
     }
     /// Borrow the immutable selected binding.
     pub fn binding(&self) -> &SdkLockedUnit {
@@ -1465,7 +1358,7 @@ impl SdkCompiledUnit {
     }
     /// Return the source-only immutable root retained by this unit's execution lease.
     pub fn source_root(&self) -> PathBuf {
-        self.owner.artifact_root.join("source")
+        self.owner.artifact_root().join("source")
     }
 }
 
@@ -1553,15 +1446,7 @@ fn publish_native_loaf_units(
                         && child.record().source == source
                 })
                 .ok_or("ordinary native record is missing its exact producer-selected dependency")?;
-            let child_owner_store = child
-                .output()?
-                .parent()
-                .and_then(Path::parent)
-                .and_then(Path::parent)
-                .and_then(Path::parent)
-                .ok_or("ordinary native child has no Store coordinate")?
-                .to_path_buf();
-            if child_owner_store != edge.store() {
+            if child.native_store()? != edge.store() {
                 return Err("ordinary native dependency Store differs from its producer-selected destination".into());
             }
             dependencies.push(NativeLoafDependency {
@@ -1572,7 +1457,7 @@ fn publish_native_loaf_units(
             });
         }
         // The native owner's payload carries the exact source selection. Do not promote mutable catalog edges.
-        let admitted: SdkLockedUnit = serde_json::from_slice(&unit.owner.payload)?;
+        let admitted: SdkLockedUnit = serde_json::from_slice(unit.owner.payload())?;
         if serde_json::to_value(admitted.identity_binding())? != serde_json::to_value(unit.binding.identity_binding())?
             || unit
                 .reproduced_receipt
@@ -1587,7 +1472,7 @@ fn publish_native_loaf_units(
         let native = NativeLoafReference {
             identity: artifact.store_identity,
             receipt_identity: artifact.receipt_identity,
-            domain: unit.owner.manifest.domain.clone(),
+            domain: unit.owner.manifest().domain.clone(),
             relative_path: artifact.relative_path,
             digest: artifact.digest,
         };
@@ -1641,7 +1526,7 @@ fn selected_native_bindings(
                 native: crate::native_loaf::NativeLoafReference {
                     identity: artifact.store_identity.clone(),
                     receipt_identity: artifact.receipt_identity.clone(),
-                    domain: unit.owner.manifest.domain.clone(),
+                    domain: unit.owner.manifest().domain.clone(),
                     relative_path: artifact.relative_path.clone(),
                     digest: artifact.digest.clone(),
                 },

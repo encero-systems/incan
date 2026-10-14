@@ -26,6 +26,8 @@ type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) struct InventoryChecks {
     calls: Arc<std::sync::atomic::AtomicUsize>,
     declarations: Arc<std::sync::atomic::AtomicUsize>,
+    selectors: Arc<std::sync::atomic::AtomicUsize>,
+    bindings: Arc<std::sync::atomic::AtomicUsize>,
     sequence: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -55,6 +57,12 @@ impl tracing::Subscriber for InventoryChecks {
         }
         if attributes.metadata().name() == "oven_rustc::read_current_local_declaration" {
             self.declarations.fetch_add(1, Ordering::Relaxed);
+        }
+        if attributes.metadata().name() == "oven_store::select_exact_payloads" {
+            self.selectors.fetch_add(1, Ordering::Relaxed);
+        }
+        if attributes.metadata().name() == "oven_rustc::validate_native_loaf_bindings" {
+            self.bindings.fetch_add(1, Ordering::Relaxed);
         }
         tracing::span::Id::from_u64(self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
     }
@@ -88,6 +96,7 @@ fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
     let checks = InventoryChecks::default();
     let selected = tracing::subscriber::with_default(checks.clone(), || NativeLoafClosure::admit(&native, &roots))?;
     assert_eq!(selected.graph.units.len(), 2);
+    assert_eq!(checks.bindings.load(Ordering::Relaxed), 2);
     assert_eq!(
         checks.calls.load(Ordering::Relaxed),
         4,
@@ -96,6 +105,11 @@ fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
 
     let checks = InventoryChecks::default();
     tracing::subscriber::with_default(checks.clone(), || selected.graph.select(&roots))?;
+    assert_eq!(
+        checks.bindings.load(Ordering::Relaxed),
+        0,
+        "private immutable bindings must not be reconstructed on a retained handoff"
+    );
     assert_eq!(
         checks.calls.load(Ordering::Relaxed),
         4,
@@ -119,6 +133,40 @@ fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
     replace_owned_fixture(&child.output()?, b"changed native bytes")?;
     assert!(NativeLoafClosure::admit(&native, &roots).is_err());
     assert!(selected.graph.select(&roots).is_err());
+    Ok(())
+}
+
+/// Store coordinate projection consumes no output, while publication and execution still reject changed children.
+#[test]
+fn dev7_native_loaf_store_coordinate_preserves_publication_integrity() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let child = publish(temp.path(), &native, &mut graph, "child", &[], &[])?;
+    let selected = Arc::clone(graph.units.get(&child).ok_or("child missing")?);
+    let output = selected.output()?;
+    let original = std::fs::read(&output)?;
+    let checks = InventoryChecks::default();
+    let coordinate = tracing::subscriber::with_default(checks.clone(), || selected.native_store())?;
+    assert_eq!(coordinate, std::fs::canonicalize(native.root())?);
+    assert_eq!(checks.count(), 0, "location metadata must not consume native files");
+    let first = publish(temp.path(), &native, &mut graph, "first", &[], &[("child", &child)])?;
+    assert!(graph.units.contains_key(&first));
+
+    replace_owned_fixture(&output, b"changed child bytes")?;
+    assert_eq!(
+        selected.native_store()?,
+        coordinate,
+        "location is not a freshness claim"
+    );
+    assert!(selected.output().is_err());
+    assert!(publish(temp.path(), &native, &mut graph, "second", &[], &[("child", &child)]).is_err());
+    assert_eq!(graph.units.len(), 2, "failed publication must not enter the graph");
+
+    replace_owned_fixture(&output, &original)?;
+    let second = publish(temp.path(), &native, &mut graph, "second", &[], &[("child", &child)])?;
+    assert!(graph.units.contains_key(&second));
+    assert_eq!(std::fs::read(selected.output()?)?, original);
     Ok(())
 }
 
@@ -533,7 +581,7 @@ fn dev7_native_loaf_declaration_requires_defaults_and_admitted_manifest() -> Tes
         ["libfixture.rlib"]
     );
     replace_owned_fixture(
-        &unit.native_owner.artifact_root.join("source/loaf.toml"),
+        &unit.native_owner.artifact_root().join("source/loaf.toml"),
         b"[project]\nname='substituted'\n",
     )?;
     assert!(unit.plan_members("units/fixture").is_err());
@@ -623,7 +671,15 @@ fn dev7_native_loaf_graph_verification_is_linear_and_fresh() -> TestResult {
     );
 
     let mut admission = NativeLoafVerificationWork::default();
-    let admitted = NativeLoafClosure::admit_with_work(&native, &roots, &mut admission)?;
+    let checks = InventoryChecks::default();
+    let admitted = tracing::subscriber::with_default(checks.clone(), || {
+        NativeLoafClosure::admit_with_work(&native, &roots, &mut admission)
+    })?;
+    assert_eq!(
+        checks.selectors.load(std::sync::atomic::Ordering::Relaxed),
+        4,
+        "three record frontiers and one native-owner batch must share the existing Store selector"
+    );
     assert_eq!(
         admission,
         NativeLoafVerificationWork {
@@ -897,10 +953,16 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     refuses(verify_children(&substituted, &graph.units), "owner was substituted")?;
     let mut injected = unit.record.clone();
     injected.dependencies[0].alias = "injected".to_string();
-    refuses(verify_native(&injected, &unit.native_owner), "extern recipe")?;
+    refuses(
+        verify_native(&injected, &unit.native_owner, super::NativeInventory::Execution),
+        "extern recipe",
+    )?;
     let mut missing = unit.record.clone();
     missing.dependencies.clear();
-    refuses(verify_native(&missing, &unit.native_owner), "extern recipe")?;
+    refuses(
+        verify_native(&missing, &unit.native_owner, super::NativeInventory::Execution),
+        "extern recipe",
+    )?;
     let mut absent = BTreeMap::new();
     absent.insert(parent.clone(), Arc::clone(unit));
     refuses(
@@ -915,7 +977,15 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     )?;
     let mut recipe = unit.record.clone();
     recipe.recipe.intent.target = "substituted-target".to_string();
-    assert!(verify_record(&recipe, &unit.record_owner, &unit.native_owner).is_err());
+    assert!(
+        verify_record(
+            &recipe,
+            &unit.record_owner,
+            &unit.native_owner,
+            super::NativeInventory::Execution
+        )
+        .is_err()
+    );
     Ok(())
 }
 
@@ -938,7 +1008,11 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
     let installed = temp.path().join("missing-native-store");
     copy_tree(native.root(), &installed)?;
     let source_store = std::fs::canonicalize(native.root())?;
-    let entry = unit.native_owner.artifact_root.parent().ok_or("native entry missing")?;
+    let entry = unit
+        .native_owner
+        .artifact_root()
+        .parent()
+        .ok_or("native entry missing")?;
     std::fs::remove_dir_all(installed.join(entry.strip_prefix(&source_store)?))?;
     assert!(matches!(
         NativeLoafClosure::admit_published(
@@ -949,7 +1023,7 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
     ));
     let record_payload = unit
         .record_owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .ok_or("record entry missing")?
         .join("payload");
@@ -960,7 +1034,7 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
     let published_unit = published.graph.units.get(&identity).ok_or("published unit missing")?;
     let native_payload = unit
         .native_owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .ok_or("native entry missing")?
         .join("payload");
@@ -1084,7 +1158,7 @@ fn consumer_plan(store: &OvenStore, selected: &NativeLoafClosure, identity: &str
     Ok(receipt)
 }
 
-/// Only record-bound native domains cross ordinary handoff; legacy owner indexes remain conservative.
+/// Only record-bound native domains cross ordinary handoff; each plan selection still refuses changed original bytes.
 #[test]
 fn dev7_native_loaf_record_bound_domain_uses_existing_shared_handoff() -> TestResult {
     use crate::plan::selection::select_receipt_direct_rustc_execution_plan_with_native_owners;
@@ -1102,6 +1176,16 @@ fn dev7_native_loaf_record_bound_domain_uses_existing_shared_handoff() -> TestRe
     let plan = select_receipt_direct_rustc_execution_plan_with_native_owners(&consumer, &receipt, Some(&admitted))?
         .ok_or("ordinary shared plan missing")?;
     assert_eq!(plan.physical_path("units/fixture/libfixture.rlib"), unit.output()?);
+    let output = unit.output()?;
+    let original = std::fs::read(&output)?;
+    replace_owned_fixture(&output, b"changed after shared-owner admission")?;
+    assert!(
+        select_receipt_direct_rustc_execution_plan_with_native_owners(&consumer, &receipt, Some(&admitted)).is_err()
+    );
+    replace_owned_fixture(&output, &original)?;
+    assert!(
+        select_receipt_direct_rustc_execution_plan_with_native_owners(&consumer, &receipt, Some(&admitted))?.is_some()
+    );
     Ok(())
 }
 
@@ -1282,5 +1366,63 @@ fn dev7_native_loaf_explicit_empty_closure_does_not_select_or_prepare() -> TestR
     let mut missing = unit.declared_root("missing")?;
     missing.record_identity = digest_bytes(b"not an admitted record");
     assert!(NativeLoafClosure::admit(&native, &[missing]).is_err());
+    Ok(())
+}
+
+/// A missing authored dependency reports the actual owner-relative coordinate and preserves its I/O cause.
+#[test]
+fn native_missing_declared_path_preserves_input_context() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let owner = temp.path().canonicalize()?;
+    let relative = PathBuf::from("missing-dependency");
+    let path = owner.join(&relative);
+    let dependency = dependency(
+        "missing",
+        oven_model::manifest::DependencySource::Path { path: relative },
+    );
+    let mut sources = super::selection::LocalSources::default();
+    let error = super::selection::declared_root_demands(&[dependency], &owner, &mut sources)
+        .err()
+        .ok_or("missing declared dependency was accepted")?;
+    assert!(error.to_string().contains(&path.display().to_string()));
+    let NativeLoafError::Failed(source) = error else {
+        return Err("missing input changed its definitive failure classification".into());
+    };
+    let context = source
+        .downcast_ref::<super::NativeInputFailure>()
+        .ok_or("input context missing")?;
+    assert_eq!(context.operation, "canonicalize declared dependency");
+    let io = context
+        .source
+        .downcast_ref::<std::io::Error>()
+        .ok_or("original I/O cause missing")?;
+    assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+    Ok(())
+}
+
+/// Source-mapping failures name the selected project without converting a malformed source into a cache miss.
+#[test]
+fn native_missing_source_tree_preserves_mapping_context() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().canonicalize()?;
+    std::fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname='missing_source'\nversion='1.0.0'\n",
+    )?;
+    let mut sources = super::selection::LocalSources::default();
+    let error = sources.get(&project).err().ok_or("missing source tree was accepted")?;
+    assert!(error.to_string().contains(&project.display().to_string()));
+    let NativeLoafError::Failed(source) = error else {
+        return Err("missing source changed its definitive failure classification".into());
+    };
+    let context = source
+        .downcast_ref::<super::NativeInputFailure>()
+        .ok_or("mapping context missing")?;
+    assert_eq!(context.operation, "map local source");
+    let io = context
+        .source
+        .downcast_ref::<std::io::Error>()
+        .ok_or("original I/O cause missing")?;
+    assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
     Ok(())
 }

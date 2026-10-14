@@ -16,13 +16,15 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 mod case_slice;
+#[cfg(all(test, unix))]
+mod collection_tests;
 mod evidence;
 pub use case_slice::{OvenNativeTestCaseSlice, OvenNativeTestCaseSliceReport, assign_case_slices, select_case_slice};
 use evidence::{CaseResult, NativeTestEvidence, NativeTestLog};
 
 use crate::rustc::clear_inherited_cargo_environment;
 use oven_store::process::{isolate_process_group, terminate_process_group};
-use oven_store::progress::{DEFAULT_HEARTBEAT_INTERVAL, Heartbeat, ProgressSink};
+use oven_store::progress::{DEFAULT_HEARTBEAT_INTERVAL, ProgressSink};
 
 /// Inventory returned by one exact native libtest binary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,6 +32,64 @@ pub struct OvenNativeTestInventory {
     /// Complete deterministic set of test names reported by the binary.
     pub names: Vec<String>,
 }
+
+/// Request-owned native inventory, bound to its original executable and invocation context.
+/// Only supervised collection constructs this value; case execution still checks names, output evidence and deadlines.
+pub struct OvenNativeTestCollection {
+    inventory: Arc<OvenNativeTestInventory>,
+    ignored: OvenNativeTestInventory,
+    executable: PathBuf,
+    environment: BTreeMap<String, String>,
+    working_directory: PathBuf,
+    inputs: oven_model::observed_inputs::InputObservations,
+}
+
+impl OvenNativeTestCollection {
+    /// Reconcile names retained by a serial owner after the canonical native producer has admitted the executable.
+    /// Only the inventory survives: selection, deadlines, runtime data and outcomes are evaluated on each request.
+    /// Changed executable observations or invocation context use the original supervised collection path.
+    pub fn reconcile(
+        previous: Option<Arc<Self>>,
+        executable: &Path,
+        environment: &BTreeMap<String, String>,
+        working_directory: &Path,
+        timeout: Option<Duration>,
+    ) -> Result<Arc<Self>, OvenNativeTestError> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_test_collection").entered();
+        if let Some(previous) = previous
+            && previous.matches(executable, environment, Some(working_directory))
+        {
+            tracing::trace!(target: "incan::invocation", decision = "retained", inventory_processes = 0_u64);
+            return Ok(previous);
+        }
+        let collection = inventory_native_tests_for_collection(executable, environment, working_directory, timeout)?;
+        tracing::trace!(target: "incan::invocation", decision = "collected", inventory_processes = 2_u64);
+        Ok(Arc::new(collection))
+    }
+
+    /// Borrow the actual complete inventory without granting callers permission to forge collected names.
+    pub fn inventory(&self) -> &OvenNativeTestInventory {
+        &self.inventory
+    }
+
+    /// Borrow the separately collected ignored-case inventory for normal scheduler selection.
+    pub fn ignored(&self) -> &OvenNativeTestInventory {
+        &self.ignored
+    }
+
+    /// Reuse only for the same invocation context and replacement-sensitive executable observation.
+    fn matches(&self, executable: &Path, environment: &BTreeMap<String, String>, directory: Option<&Path>) -> bool {
+        self.executable == executable
+            && &self.environment == environment
+            && directory == Some(self.working_directory.as_path())
+            && self.inputs.supports_retention()
+            && self.inputs.current()
+    }
+}
+
+/// Trusted per-case results recovered from the root-owned private result channel.
+pub use evidence::CaseResult as OvenNativeTestCaseResult;
 
 /// Exact native test execution request.
 #[derive(Debug, Clone)]
@@ -132,8 +192,9 @@ pub struct OvenNativeTestBatchRequest<'a> {
 /// One verified all-in-one native libtest execution used when fixture scope requires a shared process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenNativeTestBatchReport {
-    /// Complete inventory consulted before execution.
-    pub inventory: OvenNativeTestInventory,
+    /// Complete inventory shared with the original collection, without copying every name per selected case.
+    #[serde(serialize_with = "serialize_shared_inventory")]
+    pub inventory: Arc<OvenNativeTestInventory>,
     /// Whether the process exited successfully and selected case evidence is complete and green.
     pub success: bool,
     /// Raw process success, kept distinct from complete case accounting.
@@ -151,6 +212,8 @@ pub struct OvenNativeTestBatchReport {
     /// times at all. On a compiler-suite root it means the libtest process emitted no terminal timing event for an
     /// inventory case, which is what a crashed or killed root leaves behind. An ignored case has no timing.
     pub case_timings: Vec<OvenNativeTestCaseTiming>,
+    /// Per-case outcomes from the private result channel, never inferred from child stdout.
+    pub case_results: Vec<OvenNativeTestCaseResult>,
     /// Opt-in nested command timings emitted by existing integration-test helpers.
     pub command_timings: Vec<OvenNativeTestCommandTiming>,
     /// Wall-clock timing for the two native-test subprocess phases already required by this execution.
@@ -162,6 +225,14 @@ pub struct OvenNativeTestBatchReport {
     pub output: String,
     /// The slice this execution covered when the root was divided; `None` for a whole-root or exact run.
     pub case_slice: Option<OvenNativeTestCaseSliceReport>,
+}
+
+/// Preserve the existing report wire shape while the collection and per-case reports share one inventory.
+fn serialize_shared_inventory<S>(inventory: &Arc<OvenNativeTestInventory>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    inventory.as_ref().serialize(serializer)
 }
 
 /// Wall-clock timings for one all-in-one native libtest batch.
@@ -219,9 +290,54 @@ fn inventory_native_tests_with_environment_and_timeout(
     allow_empty: bool,
     timeout: Option<Duration>,
 ) -> Result<OvenNativeTestInventory, OvenNativeTestError> {
+    inventory_native_tests_selected(executable, environment, working_directory, allow_empty, timeout, false)
+}
+
+/// Inventory both ordinary and ignored cases through the same supervised native process boundary.
+/// Empty roots are valid during project collection; execution still verifies every selected exact name.
+pub fn inventory_native_tests_for_collection(
+    executable: &Path,
+    environment: &BTreeMap<String, String>,
+    working_directory: &Path,
+    timeout: Option<Duration>,
+) -> Result<OvenNativeTestCollection, OvenNativeTestError> {
+    let mut inputs = oven_model::observed_inputs::InputObservations::default();
+    inputs.observe(executable);
+    let all = inventory_native_tests_selected(executable, environment, Some(working_directory), true, timeout, false)?;
+    let ignored =
+        inventory_native_tests_selected(executable, environment, Some(working_directory), true, timeout, true)?;
+    if inputs.supports_retention() && !inputs.current() {
+        return Err(OvenNativeTestError::InventoryFailed {
+            output: "native executable changed during test collection".to_string(),
+        });
+    }
+    Ok(OvenNativeTestCollection {
+        inventory: Arc::new(all),
+        ignored,
+        executable: executable.to_path_buf(),
+        environment: environment.clone(),
+        working_directory: working_directory.to_path_buf(),
+        inputs,
+    })
+}
+
+/// Apply libtest's inventory selection while preserving the existing environment, deadline and process supervision.
+fn inventory_native_tests_selected(
+    executable: &Path,
+    environment: &BTreeMap<String, String>,
+    working_directory: Option<&Path>,
+    allow_empty: bool,
+    timeout: Option<Duration>,
+    ignored_only: bool,
+) -> Result<OvenNativeTestInventory, OvenNativeTestError> {
+    let _trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_inventory", ignored_only).entered();
     let executable = verified_executable(executable)?;
     let mut command = Command::new(&executable);
     command.args(["--list", "--format", "terse"]);
+    if ignored_only {
+        command.arg("--ignored");
+    }
     if let Some(working_directory) = working_directory {
         command.current_dir(working_directory);
     }
@@ -326,12 +442,13 @@ pub fn run_native_test_batch(
     let case_timings = Vec::new();
     let command_timings = parse_native_test_command_timings(&transcript);
     Ok(OvenNativeTestBatchReport {
-        inventory,
+        inventory: Arc::new(inventory),
         success: output.status.success() && !timed_out,
         process_success: output.status.success(),
         timed_out,
         case_counts: parse_libtest_case_counts(&transcript),
         case_timings,
+        case_results: Vec::new(),
         command_timings,
         timing: OvenNativeTestBatchTiming {
             inventory_elapsed_ms,
@@ -362,7 +479,70 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
     timeout: Option<Duration>,
     root_label: Option<&str>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    run_native_tests_exact_selected(
+        executable,
+        exact_names,
+        environment,
+        working_directory,
+        timeout,
+        root_label,
+        false,
+        true,
+        None,
+        None,
+    )
+}
+
+/// Execute a runner-owned exact selection without writing to the owner's global stderr.
+/// The caller owns progress/reporting; `no_capture` controls test stdout in the returned transcript.
+/// A matching request-owned collection avoids relisting the same harness before each case; changed or unsupported
+/// inputs use fresh inventory. `shared_threads` selects one shared process with that positive thread budget;
+/// `None` preserves per-case process isolation. Both modes retain exact selection and aggregate deadlines.
+pub fn run_native_tests_exact_for_request(
+    request: &OvenNativeTestRequest,
+    working_directory: &Path,
+    no_capture: bool,
+    collection: Option<&OvenNativeTestCollection>,
+    shared_threads: Option<usize>,
+) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    run_native_tests_exact_selected(
+        &request.executable,
+        &request.exact_names,
+        &request.environment,
+        Some(working_directory),
+        request.timeout,
+        None,
+        no_capture,
+        false,
+        collection,
+        shared_threads,
+    )
+}
+
+/// Apply capture and reporting policy around the single inventory-checked exact execution implementation.
+#[allow(clippy::too_many_arguments)]
+fn run_native_tests_exact_selected(
+    executable: &Path,
+    exact_names: &[String],
+    environment: &BTreeMap<String, String>,
+    working_directory: Option<&Path>,
+    timeout: Option<Duration>,
+    root_label: Option<&str>,
+    no_capture: bool,
+    report_progress: bool,
+    collection: Option<&OvenNativeTestCollection>,
+    shared_threads: Option<usize>,
+) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact").entered();
     let selection_started = Instant::now();
+    let selection_trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact_selection").entered();
+    if shared_threads == Some(0) {
+        return Err(OvenNativeTestError::InvalidInput {
+            field: "native test thread budget",
+            message: "must be greater than zero".to_string(),
+        });
+    }
     let requested = normalized_exact_names(exact_names)?;
     let inventory_started = Instant::now();
     let inventory_timeout = remaining_native_test_timeout(&selection_started, timeout).map_err(|timeout| {
@@ -373,17 +553,25 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             ),
         }
     })?;
-    let inventory = inventory_native_tests_with_environment_and_timeout(
-        executable,
-        environment,
-        working_directory,
-        false,
-        inventory_timeout,
-    )?;
+    let inventory = if let Some(collection) =
+        collection.filter(|collection| collection.matches(executable, environment, working_directory))
+    {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_test_inventory");
+        Arc::clone(&collection.inventory)
+    } else {
+        tracing::trace!(target: "incan::invocation", decision = "collect_native_test_inventory");
+        Arc::new(inventory_native_tests_with_environment_and_timeout(
+            executable,
+            environment,
+            working_directory,
+            false,
+            inventory_timeout,
+        )?)
+    };
     let inventory_elapsed_ms = duration_millis(inventory_started.elapsed());
-    let available = inventory.names.iter().collect::<BTreeSet<_>>();
+    // Supervised collection always parses through the canonical sorted, duplicate-free inventory.
     for exact_name in &requested {
-        if !available.contains(exact_name) {
+        if inventory.names.binary_search(exact_name).is_err() {
             return Err(OvenNativeTestError::MissingExactTest {
                 name: exact_name.clone(),
             });
@@ -391,12 +579,13 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
     }
     let executable = verified_executable(executable)?;
     let mut report = OvenNativeTestBatchReport {
-        inventory: inventory.clone(),
+        inventory,
         success: true,
         process_success: true,
         timed_out: false,
         case_counts: Some(OvenNativeTestCaseCounts::default()),
         case_timings: Vec::new(),
+        case_results: Vec::new(),
         command_timings: Vec::new(),
         timing: OvenNativeTestBatchTiming {
             inventory_elapsed_ms,
@@ -405,7 +594,10 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         output: String::new(),
         case_slice: None,
     };
-    for exact_name in requested {
+    drop(selection_trace);
+    let group_size = shared_threads.map_or(1, |_| requested.len().max(1));
+    for group in requested.chunks(group_size) {
+        let exact_name = group.join(", ");
         let process_timeout = match remaining_native_test_timeout(&selection_started, timeout) {
             Ok(timeout) => timeout,
             Err(timeout) => {
@@ -427,7 +619,13 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         };
         let mut command = Command::new(&executable);
         // Naming a case selects it: an `#[ignore]` case such as an explicit full census runs when named.
-        command.args(["--exact", &exact_name, "--include-ignored"]);
+        command.arg("--exact").args(group).arg("--include-ignored");
+        if let Some(threads) = shared_threads {
+            command.arg(format!("--test-threads={threads}"));
+        }
+        if no_capture {
+            command.arg("--nocapture");
+        }
         if let Some(working_directory) = working_directory {
             command.current_dir(working_directory);
         }
@@ -441,8 +639,12 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             process_timeout,
             Some(NativeTestProgressReporter::for_inventory(
                 root_label,
-                ProgressSink::stderr(),
-                BTreeSet::from([exact_name.clone()]),
+                if report_progress {
+                    ProgressSink::stderr()
+                } else {
+                    ProgressSink::collecting()
+                },
+                group.iter().cloned().collect(),
             )),
         )?;
         report.timing.execution_elapsed_ms = report
@@ -483,6 +685,7 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             (None, Some(_)) => {}
         }
         report.case_timings.extend(evidence.timings);
+        report.case_results.extend(evidence.results);
         report
             .command_timings
             .extend(parse_native_test_command_timings(&transcript));
@@ -596,12 +799,13 @@ pub fn run_native_test_batch_all_for_request(
         .map_or_else(|| inventory.names.clone(), |slice| slice.selected.clone());
     if case_slice.as_ref().is_some_and(|slice| slice.selected.is_empty()) {
         return Ok(OvenNativeTestBatchReport {
-            inventory,
+            inventory: Arc::new(inventory),
             success: true,
             process_success: true,
             timed_out: false,
             case_counts: Some(OvenNativeTestCaseCounts::default()),
             case_timings: Vec::new(),
+            case_results: Vec::new(),
             command_timings: Vec::new(),
             timing: OvenNativeTestBatchTiming {
                 inventory_elapsed_ms,
@@ -656,7 +860,7 @@ pub fn run_native_test_batch_all_for_request(
     }
     let command_timings = parse_native_test_command_timings(&transcript);
     Ok(OvenNativeTestBatchReport {
-        inventory,
+        inventory: Arc::new(inventory),
         success: output.status.success()
             && !timed_out
             && evidence.counts.as_ref().is_some_and(|counts| counts.failed == 0),
@@ -664,6 +868,7 @@ pub fn run_native_test_batch_all_for_request(
         timed_out,
         case_counts: evidence.counts,
         case_timings: evidence.timings,
+        case_results: evidence.results,
         command_timings,
         timing: OvenNativeTestBatchTiming {
             inventory_elapsed_ms,
@@ -1018,7 +1223,9 @@ impl NativeTestProgressReporter {
             // `--test-threads 4` and not under `--test-threads 1`. Naming a stalled *root* therefore cannot be built
             // on this event; that needs a supervisor above the per-root reporter.
             ("test", "timeout") => return self.render_slow_notice(&event),
-            ("test", _) if !outcome.is_empty() => return self.render_terminal_event(&event, outcome),
+            ("test", _) if !outcome.is_empty() => {
+                return self.render_terminal_event(&event, outcome);
+            }
             // A libtest event shape this does not know about. Pass it through rather than drop it: a future harness
             // spelling should be visible to whoever is reading, not silently absent.
             _ => return vec![line.to_string()],
@@ -1138,6 +1345,7 @@ fn libtest_outcome_label(outcome: &str) -> &str {
 ///
 /// `Command::output` cannot supervise a running child. Keeping this small polling loop here ensures the same
 /// Cargo-free environment and output capture apply to a terminated child as to a normally completed libtest process.
+/// The same supervisor emits periodic liveness reports, avoiding a separate heartbeat thread for every case.
 fn run_native_batch_child(
     command: Command,
     executable: &Path,
@@ -1153,20 +1361,41 @@ fn run_native_batch_child(
             path: executable.to_path_buf(),
             source,
         })?;
-    run_native_batch_child_with_log(command, executable, timeout, reporter, result_log)
+    run_native_batch_child_with_log(
+        command,
+        executable,
+        timeout,
+        reporter,
+        result_log,
+        DEFAULT_HEARTBEAT_INTERVAL,
+    )
 }
 
 /// Run a root with an explicitly owned result channel; every post-spawn exit reaps its group and both readers.
+/// Production uses the common progress interval; an explicit interval lets liveness controls avoid wall-clock waits.
 fn run_native_batch_child_with_log(
     mut command: Command,
     executable: &Path,
     timeout: Option<Duration>,
     reporter: Option<NativeTestProgressReporter>,
     mut result_log: Option<NativeTestLog>,
+    heartbeat_interval: Duration,
 ) -> Result<(std::process::Output, bool, NativeTestEvidence), OvenNativeTestError> {
+    let setup_trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_setup").entered();
     if let Some(log) = &result_log {
         command.arg("--logfile").arg(log.path());
     }
+    // Nested commands may share a service only while their supervising test group is alive. The existing owner
+    // coordinate includes this inherited token, so another case cannot borrow a service that this case will reap.
+    let owner_scope = tempfile::Builder::new()
+        .prefix("oven-test-owner-")
+        .tempdir()
+        .map_err(|source| OvenNativeTestError::Io {
+            path: executable.to_path_buf(),
+            source,
+        })?;
+    command.env("INCAN_INTERNAL_TEST_OWNER_SCOPE", owner_scope.path());
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     // Nested Incan commands and fixture children inherit this group, allowing a timeout to close every inherited
     // stdout/stderr writer before reader threads are joined.
@@ -1190,12 +1419,8 @@ fn run_native_batch_child_with_log(
         .as_ref()
         .and_then(|reporter| reporter.lock().ok().map(|reporter| reporter.sink()))
         .unwrap_or_default();
-    let heartbeat = progress.as_ref().map(|reporter| {
-        let watched = Arc::clone(reporter);
-        Heartbeat::start(sink.clone(), DEFAULT_HEARTBEAT_INTERVAL, move || {
-            watched.lock().ok().and_then(|reporter| reporter.still_running())
-        })
-    });
+    // The supervisor already polls while the root lives, so progress needs no additional timer thread.
+    let mut next_heartbeat = Instant::now() + heartbeat_interval;
     let root_progress = progress.clone();
     let mut progress = progress;
     let stdout_reader = thread::spawn(move || {
@@ -1243,9 +1468,20 @@ fn run_native_batch_child_with_log(
     });
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
     let mut timed_out = false;
+    drop(setup_trace);
     let completion = (|| {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_wait").entered();
         loop {
             poll_native_result_log(&mut result_log, &root_progress, executable)?;
+            if Instant::now() >= next_heartbeat {
+                if let Some(description) = root_progress
+                    .as_ref()
+                    .and_then(|reporter| reporter.lock().ok().and_then(|reporter| reporter.still_running()))
+                {
+                    sink.line(&description);
+                }
+                next_heartbeat = Instant::now() + heartbeat_interval;
+            }
             match child.try_wait().map_err(|source| OvenNativeTestError::Io {
                 path: executable.to_path_buf(),
                 source,
@@ -1261,12 +1497,13 @@ fn run_native_batch_child_with_log(
     })();
     // A root may exit with a descendant still holding its pipes. Finish the entire owned process group before
     // joining readers, on success as well as failure. A supervisor I/O error follows this same cleanup path.
+    let _cleanup_trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_cleanup").entered();
     let containment = if timed_out && completion.is_ok() {
         Ok(())
     } else {
         terminate_native_batch_child(&mut child, executable).map(|_| ())
     };
-    drop(heartbeat);
     let stdout = join_output_reader(stdout_reader, executable, "stdout");
     let stderr = join_output_reader(stderr_reader, executable, "stderr");
     // Both joins happen before any error is propagated; losing one stream cannot detach the other reader.
@@ -2591,6 +2828,7 @@ mod tests {
         Ok(())
     }
 
+    /// Inject reader failure only after the complete descendant PID is published, then prove group containment.
     #[cfg(unix)]
     #[test]
     fn result_reader_failure_reaps_the_running_root_and_descendants() -> Result<(), Box<dyn std::error::Error>> {
@@ -2602,7 +2840,7 @@ mod tests {
         let child_pid = directory.path().join("child.pid");
         fs::write(
             &executable,
-            "#!/bin/sh\necho $$ > \"$ROOT_PID\"\nsleep 30 &\necho $! > \"$CHILD_PID\"\nwait\n",
+            "#!/bin/sh\necho $$ > \"$ROOT_PID\"\nsleep 30 &\necho $! > \"$CHILD_PID.pending\"\nmv \"$CHILD_PID.pending\" \"$CHILD_PID\"\nwait\n",
         )?;
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))?;
         let mut command = Command::new(&executable);
@@ -2619,6 +2857,7 @@ mod tests {
             Some(Duration::from_secs(10)),
             Some(reporter),
             Some(log),
+            super::DEFAULT_HEARTBEAT_INTERVAL,
         )
         .err()
         .ok_or("injected log read unexpectedly succeeded")?;
@@ -2878,5 +3117,69 @@ mod tests {
             return Err(format!("rustc could not report its version: {}", rustc.display()).into());
         }
         Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    }
+    /// A silent child reports liveness before completion without a separate timer worker.
+    #[test]
+    fn supervisor_reports_silent_child_before_release() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let executable = compile_probe(
+            directory.path(),
+            r#"
+            #[test]
+            fn waits_for_release() -> Result<(), Box<dyn std::error::Error>> {
+                let release = std::path::PathBuf::from(std::env::var("INCAN_PROBE_RELEASE")?);
+                let started = std::time::Instant::now();
+                while !release.exists() {
+                    if started.elapsed() > std::time::Duration::from_secs(10) {
+                        return Err("supervisor never released the child".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(())
+            }
+            "#,
+        )?;
+        let release = directory.path().join("release");
+        let environment = BTreeMap::from([("INCAN_PROBE_RELEASE".to_string(), release.display().to_string())]);
+        let sink = ProgressSink::collecting();
+        let worker_sink = sink.clone();
+        let working_directory = directory.path().to_path_buf();
+        let worker = std::thread::spawn(move || {
+            let selected = BTreeSet::from(["waits_for_release".to_string()]);
+            let log = super::NativeTestLog::new(selected.clone()).map_err(|error| error.to_string())?;
+            let reporter = NativeTestProgressReporter::for_inventory(Some("silent-child"), worker_sink, selected);
+            let mut command = Command::new(&executable);
+            command.current_dir(&working_directory).envs(environment);
+            command.args(["--exact", "waits_for_release"]);
+            super::add_structured_libtest_output(&mut command);
+            super::run_native_batch_child_with_log(
+                command,
+                &executable,
+                Some(std::time::Duration::from_secs(5)),
+                Some(reporter),
+                Some(log),
+                std::time::Duration::from_millis(50),
+            )
+            .map_err(|error| error.to_string())
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        let mut observed_live = false;
+        while std::time::Instant::now() < deadline && !worker.is_finished() {
+            if sink
+                .collected()
+                .is_some_and(|text| text.contains("RUNNING") && text.contains("silent-child"))
+            {
+                observed_live = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // Release and join on both assertion paths, so a failed liveness control cannot detach its child.
+        fs::write(&release, b"release")?;
+        let (output, timed_out, evidence) = worker.join().map_err(|_| "supervisor worker panicked")??;
+        assert!(observed_live, "no heartbeat while the silent child was waiting");
+        assert!(output.status.success() && !timed_out, "{output:?}");
+        assert_eq!(evidence.counts.ok_or("missing case counts")?.passed, 1);
+        Ok(())
     }
 }

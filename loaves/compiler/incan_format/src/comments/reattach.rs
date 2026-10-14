@@ -24,7 +24,12 @@ pub(super) fn reattach_comments(source: &str, formatted: &str) -> String {
     for line in formatted.lines() {
         let line_trimmed = line.trim();
         let current_indent = leading_indent_width(line);
-        flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, line_trimmed, current_indent);
+        if !matches!(
+            formatted_state,
+            StringState::TripleSingleQuoted | StringState::TripleDoubleQuoted
+        ) {
+            flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, line_trimmed, current_indent);
+        }
         let normalized = if line_trimmed.is_empty() {
             None
         } else {
@@ -112,7 +117,9 @@ pub(super) fn reattach_comments(source: &str, formatted: &str) -> String {
         trailing_idx += 1;
     }
 
-    flush_ready_trailing_blocks(&mut out_lines, &mut pending_trailing, "", 0);
+    while let Some(block) = pending_trailing.pop_front() {
+        emit_anchored_block(&mut out_lines, &block);
+    }
 
     if !extracted.eof_standalone.is_empty() {
         if out_lines.ends_with_nonblank_line() {
@@ -128,11 +135,16 @@ pub(super) fn reattach_comments(source: &str, formatted: &str) -> String {
 
 /// Emit a source comment block at its formatted anchor, including its preserved leading readability gap.
 fn emit_anchored_block(out_lines: &mut NormalizedLineBuffer, block: &AnchoredStandaloneBlock) {
-    if block.blank_line_before {
+    if block.after_root_suite {
+        out_lines.set_root_blank_lines(block.root_blank_lines_before);
+    } else if block.blank_line_before {
         out_lines.ensure_blank_line_before(block.indent);
     }
     for line in &block.lines {
         out_lines.push_line(line.clone());
+    }
+    if block.after_root_suite {
+        out_lines.set_root_blank_lines(block.root_blank_lines_after);
     }
 }
 
@@ -144,7 +156,11 @@ fn flush_ready_trailing_blocks(
     current_indent: usize,
 ) {
     while let Some(block) = pending_trailing.front() {
-        let ready = line_trimmed.is_empty() || (!line_trimmed.is_empty() && current_indent <= block.indent);
+        let ready = if line_trimmed.is_empty() {
+            !block.after_root_suite
+        } else {
+            current_indent <= block.indent
+        };
         if !ready {
             break;
         }

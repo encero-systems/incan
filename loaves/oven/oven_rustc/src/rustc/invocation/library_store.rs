@@ -60,6 +60,7 @@ fn bake_native_in_store(
     kind: OvenDirectRustcOutputKind,
     test_harness: bool,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::build_native_in_store", input = %request.source.display(), test_harness).entered();
     let (domain, filename) = match (kind, test_harness) {
         (OvenDirectRustcOutputKind::Library, false) => ("generated-rust-library-v2", "library.rlib"),
         (OvenDirectRustcOutputKind::Binary, false) => ("generated-rust-binary-v2", "program"),
@@ -71,6 +72,7 @@ fn bake_native_in_store(
         .artifact_plan
         .map_or(&request.artifacts.compile_environment, |plan| &plan.compile_environment);
     if let Some(bake) = reuse_native(request, store, &expected, environment, domain, filename)? {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_artifact", native_compilations = 0_u64);
         return Ok(bake);
     }
     if std::env::var_os("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE").is_some() {
@@ -100,6 +102,7 @@ fn bake_native_in_store(
         output: &staged,
         ..*request
     };
+    tracing::trace!(target: "incan::invocation", decision = "compile_native_artifact", native_compilations = 1_u64);
     let mut bake = match (kind, test_harness) {
         (OvenDirectRustcOutputKind::Library, false) => bake_trusted_direct_rustc_library(&staged_request)?,
         (OvenDirectRustcOutputKind::Binary, false) => bake_trusted_direct_rustc_run(&staged_request)?,
@@ -146,6 +149,7 @@ fn reuse_native(
     domain: &str,
     filename: &str,
 ) -> Result<Option<OvenDirectRustcBake>, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::admit_stored_native_output", input = %request.output.display()).entered();
     let candidates = store.select_payloads_matching_for_execution(
         |manifest| {
             manifest.kind == OvenArtifactKind::Engine
@@ -157,7 +161,7 @@ fn reuse_native(
         |_, _| true,
     )?;
     for candidate in candidates {
-        let stored: StoredNativeOutput = serde_json::from_slice(&candidate.payload).map_err(recipe_error)?;
+        let stored: StoredNativeOutput = serde_json::from_slice(candidate.payload()).map_err(recipe_error)?;
         if stored.record.inputs != *expected || stored.environment != *environment {
             continue;
         }

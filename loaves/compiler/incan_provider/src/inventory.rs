@@ -210,10 +210,12 @@ fn extend_requirements_with_selected_sdk_providers(
     provider_plan: &ProviderPlan,
     sdk_providers: &BTreeSet<String>,
 ) -> ProviderResult<()> {
-    // Projection helpers do not retain the ProviderPlan. Preserve the complete active SDK path catalog separately
-    // from the minimal set of providers linked directly into this generated crate: a copied compiled artifact can
-    // still carry a non-descriptor Cargo edge to an active provider supplied transitively or unused by this consumer.
-    for provider in provider_plan.active_sdk_records() {
+    // Only an actual SDK publication contributes to the legacy SDK path catalog. Ordinary standard loaves own
+    // reserved namespace claims too, but carry their dependencies through the same checked admission as other loaves.
+    for provider in provider_plan
+        .active_sdk_records()
+        .filter(|provider| matches!(provider.provenance, crate::ProviderProvenance::Sdk { .. }))
+    {
         if let Some(artifact) = provider.artifact.as_ref() {
             merge_sdk_path_dependency(
                 &mut requirements.sdk_path_dependencies,
@@ -242,7 +244,7 @@ fn extend_requirements_with_selected_sdk_providers(
         }
     }
     for provider in provider_plan.active_records() {
-        if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved)
+        if matches!(provider.provenance, crate::ProviderProvenance::Sdk { .. })
             && !sdk_providers.contains(&provider.identity.stable_key())
         {
             continue;
@@ -255,7 +257,7 @@ fn extend_requirements_with_selected_sdk_providers(
         // same answer.
         let linked_backend_requirements = provider_plan.linked_backend_requirements(provider);
         let mut provider_dependency = artifact.to_dependency_spec();
-        if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved) {
+        if matches!(provider.provenance, crate::ProviderProvenance::Sdk { .. }) {
             // Checked private SDK edges freeze an exact feature projection and never inherit the provider crate's
             // conventional Cargo defaults. Emit that contract explicitly so future artifacts need no legacy repair.
             provider_dependency.default_features = false;
@@ -1343,6 +1345,46 @@ import std.traits
         let mut supplied = collected;
         extend_requirements_with_provider_plan(&mut supplied, &supplied_plan)?;
         assert!(!links_web(&supplied), "{:?}", supplied.dependencies);
+        Ok(())
+    }
+
+    /// Reserved namespace ownership does not grant or require a legacy SDK path projection.
+    #[test]
+    fn ordinary_standard_publication_keeps_ordinary_dependency_projection() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let artifact =
+            LibraryArtifactMetadata::from_crate_root("incan_stdlib_core", "incan_stdlib_core", workspace.path());
+        let expected_dependency = artifact.to_dependency_spec();
+        let module = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
+        let record = crate::ProviderRecord {
+            identity: crate::ProviderIdentity {
+                name: "incan_stdlib_core".to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:ordinary-core-projection".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: crate::ProviderProvenance::StandardPublication {
+                package_name: "incan_stdlib_core".to_string(),
+                manifest_path: workspace.path().join("loaf.toml"),
+            },
+            authority: crate::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([module.clone()]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_core", "0.6.0"))),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        for used_modules in [Vec::new(), vec![module.clone()]] {
+            let plan = ProviderPlan::new(Default::default(), vec![record.clone()], used_modules)?;
+            assert!(plan.active_std_module_paths().contains(&module));
+            let mut requirements = ProjectRequirements::default();
+            extend_requirements_with_provider_plan(&mut requirements, &plan)?;
+            assert_eq!(requirements.dependencies, vec![expected_dependency.clone()]);
+            assert!(requirements.sdk_path_dependencies.is_empty());
+            assert!(requirements.sdk_dependency_rebindings.is_empty());
+            assert!(requirements.sdk_artifact_projections.is_empty());
+        }
         Ok(())
     }
 

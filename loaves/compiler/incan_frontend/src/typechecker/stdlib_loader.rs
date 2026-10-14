@@ -234,6 +234,12 @@ impl StdlibAstCache {
         self.source_inputs.verify()
     }
 
+    /// Whether all source lookups have retained authority that can be rechecked before skipping analysis/emission.
+    /// Ambient legacy lookups, including unsuccessful discovery, keep canonical preparation instead.
+    pub fn supports_generation_reuse(&self) -> bool {
+        self.source_inputs.supports_generation_reuse()
+    }
+
     /// Look up a function binding while preserving a same-name overload set.
     pub fn lookup_function_symbol(&mut self, module_path: &[String], function_name: &str) -> Option<SymbolKind> {
         self.ensure_loaded(module_path);
@@ -2182,6 +2188,19 @@ fn extract_stdlib_imported_type_paths(
 
 #[cfg(test)]
 mod tests {
+    /// Probing a local name cannot invalidate reuse through an ambient stdlib lookup that never occurs.
+    #[test]
+    fn local_module_probe_preserves_metadata_reuse() {
+        let mut cache = super::StdlibAstCache::new();
+        assert!(cache.supports_generation_reuse());
+        assert!(
+            cache
+                .lookup_function_symbol(&["local_recovery_helper".to_string()], "answer")
+                .is_none()
+        );
+        assert!(cache.supports_generation_reuse());
+    }
+
     /// Imported source trait signatures keep foreign aliases valid outside their declaring module.
     #[test]
     fn rust_supertrait_alias_survives_source_signature_extraction() -> Result<(), Box<dyn std::error::Error>> {

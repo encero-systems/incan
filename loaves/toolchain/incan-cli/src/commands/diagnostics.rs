@@ -3,63 +3,23 @@
 //! `incan check` and `incan explain` expose the same compiler diagnostics as the legacy debug flags, but with stable
 //! JSON output and catalog-backed explanations for tooling consumers.
 
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::backend::c_abi::CAbiVerificationPlan;
-use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION, StableDiagnostic};
+use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION};
 use incan_provider::FeatureSelection;
 
-use incan_driver::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
-use incan_driver::modules::collect_modules_detailed_with_session;
-use incan_driver::session::CompilationSession;
-use incan_driver::typecheck::typecheck_modules_with_import_graph_detailed_for_c_abi_target;
+#[cfg(test)]
+use incan_driver::{build::check::check_path_report_with_selections, session::CompilationSession};
 
 /// Output format for stable diagnostics commands.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticOutputFormat {
     Text,
     Json,
-}
-
-/// Schema version for the `incan check` report envelope.
-///
-/// Deliberately separate from [`DIAGNOSTIC_SCHEMA_VERSION`], which versions the `StableDiagnostic` payload itself
-/// and is also stamped onto `incan explain` output and the backend execution receipt. Version 2 changed only this
-/// envelope — `diagnostics` now carries non-fatal warnings alongside errors, so `ok` means "no error-severity
-/// diagnostics" rather than "no diagnostics at all". Bumping the shared constant instead would have falsely
-/// signaled a payload or receipt contract change to consumers of those other surfaces.
-pub(crate) const CHECK_REPORT_SCHEMA_VERSION: u32 = 2;
-
-/// One complete typecheck result, retained independently from CLI rendering so workspace orchestration can emit one
-/// coherent machine-readable report for several members.
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct DiagnosticReport {
-    schema_version: u32,
-    /// Whether typechecking found no error-severity diagnostics.
-    ///
-    /// Warnings do not clear this flag: a successful check with warnings reports `ok: true` and a non-empty
-    /// `diagnostics` array, mirroring the process exit code.
-    ok: bool,
-    diagnostics: Vec<StableDiagnostic>,
-    #[serde(skip_serializing)]
-    human_message: Option<String>,
-}
-
-impl DiagnosticReport {
-    /// Whether collection and typechecking succeeded without error-severity diagnostics.
-    pub(crate) fn ok(&self) -> bool {
-        self.ok
-    }
-
-    /// Human-readable diagnostics retained from the compiler pipeline when the report is unsuccessful.
-    pub(crate) fn human_message(&self) -> Option<&str> {
-        self.human_message.as_deref()
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -90,8 +50,7 @@ pub fn check_path_with_selections(
     feature_selection: &FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> CliResult<ExitCode> {
-    let report = check_path_report_with_selections(path, feature_selection, sdk_profile_override)?;
-    render_check_report(&report, format)
+    check_path_with_interop_target_selection(path, format, feature_selection, sdk_profile_override, None)
 }
 
 /// Run the canonical check pipeline with an explicit declared target for checked C ABI verification only.
@@ -102,99 +61,8 @@ pub(crate) fn check_path_with_interop_target_selection(
     sdk_profile_override: Option<&str>,
     interop_target: Option<&str>,
 ) -> CliResult<ExitCode> {
-    let report =
-        check_path_report_with_interop_target_selection(path, feature_selection, sdk_profile_override, interop_target)?;
-    render_check_report(&report, format)
-}
-
-/// Run the canonical check pipeline for one package-feature and SDK-profile projection without rendering it.
-///
-/// This is the single-project compiler boundary used by both `incan check` and RFC 077 workspace command fan-out. It
-/// deliberately retains stable diagnostics rather than printing them as soon as a member fails.
-pub(crate) fn check_path_report_with_selections(
-    path: &Path,
-    feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-) -> CliResult<DiagnosticReport> {
-    check_path_report_with_interop_target_selection(path, feature_selection, sdk_profile_override, None)
-}
-
-/// Run one canonical package-feature, SDK-profile, and declared C ABI target projection without rendering it.
-pub(crate) fn check_path_report_with_interop_target_selection(
-    path: &Path,
-    feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-    interop_target: Option<&str>,
-) -> CliResult<DiagnosticReport> {
-    let normalized_path = normalize_input_path(path)?;
-    let compilation_session =
-        match CompilationSession::discover_for_check(&normalized_path, feature_selection, sdk_profile_override) {
-            Ok(session) => session,
-            Err(error) => {
-                let failure = CliDiagnosticFailure::single(
-                    normalized_path.to_string_lossy(),
-                    "",
-                    diagnostics::CompileError::new(error.to_string(), incan_frontend::ast::Span::default()),
-                    diagnostics::DiagnosticPhase::Import,
-                );
-                return Ok(diagnostic_report_from_failure(failure));
-            }
-        };
-    let manifest = compilation_session.manifest.clone();
-    let c_abi_plan = interop_target
-        .map(|target| select_interop_c_abi_verification_plan(manifest.as_ref(), target))
-        .transpose()?;
-    let modules = match collect_modules_detailed_with_session(normalized_path.clone(), &compilation_session) {
-        Ok(modules) => modules,
-        Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
-    };
-    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
-    #[cfg(feature = "rust_inspect")]
-    let rust_inspect_manifest_dir = compilation_session.prepare_check_rust_inspection(&normalized_path, &modules)?;
-
-    let typecheck = typecheck_modules_with_import_graph_detailed_for_c_abi_target(
-        &modules,
-        manifest.as_ref(),
-        &provider_plan,
-        c_abi_plan.as_ref(),
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir
-            .as_ref()
-            .map(|workspace| workspace.manifest_dir()),
-    );
-
-    match typecheck {
-        Ok(warnings) => Ok(DiagnosticReport {
-            schema_version: CHECK_REPORT_SCHEMA_VERSION,
-            ok: true,
-            diagnostics: stable_diagnostics_from(&warnings),
-            human_message: None,
-        }),
-        Err(failure) => Ok(diagnostic_report_from_failure(failure)),
-    }
-}
-
-/// Select exactly one Oven interop C ABI profile for an invocation that names `--interop-target`.
-fn select_interop_c_abi_verification_plan(
-    manifest: Option<&oven_model::manifest::ProjectManifest>,
-    requested_target: &str,
-) -> CliResult<CAbiVerificationPlan> {
-    let Some(manifest) = manifest else {
-        return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` requires a project manifest with an [interop.c] declaration"
-        )));
-    };
-    let Some(interop) = manifest.interop_c() else {
-        return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` requires an [interop.c] declaration in loaf.toml"
-        )));
-    };
-    let Some(interop_target) = interop.targets.iter().find(|target| target.target == requested_target) else {
-        return Err(CliError::failure(format!(
-            "`--interop-target {requested_target}` is not declared by [[interop.c.targets]] in loaf.toml"
-        )));
-    };
-    CAbiVerificationPlan::from_interop_target(interop_target).map_err(CliError::failure)
+    let report = oven_cli::project_owner::check(path, feature_selection, sdk_profile_override, interop_target)?;
+    render_check_report(report, format)
 }
 
 /// Print a catalog-backed diagnostic explanation.
@@ -237,70 +105,34 @@ pub fn explain_diagnostic(code: &str, format: DiagnosticOutputFormat) -> CliResu
 }
 
 /// Render one already-evaluated check result in either human text or the stable JSON report shape.
-fn render_check_report(report: &DiagnosticReport, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
-    match format {
-        DiagnosticOutputFormat::Text => {
-            if report.ok {
-                println!("✓ Type check passed!");
-                Ok(ExitCode::SUCCESS)
-            } else {
-                Err(CliError::failure(render_check_report_human(report)))
-            }
-        }
-        DiagnosticOutputFormat::Json => {
-            print_json(report)?;
-            if report.ok {
-                Ok(ExitCode::SUCCESS)
-            } else {
-                Err(CliError::new("", ExitCode::FAILURE))
-            }
-        }
+fn render_check_report(
+    report: incan_driver::build::check::CheckOutput,
+    format: DiagnosticOutputFormat,
+) -> CliResult<ExitCode> {
+    for warning in report.warnings {
+        eprint!("{warning}");
     }
-}
-
-/// Convert source-aware compiler failures into the stable report consumed by both single-project and workspace paths.
-/// Project collected CLI diagnostics into their stable machine-readable form, preserving input order.
-///
-/// Shared by the success and failure paths so warnings and errors are projected identically — the only thing that
-/// distinguishes them in the payload is the `severity` each one already carries.
-pub(crate) fn stable_diagnostics_from(collected: &[CliDiagnostic]) -> Vec<StableDiagnostic> {
-    collected
-        .iter()
-        .map(|diagnostic| {
-            diagnostics::stable_diagnostic(
-                &diagnostic.file_path,
-                &diagnostic.source,
-                &diagnostic.error,
-                diagnostic.phase,
-            )
-        })
-        .collect()
-}
-
-/// Build the machine-readable check report for a failed collection or typecheck pass.
-///
-/// Reports the failure's errors together with any warnings gathered before it, so a file that has both does not
-/// hide the warning behind the error. The human message stays errors-only: warnings were already printed to
-/// stderr as they were produced.
-fn diagnostic_report_from_failure(failure: CliDiagnosticFailure) -> DiagnosticReport {
-    let human_message = failure.render_human();
-    // Errors first, then any warnings gathered before the failure, so a file with both reports both.
-    let mut diagnostics = stable_diagnostics_from(&failure.diagnostics);
-    diagnostics.extend(stable_diagnostics_from(&failure.warnings));
-    DiagnosticReport {
-        schema_version: CHECK_REPORT_SCHEMA_VERSION,
-        ok: false,
-        diagnostics,
-        human_message: Some(human_message),
+    if format == DiagnosticOutputFormat::Json
+        && let Some(json) = report.json
+    {
+        println!("{json}");
+        return if report.exit_code == 0 {
+            Ok(ExitCode::SUCCESS)
+        } else {
+            Err(CliError::new("", ExitCode(report.exit_code)))
+        };
     }
-}
-
-/// Render diagnostics for the human CLI without rebuilding source context in the workspace orchestration layer.
-fn render_check_report_human(report: &DiagnosticReport) -> String {
-    report
-        .human_message
-        .clone()
-        .unwrap_or_else(|| "type check failed without diagnostics".to_string())
+    if report.exit_code == 0 {
+        println!("✓ Type check passed!");
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Err(CliError::new(
+            report
+                .human_message
+                .unwrap_or_else(|| "type check failed without diagnostics".to_string()),
+            ExitCode(report.exit_code),
+        ))
+    }
 }
 
 /// Pretty-print a serializable diagnostics payload to stdout.
@@ -342,17 +174,6 @@ fn format_explain_text(entry: &diagnostics::DiagnosticCatalogEntry) -> String {
     text
 }
 
-/// Resolve the user-supplied check target relative to the current directory for project discovery.
-fn normalize_input_path(path: &Path) -> CliResult<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(env::current_dir()
-            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
-            .join(path))
-    }
-}
-
 #[cfg(test)]
 mod dev7_checked_provider_metadata_tests {
     use super::*;
@@ -379,7 +200,7 @@ mod dev7_checked_provider_metadata_tests {
         };
         assert_eq!(metadata.kind, LibraryArtifactKind::CheckedSource);
         let record = session
-            .provider_plan
+            .provider_plan()
             .records()
             .find(|record| record.identity.name == manifest.name)
             .ok_or("checked source provider record is missing")?;
@@ -656,10 +477,13 @@ mod dev7_checked_provider_metadata_tests {
         fs::write(&producer, "pub model Widget:\n    value: int\n")?;
         let private = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
         assert!(!private.ok(), "private producer field was exposed");
-        assert!(private.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "INCAN-T0001"
-                && diagnostic.message.contains("Field 'value'")
-                && diagnostic.message.contains("private")
+        let json = serde_json::to_value(&private)?;
+        let diagnostics = json["diagnostics"].as_array().ok_or("missing check diagnostics")?;
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic["code"] == "INCAN-T0001"
+                && diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("Field 'value'") && message.contains("private"))
         }));
         fs::write(&producer, "pub model Widget:\n    pub value: int\n")?;
         assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
@@ -691,7 +515,7 @@ mod dev7_checked_provider_metadata_tests {
         let session = CompilationSession::discover_for_check(&entry, &FeatureSelection::default(), None)?;
         assert_eq!(
             session
-                .provider_plan
+                .provider_plan()
                 .records()
                 .filter(|record| record.identity.name == "widgets")
                 .count(),

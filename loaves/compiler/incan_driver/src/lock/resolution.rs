@@ -657,7 +657,11 @@ fn publish_admitted_project_lock(
         )?
         .ok_or_else(|| CliError::failure("ordinary lock collection lost its source entrypoints"))?;
         let dependencies = crate::build_unit::promoted_oven_test_dependencies(&context.resolved)?;
-        native.verify_dependencies(&dependencies, project_root)?;
+        let owners = current
+            .admitted_library_dependencies()
+            .ok_or_else(|| CliError::failure("ordinary lock publication lacks checked package owners"))?;
+        let physical = owners.physical_native_dependencies(current.provider_plan(), &dependencies)?;
+        native.verify_dependencies(&physical, project_root)?;
         let (_, publication) = generate_oven_lockfile_with_semantic_paths(
             project_root,
             &context.resolved,

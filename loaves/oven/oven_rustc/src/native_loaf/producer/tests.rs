@@ -258,6 +258,51 @@ fn publish(
     Ok(graph.publish(store, source, native, recipe, owner, edges)?)
 }
 
+/// One retained Loaf parses its exact declaration once, while unchanged metadata never permits changed bytes or links.
+#[test]
+fn dev7_native_declaration_retains_metadata_and_refuses_changes() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = store(&root.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let identity = publish(root.path(), &store, &mut graph, &Unit::library("retained"), &[])?;
+    let selected = graph.units.get(&identity).ok_or("fixture unit missing")?;
+    let path = selected.native_owner.artifact_root().join("source/loaf.toml");
+    let original = std::fs::read(&path)?;
+    let modified = std::fs::metadata(&path)?.modified()?;
+    let reads = std::cell::Cell::new(0);
+    let mut read = |path: &std::path::Path| {
+        reads.set(reads.get() + 1);
+        std::fs::read(path).map_err(super::super::failed)
+    };
+    let first = super::super::selection::source_manifest_with_reader(selected, &mut read)?;
+    assert_eq!(
+        first,
+        super::super::selection::source_manifest_with_reader(selected, &mut read)?
+    );
+    assert_eq!(reads.get(), 1, "retained declaration must not be read and parsed twice");
+    let mut changed = original.clone();
+    *changed.first_mut().ok_or("fixture declaration is empty")? ^= 1;
+    replace_owned_fixture(&path, &changed)?;
+    std::fs::File::open(&path)?.set_times(std::fs::FileTimes::new().set_modified(modified))?;
+    assert!(super::super::selection::source_manifest_with_reader(selected, &mut read).is_err());
+    replace_owned_fixture(&path, &original)?;
+    assert_eq!(
+        first,
+        super::super::selection::source_manifest_with_reader(selected, &mut read)?
+    );
+    assert_eq!(reads.get(), 1);
+    #[cfg(unix)]
+    {
+        let held = root.path().join("declaration-link-target");
+        std::fs::rename(&path, &held)?;
+        std::os::unix::fs::symlink(&held, &path)?;
+        assert!(super::super::selection::source_manifest_with_reader(selected, &mut read).is_err());
+        std::fs::remove_file(&path)?;
+        std::fs::rename(held, &path)?;
+    }
+    Ok(())
+}
+
 /// Native execution consumes native members; source inspection independently verifies its archived source closure.
 #[test]
 fn dev7_native_execution_leaves_source_validation_to_inspection() -> TestResult {
@@ -267,7 +312,7 @@ fn dev7_native_execution_leaves_source_validation_to_inspection() -> TestResult 
     let identity = publish(root.path(), &store, &mut graph, &Unit::library("bounded"), &[])?;
     let selected = graph.units.get(&identity).ok_or("fixture unit missing")?;
     let inputs = graph.inspection_inputs()?;
-    let archived = selected.native_owner.artifact_root.join("source/src/custom.rs");
+    let archived = selected.native_owner.artifact_root().join("source/src/custom.rs");
     replace_owned_fixture(&archived, b"changed archived source")?;
 
     let output = selected.output()?;
@@ -289,7 +334,7 @@ fn dev7_native_execution_leaves_source_validation_to_inspection() -> TestResult 
     );
     assert!(graph.inspection_inputs().is_err());
 
-    let injected = selected.native_owner.artifact_root.join("injected.rlib");
+    let injected = selected.native_owner.artifact_root().join("injected.rlib");
     std::fs::write(&injected, b"unlisted native input")?;
     assert!(
         selected.output().is_err(),
@@ -303,7 +348,7 @@ fn dev7_native_execution_leaves_source_validation_to_inspection() -> TestResult 
     assert!(selected.output()?.is_file());
     #[cfg(unix)]
     {
-        let source_root = selected.native_owner.artifact_root.join("source");
+        let source_root = selected.native_owner.artifact_root().join("source");
         let held = root.path().join("held-source");
         std::fs::rename(&source_root, &held)?;
         std::os::unix::fs::symlink(&held, &source_root)?;
@@ -363,12 +408,17 @@ fn dev7_native_source_projection_live_and_installed_preserve_exact_facts_and_ali
             .native_owner,
         &native_owner
     ));
+    // Construction parsed each declaration; later projections reconcile and reuse those same retained trees.
+    let expected_retained_work = NativeLoafInspectionWork {
+        manifest_read_attempts: 0,
+        ..expected_work
+    };
     let mut first_work = NativeLoafInspectionWork::default();
     let first = inputs.inspection_project_with_work(&mut first_work)?;
-    assert_eq!(first_work, expected_work);
+    assert_eq!(first_work, expected_retained_work);
     let mut repeat_work = NativeLoafInspectionWork::default();
     assert_eq!(inputs.inspection_project_with_work(&mut repeat_work)?, first);
-    assert_eq!(repeat_work, expected_work);
+    assert_eq!(repeat_work, expected_retained_work);
     let index = inputs
         .units()
         .keys()
@@ -379,7 +429,7 @@ fn dev7_native_source_projection_live_and_installed_preserve_exact_facts_and_ali
         .keys()
         .position(|identity| identity == &child_id)
         .ok_or("child index missing")?;
-    let source = native_owner.artifact_root.join("source");
+    let source = native_owner.artifact_root().join("source");
     let manifest_path = root
         .path()
         .join("publisher-1/Cargo.toml")
@@ -394,8 +444,8 @@ fn dev7_native_source_projection_live_and_installed_preserve_exact_facts_and_ali
             "env":{
                 "CARGO_MANIFEST_DIR":source, "CARGO_MANIFEST_PATH":manifest_path,
                 "CARGO_PKG_NAME":"parent", "CARGO_PKG_VERSION":"1.0.0", "CARGO_CRATE_NAME":"custom_crate", "CARGO_PRIMARY_PACKAGE":"1",
-                "OUT_DIR":native_owner.artifact_root.join("source/.oven-out"),
-                "GENERATED_INPUT":native_owner.artifact_root.join("source/.oven-out/generated.rs"), "EXACT_LITERAL":"/literal/is/not/rebased"
+                "OUT_DIR":native_owner.artifact_root().join("source/.oven-out"),
+                "GENERATED_INPUT":native_owner.artifact_root().join("source/.oven-out/generated.rs"), "EXACT_LITERAL":"/literal/is/not/rebased"
             }, "is_workspace_member":false,"is_proc_macro":false
         })
     );
@@ -500,7 +550,7 @@ fn dev7_native_source_projection_rechecks_original_sources_generated_bytes_and_r
         "source/src/custom.rs",
         "source/.oven-out/generated.rs",
     ] {
-        let path = selected.native_owner.artifact_root.join(member);
+        let path = selected.native_owner.artifact_root().join(member);
         let bytes = std::fs::read(&path)?;
         let mut changed = bytes.clone();
         let byte = changed.first_mut().ok_or("empty source fixture")?;
@@ -567,7 +617,7 @@ fn dev7_native_source_projection_keeps_versions_host_roles_and_exact_selected_se
         narrow_work,
         NativeLoafInspectionWork {
             source_projection_attempts: 1,
-            manifest_read_attempts: 1,
+            manifest_read_attempts: 0,
             generated_member_observation_attempts: 0,
             native_owner_acquisitions: 0,
         }

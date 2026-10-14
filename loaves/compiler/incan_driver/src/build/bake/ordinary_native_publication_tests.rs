@@ -50,6 +50,8 @@ const CORE_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_standard_core_publication_and_replay";
 const CORE_RELEASE_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_standard_core_release_publication_and_replay";
+const CORE_ADMISSION_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_core_checked_dependency_admission";
 const PROFILES: [&str; 2] = ["debug", "release"];
 
 /// Select equivalent ordinary publication journeys with distinct native semantic demand owners.
@@ -144,7 +146,8 @@ fn child_profiles(selector: &str, profiles: &str) -> TestResult {
     let isolated = tempfile::tempdir()?;
     let ambient = isolated.path().join("ambient");
     decoy(&ambient)?;
-    let output = std::process::Command::new(copied.as_os_str())
+    let mut command = std::process::Command::new(copied.as_os_str());
+    command
         .args(["--exact", selector, "--ignored", "--nocapture", "--test-threads=1"])
         .env(CHILD, "1")
         // The outer FIRST flag requires reuse of the native test binary. This isolated control intentionally
@@ -164,8 +167,17 @@ fn child_profiles(selector: &str, profiles: &str) -> TestResult {
         .env("INCAN_SDK_NATIVE_INDEX", &ambient)
         .env("INCAN_SDK_NATIVE_BLOBS", &ambient)
         .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", ambient.join("sdk-store"))
-        .current_dir(&ambient)
-        .output()?;
+        .current_dir(&ambient);
+    if selector == CORE_ADMISSION_SELECTOR {
+        command
+            .env(
+                "INCAN_SDK_NATIVE_COMPILER_GRAPH",
+                required_path("INCAN_ORDINARY_LIBRARY_GRAPH")?,
+            )
+            .env("INCAN_SDK_NATIVE_INDEX", required_path("INCAN_ORDINARY_LIBRARY_INDEX")?)
+            .env("INCAN_SDK_NATIVE_BLOBS", required_path("INCAN_ORDINARY_LIBRARY_BLOBS")?);
+    }
+    let output = command.output()?;
     assert!(
         output.status.success(),
         "stdout={} stderr={}",
@@ -237,6 +249,220 @@ fn ordinary_standard_core_release_publication_and_replay() -> TestResult {
     )
 }
 
+/// An ordinary consumer publishes with core's checked namespace and reuses core output without SDK access.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real ordinary native graph/index/blobs"]
+fn ordinary_core_checked_dependency_admission() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child_profiles(CORE_ADMISSION_SELECTOR, "debug");
+    }
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("loaf.toml"),
+        "[project]\nname='ordinary_core_consumer'\nversion='1.0.0'\n",
+    )?;
+    let entry = root.path().join("src/lib.incn");
+    fs::write(
+        &entry,
+        "pub def count(values: List[int]) -> int:\n    return values.iter().count()\n",
+    )?;
+    let manifest = oven_model::manifest::ProjectManifest::load(&root.path().join("loaf.toml"))?;
+    let input = AdmittedLibraryPreparation::discover_ordinary_native(&manifest, &FeatureSelection::default(), None)?
+        .ok_or("configured ordinary preparation absent")?;
+    let modules = crate::modules::collect_modules_detailed_with_session(entry, input.session())
+        .map_err(|failure| failure.render_human())?;
+    assert_eq!(modules.len(), 1, "core source must remain in its checked loaf");
+    assert!(input.session().sdk_inventory().is_none());
+    assert!(input.session().sdk_components().is_none());
+    let core_provider = input
+        .session()
+        .provider_plan()
+        .active_records()
+        .find(|provider| provider.identity.name == "incan_stdlib_core")
+        .ok_or("admitted core provider absent")?;
+    assert_eq!(
+        core_provider
+            .artifact
+            .as_ref()
+            .ok_or("core artifact absent")?
+            .dependency_key,
+        "incan_stdlib_core"
+    );
+    let core_dependency = core_provider
+        .artifact
+        .as_ref()
+        .ok_or("core artifact absent")?
+        .to_dependency_spec();
+    let owners = input
+        .session()
+        .admitted_library_dependencies()
+        .ok_or("ordinary dependencies absent")?;
+    assert!(
+        owners
+            .physical_native_dependencies(input.session().provider_plan(), std::slice::from_ref(&core_dependency))?
+            .is_empty()
+    );
+    let mut changed_dependency = core_dependency;
+    changed_dependency.features.push("unadmitted".into());
+    assert_eq!(
+        owners.physical_native_dependencies(
+            input.session().provider_plan(),
+            std::slice::from_ref(&changed_dependency)
+        )?,
+        vec![changed_dependency]
+    );
+    assert!(matches!(
+        input
+            .session()
+            .provider_plan()
+            .resolve_module(&["std".into(), "derives".into(), "collection".into()]),
+        incan_provider::ProviderModuleResolution::Active(_)
+    ));
+    input
+        .session()
+        .admitted_library_dependencies()
+        .ok_or("ordinary dependencies absent")?
+        .verify()?;
+    // One successful observation produces its semantic identity through one complete native verification.
+    let native = input.ordinary_native().ok_or("ordinary native authority absent")?;
+    take_metadata_request_verifications();
+    let observation =
+        crate::build::library_project::metadata_replay::MetadataPreparation::observe_with_ordinary_native_authority(
+            &manifest,
+            input.session(),
+            &root.path().join("target/lib"),
+            Arc::clone(native.metadata()),
+        )?;
+    assert!(observation.is_some(), "ordinary metadata observation must be available");
+    assert_eq!(
+        take_metadata_request_verifications(),
+        1,
+        "one metadata observation must verify its full native request exactly once"
+    );
+    let report = bake_admitted_library(&input, &FeatureSelection::default(), None)?;
+    for output in &report.outputs {
+        let receipt = crate::build::source_authority::project_bake_receipt_path(
+            root.path(),
+            crate::build::OvenBakeProjectTarget::Library,
+            &root.path().join("src/lib.incn"),
+            &output.profile,
+        )?;
+        assert_eq!(
+            crate::build::output_selection::project_output_locator(&receipt).as_deref(),
+            Some(output.artifact_identity.as_str()),
+            "fresh publication must retain its exact output address before the first unchanged command"
+        );
+        let selected = crate::build::output_selection::located_project_output(
+            &crate::oven_store::open_default_oven_store()?,
+            &receipt,
+            None,
+            |_, _| true,
+        )?
+        .ok_or("fresh published output cannot be admitted")?;
+        assert_eq!(selected.identity, output.artifact_identity);
+        assert!(
+            crate::build::output_materialization::project_output_projection_is_current(root.path(), &selected)?,
+            "fresh publication must retain its current projection before the first unchanged command"
+        );
+    }
+    super::admitted_publication_tests::published_metadata_profiles(root.path(), &report, &["debug"])?;
+    let core = TrustedStandardSourcePublication::discover("incan_stdlib_core")?
+        .ok_or("compiler-owned core source unavailable")?;
+    let handoff_path = packaged_library_loaf_manifest_path(&core.verified_package_root()?.join("target/lib"));
+    let handoff = fs::read(&handoff_path)?;
+    let package: OvenPackagedLibraryLoafManifest = serde_json::from_slice(&handoff)?;
+    for profile in package.profiles.values() {
+        assert_eq!(
+            profile
+                .receipt
+                .sources
+                .build_unit_inputs
+                .get("compiler-version")
+                .map(String::as_str),
+            Some(incan_lang::version::INCAN_VERSION)
+        );
+    }
+    reset_ordinary_library_preparation_branches();
+    let repeated = AdmittedLibraryPreparation::discover_ordinary_native(&manifest, &FeatureSelection::default(), None)?
+        .ok_or("repeated ordinary preparation absent")?;
+    assert_eq!(
+        ordinary_library_preparation_branches(),
+        (0, 0),
+        "unchanged core must reuse completed output before source preparation or metadata replay"
+    );
+    assert_eq!(fs::read(&handoff_path)?, handoff);
+    assert!(repeated.session().sdk_inventory().is_none());
+    assert!(repeated.session().sdk_components().is_none());
+    repeated
+        .session()
+        .admitted_library_dependencies()
+        .ok_or("repeated ordinary dependencies absent")?
+        .verify()?;
+    assert!(matches!(
+        repeated
+            .session()
+            .provider_plan()
+            .resolve_module(&["std".into(), "derives".into(), "collection".into()]),
+        incan_provider::ProviderModuleResolution::Active(_)
+    ));
+    // ---- A public dependency and its consumer must share the exact published core instance ----
+    let downstream = tempfile::tempdir()?;
+    fs::create_dir_all(downstream.path().join("src"))?;
+    fs::write(
+        downstream.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='ordinary_core_downstream'\nversion='1.0.0'\n[dependencies]\ncounts={{path={:?}}}\n",
+            root.path().to_string_lossy(),
+        ),
+    )?;
+    fs::write(
+        downstream.path().join("src/lib.incn"),
+        "from pub::counts import count\n\npub def score() -> int:\n    return count([1, 2, 3])\n",
+    )?;
+    let downstream_manifest = oven_model::manifest::ProjectManifest::load(&downstream.path().join("loaf.toml"))?;
+    let downstream_input =
+        AdmittedLibraryPreparation::discover_ordinary_native(&downstream_manifest, &FeatureSelection::default(), None)?
+            .ok_or("downstream ordinary preparation absent")?;
+    let rustc = resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let toolchain = rustc_identity(&rustc)?;
+    let plan = downstream_input.session().provider_plan();
+    let checked = crate::build::provider_compilation::checked_packaged_provider_profiles(
+        plan,
+        &["debug"],
+        &target,
+        &toolchain,
+        None,
+    )?;
+    let attachments =
+        crate::build::caller_owned::oven_caller_owned_libraries(plan, "debug", &target, &toolchain, Some(&checked))?;
+    let counts = attachments
+        .iter()
+        .find(|library| library.crate_name == "counts")
+        .ok_or("counts output missing")?;
+    let original = fs::read(&counts.output)?;
+    fs::write(&counts.output, b"not the admitted counts output")?;
+    let tampered =
+        crate::build::caller_owned::oven_caller_owned_libraries(plan, "debug", &target, &toolchain, Some(&checked));
+    fs::write(&counts.output, &original)?;
+    assert!(tampered.is_err_and(|error| error.message.contains("differs from its admitted")));
+    let moved = counts.output.with_extension("retained-test-rlib");
+    fs::rename(&counts.output, &moved)?;
+    let missing =
+        crate::build::caller_owned::oven_caller_owned_libraries(plan, "debug", &target, &toolchain, Some(&checked));
+    fs::rename(&moved, &counts.output)?;
+    assert!(missing.is_err_and(|error| error.message.contains("missing its admitted")));
+    let downstream_report = bake_admitted_library(&downstream_input, &FeatureSelection::default(), None)?;
+    super::admitted_publication_tests::published_metadata_profiles(downstream.path(), &downstream_report, &["debug"])?;
+    assert_eq!(
+        fs::read(&handoff_path)?,
+        handoff,
+        "public consumption must preserve the exact core publication"
+    );
+    Ok(())
+}
+
 /// Keep every requested profile, original source grant and published checked metadata owner in one journey.
 fn standard_source_publication(package: &str, graph: &str, required_abi: &[&str], profiles: &[&str]) -> TestResult {
     let source =
@@ -259,11 +485,11 @@ fn standard_source_publication(package: &str, graph: &str, required_abi: &[&str]
         dependencies,
         Arc::clone(&source),
     )?;
-    assert!(session.sdk_inventory.is_none());
-    assert!(session.sdk_components.is_none());
+    assert!(session.sdk_inventory().is_none());
+    assert!(session.sdk_components().is_none());
     assert!(Arc::ptr_eq(
         session
-            .provider_plan
+            .provider_plan()
             .standard_source_publication()
             .ok_or("own source authority lost")?,
         &source,
@@ -666,12 +892,15 @@ fn publication(variant: Publication) -> TestResult {
         .ok_or("release native graph is empty")?;
     let original = release_unit.output()?;
     let displaced = original.with_extension("profile-missing");
+    let dependency_owner = support.declaration_owner()?;
     fs::rename(&original, &displaced)?;
     let debug_handoff = native.metadata().verify_profile(&intent).map(|_| ());
     let complete_metadata = native.verify();
+    let complete_dependencies = native.verify_dependencies(&[], dependency_owner);
     fs::rename(&displaced, &original)?;
     assert!(debug_handoff.is_ok(), "{debug_handoff:?}");
     assert!(complete_metadata.is_err());
+    assert!(complete_dependencies.is_err());
     native.verify()?;
     // ---- Fresh ordinary checked dependency admission, actual publication and checked metadata replay ----
     let root = tempfile::tempdir()?;
@@ -717,13 +946,13 @@ fn publication(variant: Publication) -> TestResult {
     let mut provider_requirements = incan_provider::requirements::ProjectRequirements::default();
     assert!(
         native
-            .provider_semantic_dependencies(&empty_plan, &provider_requirements)?
+            .provider_semantic_dependencies(&empty_plan, &provider_requirements, None)?
             .is_empty()
     );
     provider_requirements.stdlib_facets.push("unadmitted_facet".to_string());
     assert!(
         native
-            .provider_semantic_dependencies(&empty_plan, &provider_requirements)
+            .provider_semantic_dependencies(&empty_plan, &provider_requirements, None)
             .is_err()
     );
     let input = AdmittedLibraryPreparation::with_ordinary_native(session, Arc::clone(&native))?;
@@ -745,6 +974,9 @@ fn publication(variant: Publication) -> TestResult {
                 "metadata_request_verifications": request_verifications,
                 "profiles": &report.profiles})
         );
+        for profile in &report.profiles {
+            println!("ordinary-publication-receipt {}", fs::read_to_string(&profile.receipt)?);
+        }
         assert_eq!((compiled, reused), if iteration == 0 { (2, 0) } else { (0, 2) });
         let metadata = published_metadata(root.path(), &report)?;
         if matches!(variant, Publication::Declared) {

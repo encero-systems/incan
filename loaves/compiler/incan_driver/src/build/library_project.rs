@@ -142,11 +142,11 @@ fn checked_public_library_metadata(
     compilation_session: &CompilationSession,
     modules: &[ParsedModule],
     provider_plan: &Arc<incan_provider::ProviderPlan>,
-    project_name: &str,
-    project_version: &str,
+    package_identity: (&str, &str),
     timings_ms: &mut BTreeMap<String, u64>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> CliResult<CheckedPublicLibraryMetadata> {
+    let (project_name, project_version) = package_identity;
     let lib_module = modules
         .last()
         .ok_or_else(|| CliError::failure("no modules in checked library projection"))?;
@@ -357,7 +357,7 @@ fn checked_public_library_metadata(
 pub(crate) fn checked_source_library_manifest(
     session: &CompilationSession,
     entry: &Path,
-) -> CliResult<LibraryManifest> {
+) -> CliResult<(LibraryManifest, StdlibAstCache)> {
     let manifest = session
         .manifest
         .as_ref()
@@ -392,8 +392,7 @@ pub(crate) fn checked_source_library_manifest(
         session,
         &modules,
         &provider_plan,
-        name,
-        version,
+        (name, version),
         &mut timings_ms,
         #[cfg(feature = "rust_inspect")]
         None,
@@ -404,7 +403,7 @@ pub(crate) fn checked_source_library_manifest(
         .last()
         .ok_or_else(|| CliError::failure("source provider has no library module"))?;
     let feature_plan = session
-        .package_feature_plan
+        .package_feature_plan()
         .as_ref()
         .ok_or_else(|| CliError::failure("source provider has no package feature plan"))?;
     library_manifest.contract_metadata.provider =
@@ -443,7 +442,7 @@ pub(crate) fn checked_source_library_manifest(
         library_manifest.vocab = Some(vocab.payload);
         library_manifest.soft_keywords.activations = vocab.compatibility_activations;
     }
-    Ok(library_manifest)
+    Ok((library_manifest, public.stdlib_cache))
 }
 
 /// Validate a library project and generate its Rust project without running Cargo.
@@ -527,6 +526,173 @@ pub fn prepare_library_project_with_caller_facet(
     }
 }
 
+/// Publish the mandatory core language dependency through the existing ordinary producer and checked admission.
+///
+/// The original native request is shared with the consumer, never prepared again. Core owns its source publication;
+/// consumers retain its exact checked metadata/generation and independently source-bound namespace issuer. Existing
+/// completed-output reuse skips publication only after the original Store, source and preparation checks pass.
+fn prepare_core_checked_dependency(
+    source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+    native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+    target: &str,
+    toolchain: &str,
+) -> CliResult<super::library_dependencies::LibraryDependencyInput> {
+    let root = source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .to_path_buf();
+    let manifest = oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let features = FeatureSelection::default();
+    let store = open_default_oven_store()?;
+    let targets = super::bake::discover_oven_bake_project_targets(&root)?;
+    let mut authority = OvenProjectBakeAuthorityContext {
+        requested_target: Some(target.to_string()),
+        ..OvenProjectBakeAuthorityContext::default()
+    };
+    if super::reuse::try_reuse_baked_project(&root, &targets, &store, &features, Some(target), &mut authority)?
+        .is_none()
+    {
+        let feature_plan = incan_provider::PackageFeaturePlan::resolve(&manifest, &features)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let dependencies = Arc::new(
+            super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan(
+                &feature_plan,
+                target,
+                toolchain,
+                *store.limits(),
+            )?,
+        );
+        let session = CompilationSession::discover_with_admitted_standard_source(
+            &validate_library_entrypoint(&manifest)?,
+            &features,
+            dependencies,
+            Arc::clone(&source),
+        )?;
+        let input = AdmittedLibraryPreparation::with_ordinary_native(session, native)?;
+        super::bake::bake_admitted_library(&input, &features, Some(target))?;
+    }
+    select_core_checked_dependency(source)
+}
+
+/// Select an already published core loaf through the original namespace issuer and exact handoff bytes.
+///
+/// Publication and metadata-only consumers share this boundary. Missing or stale publications refuse through the
+/// same checked dependency admission; selection never prepares native inputs or publishes a replacement.
+fn select_core_checked_dependency(
+    source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+) -> CliResult<super::library_dependencies::LibraryDependencyInput> {
+    let root = source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let artifact_root = incan_frontend::library_manifest_index::dependency_crate_root(root);
+    let namespace = incan_frontend::provider::namespaces::SelectedProviderNamespace::from_source_publication(
+        source,
+        &artifact_root,
+    )
+    .map_err(CliError::failure)?;
+    let handoff = std::fs::read(
+        incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path(&artifact_root),
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(super::library_dependencies::LibraryDependencyInput {
+        features: namespace.record().identity.feature_projection.clone(),
+        artifact_root,
+        handoff_digest: oven_store::digest_bytes(&handoff),
+        import_alias: None,
+        namespace: Some(namespace),
+    })
+}
+
+/// Build a session from the same ordinary dependency owners for publication and metadata inspection.
+/// Standard package authors retain their own source capability; consumers receive checked loaf namespaces only.
+fn ordinary_library_session(
+    manifest: &oven_model::manifest::ProjectManifest,
+    entry: &Path,
+    package_features: &FeatureSelection,
+    dependencies: Arc<super::library_dependencies::PreparedLibraryDependencies>,
+    core_source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+) -> CliResult<CompilationSession> {
+    let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    let core_root = core_source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    // Authored standard packages use their own original source capability; consumers receive only checked loaves.
+    let own_source = if root == core_root {
+        Some(core_source)
+    } else if let Some(name) = manifest.project.as_ref().and_then(|project| project.name.as_deref())
+        && incan_lang::lang::standard_packages::standard_package_namespace_policy(name).is_some()
+    {
+        match incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover(name)
+            .map_err(|error| CliError::failure(error.to_string()))?
+        {
+            Some(source)
+                if source
+                    .verified_package_root()
+                    .map_err(|error| CliError::failure(error.to_string()))?
+                    == root =>
+            {
+                Some(Arc::new(source))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    match own_source {
+        Some(source) => {
+            CompilationSession::discover_with_admitted_standard_source(entry, package_features, dependencies, source)
+        }
+        None => CompilationSession::discover_with_admitted_library_dependencies(entry, package_features, dependencies),
+    }
+}
+
+/// Select checked ordinary dependencies for metadata inspection without native preparation or SDK discovery.
+///
+/// The configured ordinary route requires existing publications matching the host target, toolchain and resolved
+/// features. Failures propagate; only an unconfigured toolchain or a manifest-free source uses the existing reader.
+pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Option<CompilationSession>> {
+    if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none() {
+        return Ok(None);
+    }
+    let root = crate::project::resolve_project_root(entry);
+    let Some(manifest) = discover_effective_project_manifest(&root)? else {
+        return Ok(None);
+    };
+    let package_features = FeatureSelection::default();
+    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, &package_features)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+    let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let core_source = Arc::new(
+        incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover("incan_stdlib_core")
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .ok_or_else(|| {
+                CliError::failure("ordinary metadata inspection requires compiler-owned core publication")
+            })?,
+    );
+    let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    let core_root = core_source
+        .verified_package_root()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let namespaces = if root == core_root {
+        Vec::new()
+    } else {
+        vec![select_core_checked_dependency(Arc::clone(&core_source))?]
+    };
+    let dependencies = Arc::new(
+        super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
+            &features,
+            namespaces,
+            &target,
+            &toolchain,
+            *open_default_oven_store()?.limits(),
+        )?,
+    );
+    ordinary_library_session(&manifest, entry, &package_features, dependencies, core_source).map(Some)
+}
+
 /// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
 ///
 /// Ordinary native requests and the temporary SDK compatibility route are explicit alternatives. This input grants
@@ -538,19 +704,85 @@ pub(crate) struct AdmittedLibraryPreparation {
 
 /// Retain the exact native route selected by the caller; absence never selects a different route.
 enum AdmittedLibraryNative {
+    #[cfg(test)]
     TemporarySdk(Arc<super::NativeSdkCommandContext>),
     Ordinary(Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>),
 }
 
 impl AdmittedLibraryPreparation {
+    /// Prepare configured ordinary native inputs and the resolver-selected source package owners for one command.
+    ///
+    /// Missing configuration leaves the migration caller unchanged. Once configured, missing or incompatible
+    /// packages, compiler support or native records refuse without discovering an older SDK generation.
+    pub(crate) fn discover_ordinary_native(
+        manifest: &oven_model::manifest::ProjectManifest,
+        package_features: &FeatureSelection,
+        requested_target: Option<&str>,
+    ) -> CliResult<Option<Self>> {
+        let Some(inputs) = super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()? else {
+            return Ok(None);
+        };
+        let support = super::ordinary_support::CompilerSupportSources::discover()?
+            .ok_or_else(|| CliError::failure("ordinary library requires compiler-bound support sources"))?;
+        let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+        let target = match requested_target {
+            Some(target) => target.to_string(),
+            None => rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?,
+        };
+        let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+        let features = incan_provider::PackageFeaturePlan::resolve(manifest, package_features)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let output = manifest.project_root().join("target/oven/ordinary-library-native");
+        let native = Arc::new(super::ordinary_library_native::OrdinaryLibraryNativeProfiles::prepare(
+            super::ordinary_library_native::OrdinaryLibraryNativeRequest {
+                support: Arc::new(support),
+                graph: &inputs.graph,
+                index: &inputs.index,
+                blobs: &inputs.blobs,
+                output: &output,
+                rustc: &rustc,
+                target: &target,
+                profiles: &explicit_bake_profiles(),
+            },
+        )?);
+        let core_source = Arc::new(
+            incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover("incan_stdlib_core")
+                .map_err(|error| CliError::failure(error.to_string()))?
+                .ok_or_else(|| {
+                    CliError::failure("ordinary preparation requires compiler-owned core publication source")
+                })?,
+        );
+        let root =
+            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+        let core_root = core_source
+            .verified_package_root()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        let namespaces = if root == core_root {
+            Vec::new()
+        } else {
+            vec![prepare_core_checked_dependency(
+                Arc::clone(&core_source),
+                Arc::clone(&native),
+                &target,
+                &toolchain,
+            )?]
+        };
+        let dependencies = Arc::new(
+            super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
+                &features,
+                namespaces,
+                &target,
+                &toolchain,
+                *open_default_oven_store()?.limits(),
+            )?,
+        );
+        let entry = validate_library_entrypoint(manifest)?;
+        let session = ordinary_library_session(manifest, &entry, package_features, dependencies, core_source)?;
+        Self::with_ordinary_native(session, native).map(Some)
+    }
+
     /// Retain actual admitted dependencies and the original native admission without discovering an SDK.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn new(
         session: CompilationSession,
         temporary_native_sdk_context: Arc<super::NativeSdkCommandContext>,
@@ -599,6 +831,7 @@ impl AdmittedLibraryPreparation {
     )]
     pub(crate) fn verify_native(&self) -> CliResult<()> {
         match &self.native {
+            #[cfg(test)]
             AdmittedLibraryNative::TemporarySdk(native) => native.verify(),
             AdmittedLibraryNative::Ordinary(native) => native.verify(),
         }
@@ -612,6 +845,7 @@ impl AdmittedLibraryPreparation {
     /// Borrow the explicitly temporary native SDK admission without reacquiring or discovering another owner set.
     pub(crate) fn temporary_native_sdk_context(&self) -> Option<&Arc<super::NativeSdkCommandContext>> {
         match &self.native {
+            #[cfg(test)]
             AdmittedLibraryNative::TemporarySdk(native) => Some(native),
             AdmittedLibraryNative::Ordinary(_) => None,
         }
@@ -623,6 +857,7 @@ impl AdmittedLibraryPreparation {
     ) -> Option<&Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>> {
         match &self.native {
             AdmittedLibraryNative::Ordinary(native) => Some(native),
+            #[cfg(test)]
             AdmittedLibraryNative::TemporarySdk(_) => None,
         }
     }
@@ -653,6 +888,28 @@ pub(crate) fn prepare_admitted_library_project<'a>(
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<PreparedAdmittedLibrary<'a>> {
+    prepare_admitted_library_project_with_caller_facet(
+        inputs,
+        output_dir,
+        package_features,
+        include_interop_execution,
+        oven_plan_mode,
+        authority_context,
+        None,
+    )
+}
+
+/// Generate a caller projection using the same original ordinary dependency and native admissions as its provider.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_admitted_library_project_with_caller_facet<'a>(
+    inputs: &'a AdmittedLibraryPreparation,
+    output_dir: Option<&str>,
+    package_features: &FeatureSelection,
+    include_interop_execution: bool,
+    oven_plan_mode: OvenProjectPlanMode,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+    caller_facet: Option<&CallerFacetRequest>,
+) -> CliResult<PreparedAdmittedLibrary<'a>> {
     let manifest = inputs
         .session
         .manifest
@@ -676,12 +933,14 @@ pub(crate) fn prepare_admitted_library_project<'a>(
         include_interop_execution,
         oven_plan_mode,
         authority_context,
-        None,
+        caller_facet,
         None,
         Some(inputs),
     )? {
         LibraryPreparation::Project(project) => *project,
-        LibraryPreparation::Native { .. } => return Err(CliError::failure("unexpected native library publication")),
+        LibraryPreparation::Native { .. } => {
+            return Err(CliError::failure("unexpected native library publication"));
+        }
     };
     Ok(PreparedAdmittedLibrary {
         project,
@@ -731,11 +990,11 @@ pub(crate) fn current_admitted_library_session(
         ));
     }
     let input_features = input
-        .package_feature_plan
+        .package_feature_plan()
         .as_ref()
         .ok_or_else(|| CliError::failure("explicit ordinary session has no feature authority"))?;
     let current_features = current
-        .package_feature_plan
+        .package_feature_plan()
         .as_ref()
         .ok_or_else(|| CliError::failure("current ordinary session has no feature authority"))?;
     if input.active_features != current.active_features
@@ -946,7 +1205,10 @@ fn prepare_library_project_with_context(
     } else {
         None
     };
-    if ordinary_native.is_some() && metadata_preparation.is_none() {
+    // Caller projections are generated for a specific Rust unit and receipted by its caller-facet identity. They
+    // cannot reuse or publish the canonical library's generated metadata; their original native and dependency
+    // admissions still pass the same checked-demand gates below.
+    if ordinary_native.is_some() && caller_facet.is_none() && metadata_preparation.is_none() {
         return Err(CliError::failure(
             "ordinary native library requires observable checked metadata authority",
         ));
@@ -995,11 +1257,13 @@ fn prepare_library_project_with_context(
     let requirements_start = Instant::now();
     let declared = manifest.declared_rust_crate_names();
     let package_feature_plan = compilation_session
-        .package_feature_plan
+        .package_feature_plan()
         .clone()
         .ok_or_else(|| CliError::failure("library compilation session is missing its package feature graph"))?;
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    // Checked source metadata retains authored requirements; current provider coordinates are reconstructed from
+    // the admitted catalog during planning and must never become portable source bindings.
     let source_requirements = project_requirements.clone();
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
@@ -1007,7 +1271,13 @@ fn prepare_library_project_with_context(
     let semantic_sdk_paths = if native_sdk.is_some() {
         Vec::new()
     } else if let Some(native) = ordinary_native.as_ref() {
-        native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
+        native.provider_semantic_dependencies(
+            &provider_plan,
+            &project_requirements,
+            compilation_session
+                .admitted_library_dependencies()
+                .map(|owner| owner.as_ref()),
+        )?
     } else {
         semantic_sdk_path_dependencies(&project_requirements)
     };
@@ -1016,8 +1286,8 @@ fn prepare_library_project_with_context(
     let semantic = incan_provider::lock_semantics::semantic_lock_state_with_provider_identities(
         &project_root,
         manifest.interop_c(),
-        compilation_session.sdk_inventory.as_deref(),
-        compilation_session.sdk_components.as_ref(),
+        compilation_session.sdk_inventory().as_deref(),
+        compilation_session.sdk_components().as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
         &semantic_sdk_paths,
@@ -1107,7 +1377,12 @@ fn prepare_library_project_with_context(
             &provider_plan,
             &metadata_query_paths.iter().cloned().collect(),
         )?
-        .require_ordinary_source_inspection()?;
+        .require_ordinary_source_inspection(
+            compilation_session
+                .admitted_library_dependencies()
+                .map(|owners| (owners.as_ref(), provider_plan.as_ref())),
+        )
+        .map_err(|error| CliError::failure(format!("ordinary pre-check source demands: {}", error.message)))?;
         if include_interop_execution {
             return Err(CliError::failure(
                 "ordinary support-only library cannot request interop execution",
@@ -1236,7 +1511,7 @@ fn prepare_library_project_with_context(
     let mut oven_build_inputs = (normal_oven && native_sdk.is_none())
         .then(|| {
             if ordinary_native.is_some() {
-                Ok(BTreeMap::new())
+                Ok(crate::build_unit::ordinary_library_build_unit_inputs())
             } else {
                 crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
                     &provider_plan,
@@ -1416,8 +1691,7 @@ fn prepare_library_project_with_context(
         &compilation_session,
         &modules,
         &provider_plan,
-        &project_name,
-        &project_version,
+        (&project_name, &project_version),
         &mut timings_ms,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir
@@ -1787,8 +2061,8 @@ fn prepare_library_project_with_context(
             project_requirements.stdlib_facets.clone(),
         ),
         semantic: semantic_report(
-            compilation_session.sdk_inventory.as_deref(),
-            compilation_session.sdk_components.as_ref(),
+            compilation_session.sdk_inventory().as_deref(),
+            compilation_session.sdk_components().as_ref(),
             Some(&package_feature_plan),
             &provider_plan,
         ),
@@ -1819,6 +2093,9 @@ fn prepare_library_project_with_context(
                 &project_requirements,
                 &resolved,
                 &provider_semantic_identities,
+                compilation_session
+                    .admitted_library_dependencies()
+                    .map(|owner| owner.as_ref()),
             )
         })
         .transpose()?;
@@ -2038,7 +2315,15 @@ fn prepare_library_project_with_context(
         ) {
             Ok(contract) => {
                 if ordinary_native.is_some() {
-                    contract.require_ordinary_source_inspection_native()?;
+                    contract
+                        .require_ordinary_source_inspection_native(
+                            compilation_session
+                                .admitted_library_dependencies()
+                                .map(|owners| (owners.as_ref(), provider_plan.as_ref())),
+                        )
+                        .map_err(|error| {
+                            CliError::failure(format!("ordinary checked publication demands: {}", error.message))
+                        })?;
                 }
                 Some(contract)
             }
@@ -2115,13 +2400,10 @@ fn checked_requirement_contract(
     let source_modules = modules
         .iter()
         .map(|module| {
-            let relative = module
-                .file_path
-                .strip_prefix(manifest.project_root())
-                .map_err(|_| CliError::failure("checked module source has no portable package binding"))?
-                .to_str()
-                .ok_or_else(|| CliError::failure("checked module source is not UTF-8"))?
-                .replace('\\', "/");
+            let relative = crate::build::library_metadata::requirements::source_relative(
+                manifest.project_root(),
+                &module.file_path,
+            )?;
             Ok((relative, module.path_segments.clone()))
         })
         .collect::<CliResult<BTreeMap<_, _>>>()?;

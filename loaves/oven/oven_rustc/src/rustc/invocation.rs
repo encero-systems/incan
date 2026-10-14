@@ -244,6 +244,7 @@ fn direct_rustc_output_recipe(
     test_harness: bool,
     output_kind: OvenDirectRustcOutputKind,
 ) -> Result<OvenDirectRustcOutputReceipt, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_output_recipe", input = %request.source.display()).entered();
     let OvenTrustedDirectRustcTargetRequest {
         receipt,
         artifacts,
@@ -839,10 +840,13 @@ fn compile_direct_rustc_output(
     for (crate_name, path) in &plan.externs {
         command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
     }
-    let output_result = command.output().map_err(|source_error| OvenRustcError::Io {
-        path: rustc.to_path_buf(),
-        source: source_error,
-    })?;
+    let output_result = {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::compile_native_process", input = %source.display(), crate_name, test_harness, output_kind = ?output_kind).entered();
+        command.output().map_err(|source_error| OvenRustcError::Io {
+            path: rustc.to_path_buf(),
+            source: source_error,
+        })?
+    };
     if !output_result.status.success() {
         return Err(OvenRustcError::CompilationFailed {
             report: parse_rustc_diagnostics(&output_result.stdout, &output_result.stderr).with_invocation(&command),
@@ -905,6 +909,7 @@ pub(super) fn caller_output_receipt_path(output: &Path) -> Result<PathBuf, OvenR
 /// Missing, malformed, old or mismatched evidence is a cache miss. Returning the verified digest lets the caller
 /// report reuse without rereading the output. The caller must perform receipt/compiler/input admission first.
 pub(super) fn caller_output_reusable_digest(output: &Path, expected: &OvenDirectRustcOutputReceipt) -> Option<String> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_native_output", input = %output.display()).entered();
     let receipt_path = caller_output_receipt_path(output).ok()?;
     let bytes = fs::read(&receipt_path).ok()?;
     let record: OvenDirectRustcOutputRecord = serde_json::from_slice(&bytes).ok()?;

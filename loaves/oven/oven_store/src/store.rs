@@ -5,18 +5,23 @@
 //! toward retention targets; retained totals never justify evicting active readers or refusing valid records.
 
 use oven_model::compiler_identity::{CompilerIdentity, RELEASE_DOMAIN_PREFIX};
+use oven_model::observed_inputs::{FileStamp as MaterializedFileStamp, InputObservations, observation_stamp};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{OvenBuildIntent, OvenReceipt, digest_bytes};
+
+mod payload_index;
+pub use payload_index::{OvenStoreExecutionRequest, OvenStorePayloadIndex};
+use payload_index::{RetainedPayloadIndex, advance_payload_indexes, resolve_execution_request};
 
 /// Version of the persistent Oven artifact-store layout.
 pub const OVEN_STORE_SCHEMA_VERSION: u32 = 4;
@@ -51,6 +56,12 @@ const LEGACY_CARGO_STAGING_DIRECTORY: &str = "legacy-cargo-staging";
 const LEGACY_CARGO_PUBLISHER_LOCK_FILE: &str = ".publisher.lock";
 const LEGACY_CARGO_STAGING_PREFIX: &str = ".legacy-cargo-";
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+thread_local! {
+    /// Count actual canonical directory enumerations on this test's thread.
+    static MATERIALIZED_DIRECTORY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Request bounds and idle-retention targets applied before an Oven artifact becomes visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,15 +252,13 @@ pub struct OvenStoreEntry {
 /// shard between test roots.
 pub struct OvenStoreExecutionPayload {
     /// Verified immutable manifest authorizing this execution input.
-    pub manifest: OvenArtifactManifest,
+    manifest: OvenArtifactManifest,
     /// Store-owned root containing the materialized immutable closure.
-    pub artifact_root: PathBuf,
+    artifact_root: PathBuf,
     /// Verified immutable payload bytes.
-    pub payload: Vec<u8>,
-    /// Canonical selected entry coordinate, retained independently of the public materialized root.
+    payload: Vec<u8>,
+    /// Canonical selected entry coordinate, retained independently of the borrowed materialized root.
     admitted_entry_root: PathBuf,
-    /// Original content identity; public record mutation cannot retarget the held lease.
-    admitted_identity: String,
     /// Publisher's own receipt, retained beside the entry and decoded once at admission.
     ///
     /// A reused output's manifest names the receipt that authorizes *this* selection; this is the receipt of the
@@ -257,12 +266,96 @@ pub struct OvenStoreExecutionPayload {
     /// consumer needs to be able to report. `None` is an entry published before the witness existed, which is
     /// legacy evidence rather than an empty recipe.
     original_native_receipt: Option<AdmittedNativeReceipt>,
-    /// Replacement-sensitive file observations, bounded by this admitted owner's manifest and lease lifetime.
-    materialized_observations: Mutex<BTreeMap<PathBuf, MaterializedFileDigest>>,
+    /// Existing byte observations and verified consumed inventory, bounded by this original manifest and lease.
+    materialized_observations: Mutex<MaterializedObservations>,
     _lease: OvenStoreLease,
 }
 
 impl OvenStoreExecutionPayload {
+    /// Borrow the immutable manifest authenticated at admission; physical consumers must still revalidate original
+    /// files.
+    ///
+    /// ```compile_fail
+    /// fn mutate(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.manifest().intent.profile.clear();
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0616
+    /// fn retarget(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.manifest.intent.profile.clear();
+    /// }
+    /// ```
+    pub fn manifest(&self) -> &OvenArtifactManifest {
+        &self.manifest
+    }
+
+    /// Borrow the original materialized root without allowing a consumer to retarget this lease.
+    ///
+    /// ```compile_fail
+    /// fn mutate(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.artifact_root().push("retarget");
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0616
+    /// fn retarget(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.artifact_root.push("retarget");
+    /// }
+    /// ```
+    pub fn artifact_root(&self) -> &Path {
+        &self.artifact_root
+    }
+
+    /// Borrow the immutable bytes authenticated at admission, without exposing mutation or transferring the lease.
+    ///
+    /// ```compile_fail
+    /// fn mutate(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.payload().push(0);
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0616
+    /// fn retarget(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.payload.push(0);
+    /// }
+    /// ```
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    /// Enumerate the exact admitted record, witness and materialized inputs for an enclosing owner's observations.
+    ///
+    /// This neither discovers Store entries nor grants authority: the caller must retain this leased payload and use
+    /// its existing replacement-sensitive observation policy. Mutable lease/accounting sidecars are excluded.
+    /// Native execution excludes the archived `source` subtree, matching native Loaf verification; source inspection
+    /// must verify that subtree separately.
+    pub fn visit_admitted_native_inputs(&self, visit: &mut impl FnMut(&Path)) {
+        for name in [
+            ARTIFACT_MANIFEST_FILE,
+            LOAF_MANIFEST_FILE,
+            PAYLOAD_FILE,
+            NATIVE_RECEIPT_FILE,
+        ] {
+            visit(&self.admitted_entry_root.join(name));
+        }
+        visit(&self.artifact_root);
+        for relative in self
+            .admitted_materialized_files()
+            .iter()
+            .map(|file| &file.relative_path)
+            .chain(
+                self.admitted_materialized_directories()
+                    .iter()
+                    .map(|directory| &directory.relative_path),
+            )
+        {
+            if !Path::new(relative).starts_with("source") {
+                visit(&self.artifact_root.join(relative));
+            }
+        }
+    }
+
     /// Borrow the original publisher recipe; a legacy entry without a witness does not acquire new receipt facts.
     ///
     /// `OvenStoreEntry` exposes the same record for inspection, which is the surface a reader uses. This borrow is
@@ -273,50 +366,173 @@ impl OvenStoreExecutionPayload {
         self.original_native_receipt.as_ref().map(|witness| &witness.receipt)
     }
 
-    /// Revalidate the original admitted record and payload bytes without walking the materialized closure.
+    /// Observe one inventoried materialized member through this owner's existing retained file digests.
     ///
-    /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
-    /// checks those fields against the original selected coordinate and content identity before a new physical
-    /// consumer borrows them. It authenticates the current primary payload file against both the manifest and the
-    /// retained bytes, then stats the artifact root rather than hashing the closure underneath it. A consumer that
-    /// never reads the closure must use [`Self::verify_admitted_payload`], which adds that walk. One that is about
-    /// to read every file anyway — a store-to-store import building a destination manifest — proves the closure
-    /// with that read instead, by handing this manifest to the publication as its expectation.
-    pub fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
-        let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
-        if manifest.identity != self.admitted_identity
-            || manifest != self.manifest
-            || self.artifact_root != self.admitted_entry_root.join(MATERIALIZED_DIRECTORY)
+    /// This returns observed bytes, not admission authority. Consumers must separately verify the original owner
+    /// and compare this identity with their authenticated member descriptor. Paths resolve beneath the private
+    /// admitted coordinate; nonmembers, escaping paths and linked ancestors or files are refused. Unchanged
+    /// generations avoid artifact opens and persistent digest-cache I/O through the same observations as inventory
+    /// verification. Changed or unsupported generations use the existing held-file hashing path.
+    pub fn digest_materialized_member(&self, relative_path: &str) -> Result<(u64, String), OvenStoreError> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::digest_materialized_member", input = relative_path, inventory_members = self.admitted_materialized_files().len()).entered();
+        let relative = Path::new(relative_path);
+        if relative_path.is_empty()
+            || relative_path.contains('\\')
+            || !relative.components().all(|part| matches!(part, Component::Normal(_)))
+            || !self
+                .admitted_materialized_files()
+                .iter()
+                .any(|member| member.relative_path == relative_path)
         {
-            return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
-                message: "execution payload no longer matches its original admitted record and root".to_string(),
+            return Err(OvenStoreError::InvalidInput {
+                field: "materialized member",
+                message: "requires an exact inventoried relative file coordinate".into(),
             });
         }
-        let current_payload = verified_payload_bytes(&self.admitted_entry_root, &manifest)?;
-        if current_payload != self.payload {
+
+        // ---- Original coordinate and plain ancestors ----
+        let root = self.admitted_entry_root.join(MATERIALIZED_DIRECTORY);
+        let path = root.join(relative);
+        let mut inputs = InputObservations::default();
+        let metadata = inputs
+            .observe_regular_file_within(&root, &path)
+            .map_err(|source| OvenStoreError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let before = materialized_metadata_stamp(&metadata).map_err(|source| OvenStoreError::Io {
+            path: path.clone(),
+            source,
+        })?;
+
+        // ---- Same owner-held byte observations as inventory verification ----
+        let observed = {
+            let mut observations = self
+                .materialized_observations
+                .lock()
+                .map_err(|_| OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "materialized file observation lock poisoned".into(),
+                })?;
+            digest_retained_materialized_file(&path, &mut observations.files, Some(&metadata))?
+        };
+        if before != observed.stamp || (inputs.supports_retention() && !inputs.current()) {
             return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
-                message: "execution payload bytes disagree with the original admitted descriptor".to_string(),
+                identity: self.manifest.identity.clone(),
+                message: "materialized member changed during observation".into(),
+            });
+        }
+        Ok((observed.length, observed.digest))
+    }
+
+    /// Revalidate the original admitted record and current payload file without walking the materialized closure.
+    ///
+    /// The manifest, root and retained bytes are immutable after admission. This authenticates the original manifest
+    /// identity and reconciles the current primary payload through the owner's replacement-sensitive observations;
+    /// it does not rehash immutable held bytes. The lease prevents pruning, while these file checks detect out-of-band
+    /// edits. An unchanged original record reuses this owner's successful validation under the same input
+    /// observations as its files; replacement, mutation and absent-witness changes return to canonical checks.
+    /// Consumers that do not independently verify the closure must use [`Self::verify_admitted_payload`].
+    pub fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
+        let _verification = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_admitted_record", input = %self.manifest.identity).entered();
+        verify_store_entry_root(&self.admitted_entry_root)?;
+        {
+            let mut observations = self
+                .materialized_observations
+                .lock()
+                .map_err(|_| OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "materialized file observation lock poisoned".to_string(),
+                })?;
+            if let Some(record) = observations.record.as_ref()
+                && record.supports_retention()
+                && record.current()
+            {
+                tracing::trace!(target: "incan::invocation", decision = "reuse_original_record_verification", metadata_checks = record.len());
+                return Ok(());
+            }
+            observations.record = None;
+        }
+
+        // Observe before canonical verification: replacements during the check cannot seed a retained success.
+        // Both manifest spellings matter because adding loaf.json changes the canonical selector for a bare entry.
+        let mut inputs = InputObservations::default();
+        for member in [
+            LOAF_MANIFEST_FILE,
+            ARTIFACT_MANIFEST_FILE,
+            PAYLOAD_FILE,
+            NATIVE_RECEIPT_FILE,
+            MATERIALIZED_DIRECTORY,
+        ] {
+            inputs.observe_within(&self.admitted_entry_root, &self.admitted_entry_root.join(member));
+        }
+        let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
+        if manifest.identity != self.manifest.identity {
+            return Err(OvenStoreError::Integrity {
+                identity: self.manifest.identity.clone(),
+                message: "execution payload no longer matches its original admitted record".to_string(),
+            });
+        }
+        let observed = {
+            let _observation =
+                tracing::trace_span!(target: "incan::invocation", "oven_store::reconcile_primary_payload").entered();
+            let mut observations = self
+                .materialized_observations
+                .lock()
+                .map_err(|_| OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "materialized file observation lock poisoned".to_string(),
+                })?;
+            digest_retained_materialized_file(
+                &self.admitted_entry_root.join(PAYLOAD_FILE),
+                &mut observations.files,
+                None,
+            )?
+        };
+        if observed.length != manifest.payload.logical_bytes || observed.digest != manifest.payload.digest {
+            return Err(OvenStoreError::Integrity {
+                identity: self.manifest.identity.clone(),
+                message: "manifest payload descriptor disagrees with stored bytes".to_string(),
             });
         }
         // The lease stops the entry being pruned; it does not stop the witness file being rewritten underneath a
         // held payload. Comparing the digest admission recorded is what makes the retained receipt evidence rather
         // than a cached read.
-        let witness_bytes = read_native_receipt_bytes(&self.admitted_entry_root, &manifest)?;
-        let current_digest = witness_bytes.as_deref().map(digest_bytes);
-        if current_digest.as_deref()
-            != self
-                .original_native_receipt
-                .as_ref()
-                .map(|witness| witness.bytes_digest.as_str())
         {
-            return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
-                message: "original native receipt witness changed after admission".to_string(),
-            });
+            let _validation =
+                tracing::trace_span!(target: "incan::invocation", "oven_store::verify_original_receipt_witness")
+                    .entered();
+            let witness_bytes = read_native_receipt_bytes(&self.admitted_entry_root, &manifest)?;
+            let current_digest = witness_bytes.as_deref().map(digest_bytes);
+            if current_digest.as_deref()
+                != self
+                    .original_native_receipt
+                    .as_ref()
+                    .map(|witness| witness.bytes_digest.as_str())
+            {
+                return Err(OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "original native receipt witness changed after admission".to_string(),
+                });
+            }
         }
-        verify_materialized_root(&self.admitted_entry_root, &manifest)
+        verify_materialized_root(&self.admitted_entry_root, &manifest)?;
+        if inputs.supports_retention() {
+            if !inputs.current() {
+                return Err(OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "original record changed during verification".to_string(),
+                });
+            }
+            self.materialized_observations
+                .lock()
+                .map_err(|_| OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "materialized file observation lock poisoned".to_string(),
+                })?
+                .record = Some(inputs);
+        }
+        Ok(())
     }
 
     /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
@@ -353,7 +569,7 @@ impl OvenStoreExecutionPayload {
             .materialized_observations
             .lock()
             .map_err(|_| OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "materialized file observation lock poisoned".to_string(),
             })?;
         verify_materialized_files_with_observations(
@@ -380,16 +596,16 @@ impl OvenStoreExecutionPayload {
             .parent()
             .and_then(Path::parent)
             .ok_or_else(|| OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "native entry has no store root".to_string(),
             })?;
-        let proof_path = crate::closure_proof::OvenClosureProof::path(store_root, &self.admitted_identity);
+        let proof_path = crate::closure_proof::OvenClosureProof::path(store_root, &self.manifest.identity);
         let artifact_count =
             u64::try_from(self.manifest.materialized_files.len()).map_err(|_| OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "native member count is outside supported bounds".to_string(),
             })?;
-        if crate::closure_proof::OvenClosureProof::read_matching(&proof_path, &self.admitted_identity, artifact_count)
+        if crate::closure_proof::OvenClosureProof::read_matching(&proof_path, &self.manifest.identity, artifact_count)
             .is_some()
         {
             return Ok(());
@@ -397,7 +613,7 @@ impl OvenStoreExecutionPayload {
         self.verify_admitted_payload()?;
         crate::closure_proof::OvenClosureProof {
             schema_version: crate::closure_proof::OVEN_CLOSURE_PROOF_SCHEMA_VERSION,
-            closure_identity: self.admitted_identity.clone(),
+            closure_identity: self.manifest.identity.clone(),
             artifact_count,
         }
         .write(&proof_path)
@@ -429,7 +645,7 @@ impl OvenStoreExecutionPayload {
     ///
     /// Call before importing the source files. An already admitted destination can reuse its own leased content
     /// without rereading the source closure. The check is anchored to the originally admitted entry and also
-    /// revalidates the mutable public manifest, artifact root, and payload bytes before trusting that closure. This
+    /// revalidates the original manifest, artifact root, and current payload file before trusting that closure. This
     /// verification does not populate physical-accounting caches.
     pub fn verify_materialized_files(&self) -> Result<(), OvenStoreError> {
         self.verify_admitted_payload()
@@ -559,18 +775,22 @@ impl PublishedOvenStore {
 
     /// Select exact immutable owners without enumerating unrelated published entries.
     ///
-    /// All identities are validated before filesystem access. One existing shared manager lock protects the entire
+    /// Explicit identities are validated before filesystem access. Indexed requests resolve retained payload keys
+    /// under the same manager lock, then enter this exact admission; a cold partition is discovered once.
+    /// One existing shared manager lock protects the entire
     /// batch until every payload has its original active lease. Selection verifies the same manifest, requested
     /// identity, payload and native receipt as writable admission, but creates no layout or bookkeeping. Missing
     /// owners and competing bare/Loaf coordinates refuse; materialized files still require caller verification.
-    pub fn select_payloads_for_execution(
+    pub fn select_payloads_for_execution<'a>(
         &self,
-        identities: &[String],
+        request: impl Into<OvenStoreExecutionRequest<'a>>,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
-        validate_execution_identities(identities)?;
+        let request = request.into();
+        request.validate_identities()?;
         let _manager = self.manager_lock()?;
+        let identities = resolve_execution_request(&self.root.join(ENTRIES_DIRECTORY), request)?;
         let mut selected = Vec::with_capacity(identities.len());
-        for identity in identities {
+        for identity in identities.as_ref() {
             let path = exact_published_entry_root(&self.root.join(ENTRIES_DIRECTORY), identity)?;
             let manifest = verify_published_entry_manifest(&path)?;
             verify_requested_entry_identity(identity, &manifest)?;
@@ -579,9 +799,8 @@ impl PublishedOvenStore {
             let original_native_receipt = admit_native_receipt(&path, &manifest)?;
             selected.push(OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
-                admitted_identity: identity.clone(),
                 original_native_receipt,
-                materialized_observations: Mutex::new(BTreeMap::new()),
+                materialized_observations: Mutex::new(MaterializedObservations::default()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -645,11 +864,13 @@ struct StagedOvenArtifactPublication {
     manifest: OvenArtifactManifest,
     logical_bytes: u64,
     physical_bytes: u64,
+    /// Actual private copy observations, retained across the directory commit only while full stamps match.
+    written_files: BTreeMap<String, MaterializedFileDigest>,
 }
 
-/// Held shared advisory lease that protects one selected Oven artifact from pruning.
+/// Shared physical advisory lock protecting one selected artifact until its last consumer releases the handle.
 pub struct OvenStoreLease {
-    file: File,
+    _file: Arc<File>,
 }
 
 impl OvenStore {
@@ -738,6 +959,7 @@ impl OvenStore {
         admitted_files: Option<&[OvenArtifactMaterializedFileManifest]>,
         admitted_directories: Option<&[OvenArtifactMaterializedDirectoryManifest]>,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
+        let _publication = tracing::trace_span!(target: "incan::invocation", "oven_store::publish_artifact", domain = %request.domain, files = request.materialized_files.len(), payload_bytes = request.payload.len()).entered();
         let domain = normalized_domain(&request.domain)?;
         if request.payload.is_empty() {
             return Err(OvenStoreError::InvalidInput {
@@ -762,10 +984,13 @@ impl OvenStore {
         let manifest = artifact_manifest(request, domain.clone(), &materialized_files, &materialized_directories)?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
+        let manager_wait =
+            tracing::trace_span!(target: "incan::invocation", "oven_store::wait_publication_lock").entered();
         manager.lock().map_err(|source| OvenStoreError::Io {
             path: self.root.join(MANAGER_LOCK_FILE),
             source,
         })?;
+        drop(manager_wait);
         self.reclaim_stale_staging()?;
         if !allow_legacy_cargo_publisher {
             self.reject_active_legacy_cargo_publisher()?;
@@ -818,10 +1043,13 @@ impl OvenStore {
             &materialized_directories,
             &mut shared_materialized_files,
         );
-        if let Err(error) = publication {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error);
-        }
+        let written_files = match publication {
+            Ok(written_files) => written_files,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+        };
 
         // `write_staged_entry` has just rechecked every source digest while writing and synchronizing the new
         // files. Capacity admission needs the actual allocation and shape, not a second full content walk of this
@@ -838,12 +1066,28 @@ impl OvenStore {
                 ),
             });
         }
-        self.prune_for_admission(&staged.manifest.domain, staged.logical_bytes, staged.physical_bytes)?;
+        // The manager lock still excludes other publishers. The first sweep already reserved these logical bytes
+        // and the conservative physical estimate, so only a larger measured allocation can require another sweep.
+        if staged.physical_bytes > estimated_physical {
+            self.prune_for_admission(&staged.manifest.domain, staged.logical_bytes, staged.physical_bytes)?;
+        }
+        let entries_root = self.entries_root();
+        let before_commit = store_directory_stamp(&entries_root);
         fs::rename(&staging, &entry_path).map_err(|source| OvenStoreError::Io {
             path: entry_path.clone(),
             source,
         })?;
         sync_directory(self.entries_root())?;
+        remember_published_file_observations(&entry_path, &written_files);
+        remember_published_manifest(
+            &entries_root,
+            &entry_path,
+            &manifest,
+            before_commit.as_ref(),
+            staged.logical_bytes,
+            staged.physical_bytes,
+            &request.payload,
+        );
         Ok(manifest)
     }
 
@@ -858,6 +1102,11 @@ impl OvenStore {
         &self,
         candidate: &OvenArtifactManifest,
     ) -> Result<Option<(OvenArtifactManifest, PathBuf)>, OvenStoreError> {
+        if candidate.kind != OvenArtifactKind::DirectRustcPlan {
+            return Ok(None);
+        }
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "oven_store::find_equivalent_direct_plan").entered();
         let root = self.entries_root();
         if !root.exists() {
             return Ok(None);
@@ -1096,7 +1345,7 @@ impl OvenStore {
                 cleanup_batch_staging(&staged);
                 return Err(OvenStoreError::Io { path: staging, source });
             }
-            if let Err(error) = write_staged_entry(
+            let written_files = match write_staged_entry(
                 &staging,
                 &publication.manifest,
                 &publication.request.payload,
@@ -1105,10 +1354,13 @@ impl OvenStore {
                 &publication.materialized_directories,
                 &mut shared_materialized_files,
             ) {
-                let _ = fs::remove_dir_all(&staging);
-                cleanup_batch_staging(&staged);
-                return Err(error);
-            }
+                Ok(written_files) => written_files,
+                Err(error) => {
+                    let _ = fs::remove_dir_all(&staging);
+                    cleanup_batch_staging(&staged);
+                    return Err(error);
+                }
+            };
             let measurement = match measure_staged_entry_for_admission(&staging) {
                 Ok(measurement) => measurement,
                 Err(error) => {
@@ -1122,6 +1374,7 @@ impl OvenStore {
                 manifest: publication.manifest.clone(),
                 logical_bytes: measurement.logical_bytes,
                 physical_bytes: 0,
+                written_files,
             });
         }
         let measured_physical = assign_unique_staged_physical_bytes(&mut staged)?;
@@ -1196,6 +1449,7 @@ impl OvenStore {
                     source,
                 });
             }
+            remember_published_file_observations(&destination, &publication.written_files);
             published.push(destination);
         }
         sync_directory(self.entries_root())?;
@@ -1213,21 +1467,9 @@ impl OvenStore {
         self.reclaim_stale_staging()?;
         let path = self.entry_root(identity);
         verify_entry(&path)?;
-        let lease_path = path.join(ACTIVE_LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&lease_path)
-            .map_err(|source| OvenStoreError::Io {
-                path: lease_path.clone(),
-                source,
-            })?;
-        file.lock_shared().map_err(|source| OvenStoreError::Io {
-            path: lease_path,
-            source,
-        })?;
+        let lease = acquire_execution_lease(&path, true)?;
         touch_entry(&path)?;
-        Ok((measure_entry(&path)?, OvenStoreLease { file }))
+        Ok((measure_entry(&path)?, lease))
     }
 
     /// Select one immutable payload with a held lease so an executor never races pruning after integrity verification.
@@ -1282,39 +1524,23 @@ impl OvenStore {
                 message: "manifest payload descriptor disagrees with stored bytes".to_string(),
             });
         }
-        let lease_path = path.join(ACTIVE_LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&lease_path)
-            .map_err(|source| OvenStoreError::Io {
-                path: lease_path.clone(),
-                source,
-            })?;
-        file.lock_shared().map_err(|source| OvenStoreError::Io {
-            path: lease_path,
-            source,
-        })?;
+        let lease = acquire_execution_lease(&path, true)?;
         touch_entry(&path)?;
-        Ok((
-            manifest,
-            path.join(MATERIALIZED_DIRECTORY),
-            payload,
-            OvenStoreLease { file },
-        ))
+        Ok((manifest, path.join(MATERIALIZED_DIRECTORY), payload, lease))
     }
 
     /// Select every immutable execution input for one batch and retain all their active leases together.
     ///
-    /// Callers must provide a unique non-empty identity set. The manager lock covers complete manifest/payload
+    /// Explicit callers provide a unique non-empty identity set; indexed requests resolve retained payload keys
+    /// under the same manager lock and may return an empty miss. The manager lock covers complete manifest/payload
     /// verification and lease acquisition for the whole set, then the returned values keep those entries protected
     /// through execution. This deliberately avoids selecting one later shard after an earlier child has already run:
     /// a concurrent policy admission could otherwise legally prune the not-yet-selected shard.
-    pub fn select_payloads_for_execution(
+    pub fn select_payloads_for_execution<'a>(
         &self,
-        identities: &[String],
+        request: impl Into<OvenStoreExecutionRequest<'a>>,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
-        self.select_execution_payloads(identities, false)
+        self.select_execution_payloads(request.into(), false)
     }
 
     /// Select an exact original-owner batch without publication or a catalog scan, returning `None` for an absent
@@ -1324,7 +1550,7 @@ impl OvenStore {
         &self,
         identities: &[String],
     ) -> Result<Option<Vec<OvenStoreExecutionPayload>>, OvenStoreError> {
-        let owners = self.select_execution_payloads(identities, true)?;
+        let owners = self.select_execution_payloads(OvenStoreExecutionRequest::Identities(identities), true)?;
         Ok((!owners.is_empty()).then_some(owners))
     }
 
@@ -1332,12 +1558,12 @@ impl OvenStore {
     #[track_caller]
     fn select_execution_payloads(
         &self,
-        identities: &[String],
+        request: OvenStoreExecutionRequest<'_>,
         allow_missing: bool,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
         let caller = std::panic::Location::caller();
-        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_exact_payloads", input = ?identities, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
-        validate_execution_identities(identities)?;
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_exact_payloads", caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+        request.validate_identities()?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
         manager.lock().map_err(|source| OvenStoreError::Io {
@@ -1346,8 +1572,9 @@ impl OvenStore {
         })?;
         self.reclaim_stale_staging()?;
 
+        let identities = resolve_execution_request(&self.entries_root(), request)?;
         let mut selected = Vec::with_capacity(identities.len());
-        for identity in identities {
+        for identity in identities.as_ref() {
             let path = if allow_missing {
                 match try_exact_published_entry_root(&self.entries_root(), identity)? {
                     Some(path) => path,
@@ -1364,9 +1591,8 @@ impl OvenStore {
             touch_entry(&path)?;
             selected.push(OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
-                admitted_identity: identity.clone(),
                 original_native_receipt,
-                materialized_observations: Mutex::new(BTreeMap::new()),
+                materialized_observations: Mutex::new(MaterializedObservations::default()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -1727,6 +1953,20 @@ impl OvenStore {
         pending_logical_bytes: u64,
         pending_physical_bytes: u64,
     ) -> Result<(), OvenStoreError> {
+        let _capacity = tracing::trace_span!(target: "incan::invocation", "oven_store::admit_publication_capacity", pending_logical_bytes, pending_physical_bytes).entered();
+        let root = self.entries_root();
+        if let Some(stamp) = store_directory_stamp(&root)
+            && let Ok(memo) = read_manifest_memo().lock()
+            && let Some(catalog) = memo.catalogs.get(&root)
+            && catalog.stamp == stamp
+            && let Some(capacity) = &catalog.capacity
+            && capacity.satisfies(self.limits, Some(domain), pending_logical_bytes, pending_physical_bytes)
+        {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_store_capacity_accounting");
+            return Ok(());
+        }
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "oven_store::sweep_for_publication").entered();
         self.prune_to_limits(Some(domain), pending_logical_bytes, pending_physical_bytes, true)?;
         Ok(())
     }
@@ -2094,7 +2334,35 @@ impl OvenStore {
     /// materialized-file digest verification is deliberately reserved for [`Self::inspect`] and the verifying
     /// selection APIs; direct native execution relies on its separately validated caller-output receipt.
     fn collect_entries_for_admission(&self) -> Result<Vec<OvenStoreEntry>, OvenStoreError> {
-        self.collect_entries_with(measure_entry_for_admission)
+        let root = self.entries_root();
+        let before = store_directory_stamp(&root);
+        let entries = self.collect_entries_with(measure_entry_for_admission)?;
+        if let Some(stamp) = store_directory_stamp(&root)
+            && Some(&stamp) == before.as_ref()
+            && let Ok(mut memo) = read_manifest_memo().lock()
+        {
+            let capacity = StoreCapacity::from_entries(&entries);
+            if let Some(catalog) = memo.catalogs.get_mut(&root)
+                && catalog.stamp == stamp
+            {
+                catalog.capacity = Some(capacity);
+                return Ok(entries);
+            }
+            let manifests = entries
+                .iter()
+                .map(|entry| (entry.path.clone(), Arc::new(entry.manifest.clone())))
+                .collect();
+            memo.catalogs.insert(
+                root,
+                RetainedManifestCatalog {
+                    stamp,
+                    entries: Arc::new(manifests),
+                    capacity: Some(capacity),
+                    payload_indexes: HashMap::new(),
+                },
+            );
+        }
+        Ok(entries)
     }
 
     /// Enumerate complete store entries through one caller-selected measurement policy.
@@ -2418,10 +2686,29 @@ fn cleanup_batch_staging(staged: &[StagedOvenArtifactPublication]) {
     }
 }
 
-impl Drop for OvenStoreLease {
-    /// Release the advisory lease before a future capacity operation can prune the selected entry.
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
+/// Live physical lease handles; weak references never extend a consumer lifetime.
+type ExecutionLeaseHandles = Mutex<HashMap<(u64, u64), Weak<File>>>;
+
+/// Share only live physical lock handles; weak entries retain neither artifacts nor admission decisions.
+/// The final consumer closes the shared file, releasing its advisory lock. Dropping an earlier consumer must not
+/// explicitly unlock a descriptor still owned by another selected payload.
+fn execution_lease_handles() -> &'static ExecutionLeaseHandles {
+    static HANDLES: OnceLock<ExecutionLeaseHandles> = OnceLock::new();
+    HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Identify the physical lock object, independently of timestamps or bookkeeping bytes.
+/// A held file prevents inode reuse; platforms without a stable object identity retain independent handles.
+fn execution_lease_identity(metadata: &fs::Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
     }
 }
 
@@ -2438,6 +2725,16 @@ fn acquire_execution_lease(root: &Path, writable: bool) -> Result<OvenStoreLease
             message: "store entry lease must be a regular non-symlink file".to_string(),
         });
     }
+    let identity = execution_lease_identity(&metadata);
+    if let Some(identity) = identity {
+        let handles = execution_lease_handles().lock().map_err(|_| OvenStoreError::Io {
+            path: lease_path.clone(),
+            source: io::Error::other("Store execution lease registry is poisoned"),
+        })?;
+        if let Some(file) = handles.get(&identity).and_then(Weak::upgrade) {
+            return Ok(OvenStoreLease { _file: file });
+        }
+    }
     let file = OpenOptions::new()
         .read(true)
         .write(writable)
@@ -2447,10 +2744,35 @@ fn acquire_execution_lease(root: &Path, writable: bool) -> Result<OvenStoreLease
             source,
         })?;
     file.lock_shared().map_err(|source| OvenStoreError::Io {
-        path: lease_path,
+        path: lease_path.clone(),
         source,
     })?;
-    Ok(OvenStoreLease { file })
+    for observed in [file.metadata(), fs::symlink_metadata(&lease_path)] {
+        let observed = observed.map_err(|source| OvenStoreError::Io {
+            path: lease_path.clone(),
+            source,
+        })?;
+        if !observed.is_file() || (identity.is_some() && execution_lease_identity(&observed) != identity) {
+            return Err(OvenStoreError::Integrity {
+                identity: root.display().to_string(),
+                message: "store entry lease was replaced during acquisition".to_string(),
+            });
+        }
+    }
+    let file = Arc::new(file);
+    if let Some(identity) = identity {
+        let mut handles = execution_lease_handles().lock().map_err(|_| OvenStoreError::Io {
+            path: lease_path,
+            source: io::Error::other("Store execution lease registry is poisoned"),
+        })?;
+        // Another consumer may have acquired this file while the registry was unlocked for filesystem I/O.
+        if let Some(file) = handles.get(&identity).and_then(Weak::upgrade) {
+            return Ok(OvenStoreLease { _file: file });
+        }
+        handles.retain(|_, handle| handle.strong_count() != 0);
+        handles.insert(identity, Arc::downgrade(&file));
+    }
+    Ok(OvenStoreLease { _file: file })
 }
 
 /// Acquire matching payloads while the caller holds this store's manager lock.
@@ -2468,37 +2790,19 @@ where
     P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
 {
     let caller = std::panic::Location::caller();
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_matching_payloads", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::match_retained_payloads", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+    let catalog = retained_store_manifests(root)?;
+    tracing::trace!(target: "incan::invocation", retained_manifest_candidates = catalog.len());
     let mut selected = Vec::new();
-    for candidate in fs::read_dir(root).map_err(|source| OvenStoreError::Io {
-        path: root.to_path_buf(),
-        source,
-    })? {
-        let candidate = candidate.map_err(|source| OvenStoreError::Io {
-            path: root.to_path_buf(),
-            source,
-        })?;
-        let path = candidate.path();
-        if !path.is_dir() {
-            return Err(OvenStoreError::Integrity {
-                identity: path.display().to_string(),
-                message: "entries root contains a non-directory item".to_string(),
-            });
+    for (path, manifest) in catalog.iter() {
+        if !matches(manifest) {
+            continue;
         }
-        let path = canonical_published_entry_root(&path)?;
-        // Read every candidate, but prove only the ones this selection actually takes. Enumerating a store means
-        // touching every entry in it — 519 in one measured store, and the largest manifests carry close to four
-        // thousand materialized-file records each — while a selection usually wants a handful. Recomputing every
-        // enumerated entry's identity to answer a question that only reads its fields was most of the cost of a
-        // bake that compiles nothing.
-        //
-        // Nothing that gets used goes unproven. An entry that does not match is never executed, and one that does
-        // is verified here before its payload is read, so a tampered manifest cannot reach execution by matching.
-        // The cheap structural checks — entry root shape, regular non-symlink manifest, schema version, and the
-        // coordinate binding the directory name to the recorded identity — still run for every entry enumerated.
+        // Retained records only narrow the search. Re-read a selected entry under its current file stamp and
+        // reapply the predicate before proving the manifest, payload and native receipt and taking its lease.
+        let path = canonical_published_entry_root(path)?;
         let read = read_published_entry_manifest(&path)?;
         if !matches(&read.manifest) {
-            tracing::trace!(target: "incan::invocation", decision = "reject_manifest", input = %read.manifest.identity);
             continue;
         }
         prove_entry_manifest(&read)?;
@@ -2515,9 +2819,8 @@ where
             path.clone(),
             OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
-                admitted_identity: manifest.identity.clone(),
                 original_native_receipt,
-                materialized_observations: Mutex::new(BTreeMap::new()),
+                materialized_observations: Mutex::new(MaterializedObservations::default()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -2615,6 +2918,7 @@ fn validated_materialized_files(
     files: &[OvenArtifactMaterializedFile],
     expected: Option<&[OvenArtifactMaterializedFileManifest]>,
 ) -> Result<Vec<ValidatedMaterializedFile>, OvenStoreError> {
+    let _validation = tracing::trace_span!(target: "incan::invocation", "oven_store::validate_publication_files", files = files.len()).entered();
     let expected_by_path = expected.map(|files| {
         files
             .iter()
@@ -2996,8 +3300,10 @@ fn write_staged_entry(
     materialized_files: &[ValidatedMaterializedFile],
     materialized_directories: &[ValidatedMaterializedDirectory],
     shared_materialized_files: &mut BTreeMap<(String, bool), PathBuf>,
-) -> Result<(), OvenStoreError> {
-    write_synced_file(&root.join(PAYLOAD_FILE), payload, false)?;
+) -> Result<BTreeMap<String, MaterializedFileDigest>, OvenStoreError> {
+    let _staging = tracing::trace_span!(target: "incan::invocation", "oven_store::write_staged_entry", input = %manifest.identity, files = materialized_files.len()).entered();
+    let mut written_files = BTreeMap::new();
+    write_staged_file(&root.join(PAYLOAD_FILE), payload, false)?;
     let materialized_root = root.join(MATERIALIZED_DIRECTORY);
     fs::create_dir(&materialized_root).map_err(|source| OvenStoreError::Io {
         path: materialized_root.clone(),
@@ -3063,6 +3369,7 @@ fn write_staged_entry(
                 path: destination.clone(),
                 source,
             })?;
+            tracing::trace!(target: "incan::invocation", decision = "link_shared_publication_member", bytes = file.manifest.logical_bytes);
         } else {
             // A source that is already an immutable, synchronized store file is adopted by link. The bytes above
             // were still read and re-digested first, so the entry is admitted on exactly the same evidence as a
@@ -3075,6 +3382,7 @@ fn write_staged_entry(
                 false
             };
             if !linked {
+                let _copy = tracing::trace_span!(target: "incan::invocation", "oven_store::copy_publication_member", bytes = file.manifest.logical_bytes).entered();
                 // The copy route is the one that rewrites bytes, so it is the one that re-verifies them in full.
                 let bytes = fs::read(&file.source_path).map_err(|source| OvenStoreError::Io {
                     path: file.source_path.clone(),
@@ -3085,21 +3393,35 @@ fn write_staged_entry(
                 {
                     return Err(changed_before_storage(file));
                 }
-                write_synced_file(&destination, &bytes, false)?;
-                set_materialized_executable(&destination, file.manifest.executable)?;
+                let written = write_staged_file_handle(&destination, &bytes, false, Some(file.manifest.executable))?;
+                // Only this private, newly written handle supplies observations; links remain canonical reads.
+                if let Ok(stamp) = materialized_file_stamp(&written)
+                    && stamp.supports_retention()
+                    && stamp.length() == file.manifest.logical_bytes
+                {
+                    written_files.insert(
+                        file.manifest.relative_path.clone(),
+                        MaterializedFileDigest {
+                            stamp,
+                            digest: file.manifest.digest.clone(),
+                        },
+                    );
+                }
+            } else {
+                tracing::trace!(target: "incan::invocation", decision = "link_immutable_publication_member", bytes = file.manifest.logical_bytes);
             }
             shared_materialized_files.insert(shared_key, destination.clone());
         }
     }
-    sync_directory_tree(&materialized_root)?;
+    sync_directory_tree_with(&materialized_root, &mut sync_staged_directory)?;
     if let Some(bytes) = native_receipt_bytes {
-        write_synced_file(&root.join(NATIVE_RECEIPT_FILE), bytes, false)?;
+        write_staged_file(&root.join(NATIVE_RECEIPT_FILE), bytes, false)?;
     }
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| OvenStoreError::Manifest {
         path: root.join(manifest_file_name(manifest.kind)),
         message: error.to_string(),
     })?;
-    write_synced_file(&root.join(manifest_file_name(manifest.kind)), &manifest_bytes, true)?;
+    write_staged_file(&root.join(manifest_file_name(manifest.kind)), &manifest_bytes, true)?;
     OpenOptions::new()
         .create_new(true)
         .read(true)
@@ -3109,12 +3431,38 @@ fn write_staged_entry(
             path: root.join(ACTIVE_LOCK_FILE),
             source,
         })?;
-    write_synced_file(
+    write_staged_file(
         &root.join(ACCESS_FILE),
         now_unix_seconds()?.to_string().as_bytes(),
         true,
     )?;
-    sync_directory(root.to_path_buf())
+    // Every staged inode has reached the device. Commit its volatile cache once before exposing the tree; the
+    // publisher separately synchronizes the entries directory after rename. No partially staged entry is admitted.
+    sync_directory(root.to_path_buf())?;
+    Ok(written_files)
+}
+
+/// Carry actual private-write observations into the existing digest cache after the containing directory commits.
+///
+/// A directory rename preserves the child file generation. Replacements, edits, permission changes and new hard
+/// links invalidate the full stamp and forfeit acceleration. Linked files have no private-write observation here.
+/// Missing, unsupported or unwritable cache state never changes publication or subsequent digest verification.
+fn remember_published_file_observations(root: &Path, written_files: &BTreeMap<String, MaterializedFileDigest>) {
+    let _retention = tracing::trace_span!(target: "incan::invocation", "oven_store::remember_publication_observations", files = written_files.len()).entered();
+    let mut retained = 0_u64;
+    for (relative, record) in written_files {
+        let path = root.join(MATERIALIZED_DIRECTORY).join(relative);
+        let current = fs::symlink_metadata(&path).and_then(|metadata| materialized_metadata_stamp(&metadata));
+        if !current.is_ok_and(|stamp| file_digest_matches(record, &stamp)) {
+            continue;
+        }
+        if let Some(cache) = materialized_digest_cache_path(&path)
+            && publish_materialized_file_digest(&cache, record).is_ok()
+        {
+            retained += 1;
+        }
+    }
+    tracing::trace!(target: "incan::invocation", decision = "retain_published_file_observations", retained_files = retained);
 }
 
 /// Return whether a verified materialized source is already immutable and owned by this store.
@@ -3173,6 +3521,8 @@ fn link_immutable_materialized_source(
     destination: &Path,
     sync_source: bool,
 ) -> Result<bool, OvenStoreError> {
+    let _link =
+        tracing::trace_span!(target: "incan::invocation", "oven_store::link_publication_member", sync_source).entered();
     if sync_source {
         OpenOptions::new()
             .read(true)
@@ -3286,10 +3636,9 @@ fn verify_entry(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
 
 /// Identity of one manifest file as seen on disk, used to key the read memo.
 ///
-/// Length and modification time together are what a rewritten file changes, so a staging manifest replaced in
-/// place misses the memo and is read again. An admitted entry never changes at all: its directory name is the
-/// digest of its own content.
-type ManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
+/// The Store's existing device, inode, length and nanosecond modification/change observations bind the parsed
+/// bytes. Replacement and preserved-mtime edits must miss both the parsed-record and identity-proof memos.
+type ManifestFileStamp = (PathBuf, MaterializedFileStamp);
 
 /// Process-local memo of manifests already read and structurally checked in this run.
 ///
@@ -3301,18 +3650,197 @@ type ManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
 /// memoized separately in [`proven_manifest_memo`], keyed by that same stamp — the stamp of the bytes that were
 /// hashed — and never by the identity a manifest *claims*, or a tampered manifest that keeps its recorded identity
 /// would ride on the proof the genuine one earned earlier in the same process.
-fn read_manifest_memo() -> &'static Mutex<HashMap<ManifestFileStamp, OvenArtifactManifest>> {
-    static MEMO: OnceLock<Mutex<HashMap<ManifestFileStamp, OvenArtifactManifest>>> = OnceLock::new();
-    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+fn read_manifest_memo() -> &'static Mutex<StoreManifestMemo> {
+    static MEMO: OnceLock<Mutex<StoreManifestMemo>> = OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(StoreManifestMemo::default()))
+}
+
+/// One parsed-manifest memo, with retained directory membership over the same shared records.
+#[derive(Default)]
+struct StoreManifestMemo {
+    files: HashMap<ManifestFileStamp, Arc<OvenArtifactManifest>>,
+    catalogs: HashMap<PathBuf, RetainedManifestCatalog>,
+}
+
+/// Immutable membership observed while the Store manager excludes publication and pruning.
+struct RetainedManifestCatalog {
+    stamp: MaterializedFileStamp,
+    entries: Arc<BTreeMap<PathBuf, Arc<OvenArtifactManifest>>>,
+    capacity: Option<StoreCapacity>,
+    payload_indexes: HashMap<(&'static str, String), RetainedPayloadIndex>,
+}
+
+/// Conservative retention totals for the immutable membership of one catalog generation.
+///
+/// A canonical sweep deduplicates shared allocations. Each subsequent publisher adds its complete measured stage,
+/// which can overcount hardlinks but never understates capacity. Crossing a policy target returns to the canonical
+/// sweep and fresh lease/LRU checks. This summary never authorizes an artifact or relaxes request-size bounds.
+#[derive(Default)]
+struct StoreCapacity {
+    physical: u64,
+    domains: BTreeMap<String, (u64, u64)>,
+}
+
+impl StoreCapacity {
+    /// Retain the existing sweep's deduplicated accounting, with saturating sums for conservative overflow handling.
+    fn from_entries(entries: &[OvenStoreEntry]) -> Self {
+        let mut capacity = Self::default();
+        for entry in entries {
+            capacity.add(&entry.manifest.domain, entry.logical_bytes, entry.physical_bytes);
+        }
+        capacity
+    }
+
+    /// Advance an upper bound with the publisher's verified staging allocation while the manager lock is held.
+    fn add(&mut self, domain: &str, logical: u64, physical: u64) {
+        self.physical = self.physical.saturating_add(physical);
+        let total = self.domains.entry(domain.to_owned()).or_default();
+        total.0 = total.0.saturating_add(logical);
+        total.1 = total.1.saturating_add(physical);
+    }
+
+    /// Apply the same aggregate and pending-domain policy to measured or conservatively advanced totals.
+    fn satisfies(
+        &self,
+        limits: OvenStoreLimits,
+        pending_domain: Option<&str>,
+        pending_logical_bytes: u64,
+        pending_physical_bytes: u64,
+    ) -> bool {
+        capacity_policy_satisfied(
+            self.physical,
+            pending_domain.map(|domain| self.domains.get(domain).copied().unwrap_or_default()),
+            limits,
+            pending_logical_bytes,
+            pending_physical_bytes,
+        )
+    }
+}
+
+/// Observe directory replacement and membership changes with the Store's existing metadata generation fields.
+///
+/// Platforms without a replacement-sensitive identity deliberately retain the ordinary discovery path. A directory
+/// stamp only covers membership; selected manifest and payload integrity are always checked independently.
+fn store_directory_stamp(root: &Path) -> Option<MaterializedFileStamp> {
+    let metadata = fs::symlink_metadata(root).ok()?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    let stamp = observation_stamp(&metadata).ok()?;
+    (stamp.supports_retention()).then_some(stamp)
+}
+
+/// Retain immutable manifest discovery inside the existing parsed-manifest memo, without retaining execution leases.
+///
+/// The caller holds the manager lock. Exact selectors still re-observe and prove every chosen entry; an unrelated
+/// immutable record is only a negative search filter. An external publication, pruning or directory replacement
+/// changes membership and requires rediscovery. This is one Store index, shared by writable and published selection.
+fn retained_store_manifests(root: &Path) -> Result<Arc<BTreeMap<PathBuf, Arc<OvenArtifactManifest>>>, OvenStoreError> {
+    let before = store_directory_stamp(root);
+    if let Some(stamp) = before.as_ref()
+        && let Ok(memo) = read_manifest_memo().lock()
+        && let Some(catalog) = memo.catalogs.get(root)
+        && &catalog.stamp == stamp
+    {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_store_manifest_catalog");
+        return Ok(Arc::clone(&catalog.entries));
+    }
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_matching_payloads", input = %root.display()).entered();
+    let mut entries = BTreeMap::new();
+    for candidate in fs::read_dir(root).map_err(|source| OvenStoreError::Io {
+        path: root.to_path_buf(),
+        source,
+    })? {
+        let candidate = candidate.map_err(|source| OvenStoreError::Io {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = candidate.path();
+        if !path.is_dir() {
+            return Err(OvenStoreError::Integrity {
+                identity: path.display().to_string(),
+                message: "entries root contains a non-directory item".to_string(),
+            });
+        }
+        let path = canonical_published_entry_root(&path)?;
+        let read = read_published_entry_manifest(&path)?;
+        let shared = read
+            .stamp
+            .as_ref()
+            .and_then(|stamp| read_manifest_memo().lock().ok()?.files.get(stamp).cloned())
+            .unwrap_or_else(|| Arc::new(read.manifest));
+        entries.insert(path, shared);
+    }
+    let entries = Arc::new(entries);
+    let after = store_directory_stamp(root);
+    if before != after {
+        return Err(OvenStoreError::Integrity {
+            identity: root.display().to_string(),
+            message: "Store membership changed during discovery".to_string(),
+        });
+    }
+    if let Some(stamp) = after
+        && let Ok(mut memo) = read_manifest_memo().lock()
+    {
+        memo.catalogs.insert(
+            root.to_path_buf(),
+            RetainedManifestCatalog {
+                stamp,
+                entries: Arc::clone(&entries),
+                capacity: None,
+                payload_indexes: HashMap::new(),
+            },
+        );
+    }
+    Ok(entries)
+}
+
+/// Extend a current retained catalog with this publisher's committed record while its manager lock is still held.
+///
+/// A pruning sweep or another membership change invalidates the catalog rather than advancing an incomplete view.
+/// The manifest remains a search hint: later selection performs the existing fresh admission and lease checks.
+fn remember_published_manifest(
+    root: &Path,
+    entry_path: &Path,
+    manifest: &OvenArtifactManifest,
+    before: Option<&MaterializedFileStamp>,
+    logical_bytes: u64,
+    physical_bytes: u64,
+    payload: &[u8],
+) {
+    let after = store_directory_stamp(root);
+    let file_stamp = manifest_file_stamp(&manifest_path_for_entry(entry_path));
+    let Ok(mut memo) = read_manifest_memo().lock() else {
+        return;
+    };
+    let shared = Arc::new(manifest.clone());
+    if let Some(stamp) = file_stamp {
+        memo.files.insert(stamp, Arc::clone(&shared));
+    }
+    if let Some(after) = after
+        && let Some(catalog) = memo.catalogs.get_mut(root)
+        && Some(&catalog.stamp) == before
+    {
+        Arc::make_mut(&mut catalog.entries).insert(entry_path.to_path_buf(), shared);
+        if let Some(capacity) = &mut catalog.capacity {
+            capacity.add(&manifest.domain, logical_bytes, physical_bytes);
+        }
+        advance_payload_indexes(catalog, manifest, payload);
+        catalog.stamp = after;
+        tracing::trace!(target: "incan::invocation", decision = "advance_store_manifest_catalog");
+        return;
+    }
+    memo.catalogs.remove(root);
 }
 
 /// Describe one manifest file well enough to notice it being rewritten underneath us.
 ///
-/// A manifest that cannot be stated — it has just been removed, or the filesystem reports no modification time —
-/// is simply not memoized: the caller falls through to a full read, which produces the honest error.
+/// Missing, unsupported or non-regular files are not memoized. Callers fall through to their ordinary read and
+/// integrity checks rather than trusting metadata that cannot distinguish replacement.
 fn manifest_file_stamp(manifest_path: &Path) -> Option<ManifestFileStamp> {
-    let metadata = fs::metadata(manifest_path).ok()?;
-    Some((manifest_path.to_path_buf(), metadata.len(), metadata.modified().ok()))
+    let metadata = fs::symlink_metadata(manifest_path).ok()?;
+    let stamp = materialized_metadata_stamp(&metadata).ok()?;
+    (stamp.supports_retention()).then_some((manifest_path.to_path_buf(), stamp))
 }
 
 /// One entry manifest together with the stamp of the file it was parsed from.
@@ -3336,10 +3864,10 @@ fn read_entry_manifest(root: &Path) -> Result<ReadEntryManifest, OvenStoreError>
     let stamp = manifest_file_stamp(&manifest_path);
     if let Some(stamp) = stamp.as_ref()
         && let Ok(memo) = read_manifest_memo().lock()
-        && let Some(manifest) = memo.get(stamp)
+        && let Some(manifest) = memo.files.get(stamp)
     {
         return Ok(ReadEntryManifest {
-            manifest: manifest.clone(),
+            manifest: manifest.as_ref().clone(),
             stamp: Some(stamp.clone()),
         });
     }
@@ -3361,7 +3889,7 @@ fn read_entry_manifest(root: &Path) -> Result<ReadEntryManifest, OvenStoreError>
     if let Some(stamp) = stamp.as_ref()
         && let Ok(mut memo) = read_manifest_memo().lock()
     {
-        memo.insert(stamp.clone(), manifest.clone());
+        memo.files.insert(stamp.clone(), Arc::new(manifest.clone()));
     }
     Ok(ReadEntryManifest { manifest, stamp })
 }
@@ -3475,15 +4003,28 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
     verify_materialized_files_with_observations(root, manifest, None, None)
 }
 
-/// Walk the current consumed inventory, optionally retaining byte observations under its admitted owner.
-/// Every consumed file rechecks replacement-sensitive metadata; an explicit exclusion prunes only one root child.
+/// Reconcile the original owner's consumed inventory, falling back to its canonical walker on metadata changes.
+/// The caller authenticates the original manifest/root first. A retained scope checks every consumed file and
+/// enumerated directory once without listing or reading bytes. A scope switch or unsupported observation walks
+/// again. Canonical discovery observes inputs before use and rejects drift before retaining the same integrity proof.
 fn verify_materialized_files_with_observations(
     root: &Path,
     manifest: &OvenArtifactManifest,
-    mut observations: Option<&mut BTreeMap<PathBuf, MaterializedFileDigest>>,
+    mut observations: Option<&mut MaterializedObservations>,
     excluded_directory: Option<&str>,
 ) -> Result<u64, OvenStoreError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_materialized_inventory", input = %manifest.identity, excluded_directory = excluded_directory.unwrap_or("")).entered();
+    if let Some(retained) = observations.as_ref().and_then(|state| state.inventory.as_ref())
+        && retained.excluded_directory.as_deref() == excluded_directory
+        && retained.inputs.supports_retention()
+    {
+        let _guard = tracing::trace_span!(target: "incan::invocation", "oven_store::reconcile_materialized_inventory", metadata_checks = retained.inputs.len(), metadata_passes = 1_u64).entered();
+        if retained.inputs.current() {
+            return Ok(retained.logical_bytes);
+        }
+    }
+    let mut inputs = InputObservations::default();
+    let _discovery = tracing::trace_span!(target: "incan::invocation", "oven_store::discover_materialized_inventory", input = %manifest.identity).entered();
     let mut expected = manifest
         .materialized_files
         .iter()
@@ -3510,6 +4051,7 @@ fn verify_materialized_files_with_observations(
         &mut actual,
         &mut actual_directories,
         excluded_directory,
+        &mut |path| inputs.observe_within(&materialized_root, path),
     )?;
     if actual.len() != expected.len() || actual.keys().ne(expected.keys()) {
         return Err(OvenStoreError::Integrity {
@@ -3524,7 +4066,7 @@ fn verify_materialized_files_with_observations(
         })?;
         let (logical_bytes, digest) = match observations.as_deref_mut() {
             Some(observations) => {
-                let observed = digest_retained_materialized_file(path, observations, Some(metadata))?;
+                let observed = digest_retained_materialized_file(path, &mut observations.files, Some(metadata))?;
                 (observed.length, observed.digest)
             }
             None => digest_materialized_file(path)?,
@@ -3548,19 +4090,41 @@ fn verify_materialized_files_with_observations(
             message: "materialized artifact empty directories differ from the immutable manifest".to_string(),
         });
     }
-    Ok(manifest
+    let logical_bytes = manifest
         .materialized_files
         .iter()
         .filter(|file| consumed(&file.relative_path))
-        .fold(0_u64, |total, file| total.saturating_add(file.logical_bytes)))
+        .fold(0_u64, |total, file| total.saturating_add(file.logical_bytes));
+    if inputs.supports_retention() && !inputs.current() {
+        return Err(OvenStoreError::Integrity {
+            identity: manifest.identity.clone(),
+            message: "materialized inventory changed during verification".into(),
+        });
+    }
+    if let Some(observations) = observations {
+        observations.inventory = inputs.supports_retention().then(|| ObservedInventory {
+            excluded_directory: excluded_directory.map(str::to_owned),
+            inputs,
+            logical_bytes,
+        });
+    }
+    Ok(logical_bytes)
 }
 
-/// Metadata for one regular-file generation, including replacement and preserved-mtime edits.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct MaterializedFileStamp {
-    length: u64,
-    modified: u128,
-    identity: Vec<u64>,
+/// One owner-held observation state for byte digests and its most recently verified inventory scope.
+#[derive(Default)]
+struct MaterializedObservations {
+    /// Successful original-record validation under the same replacement-sensitive observations as its files.
+    record: Option<InputObservations>,
+    files: BTreeMap<PathBuf, MaterializedFileDigest>,
+    inventory: Option<ObservedInventory>,
+}
+
+/// A successful canonical inventory under the same original owner, guarded by consumed files and directories.
+struct ObservedInventory {
+    excluded_directory: Option<String>,
+    inputs: InputObservations,
+    logical_bytes: u64,
 }
 
 /// A local acceleration record populated only from observed artifact bytes.
@@ -3581,41 +4145,16 @@ fn materialized_metadata_stamp(metadata: &fs::Metadata) -> io::Result<Materializ
     if !metadata.is_file() {
         return Err(io::Error::other("materialized artifact must be a regular file"));
     }
-    let modified = metadata
-        .modified()?
-        .duration_since(UNIX_EPOCH)
-        .map_err(io::Error::other)?
-        .as_nanos();
-    #[cfg(unix)]
-    let identity = {
-        use std::os::unix::fs::MetadataExt;
-        vec![
-            metadata.dev(),
-            metadata.ino(),
-            metadata.ctime().cast_unsigned(),
-            metadata.ctime_nsec().cast_unsigned(),
-        ]
-    };
-    #[cfg(not(unix))]
-    let identity = Vec::new();
-    Ok(MaterializedFileStamp {
-        length: metadata.len(),
-        modified,
-        identity,
-    })
+    observation_stamp(metadata)
 }
 
 /// Keep acceleration outside the published store inventory; staging and caller paths remain uncached.
 fn materialized_digest_cache_path(path: &Path) -> Option<PathBuf> {
     let canonical = fs::canonicalize(path).ok()?;
-    let entries = canonical
+    canonical
         .ancestors()
         .find(|ancestor| ancestor.file_name().is_some_and(|name| name == ENTRIES_DIRECTORY))?;
-    let store = entries.parent()?;
-    Some(store.parent()?.join("oven-file-digests-v1").join(format!(
-        "{:x}.json",
-        Sha256::digest(canonical.as_os_str().as_encoded_bytes())
-    )))
+    observed_digest_cache_path(&canonical)
 }
 
 /// Publish a complete optional hash record atomically without receipt-level durability.
@@ -3648,6 +4187,18 @@ fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest
 /// without those observations always hash bytes. Missing, malformed or unwritable cache records only forfeit
 /// acceleration. Callers must still enforce their own receipt, path and owner admission rules.
 pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
+    let canonical = fs::canonicalize(path).map_err(|source| OvenStoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let record = observed_digest_cache_path(&canonical);
+    let observed = digest_observed_file(path, record.as_deref())?;
+    Ok((observed.length, observed.digest))
+}
+
+/// Use the existing user cache for all file observations, including nested published package Stores.
+/// Placing records beside a Store can mutate its enclosing immutable provider and change that provider's identity.
+fn observed_digest_cache_path(canonical: &Path) -> Option<PathBuf> {
     let cache = std::env::var_os("INCAN_HOME")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -3658,18 +4209,12 @@ pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError>
                 .map(|path| PathBuf::from(path).join(".incan"))
         })
         .map(|root| root.join("cache/observed-file-digests-v1"));
-    let canonical = fs::canonicalize(path).map_err(|source| OvenStoreError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let record = cache.map(|root| {
+    cache.map(|root| {
         root.join(format!(
             "{:x}.json",
             Sha256::digest(canonical.as_os_str().as_encoded_bytes())
         ))
-    });
-    let observed = digest_observed_file(path, record.as_deref())?;
-    Ok((observed.length, observed.digest))
+    })
 }
 
 /// Content identity and physical work from one file observation; retained warm lookups need no file opens.
@@ -3730,7 +4275,7 @@ fn digest_retained_materialized_file_with_metadata(
             if before == after {
                 return Ok(report_observed_file_digest(
                     path,
-                    before.length,
+                    before.length(),
                     retained.digest.clone(),
                     0,
                     0,
@@ -3745,7 +4290,7 @@ fn digest_retained_materialized_file_with_metadata(
         || materialized_digest_cache_path(path),
         materialized_file_stamp,
     )?;
-    if !observed.stamp.identity.is_empty() {
+    if observed.stamp.supports_retention() {
         observations.insert(
             path.to_path_buf(),
             MaterializedFileDigest {
@@ -3822,7 +4367,7 @@ fn digest_observed_file_with_retained(
             if before == after {
                 return Ok(report_observed_file_digest(
                     path,
-                    before.length,
+                    before.length(),
                     record.digest.clone(),
                     input_bytes_read,
                     1,
@@ -3864,7 +4409,7 @@ fn digest_observed_file_with_retained(
             path: path.to_path_buf(),
             source,
         })?;
-        if before != after || logical_bytes != before.length {
+        if before != after || logical_bytes != before.length() {
             continue;
         }
         let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
@@ -3894,7 +4439,7 @@ fn digest_observed_file_with_retained(
 
 /// Match only a valid byte digest under a stable replacement-sensitive stamp; unsupported platforms rehash.
 fn file_digest_matches(record: &MaterializedFileDigest, current: &MaterializedFileStamp) -> bool {
-    !current.identity.is_empty()
+    current.supports_retention()
         && record.stamp == *current
         && record
             .digest
@@ -3935,7 +4480,11 @@ fn collect_materialized_files(
     files: &mut BTreeMap<String, (PathBuf, fs::Metadata)>,
     empty_directories: &mut BTreeSet<String>,
     excluded_directory: Option<&str>,
+    observe: &mut impl FnMut(&Path),
 ) -> Result<(), OvenStoreError> {
+    observe(directory);
+    #[cfg(test)]
+    MATERIALIZED_DIRECTORY_READS.with(|count| count.set(count.get() + 1));
     let children = fs::read_dir(directory)
         .map_err(|source| OvenStoreError::Io {
             path: directory.to_path_buf(),
@@ -3962,6 +4511,7 @@ fn collect_materialized_files(
             continue;
         }
         let path = child.path();
+        observe(&path);
         let metadata = fs::symlink_metadata(&path).map_err(|source| OvenStoreError::Io {
             path: path.clone(),
             source,
@@ -3973,7 +4523,7 @@ fn collect_materialized_files(
             });
         }
         if metadata.is_dir() {
-            collect_materialized_files(root, &path, files, empty_directories, excluded_directory)?;
+            collect_materialized_files(root, &path, files, empty_directories, excluded_directory, observe)?;
             continue;
         }
         if !metadata.is_file() {
@@ -4019,6 +4569,8 @@ fn measure_entry_for_admission(root: &Path) -> Result<OvenStoreEntry, OvenStoreE
 /// Staging roots add a process-unique suffix so concurrent publishers cannot collide. They are never selection
 /// candidates; once atomically renamed, the public-entry measurement above requires the manifest identity name.
 fn measure_staged_entry_for_admission(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
+    let _measurement =
+        tracing::trace_span!(target: "incan::invocation", "oven_store::measure_staged_publication").entered();
     measure_entry_for_admission_with_directory_identity(root, false)
 }
 
@@ -4177,15 +4729,30 @@ fn policy_satisfied(
     pending_logical_bytes: u64,
     pending_physical_bytes: u64,
 ) -> bool {
-    let physical = entries.iter().map(|entry| entry.physical_bytes).sum::<u64>();
-    if physical.saturating_add(pending_physical_bytes) > limits.max_physical_bytes {
-        return false;
-    }
-    pending_domain.is_none_or(|domain| {
-        let (logical, physical) = domain_totals(entries, domain);
-        logical.saturating_add(pending_logical_bytes) <= limits.max_domain_logical_bytes
-            && physical.saturating_add(pending_physical_bytes) <= limits.max_domain_physical_bytes
-    })
+    capacity_policy_satisfied(
+        entries
+            .iter()
+            .fold(0_u64, |total, entry| total.saturating_add(entry.physical_bytes)),
+        pending_domain.map(|domain| domain_totals(entries, domain)),
+        limits,
+        pending_logical_bytes,
+        pending_physical_bytes,
+    )
+}
+
+/// Apply aggregate and optional domain retention bounds without requiring a directory walk or manifest collection.
+fn capacity_policy_satisfied(
+    physical: u64,
+    domain: Option<(u64, u64)>,
+    limits: OvenStoreLimits,
+    pending_logical_bytes: u64,
+    pending_physical_bytes: u64,
+) -> bool {
+    physical.saturating_add(pending_physical_bytes) <= limits.max_physical_bytes
+        && domain.is_none_or(|(logical, physical)| {
+            logical.saturating_add(pending_logical_bytes) <= limits.max_domain_logical_bytes
+                && physical.saturating_add(pending_physical_bytes) <= limits.max_domain_physical_bytes
+        })
 }
 
 /// Return true when aggregate physical capacity and every pending compatibility domain can admit one related batch.
@@ -4760,14 +5327,25 @@ fn set_materialized_executable(path: &Path, executable: bool) -> Result<(), Oven
     })
 }
 
-/// Non-Unix hosts retain the platform default after the file contents have been synchronized.
+/// Non-Unix hosts retain the platform default before staged data is synchronized.
 #[cfg(not(unix))]
 fn set_materialized_executable(_path: &Path, _executable: bool) -> Result<(), OvenStoreError> {
     Ok(())
 }
 
-/// Persist one file and its data before its containing directory is renamed into the published store.
-fn write_synced_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<(), OvenStoreError> {
+/// Submit private staged bytes; the containing transaction must complete its full barrier before publication.
+fn write_staged_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Result<(), OvenStoreError> {
+    write_staged_file_handle(path, bytes, trailing_newline, None).map(drop)
+}
+
+/// Return the written handle after submitting bytes and final permissions, before the transaction's full barrier.
+fn write_staged_file_handle(
+    path: &Path,
+    bytes: &[u8],
+    trailing_newline: bool,
+    executable: Option<bool>,
+) -> Result<File, OvenStoreError> {
+    let _write = tracing::trace_span!(target: "incan::invocation", "oven_store::write_synced_file", bytes = bytes.len(), trailing_newline).entered();
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -4786,14 +5364,52 @@ fn write_synced_file(path: &Path, bytes: &[u8], trailing_newline: bool) -> Resul
             source,
         })?;
     }
-    file.sync_all().map_err(|source| OvenStoreError::Io {
+    if let Some(executable) = executable {
+        set_materialized_executable(path, executable)?;
+    }
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_staged_file").entered();
+    sync_staged_file(&file).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    Ok(file)
+}
+
+/// Submit a private inode's data and metadata without a drive-wide barrier for every file on Apple platforms.
+///
+/// Apple's fsync moves this inode's changes to the device; F_FULLFSYNC additionally flushes its volatile cache.
+/// The staged tree's full barrier and the post-rename parent barrier remain mandatory. This helper must never be
+/// used as a replacement for synchronizing independently published data. Other platforms retain sync_all.
+fn sync_staged_file(file: &File) -> std::io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::fd::AsRawFd;
+        loop {
+            // SAFETY: this live borrowed File owns the descriptor throughout the synchronous system call.
+            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    file.sync_all()
+}
+
+/// Submit a private directory's entries before the containing staged tree receives its full durability barrier.
+fn sync_staged_directory(path: PathBuf) -> Result<(), OvenStoreError> {
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_staged_directory").entered();
+    File::open(&path)
+        .and_then(|directory| sync_staged_file(&directory))
+        .map_err(|source| OvenStoreError::Io { path, source })
 }
 
 /// Synchronize a directory entry after atomic store publication where the host supports directory handles.
 pub fn sync_directory(path: PathBuf) -> Result<(), OvenStoreError> {
+    let _sync = tracing::trace_span!(target: "incan::invocation", "oven_store::sync_publication_directory").entered();
     File::open(&path)
         .and_then(|directory| directory.sync_all())
         .map_err(|source| OvenStoreError::Io { path, source })
@@ -4801,6 +5417,14 @@ pub fn sync_directory(path: PathBuf) -> Result<(), OvenStoreError> {
 
 /// Synchronize nested materialized directories from leaves to root before their entry becomes visible.
 pub fn sync_directory_tree(directory: &Path) -> Result<(), OvenStoreError> {
+    sync_directory_tree_with(directory, &mut sync_directory)
+}
+
+/// Traverse the same link-refusing directory tree with the caller's staging or complete durability boundary.
+fn sync_directory_tree_with(
+    directory: &Path,
+    synchronize: &mut impl FnMut(PathBuf) -> Result<(), OvenStoreError>,
+) -> Result<(), OvenStoreError> {
     for child in fs::read_dir(directory).map_err(|source| OvenStoreError::Io {
         path: directory.to_path_buf(),
         source,
@@ -4821,10 +5445,10 @@ pub fn sync_directory_tree(directory: &Path) -> Result<(), OvenStoreError> {
             });
         }
         if metadata.is_dir() {
-            sync_directory_tree(&path)?;
+            sync_directory_tree_with(&path, synchronize)?;
         }
     }
-    sync_directory(directory.to_path_buf())
+    synchronize(directory.to_path_buf())
 }
 
 /// Return the current Unix timestamp for mutable access metadata, not immutable artifact identity.
@@ -4878,6 +5502,380 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// A copied publication seeds its existing digest observer without weakening subsequent corruption checks.
+    #[cfg(unix)]
+    #[test]
+    fn copied_publication_reuses_written_bytes_on_first_observation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = project.path().join("program");
+        fs::write(&source, b"original")?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publication = request(project.path(), "copied-observation", b"payload")?;
+        publication.materialized_files.push(OvenArtifactMaterializedFile {
+            source_path: source,
+            relative_path: "program".into(),
+        });
+        let manifest = store.publish(&publication)?;
+        let stored = store.entry_root(&manifest.identity).join("artifacts/program");
+        let cache = super::materialized_digest_cache_path(&stored).ok_or("no file observation cache")?;
+        let first = super::digest_observed_file(&stored, Some(&cache))?;
+        assert_eq!(
+            first.input_bytes_read, 0,
+            "publication already wrote and verified these bytes"
+        );
+        assert_eq!(first.digest, crate::digest_bytes(b"original"));
+
+        let modified = fs::metadata(&stored)?.modified()?;
+        replace_native_witness_fixture(&stored, b"modified")?;
+        fs::File::open(&stored)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed = super::digest_observed_file(&stored, Some(&cache))?;
+        assert_eq!(changed.input_bytes_read, 8);
+        assert_eq!(changed.digest, crate::digest_bytes(b"modified"));
+        assert!(store.select(&manifest.identity).is_err());
+        Ok(())
+    }
+
+    /// Related publication uses the same write observations for independently copied batch members.
+    #[cfg(unix)]
+    #[test]
+    fn related_publication_reuses_written_byte_observations() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publications = Vec::new();
+        for name in ["first", "second"] {
+            let source = project.path().join(name);
+            fs::write(&source, name)?;
+            let mut publication = request(project.path(), name, name.as_bytes())?;
+            publication.materialized_files.push(OvenArtifactMaterializedFile {
+                source_path: source,
+                relative_path: "program".into(),
+            });
+            publications.push(publication);
+        }
+        for manifest in store.publish_batch(&publications)? {
+            let stored = store.entry_root(&manifest.identity).join("artifacts/program");
+            let cache = super::materialized_digest_cache_path(&stored).ok_or("no file observation cache")?;
+            let first = super::digest_observed_file(&stored, Some(&cache))?;
+            assert_eq!(first.input_bytes_read, 0);
+            assert_eq!(first.digest, crate::digest_bytes(manifest.domain.as_bytes()));
+            store.select(&manifest.identity)?;
+        }
+        Ok(())
+    }
+
+    /// Staged files include final executable permissions before observations and refuse replacement of prior data.
+    #[cfg(unix)]
+    #[test]
+    fn staged_file_permissions_precede_retained_observation() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("program");
+        let file = super::write_staged_file_handle(&path, b"program", true, Some(true))?;
+        let stamp = super::materialized_file_stamp(&file)?;
+        assert_eq!(fs::read(&path)?, b"program\n");
+        assert_eq!(file.metadata()?.permissions().mode() & 0o777, 0o555);
+        super::sync_directory(root.path().to_path_buf())?;
+        assert_eq!(stamp, super::materialized_file_stamp(&file)?);
+        assert!(super::write_staged_file_handle(&path, b"replacement", false, None).is_err());
+        assert_eq!(fs::read(&path)?, b"program\n");
+        Ok(())
+    }
+
+    /// A failed child synchronization stops before any parent commit barrier can run.
+    #[test]
+    fn staged_directory_failure_stops_before_parent_barrier() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let child = root.path().join("child");
+        fs::create_dir(&child)?;
+        let mut calls = Vec::new();
+        let error = super::sync_directory_tree_with(root.path(), &mut |path| {
+            calls.push(path.clone());
+            Err(OvenStoreError::Io {
+                path,
+                source: std::io::Error::other("injected synchronization failure"),
+            })
+        });
+        assert!(matches!(error, Err(OvenStoreError::Io { .. })));
+        assert_eq!(calls, std::slice::from_ref(&child));
+        calls.clear();
+        super::sync_directory_tree_with(root.path(), &mut |path| {
+            calls.push(path);
+            Ok(())
+        })?;
+        assert_eq!(calls, [child, root.path().to_path_buf()]);
+        Ok(())
+    }
+
+    /// Staging synchronization propagates the operating system's refusal for an unsupported file descriptor.
+    #[cfg(unix)]
+    #[test]
+    fn staged_sync_rejects_non_file_descriptor() -> Result<(), Box<dyn std::error::Error>> {
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair()?;
+        let descriptor: std::os::fd::OwnedFd = socket.into();
+        let file = fs::File::from(descriptor);
+        assert!(super::sync_staged_file(&file).is_err());
+        Ok(())
+    }
+
+    /// A private write changed before commitment cannot seed an old digest under its new file generation.
+    #[cfg(unix)]
+    #[test]
+    fn publication_observation_rejects_changed_commit_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let staged = root.path().join("staging");
+        fs::create_dir_all(staged.join("artifacts"))?;
+        let source = staged.join("artifacts/program");
+        let written = super::write_staged_file_handle(&source, b"original", false, None)?;
+        let record = super::MaterializedFileDigest {
+            stamp: super::materialized_file_stamp(&written)?,
+            digest: crate::digest_bytes(b"original"),
+        };
+        let modified = written.metadata()?.modified()?;
+        let observations = BTreeMap::from([("program".to_string(), record)]);
+        let published = root.path().join("entries/published");
+        fs::create_dir_all(root.path().join("entries"))?;
+        fs::rename(&staged, &published)?;
+        let path = published.join("artifacts/program");
+        fs::write(&path, b"modified")?;
+        fs::File::open(&path)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        super::remember_published_file_observations(&published, &observations);
+        let cache = super::materialized_digest_cache_path(&path).ok_or("no file observation cache")?;
+        assert!(
+            !cache.exists(),
+            "changed stamps must not inherit the private write digest"
+        );
+        let changed = super::digest_observed_file(&path, Some(&cache))?;
+        assert_eq!(changed.input_bytes_read, 8);
+        assert_eq!(changed.digest, crate::digest_bytes(b"modified"));
+        Ok(())
+    }
+
+    /// Non-plan publications must never inspect the catalog for a plan-only equivalence relation.
+    #[test]
+    fn only_direct_plans_search_for_equivalent_publications() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        store.ensure_layout()?;
+        fs::write(
+            store.entries_root().join("unrelated-invalid-entry"),
+            b"must not be inspected",
+        )?;
+        let mut publication = request(project.path(), "publication-kind", b"payload")?;
+        for kind in [OvenArtifactKind::Engine, OvenArtifactKind::ProjectOutput] {
+            publication.kind = kind;
+            let manifest = store.manifest_for_publication(&publication)?;
+            assert!(store.reusable_existing_manifest(&manifest)?.is_none());
+        }
+        publication.kind = OvenArtifactKind::DirectRustcPlan;
+        let manifest = store.manifest_for_publication(&publication)?;
+        assert!(matches!(
+            store.reusable_existing_manifest(&manifest),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        Ok(())
+    }
+
+    /// Warm lookup retains shared records, and publication extends membership without pinning historical artifacts.
+    #[cfg(unix)]
+    #[test]
+    fn retained_catalog_advances_publication_without_leasing_history() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let first = store.publish(&request(project.path(), "catalog-first", b"first")?)?;
+        let original = super::retained_store_manifests(&store.entries_root())?;
+        let warm = super::retained_store_manifests(&store.entries_root())?;
+        assert!(std::sync::Arc::ptr_eq(&original, &warm));
+        let second = store.publish(&request(project.path(), "catalog-second", b"second")?)?;
+        let current = super::retained_store_manifests(&store.entries_root())?;
+        assert_eq!(original.len(), 1, "a held snapshot stays immutable");
+        assert_eq!(current.len(), 2);
+        let memo = super::read_manifest_memo().lock().map_err(|error| error.to_string())?;
+        let catalog = memo
+            .catalogs
+            .get(&store.entries_root())
+            .ok_or("publisher dropped a current index")?;
+        assert!(std::sync::Arc::ptr_eq(&catalog.entries, &current));
+        assert_eq!(
+            Some(&catalog.stamp),
+            super::store_directory_stamp(&store.entries_root()).as_ref()
+        );
+        drop(memo);
+        let selected = store
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == second.identity, |_, _| true)?;
+        assert_eq!(selected.len(), 1);
+        assert!(super::try_lock_entry(&store.entry_root(&first.identity))?.is_some());
+        assert!(super::try_lock_entry(&store.entry_root(&second.identity))?.is_none());
+        Ok(())
+    }
+
+    /// Retained totals skip unchanged accounting, but a stricter policy still sweeps idle entries and preserves leases.
+    #[cfg(unix)]
+    #[test]
+    fn retained_capacity_skips_accounting_until_policy_requires_a_sweep() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let first = store.publish(&request(project.path(), "capacity-first", b"first")?)?;
+        let held = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
+        let second = store.publish(&request(project.path(), "capacity-second", b"second")?)?;
+        let before = super::retained_store_manifests(&store.entries_root())?;
+        store.prune_for_admission(&first.domain, 1, 1)?;
+        let after = super::retained_store_manifests(&store.entries_root())?;
+        assert!(
+            std::sync::Arc::ptr_eq(&before, &after),
+            "unchanged accounting rebuilt the catalog"
+        );
+        let measured = store.collect_entries_with(super::measure_entry_for_admission)?;
+        let memo = super::read_manifest_memo().lock().map_err(|error| error.to_string())?;
+        let capacity = memo
+            .catalogs
+            .get(&store.entries_root())
+            .and_then(|catalog| catalog.capacity.as_ref())
+            .ok_or("missing retained capacity")?;
+        assert!(capacity.physical >= measured.iter().map(|entry| entry.physical_bytes).sum::<u64>());
+        assert_eq!(
+            capacity.domains.values().map(|total| total.0).sum::<u64>(),
+            measured.iter().map(|entry| entry.logical_bytes).sum::<u64>()
+        );
+        drop(memo);
+        let bounded = OvenStore::new(root.path(), OvenStoreLimits::new(0, 1_000_000, 1_000_000));
+        bounded.prune_for_admission(&first.domain, 0, 0)?;
+        assert!(store.entry_root(&first.identity).exists(), "an active lease was pruned");
+        assert!(
+            !store.entry_root(&second.identity).exists(),
+            "retained totals bypassed pruning"
+        );
+        drop(held);
+        Ok(())
+    }
+
+    /// A new invalid member invalidates retained accounting before an otherwise small publication can proceed.
+    #[cfg(unix)]
+    #[test]
+    fn retained_capacity_reconciles_membership_before_publication() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        store.publish(&request(project.path(), "capacity-before", b"first")?)?;
+        fs::write(store.entries_root().join("invalid-capacity-member"), b"invalid")?;
+        assert!(matches!(
+            store.publish(&request(project.path(), "capacity-after", b"second")?),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        Ok(())
+    }
+
+    /// A different process's publication and later removal invalidate retained directory membership.
+    #[cfg(unix)]
+    #[test]
+    fn retained_catalog_reconciles_external_publication_and_removal() -> Result<(), Box<dyn std::error::Error>> {
+        const ROOT: &str = "INCAN_CATALOG_TEST_STORE";
+        const PROJECT: &str = "INCAN_CATALOG_TEST_PROJECT";
+        if let Some(root) = std::env::var_os(ROOT) {
+            let project = std::env::var_os(PROJECT).ok_or("child project missing")?;
+            let store = OvenStore::new(Path::new(&root), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+            store.publish(&request(Path::new(&project), "catalog-external", b"external")?)?;
+            return Ok(());
+        }
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let original = store.publish(&request(project.path(), "catalog-original", b"original")?)?;
+        let before = super::retained_store_manifests(&store.entries_root())?;
+        let child = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "store::tests::retained_catalog_reconciles_external_publication_and_removal",
+                "--nocapture",
+            ])
+            .env(ROOT, root.path())
+            .env(PROJECT, project.path())
+            .output()?;
+        assert!(
+            child.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+        let after = super::retained_store_manifests(&store.entries_root())?;
+        assert_eq!(before.len(), 1);
+        assert_eq!(after.len(), 2);
+        fs::remove_dir_all(store.entry_root(&original.identity))?;
+        let selected = store.select_payloads_matching_for_execution(|_| true, |_, _| true)?;
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            selected.first().ok_or("external publication missing")?.payload,
+            b"external"
+        );
+        Ok(())
+    }
+
+    /// Retained discovery cannot authorize a selected manifest replaced with same-length, restored-mtime bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_catalog_refuses_preserved_mtime_manifest_replacement() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let manifest = store.publish(&request(project.path(), "catalog-wanted", b"payload")?)?;
+        let first =
+            store.select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true)?;
+        assert_eq!(first.len(), 1);
+        drop(first);
+        let path = super::manifest_path_for_entry(&store.entry_root(&manifest.identity));
+        let before = fs::metadata(&path)?;
+        let original = fs::read_to_string(&path)?;
+        let tampered = original.replace("catalog-wanted", "catalog-edited");
+        assert_ne!(original, tampered);
+        assert_eq!(original.len(), tampered.len());
+        fs::remove_file(&path)?;
+        fs::write(&path, tampered)?;
+        fs::File::options()
+            .write(true)
+            .open(&path)?
+            .set_times(fs::FileTimes::new().set_modified(before.modified()?))?;
+        let refused =
+            store.select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true);
+        assert!(matches!(refused, Err(OvenStoreError::Integrity { .. })));
+        Ok(())
+    }
+
+    /// Newly introduced invalid members are discovered even when an earlier catalog is retained.
+    #[cfg(unix)]
+    #[test]
+    fn retained_catalog_refuses_new_invalid_members() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let manifest = store.publish(&request(project.path(), "catalog-wanted", b"payload")?)?;
+        assert_eq!(
+            store
+                .select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true)?
+                .len(),
+            1
+        );
+        fs::write(store.entries_root().join("invalid-member"), b"invalid")?;
+        assert!(matches!(
+            store.select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        Ok(())
+    }
 
     /// Inventory metadata saves the first query but never conceals replacement before the final fresh observation.
     #[cfg(unix)]
@@ -5098,7 +6096,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// Original owners retain bounded observations, but unchanged inventory, bytes and coordinates still govern reuse.
+    /// Original owners retain primary and materialized observations without weakening payload or inventory checks.
     #[cfg(unix)]
     #[test]
     fn retained_payload_observations_preserve_complete_inventory() -> Result<(), Box<dyn std::error::Error>> {
@@ -5115,12 +6113,13 @@ pub(crate) mod tests {
         }];
         let manifest = store.publish(&publication)?;
         let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
-        let owner = &selected[0];
+        let owner = selected.first().ok_or("observed owner missing")?;
         assert_eq!(
             owner
                 .materialized_observations
                 .lock()
                 .map_err(|_| "observation lock poisoned")?
+                .files
                 .len(),
             0
         );
@@ -5130,13 +6129,31 @@ pub(crate) mod tests {
                 .materialized_observations
                 .lock()
                 .map_err(|_| "observation lock poisoned")?
+                .files
                 .len(),
-            1
+            2
         );
+        let payload_path = owner.admitted_entry_root.join(super::PAYLOAD_FILE);
+        {
+            let mut observations = owner
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?;
+            assert!(observations.files.contains_key(&payload_path));
+            let warm = super::digest_retained_materialized_file(&payload_path, &mut observations.files, None)?;
+            assert_eq!(warm.file_opens, 0);
+            assert_eq!(warm.input_bytes_read, 0);
+        }
         let native = owner.artifact_root.join("nested/native");
         let cache = super::materialized_digest_cache_path(&native).ok_or("native cache path absent")?;
         fs::remove_file(&cache)?;
+        let directory_reads = super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get);
         owner.verify_admitted_payload()?;
+        assert_eq!(
+            super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get),
+            directory_reads,
+            "unchanged retained inventory must not enumerate directories again"
+        );
         assert!(
             !cache.exists(),
             "retained owner reopened or recreated persistent digest state"
@@ -5160,12 +6177,88 @@ pub(crate) mod tests {
         assert!(owner.verify_admitted_payload().is_err());
         fs::remove_file(owner.artifact_root.join("injected"))?;
         owner.verify_admitted_payload()?;
+
+        // ---- Directory topology and metadata-only changes ----
+        let empty = owner.artifact_root.join("injected-empty");
+        fs::create_dir(&empty)?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::remove_dir(empty)?;
+        owner.verify_admitted_payload()?;
+        let replacement = temp.path().join("identical-native");
+        fs::write(&replacement, b"native bytes")?;
+        fs::set_permissions(&replacement, fs::metadata(&native)?.permissions())?;
+        fs::rename(&replacement, &native)?;
+        let before = super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get);
+        owner.verify_admitted_payload()?;
+        assert!(
+            super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get) > before,
+            "atomic replacement must reconcile through the canonical walker"
+        );
+        let before = super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get);
+        owner.verify_admitted_payload()?;
+        assert_eq!(super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get), before);
+        let modified = fs::metadata(&native)?.modified()?;
+        replace_native_witness_fixture(&native, b"NATIVE BYTES")?;
+        fs::File::open(&native)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert!(
+            owner.verify_admitted_payload().is_err(),
+            "same-size restored-mtime edit was hidden"
+        );
+        replace_native_witness_fixture(&native, b"native bytes")?;
+        owner.verify_admitted_payload()?;
+        let nested = owner.artifact_root.join("nested");
+        let held_directory = temp.path().join("held-directory");
+        fs::rename(&nested, &held_directory)?;
+        fs::create_dir(&nested)?;
+        fs::copy(held_directory.join("native"), &native)?;
+        owner.verify_admitted_payload()?;
+        fs::remove_file(&native)?;
+        fs::remove_dir(&nested)?;
+        fs::rename(&held_directory, &nested)?;
+        owner.verify_admitted_payload()?;
+
+        // A scoped observation must not silently accept a path outside its independently authenticated root.
+        let mut scoped = oven_model::observed_inputs::InputObservations::default();
+        scoped.observe_within(&owner.artifact_root, &native);
+        assert!(scoped.supports_retention() && scoped.current());
+        scoped.observe_within(&owner.artifact_root, &temp.path().join("outside-root"));
+        assert!(!scoped.supports_retention());
+
+        // The public API borrows sealed bytes; changed original payload generations still require refusal.
+        assert_eq!(owner.payload(), b"payload");
+        owner.verify_admitted_record()?;
+        let modified = fs::metadata(&payload_path)?.modified()?;
+        let held_payload = temp.path().join("held-payload");
+        fs::rename(&payload_path, &held_payload)?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::write(&payload_path, b"PAYLOAD")?;
+        fs::File::options()
+            .write(true)
+            .open(&payload_path)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::write(&payload_path, b"payload")?;
+        owner.verify_admitted_record()?;
+        let modified = fs::metadata(&payload_path)?.modified()?;
+        fs::write(&payload_path, b"PAYLOAD")?;
+        fs::File::options()
+            .write(true)
+            .open(&payload_path)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::remove_file(&payload_path)?;
+        std::os::unix::fs::symlink(&held_payload, &payload_path)?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::remove_file(&payload_path)?;
+        fs::rename(&held_payload, &payload_path)?;
+        owner.verify_admitted_record()?;
         let fresh = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         assert_eq!(
             fresh[0]
                 .materialized_observations
                 .lock()
                 .map_err(|_| "observation lock poisoned")?
+                .files
                 .len(),
             0
         );
@@ -5190,9 +6283,32 @@ pub(crate) mod tests {
             })
             .collect();
         let manifest = store.publish(&publication)?;
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
-        let owner = selected.get_mut(0).ok_or("selected fixture missing")?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.first().ok_or("selected fixture missing")?;
         owner.verify_admitted_payload()?;
+        let declaration = owner.artifact_root.join("source/lib.rs");
+        let original_digest = owner.digest_materialized_member("source/lib.rs")?;
+        assert_eq!(original_digest, (12, crate::digest_bytes(b"native bytes")));
+        #[cfg(unix)]
+        {
+            let cache = super::materialized_digest_cache_path(&declaration).ok_or("member cache path absent")?;
+            if cache.exists() {
+                fs::remove_file(&cache)?;
+            }
+            assert_eq!(owner.digest_materialized_member("source/lib.rs")?, original_digest);
+            assert!(!cache.exists(), "warm member lookup reopened persistent digest state");
+        }
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "source/../native",
+            "/native",
+            "source\\lib.rs",
+            "missing",
+        ] {
+            assert!(owner.digest_materialized_member(invalid).is_err());
+        }
         // Publication may share identical bytes through hard links. Replace only this fixture's selected path.
         let replace = |path: &Path, bytes: &[u8]| -> std::io::Result<()> {
             let replacement = project.path().join("replacement");
@@ -5201,8 +6317,42 @@ pub(crate) mod tests {
             fs::rename(replacement, path)
         };
         replace(&owner.artifact_root.join("source/lib.rs"), b"changed archived source")?;
+        assert_eq!(
+            owner.digest_materialized_member("source/lib.rs")?,
+            (23, crate::digest_bytes(b"changed archived source"))
+        );
         owner.verify_admitted_payload_except_directory("source")?;
         assert!(owner.verify_admitted_payload().is_err());
+        replace(
+            &owner.artifact_root.join("source/lib.rs"),
+            b"another excluded source change",
+        )?;
+        #[cfg(unix)]
+        let before = super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get);
+        owner.verify_admitted_payload_except_directory("source")?;
+        #[cfg(unix)]
+        assert_eq!(
+            super::MATERIALIZED_DIRECTORY_READS.with(std::cell::Cell::get),
+            before,
+            "excluded source changes must not rediscover the consumed inventory"
+        );
+        #[cfg(unix)]
+        {
+            let held = project.path().join("held-member");
+            fs::rename(&declaration, &held)?;
+            assert!(owner.digest_materialized_member("source/lib.rs").is_err());
+            std::os::unix::fs::symlink(&held, &declaration)?;
+            assert!(owner.digest_materialized_member("source/lib.rs").is_err());
+            fs::remove_file(&declaration)?;
+            fs::rename(&held, &declaration)?;
+            let directory = owner.artifact_root.join("source");
+            let held_directory = project.path().join("held-source");
+            fs::rename(&directory, &held_directory)?;
+            std::os::unix::fs::symlink(&held_directory, &directory)?;
+            assert!(owner.digest_materialized_member("source/lib.rs").is_err());
+            fs::remove_file(&directory)?;
+            fs::rename(&held_directory, &directory)?;
+        }
         for unsafe_directory in ["", ".", "..", "source/", "source/.", "source/nested", "/source"] {
             assert!(
                 owner
@@ -5219,8 +6369,16 @@ pub(crate) mod tests {
         assert!(owner.verify_admitted_payload_except_directory("source").is_err());
         fs::remove_file(injected)?;
         owner.verify_admitted_payload_except_directory("source")?;
-        owner.payload.push(0);
+        let payload_path = owner.admitted_entry_root.join(super::PAYLOAD_FILE);
+        replace(&payload_path, b"PAYLOAD")?;
         assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        assert_eq!(
+            owner.payload(),
+            b"payload",
+            "disk edits cannot mutate sealed held bytes"
+        );
+        replace(&payload_path, b"payload")?;
+        owner.verify_admitted_payload_except_directory("source")?;
         Ok(())
     }
 
@@ -5231,9 +6389,10 @@ pub(crate) mod tests {
         let source = root.path().join("native");
         fs::write(&source, b"native bytes")?;
         let unsupported_stamp = |file: &fs::File| {
-            let mut stamp = super::materialized_file_stamp(file)?;
-            stamp.identity.clear();
-            Ok(stamp)
+            let stamp = super::materialized_file_stamp(file)?;
+            let mut encoded = serde_json::to_value(stamp).map_err(std::io::Error::other)?;
+            encoded["identity"] = serde_json::json!([]);
+            serde_json::from_value(encoded).map_err(std::io::Error::other)
         };
         let first = super::digest_observed_file_with_retained(&source, None, || None, unsupported_stamp)?;
         let retained = super::MaterializedFileDigest {
@@ -5462,6 +6621,22 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Published package reads must not place digest acceleration inside the enclosing provider artifact.
+    #[test]
+    fn materialized_digest_records_use_shared_user_cache() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("oven/loafs/entries/fixture.loaf/artifacts/native");
+        fs::create_dir_all(source.parent().ok_or("artifact has no parent")?)?;
+        fs::write(&source, b"immutable native")?;
+        let cache = super::materialized_digest_cache_path(&source).ok_or("observation cache unavailable")?;
+        assert!(!cache.starts_with(root.path()));
+        let first = super::digest_materialized_file(&source)?;
+        assert_eq!(first, super::digest_regular_file(&source)?);
+        assert_eq!(first, super::digest_materialized_file(&source)?);
+        assert!(!root.path().join("oven/oven-file-digests-v1").exists());
+        Ok(())
+    }
+
     /// Stat-bound hashes invalidate same-length preserved-mtime edits and malformed records.
     #[test]
     fn materialized_file_freshness_rejects_preserved_mtime_edits() -> Result<(), Box<dyn std::error::Error>> {
@@ -5594,61 +6769,48 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// Execution payload revalidation binds public fields to the admitted owner.
+    /// Borrowed authority remains bound to the original owner while changed disk payloads still refuse.
     #[test]
-    fn execution_payload_revalidation_binds_public_fields_to_the_admitted_owner()
+    fn execution_payload_borrows_admitted_authority_and_refuses_changed_disk_bytes()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
         let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
-        let first = store.publish(&request(project.path(), "first-owner", b"shared payload")?)?;
-        let second = store.publish(&request(project.path(), "second-owner", b"shared payload")?)?;
-        let second_artifact_root = store.entry_root(&second.identity).join(super::MATERIALIZED_DIRECTORY);
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        selected[0].verify_materialized_files()?;
-        let mut changed_root = selected.remove(0);
-        changed_root.artifact_root = second_artifact_root.clone();
-        assert!(matches!(
-            changed_root.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        let mut changed_manifest = selected.remove(0);
-        changed_manifest.manifest = second.clone();
-        assert!(matches!(
-            changed_manifest.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        let mut retargeted = selected.remove(0);
-        retargeted.manifest = second.clone();
-        retargeted.artifact_root = second_artifact_root;
-        assert!(matches!(
-            retargeted.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        let mut changed_payload = selected.remove(0);
-        changed_payload.payload = b"forged payload".to_vec();
-        assert!(matches!(
-            changed_payload.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
+        let manifest = store.publish(&request(project.path(), "sealed-owner", b"shared payload")?)?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.first().ok_or("selected owner absent")?;
         let published = super::PublishedOvenStore::new(temp.path());
         let matched = published
-            .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity, |_, _| true)?;
-        assert_eq!(matched.len(), 1);
-        matched[0].verify_materialized_files()?;
+            .select_payloads_matching_for_execution(|candidate| candidate.identity == manifest.identity, |_, _| true)?;
+        let published_owner = matched.first().ok_or("published owner absent")?;
+        assert_eq!(owner.manifest(), &manifest);
+        assert_eq!(
+            owner.artifact_root(),
+            fs::canonicalize(store.entry_root(&manifest.identity).join(super::MATERIALIZED_DIRECTORY))?
+        );
+        assert_eq!(owner.payload(), b"shared payload");
+        owner.verify_materialized_files()?;
+        published_owner.verify_materialized_files()?;
+
+        let payload_path = store.entry_root(&manifest.identity).join(super::PAYLOAD_FILE);
+        replace_native_witness_fixture(&payload_path, b"forged payload")?;
+        assert!(matches!(
+            owner.verify_materialized_files(),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        assert!(matches!(
+            published_owner.verify_materialized_files(),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        assert_eq!(
+            owner.payload(),
+            b"shared payload",
+            "disk edits cannot mutate admitted bytes"
+        );
+        replace_native_witness_fixture(&payload_path, b"shared payload")?;
+        owner.verify_materialized_files()?;
+        published_owner.verify_materialized_files()?;
         Ok(())
     }
 
@@ -6078,7 +7240,7 @@ pub(crate) mod tests {
         let untouched = super::PublishedOvenStore::new(temp.path())
             .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity, |_, _| true)?;
         assert_eq!(untouched.len(), 1);
-        assert_eq!(untouched[0].admitted_identity, wanted.identity);
+        assert_eq!(untouched[0].manifest().identity, wanted.identity);
 
         // A selection that does want it is refused.
         let refused =
@@ -6153,29 +7315,25 @@ pub(crate) mod tests {
         write_project(first_project.path())?;
         write_project(second_project.path())?;
         write_project(third_project.path())?;
-        // Generous limits keep every publish well under capacity, so admission only ever measures retained entries
-        // to confirm there is room; it never has to prune one.
+        // Generous limits keep every publication under capacity, without pruning.
         let store = OvenStore::new(temp.path(), OvenStoreLimits::new(10_000_000, 10_000_000, 10_000_000));
 
-        // Publishing the first entry does not yet measure it: admission only re-measures *retained* entries while
-        // making room for a new one. Publishing a second, unrelated entry re-measures the first as part of that
-        // aggregate capacity scan, which is what leaves both sidecar cache files behind (the plain physical-byte
-        // total and the per-file identity listing that cross-entry hard-link deduplication consumes).
+        // Seed canonical accounting explicitly. A warm publisher can now use retained totals without this walk;
+        // this control exercises the sidecars used when a cold owner or capacity pressure requires measurement.
         let first_manifest = store.publish(&request(first_project.path(), "engine-arm64", b"engine payload")?)?;
         let first_entry_root = store.entry_root(&first_manifest.identity);
         store.publish(&request(second_project.path(), "engine-x64", b"second engine payload")?)?;
+        store.collect_entries_for_admission()?;
         assert!(first_entry_root.join(super::PHYSICAL_BYTES_CACHE_FILE).is_file());
         assert!(first_entry_root.join(super::UNIQUE_FILE_RECORDS_CACHE_FILE).is_file());
 
-        // A fresh recursive walk of the first entry would now fail outright: `directory_physical_bytes` rejects any
-        // symlink it encounters. Admitting a third, unrelated entry re-measures every retained entry (including
-        // this one) as part of aggregate capacity accounting via the same `collect_entries_for_admission` path
-        // exercised by every ordinary build; if that publish still succeeds, it can only have done so by trusting
-        // the cache files instead of re-walking the first entry.
+        // A fresh recursive walk would reject this symlink. Explicit canonical admission must still reuse its
+        // measured immutable allocation, rather than passing only because the warm publisher skips accounting.
         symlink(
             first_entry_root.join(super::PAYLOAD_FILE),
             first_entry_root.join("untracked-symlink"),
         )?;
+        store.collect_entries_for_admission()?;
         store.publish(&request(third_project.path(), "engine-riscv", b"third engine payload")?)?;
         Ok(())
     }
@@ -6193,9 +7351,9 @@ pub(crate) mod tests {
         let store = OvenStore::new(temp.path(), OvenStoreLimits::new(10_000_000, 10_000_000, 10_000_000));
 
         let first_manifest = store.publish(&request(first_project.path(), "engine-arm64", b"first payload")?)?;
-        // Publishing a second, unrelated entry forces admission to re-measure the first as a retained entry, which
-        // is what writes both sidecar cache files into its directory.
+        // Explicit canonical admission seeds both sidecars even when warm publication skips a capacity walk.
         store.publish(&request(second_project.path(), "engine-x64", b"second payload")?)?;
+        store.collect_entries_for_admission()?;
         let first_entry_root = store.entry_root(&first_manifest.identity);
         assert!(first_entry_root.join(super::PHYSICAL_BYTES_CACHE_FILE).is_file());
         assert!(first_entry_root.join(super::UNIQUE_FILE_RECORDS_CACHE_FILE).is_file());
@@ -6478,6 +7636,127 @@ pub(crate) mod tests {
             Err(OvenStoreError::InvalidInput { field: "receipt", .. })
         ));
         assert!(store.inspect()?.entries.is_empty());
+        Ok(())
+    }
+
+    /// Repeated consumers share one physical lease without releasing protection when an earlier consumer drops.
+    #[cfg(unix)]
+    #[test]
+    fn repeated_store_selections_share_the_physical_lease_until_the_last_consumer_drops()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let manifest = store.publish(&request(project.path(), "shared-lease", b"payload")?)?;
+        let root = store.entry_root(&manifest.identity);
+        let (_entry, first) = store.select(&manifest.identity)?;
+        let (_manifest, _root, _payload, second) = store.select_payload_for_execution(&manifest.identity)?;
+        let read_only = super::acquire_execution_lease(&root, false)?;
+        assert_eq!(
+            first._file.as_raw_fd(),
+            second._file.as_raw_fd(),
+            "independent selections duplicated a lease descriptor"
+        );
+        assert_eq!(
+            first._file.as_raw_fd(),
+            read_only._file.as_raw_fd(),
+            "read-only admission duplicated the held lease"
+        );
+        drop(first);
+        assert!(super::try_lock_entry(&root)?.is_none());
+        drop(second);
+        assert!(super::try_lock_entry(&root)?.is_none());
+        drop(read_only);
+        assert!(super::try_lock_entry(&root)?.is_some());
+        Ok(())
+    }
+
+    /// Concurrent admissions converge on one descriptor while every returned guard independently protects the entry.
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_execution_consumers_share_one_live_lease() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+        use std::sync::Barrier;
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        fs::write(root.join(super::ACTIVE_LOCK_FILE), b"")?;
+        let barrier = Barrier::new(16);
+        let mut leases = std::thread::scope(|scope| -> Result<Vec<_>, Box<dyn std::error::Error>> {
+            let workers = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        super::acquire_execution_lease(root, false)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut leases = Vec::new();
+            for worker in workers {
+                leases.push(
+                    worker
+                        .join()
+                        .map_err(|_| std::io::Error::other("lease worker panicked"))??,
+                );
+            }
+            Ok(leases)
+        })?;
+        let descriptors = leases
+            .iter()
+            .map(|lease| lease._file.as_raw_fd())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(descriptors.len(), 1);
+        let last = leases.pop().ok_or("missing final lease")?;
+        drop(leases);
+        assert!(super::try_lock_entry(root)?.is_none());
+        drop(last);
+        assert!(super::try_lock_entry(root)?.is_some());
+        Ok(())
+    }
+
+    /// Timestamp or bookkeeping changes cannot duplicate the lock protecting an unchanged physical inode.
+    #[cfg(unix)]
+    #[test]
+    fn lock_metadata_changes_preserve_the_same_physical_lease() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let path = root.join(super::ACTIVE_LOCK_FILE);
+        fs::write(&path, b"")?;
+        let first = super::acquire_execution_lease(root, false)?;
+        fs::write(&path, b"bookkeeping")?;
+        let second = super::acquire_execution_lease(root, false)?;
+        assert_eq!(first._file.as_raw_fd(), second._file.as_raw_fd());
+        drop(first);
+        assert!(super::try_lock_entry(root)?.is_none());
+        drop(second);
+        assert!(super::try_lock_entry(root)?.is_some());
+        Ok(())
+    }
+
+    /// Replacing a lock file cannot make a held lease for its former inode protect or authorize the new inode.
+    #[cfg(unix)]
+    #[test]
+    fn replaced_execution_lock_gets_a_distinct_lease() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let path = root.join(super::ACTIVE_LOCK_FILE);
+        fs::write(&path, b"")?;
+        let first = super::acquire_execution_lease(root, false)?;
+        fs::rename(&path, root.join("previous-lock"))?;
+        fs::write(&path, b"")?;
+        let second = super::acquire_execution_lease(root, false)?;
+        assert_ne!(first._file.as_raw_fd(), second._file.as_raw_fd());
+        drop(first);
+        assert!(super::try_lock_entry(root)?.is_none());
+        drop(second);
+        assert!(super::try_lock_entry(root)?.is_some());
         Ok(())
     }
 
@@ -7374,7 +8653,10 @@ pub(crate) mod tests {
         };
         let before = immutable()?;
         assert_eq!(store.publish(&original)?, published);
-        assert_eq!(store.publish_batch(&[original.clone()])?, vec![published.clone()]);
+        assert_eq!(
+            store.publish_batch(std::slice::from_ref(&original))?,
+            vec![published.clone()]
+        );
         // The dev-line fixture project is a frozen Cargo package, so its receipt identity moves with the locked
         // sources rather than with an arbitrary file in the directory. The lock is a source input and not a
         // build-unit fact, which is exactly the shape these tests need: a different receipt for the same unit.
@@ -7538,6 +8820,46 @@ pub(crate) mod tests {
             "witness removal must not downgrade an admitted owner"
         );
         fs::write(&path, &original_bytes)?;
+        owner.verify_admitted_payload()?;
+        Ok(())
+    }
+
+    /// A warm original record still rejects changed bytes and newly present metadata at alternate coordinates.
+    #[test]
+    fn retained_record_refuses_changed_payload_and_added_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut original = request(project.path(), "record-observation", b"native")?;
+        original.kind = OvenArtifactKind::Engine;
+        let published = store.publish(&original)?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&published.identity))?;
+        let owner = selected.first().ok_or("original owner missing")?;
+        owner.verify_admitted_record()?;
+        owner.verify_admitted_record()?;
+        let entry = store.entry_root(&published.identity);
+
+        // ---- Same-length payload change with its original modification time ----
+        let payload = entry.join(super::PAYLOAD_FILE);
+        let modified = fs::metadata(&payload)?.modified()?;
+        replace_native_witness_fixture(&payload, b"edited")?;
+        fs::File::open(&payload)?.set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert!(owner.verify_admitted_record().is_err());
+        replace_native_witness_fixture(&payload, b"native")?;
+        owner.verify_admitted_record()?;
+
+        // ---- Absence is part of original record identity ----
+        let witness = entry.join(super::NATIVE_RECEIPT_FILE);
+        fs::write(&witness, b"injected receipt")?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::remove_file(&witness)?;
+        owner.verify_admitted_record()?;
+        let alternate = entry.join(super::LOAF_MANIFEST_FILE);
+        fs::copy(entry.join(super::ARTIFACT_MANIFEST_FILE), &alternate)?;
+        assert!(owner.verify_admitted_record().is_err());
+        fs::remove_file(alternate)?;
+        owner.verify_admitted_record()?;
         owner.verify_admitted_payload()?;
         Ok(())
     }

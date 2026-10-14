@@ -20,16 +20,17 @@ use crate::build::library_project::metadata_replay::lock_transition::{
 };
 use crate::build::library_project::{
     AdmittedLibraryPreparation, PreparedAdmittedLibrary, current_admitted_library_session,
-    prepare_admitted_library_project, prepare_library_project, prepare_library_project_with_caller_facet,
+    prepare_admitted_library_project, prepare_admitted_library_project_with_caller_facet, prepare_library_project,
+    prepare_library_project_with_caller_facet,
 };
 use crate::build::output_materialization::{
-    completed_output_default_backend_receipt, select_default_project_output,
-    warn_for_completed_output_lock_fingerprint_drift,
+    completed_output_default_backend_receipt, select_default_project_output_with_inputs,
+    write_project_output_projection,
 };
 use crate::build::output_paths::{
     canonical_output_file_relative_to_root, library_project_output_sidecars, normalized_project_entrypoint,
-    oven_binary_path, project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
-    validated_project_output_relative_path,
+    oven_binary_path, project_locked_registry_packages, project_output_bake_files,
+    project_root_for_completed_output_with_inputs, validated_project_output_relative_path,
 };
 use crate::build::output_selection::{project_output_report_snapshot, remember_project_output};
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
@@ -93,6 +94,7 @@ pub fn bake_oven_project(
     profile: &str,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<oven_rustc::rustc::OvenDirectRustcBake> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::native_build", input = %prepared.entrypoint.display()).entered();
     let mut caller_owned_libraries = prepared.caller_owned_libraries.clone();
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&prepared.plan_selection)?;
@@ -218,8 +220,8 @@ pub fn bake_oven_library(
 
 /// Retain the actual coherent dependency plan used for a library's native compilation.
 ///
-/// A Rust caller must inherit rematerialized provider externs and search paths, rather than the pre-rematerialization
-/// selection. Otherwise its library metadata names dependency artifacts absent from the caller's closure.
+/// Ordinary libraries consume their original checked provider outputs and native cohort. The legacy compatibility
+/// path rematerializes caller sources and passes those replacement externs and searches to its Rust caller.
 fn bake_oven_library_with_dependencies(
     prepared: &PreparedLibraryProject,
     oven: &OvenPreparedLibrary,
@@ -242,7 +244,9 @@ fn bake_oven_library_with_dependencies(
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&selected.plan_selection)?;
     let mut extra_dependency_search_paths = Vec::new();
-    if has_caller_owned_project_libraries(&selected.provider_plan) {
+    // Ordinary admission already bound each sealed provider output and its original native dependency closure.
+    // Recompiling those sources here would introduce a second core instance with the same stable crate identity.
+    if selected.ordinary_native.is_none() && has_caller_owned_project_libraries(&selected.provider_plan) {
         let closure = collect_caller_owned_provider_registry_leaf_authority(
             &open_default_oven_store()?,
             &selected.provider_plan,
@@ -481,6 +485,7 @@ pub fn publish_ordinary_project_output(
     preparation_identity: &str,
     report: &crate::build_report::BuildReport,
 ) -> CliResult<()> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::publish_ordinary_output", input = %prepared.project_root.display()).entered();
     if super::source_authority::digest_baked_project_source_authority(&prepared.project_root)? != source_authority
         || super::source_authority::ordinary_preparation_identity_digest()? != preparation_identity
     {
@@ -500,7 +505,7 @@ pub fn publish_ordinary_project_output(
         .backend
         .clone()
         .ok_or_else(|| CliError::failure("ordinary build has no backend receipt"))?;
-    publish_prepared_project_output(
+    let output = publish_prepared_project_output(
         OvenProjectOutputBakeRequest {
             project_root: &prepared.project_root,
             entrypoint: &prepared.entrypoint,
@@ -519,6 +524,7 @@ pub fn publish_ordinary_project_output(
         },
         preparation_identity,
     )?;
+    write_project_output_projection(&prepared.project_root, &output)?;
     Ok(())
 }
 
@@ -530,6 +536,8 @@ pub fn publish_prepared_project_output(
     request: OvenProjectOutputBakeRequest<'_>,
     preparation_identity: &str,
 ) -> CliResult<super::OvenStoredProjectOutput> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::publish_prepared_output").entered();
     let receipt_path = project_bake_receipt_path(
         request.project_root,
         request.target,
@@ -550,7 +558,11 @@ pub fn select_default_executable_project_output(
     file_path: &str,
     output_dir: Option<&String>,
     options: &BuildCommandOptions,
+    authority: &mut super::ProjectSourceAuthorityDigester,
 ) -> CliResult<Option<(PathBuf, OvenStoredProjectOutput, BackendExecutionReceipt)>> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::select_executable_output", input = file_path)
+            .entered();
     if output_dir.is_some() {
         return Ok(None);
     }
@@ -562,21 +574,29 @@ pub fn select_default_executable_project_output(
         cargo_no_default_features: options.cargo_no_default_features,
         cargo_all_features: options.cargo_all_features,
     };
-    let Some(selected) = select_default_project_output(
+    let Some(selected) = select_default_project_output_with_inputs(
         file_path,
         &completed_output_policy,
         OvenBakeProjectTarget::Executable,
         "release",
+        authority,
     )?
     else {
         return Ok(None);
     };
-    let project_root = project_root_for_completed_output(&normalized_project_entrypoint(file_path)?)?
-        .ok_or_else(|| CliError::failure("selected Oven project-output Loaf has no manifest-backed project root"))?;
+    let project_root = project_root_for_completed_output_with_inputs(
+        &normalized_project_entrypoint(file_path)?,
+        &mut authority.retained_inputs,
+    )?
+    .ok_or_else(|| CliError::failure("selected Oven project-output Loaf has no manifest-backed project root"))?;
     let Some(backend_receipt) = completed_output_default_backend_receipt(&selected) else {
         return Ok(None);
     };
-    warn_for_completed_output_lock_fingerprint_drift(&project_root, [&selected])?;
+    super::output_materialization::warn_for_completed_output_lock_fingerprint_drift_with_current(
+        &project_root,
+        [&selected],
+        || authority.lock_fingerprint(&project_root),
+    )?;
     Ok(Some((project_root, selected, backend_receipt)))
 }
 
@@ -810,6 +830,8 @@ fn finalize_library_metadata_lock_transition(
 }
 
 /// Reobserve the original caller-selected native route on both sides of canonical lock publication.
+/// The metadata observer verifies the complete native request when producing its semantic identity; this wrapper only
+/// forwards the original capability.
 fn observe_admitted_library_metadata(
     project: &ProjectManifest,
     session: &crate::session::CompilationSession,
@@ -818,7 +840,6 @@ fn observe_admitted_library_metadata(
     admitted: Option<&AdmittedLibraryPreparation>,
 ) -> CliResult<Option<MetadataPreparation>> {
     if let Some(native) = admitted.and_then(AdmittedLibraryPreparation::ordinary_native) {
-        native.verify()?;
         MetadataPreparation::observe_with_ordinary_native_authority(
             project,
             session,
@@ -984,6 +1005,23 @@ fn checked_library_exports(
     source: &Path,
     package_features: &FeatureSelection,
 ) -> CliResult<Vec<incan_frontend::library_exports::CheckedNamedExport>> {
+    let root = resolve_library_project_root(Some(
+        source
+            .to_str()
+            .ok_or_else(|| CliError::failure("invalid provider source path"))?,
+    ))?;
+    let manifest = discover_effective_project_manifest(&root)?
+        .ok_or_else(|| CliError::failure("caller provider has no manifest"))?;
+    let admitted = AdmittedLibraryPreparation::discover_ordinary_native(&manifest, package_features, None)?;
+    checked_library_exports_with_admission(source, package_features, admitted.as_ref())
+}
+
+/// Inspect caller export shapes without rediscovering native or language authority selected by this command.
+fn checked_library_exports_with_admission(
+    source: &Path,
+    package_features: &FeatureSelection,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<Vec<incan_frontend::library_exports::CheckedNamedExport>> {
     let root = source
         .parent()
         .and_then(Path::parent)
@@ -1002,22 +1040,33 @@ fn checked_library_exports(
         library_publication_receipts(Path::new(root))?,
     )?;
     let result = (|| {
-        let prepared = prepare_library_project(
-            Some(root),
-            Some(output),
-            CargoPolicy::default(),
-            package_features,
-            None,
-            Vec::new(),
-            false,
-            false,
-            None,
-            true,
-            false,
-            OvenProjectPlanMode::ExplicitBake,
-            None,
-        )?;
-        let mut exports = prepared.checked_exports;
+        let mut preparation = if let Some(input) = admitted {
+            RetainedLibraryPreparation::Admitted(prepare_admitted_library_project(
+                input,
+                Some(output),
+                package_features,
+                false,
+                OvenProjectPlanMode::ExplicitBake,
+                None,
+            )?)
+        } else {
+            RetainedLibraryPreparation::Discovered(prepare_library_project(
+                Some(root),
+                Some(output),
+                CargoPolicy::default(),
+                package_features,
+                None,
+                Vec::new(),
+                false,
+                false,
+                None,
+                true,
+                false,
+                OvenProjectPlanMode::ExplicitBake,
+                None,
+            )?)
+        };
+        let mut exports = std::mem::take(&mut preparation.project_mut().checked_exports);
         resolve_caller_imported_shapes(Path::new(root), &mut exports, package_features)?;
         Ok(exports)
     })();
@@ -1185,6 +1234,7 @@ struct ProjectRustCallerUnit<'a> {
     dependency: &'a oven_model::manifest::LibraryDependencySpec,
     selection: &'a crate::build::caller_facet::CallerFacetSelection,
     facet_id: &'a str,
+    admitted: Option<&'a AdmittedLibraryPreparation>,
 }
 
 /// Publish or select a Rust unit's own dependency closure without granting permissions to its dependencies.
@@ -1225,28 +1275,13 @@ fn prepare_rust_unit_dependencies(
         .map_err(|error| CliError::failure(error.to_string()))?;
 
     // ---- Receipt-bound dependency publisher ----
-    let request = OvenGeneratedProjectRequest::new(
-        context.manifest.project_root(),
-        "incan-rust-unit-dependencies",
-        context.project_version,
-        context.target,
-        context.toolchain,
+    let receipt = rust_unit_dependency_receipt(
+        context,
         profile,
-        Vec::new(),
-    )
-    .with_generated_source("generated-root", generator.crate_root_path());
-    let mut request = request;
-    for (name, value) in &base_receipt.sources.build_unit_inputs {
-        if name != oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT {
-            request = request.with_build_unit_input(name, value);
-        }
-    }
-    let dependency_digest =
-        oven_store::digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
-            .map_err(|error| CliError::failure(error.to_string()))?;
-    request = request.with_build_unit_input("rust-dependencies", dependency_digest);
-    let receipt =
-        oven_store::receipt_generated_project(&request).map_err(|error| CliError::failure(error.to_string()))?;
+        base_receipt,
+        &generator.crate_root_path(),
+        &dependencies,
+    )?;
 
     // ---- Explicit plan selection under lease ----
     let store = open_default_oven_store()?;
@@ -1267,6 +1302,35 @@ fn prepare_rust_unit_dependencies(
     )?
     .ok_or_else(|| CliError::failure("Rust unit dependency closure was not prepared"))?;
     Ok(Some((receipt, preparation.plan_selection)))
+}
+
+/// Receipt a Rust caller's dependency source independently of the selected Incan callee's native projection.
+///
+/// The callee supplies a retained build relation; its runtime roots and execution grants belong to its own consumer.
+/// The caller's declaration-selected closure must establish its own roots before native plan selection.
+fn rust_unit_dependency_receipt(
+    context: &ProjectRustBakeContext<'_>,
+    profile: &str,
+    base_receipt: &oven_store::OvenReceipt,
+    generated_source: &Path,
+    dependencies: &[oven_model::manifest::DependencySpec],
+) -> CliResult<oven_store::OvenReceipt> {
+    let request = OvenGeneratedProjectRequest::new(
+        context.manifest.project_root(),
+        "incan-rust-unit-dependencies",
+        context.project_version,
+        context.target,
+        context.toolchain,
+        profile,
+        Vec::new(),
+    )
+    .with_generated_source("generated-root", generated_source)
+    .with_build_unit_input("callee-incan-unit", &base_receipt.identity);
+    let dependency_digest =
+        oven_store::digest_dependency_specs(dependencies, incan_oven_facet::provider_hooks().as_ref())
+            .map_err(|error| CliError::failure(error.to_string()))?;
+    let request = request.with_build_unit_input("rust-dependencies", dependency_digest);
+    oven_store::receipt_generated_project(&request).map_err(|error| CliError::failure(error.to_string()))
 }
 
 /// Prepare declared Rust-unit roots from explicit native producer coordinates rather than SDK coverage.
@@ -1336,11 +1400,11 @@ fn compose_rust_unit_dependencies(
 ///
 /// Generated caller facets belong to the Rust caller's output tree. Provider receipt pointers and canonical lock
 /// bytes are restored after preparation; the returned plan owns its checked receipt and retained artifact evidence.
-fn prepare_rust_caller_library(
+fn prepare_rust_caller_library<'a>(
     context: &ProjectRustBakeContext<'_>,
-    unit: &ProjectRustCallerUnit<'_>,
+    unit: &ProjectRustCallerUnit<'a>,
     profile: &str,
-) -> CliResult<PreparedLibraryProject> {
+) -> CliResult<RetainedLibraryPreparation<'a>> {
     let ProjectRustCallerUnit {
         unit_name,
         library,
@@ -1377,22 +1441,36 @@ fn prepare_rust_caller_library(
         &dependency.path,
         library_publication_receipts(&dependency.path)?,
     )?;
-    let result = prepare_library_project_with_caller_facet(
-        Some(dependency_path),
-        Some(output),
-        CargoPolicy::default(),
-        context.package_features,
-        None,
-        Vec::new(),
-        false,
-        false,
-        None,
-        true,
-        false,
-        OvenProjectPlanMode::ExplicitBake,
-        None,
-        Some(&caller),
-    );
+    let result = if let Some(input) = unit.admitted {
+        prepare_admitted_library_project_with_caller_facet(
+            input,
+            Some(output),
+            context.package_features,
+            false,
+            OvenProjectPlanMode::ExplicitBake,
+            None,
+            Some(&caller),
+        )
+        .map(RetainedLibraryPreparation::Admitted)
+    } else {
+        prepare_library_project_with_caller_facet(
+            Some(dependency_path),
+            Some(output),
+            CargoPolicy::default(),
+            context.package_features,
+            None,
+            Vec::new(),
+            false,
+            false,
+            None,
+            true,
+            false,
+            OvenProjectPlanMode::ExplicitBake,
+            None,
+            Some(&caller),
+        )
+        .map(RetainedLibraryPreparation::Discovered)
+    };
     publication.finish_inspection(result).map_err(|error| {
         CliError::failure(format!(
             "failed to prepare caller library `{library}` for `{unit_name}`: {error}"
@@ -1415,7 +1493,8 @@ fn bake_project_rust_profile(
     } = *unit;
 
     // ---- Checked sibling Incan caller ----
-    let prepared = prepare_rust_caller_library(context, unit, profile)?;
+    let mut preparation = prepare_rust_caller_library(context, unit, profile)?;
+    let prepared = preparation.project_mut();
     let oven = prepared
         .oven
         .as_ref()
@@ -1438,7 +1517,7 @@ fn bake_project_rust_profile(
         None
     };
     let (library_bake, mut artifact_plan) =
-        bake_oven_library_with_dependencies(&prepared, oven, profile, None, host_body_ir_plan.as_ref()).map_err(
+        bake_oven_library_with_dependencies(prepared, oven, profile, None, host_body_ir_plan.as_ref()).map_err(
             |error| {
                 CliError::failure(format!(
                     "failed to bake caller library `{library}` for `{unit_name}`: {error}"
@@ -1574,7 +1653,14 @@ fn bake_project_rust_units(
                 CliError::failure(format!("Rust caller path names undeclared Incan Loaf `{library}`"))
             })?;
             let library_source = dependency.path.join("src/lib.incn");
-            let checked = checked_library_exports(&library_source, package_features)?;
+            let provider_manifest = discover_effective_project_manifest(&dependency.path)?
+                .ok_or_else(|| CliError::failure("Rust caller provider has no manifest"))?;
+            let admitted = AdmittedLibraryPreparation::discover_ordinary_native(
+                &provider_manifest,
+                package_features,
+                Some(&target),
+            )?;
+            let checked = checked_library_exports_with_admission(&library_source, package_features, admitted.as_ref())?;
             let body_ir_identity = caller_body_ir_identity(manifest, &dependency.path)?;
             let selection =
                 select_checked_caller_exports_with_body_ir(&library, &requested, &checked, body_ir_identity)
@@ -1587,6 +1673,7 @@ fn bake_project_rust_units(
                 dependency,
                 selection: &selection,
                 facet_id: &facet_id,
+                admitted: admitted.as_ref(),
             };
             for profile in explicit_bake_profiles() {
                 generated_sources.insert(format!("rust:{unit_name}"), source.clone());
@@ -1615,6 +1702,25 @@ pub fn bake_oven_project_targets(
     requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
     bake_oven_project_targets_with_admission(project, package_features, requested_target, None)
+}
+
+/// Make a standalone library ready through the existing ordinary producer when native inputs are configured.
+///
+/// Normal library commands call this after completed-output reuse misses. The shared publisher owns all profiles,
+/// package metadata and rollback; this adapter neither discovers an SDK nor introduces another publication engine.
+/// Absence of configuration leaves transitional callers unchanged; configured preparation failures propagate.
+pub fn publish_configured_ordinary_library(project: &Path, package_features: &FeatureSelection) -> CliResult<bool> {
+    if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none() {
+        return Ok(false);
+    }
+    let targets = discover_oven_bake_project_targets(project)?;
+    if targets.len() != 1 || targets[0].0 != OvenBakeProjectTarget::Library {
+        return Err(CliError::failure(
+            "ordinary library preparation requires one standalone library target",
+        ));
+    }
+    bake_oven_project_targets(project, package_features, None)?;
+    Ok(true)
 }
 
 /// Publish a standalone ordinary library from original command admissions through the existing bake engine.
@@ -1777,6 +1883,19 @@ fn bake_oven_project_targets_with_admission(
             "completed project reuse missed before frontend preparation",
         ));
     }
+    // Select ordinary preparation only after completed-output reuse has missed. Its original owner leases must
+    // survive every profile and finalization; passing a temporary session into preparation would lose that boundary.
+    let discovered_admission =
+        if admitted.is_none() && targets.len() == 1 && targets[0].0 == OvenBakeProjectTarget::Library {
+            AdmittedLibraryPreparation::discover_ordinary_native(&manifest, package_features, requested_target)?
+        } else {
+            None
+        };
+    let admitted = admitted.or(discovered_admission.as_ref());
+    let ordinary_preparation_identity = admitted
+        .and_then(AdmittedLibraryPreparation::ordinary_native)
+        .map(|native| super::source_authority::ordinary_library_preparation_identity_digest(Some(native.as_ref())))
+        .transpose()?;
     let mut source_authority_digest = None;
     let mut published_project_lock = None;
     let mut generated_sources = BTreeMap::new();
@@ -1801,6 +1920,7 @@ fn bake_oven_project_targets_with_admission(
     // closure, so its constituents stay leased until the authority is sealed; if the policy cannot hold them all,
     // admission fails loudly instead.
     let mut retained_preparations: Vec<RetainedLibraryPreparation<'_>> = Vec::new();
+    let mut retained_library_generations = Vec::new();
     // Destination owners are independent of prepared source Store leases and survive finalization/rollback too.
     let mut retained_package_loafs: Vec<ExportedPackageLoafs> = Vec::new();
     // The same holds for an executable target: its debug plan is published one profile before its release plan, and
@@ -1829,6 +1949,8 @@ fn bake_oven_project_targets_with_admission(
     } else {
         None
     };
+    // Exact output hints become visible only after every publication succeeds and rollback is no longer possible.
+    let mut published_outputs = Vec::new();
     let result = (|| {
         for (target, entrypoint) in targets {
             match target {
@@ -1994,12 +2116,11 @@ fn bake_oven_project_targets_with_admission(
                     })?;
                     let library_sidecars =
                         library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
-                    publish_checked_library_package(
-                        prepared,
-                        source_authority_digest,
-                        package_profiles,
-                        *store.limits(),
-                    )?;
+                    if let Some(generation) =
+                        publish_checked_library_package(prepared, source_authority_digest, package_profiles, &store)?
+                    {
+                        retained_library_generations.push(generation);
+                    }
                     let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
                     let package_loaf_store_relative_path = package_store_root
                         .strip_prefix(&prepared.project_root)
@@ -2156,6 +2277,9 @@ fn bake_oven_project_targets_with_admission(
                 })?,
                 dependency_surface,
                 &project_root,
+                admitted
+                    .ok_or_else(|| CliError::failure("ordinary test envelope has no admitted session"))?
+                    .session(),
             )?
         } else {
             prepare_oven_test_dependency_envelope(
@@ -2226,9 +2350,22 @@ fn bake_oven_project_targets_with_admission(
             &test_dependency_envelope,
             library_inspection_constituent.as_ref(),
         )?;
+        if let Some(identity) = ordinary_preparation_identity.as_deref()
+            && super::source_authority::ordinary_library_preparation_identity_digest(
+                admitted
+                    .and_then(AdmittedLibraryPreparation::ordinary_native)
+                    .map(|native| native.as_ref()),
+            )? != identity
+        {
+            return Err(CliError::failure(
+                "ordinary library preparation inputs changed during publication",
+            ));
+        }
         let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(&project_root)?;
-        let mut published_outputs = Vec::with_capacity(pending_outputs.len());
+        published_outputs.reserve(pending_outputs.len());
         for pending in pending_outputs {
+            let receipt_path =
+                project_bake_receipt_path(&project_root, pending.target, &pending.entrypoint, &pending.profile)?;
             let files = pending.files;
             let mut payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
                 project_root: &project_root,
@@ -2247,7 +2384,9 @@ fn bake_oven_project_targets_with_admission(
                 build_report: pending.build_report,
             })?;
             payload.inspection_authority_snapshot = Some(inspection_authority.snapshot.clone());
-            published_outputs.push(publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?);
+            payload.preparation_identity_digest = ordinary_preparation_identity.clone();
+            let output = publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?;
+            published_outputs.push((receipt_path, output));
         }
         // Keep every sibling output and the authority leased through completion. Retention sweeps must preserve
         // earlier targets/profiles while bounded publications complete, even above the aggregate retention target.
@@ -2256,9 +2395,9 @@ fn bake_oven_project_targets_with_admission(
         // leave a source-current authority that points at a missing closure.
         let outputs = published_outputs
             .iter()
-            .map(OvenProjectBakeOutputReport::from)
+            .map(|(_, output)| OvenProjectBakeOutputReport::from(output))
             .collect();
-        let _complete_publication_set = (test_dependency_envelope, inspection_authority, published_outputs);
+        let _complete_publication_set = (test_dependency_envelope, inspection_authority);
         #[cfg(feature = "rust_inspect")]
         for manifest_dir in rust_inspect_manifest_dirs {
             mark_oven_direct_rust_inspection(&manifest_dir)?;
@@ -2275,6 +2414,14 @@ fn bake_oven_project_targets_with_admission(
         Some(publication) => publication.finish(result),
         None => result,
     };
+    if let Ok(report) = &result {
+        for (receipt_path, output) in &published_outputs {
+            // Both are optional hints written after commit. An unavailable marker only forfeits acceleration;
+            // reuse still verifies the selected owner, caller files and receipts before consuming any output.
+            let _ = write_project_output_projection(&report.project, output);
+            remember_project_output(receipt_path, &output.identity);
+        }
+    }
     drop(retained_package_loafs);
     result
 }
@@ -2292,9 +2439,84 @@ mod tests {
 
     use oven_rustc::rustc::OvenRustcError;
 
+    /// Caller dependencies bind the callee identity without inheriting its roots, runtime claims or driver grant.
+    #[test]
+    fn rust_caller_dependency_receipt_keeps_consumer_roots_separate() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path();
+        fs::write(root.join("loaf.toml"), "[project]\nname='caller'\nversion='1.0.0'\n")?;
+        let generated = root.join("main.rs");
+        fs::write(&generated, "fn main() {}\n")?;
+        let manifest = ProjectManifest::load(&root.join("loaf.toml"))?;
+        let features = FeatureSelection::default();
+        let context = ProjectRustBakeContext {
+            manifest: &manifest,
+            package_features: &features,
+            rustc: Path::new("unused-rustc"),
+            target: "caller-target",
+            toolchain: "caller-toolchain",
+            project_name: "caller",
+            project_version: "1.0.0",
+        };
+        let mut previous = None;
+        for native_roots in ["callee-roots-one", "callee-roots-two"] {
+            let base_request = OvenGeneratedProjectRequest::new(
+                root,
+                "callee",
+                "1.0.0",
+                "caller-target",
+                "caller-toolchain",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &generated)
+            .with_build_unit_input("ordinary-native-roots", native_roots)
+            .with_build_unit_input("runtime-identity-domain", "ordinary-native-records/1")
+            .with_build_unit_input(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT, "callee-grant");
+            let base = oven_store::receipt_generated_project(&base_request)?;
+            let receipt = rust_unit_dependency_receipt(&context, "debug", &base, &generated, &[])?;
+            assert!(
+                !receipt.sources.build_unit_inputs.contains_key("ordinary-native-roots"),
+                "callee roots leaked into a different dependency consumer"
+            );
+            assert!(
+                !receipt
+                    .sources
+                    .build_unit_inputs
+                    .contains_key("runtime-identity-domain")
+            );
+            assert!(
+                !receipt
+                    .sources
+                    .build_unit_inputs
+                    .contains_key(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT)
+            );
+            assert_eq!(
+                receipt.sources.build_unit_inputs.get("callee-incan-unit"),
+                Some(&base.identity)
+            );
+            assert!(receipt.sources.build_unit_inputs.contains_key("rust-dependencies"));
+            assert_eq!(receipt.intent, base.intent);
+            if let Some(previous) = previous {
+                assert_ne!(
+                    receipt.identity, previous,
+                    "changed callee authority must invalidate caller dependencies"
+                );
+            }
+            previous = Some(receipt.identity);
+        }
+        Ok(())
+    }
+
     /// Export inspection keeps an admitted provider's physical bytes and canonical pointers intact.
     #[test]
     fn checked_exports_preserve_published_provider() -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "build::bake::tests::checked_exports_preserve_published_provider",
+        )? {
+            return Ok(());
+        }
+
         let project = tempfile::tempdir()?;
         fs::create_dir_all(project.path().join("src"))?;
         fs::write(

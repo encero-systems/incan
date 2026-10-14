@@ -1,5 +1,8 @@
 """Decode pinned Loaf index declarations without inspecting upstream package metadata."""
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from std.json import JsonValue, parse
 from rust_activation import (
     validate_feature_declarations,

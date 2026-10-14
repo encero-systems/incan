@@ -384,7 +384,7 @@ fn optional_lineage_refuses_constituent_damage_and_missing_original_after_load()
             .stored_constituents
             .first()
             .ok_or("fixture lost its constituent")?;
-        let payload = primary_payload(&constituent.artifact_root)?;
+        let payload = primary_payload(constituent.artifact_root())?;
         if remove {
             fs::remove_file(payload)?;
         } else {
@@ -501,22 +501,22 @@ fn optional_lineage_refuses_equal_identity_at_different_store_after_load() -> Re
     let copied = destination.publish_verified_import(
         &OvenArtifactPublishRequest {
             receipt: fixture.receipt.clone(),
-            domain: original.manifest.domain.clone(),
-            kind: original.manifest.kind,
-            payload: original.payload.clone(),
+            domain: original.manifest().domain.clone(),
+            kind: original.manifest().kind,
+            payload: original.payload().to_vec(),
             materialized_files: Vec::new(),
             materialized_directories: Vec::new(),
         },
         original.admitted_materialized_files(),
         original.admitted_materialized_directories(),
     )?;
-    assert_eq!(copied.identity, original.manifest.identity);
+    assert_eq!(copied.identity, original.manifest().identity);
     let replacement = destination.select_payloads_for_execution(&[copied.identity])?;
-    let different_root = &replacement
+    let different_root = replacement
         .first()
         .ok_or("copied owner was not admitted")?
-        .artifact_root;
-    assert_ne!(different_root, &original.artifact_root);
+        .artifact_root();
+    assert_ne!(different_root, original.artifact_root());
     authority.stored_constituents = replacement;
     let error = prepare_optional_project_registry_source_authorities_with_native_sdk(
         authority,

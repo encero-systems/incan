@@ -30,31 +30,43 @@ pub fn digest_native_compiler_input(path: &Path) -> std::io::Result<String> {
     super::file_freshness::digest_file(path)
 }
 
-/// Forward source-current completed-output selection without the optional borrowed-tuple argument that Incan cannot
-/// emit.
+/// Select one source-current output through the canonical locator and fallback without the borrowed tuple arguments
+/// that Incan cannot emit.
 ///
 /// Removable argument-shape adapter for the minimized #872 repro in
 /// `workspaces/compiler-bootstrap/repros/optional-tuple-api-gap`. All selection inputs are caller-owned;
-/// target/toolchain, exact compiler, dependency and lock acceptance remain in the Incan bootstrap. The returned owners
-/// retain the existing immutable execution leases. Remove this adapter when the public optional tuple parameter can be
-/// called directly.
-pub fn matching_project_outputs_for_incan(
+/// the bootstrap supplies its current source, target/toolchain, compiler and dependency identities to the same
+/// canonical selector. Returned owners retain the existing immutable execution leases. Remove this adapter when the
+/// public optional tuple parameter can be called directly. Exact compiler, dependency, target and toolchain predicates
+/// apply inside the same selector to both the locked address and fallback candidates; a fresh client therefore need not
+/// discover unrelated Store entries.
+#[allow(clippy::too_many_arguments)]
+pub fn select_project_output_for_incan(
     store: &oven_store::store::OvenStore,
     project_root: &Path,
     entrypoint: &Path,
     target: super::OvenBakeProjectTarget,
     profile: &str,
     source_authority: &str,
-) -> CliResult<Vec<super::OvenStoredProjectOutput>> {
-    super::output_selection::matching_baked_project_outputs_with_source_authority(
+    required_target: &str,
+    required_toolchain: &str,
+    required_compiler: &str,
+    required_dependencies: &str,
+) -> CliResult<Option<super::OvenStoredProjectOutput>> {
+    Ok(super::output_selection::project_outputs_with_source_authority(
         store,
         project_root,
         entrypoint,
         target,
         profile,
         source_authority,
+        Some((required_target, required_toolchain)),
+        true,
         None,
-    )
+        Some((required_compiler, required_dependencies)),
+    )?
+    .into_iter()
+    .next())
 }
 
 #[derive(Serialize)]
@@ -193,7 +205,7 @@ pub(crate) fn ordinary_runtime_inputs(
         ));
     }
     // ---- Bound executable response and final original-owner observation ----
-    let response = execute_exchange(&bound.engine, &bytes)?;
+    let response: Response = execute_exchange(&bound.engine, &bytes)?;
     let roots_digest = ordinary_roots_digest(selected.roots())?;
     let records_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.selected_records).map_err(failure)?);
     let features_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.consumer_features).map_err(failure)?);
@@ -440,11 +452,77 @@ pub(crate) fn dependency_inputs(
 /// Exact verified compiler output and adjacent engine binding, retained for one command.
 #[derive(Clone)]
 struct BoundCompilerEngine {
+    compiler: PathBuf,
     engine: PathBuf,
     engine_digest: String,
+    policy_engine: Option<(PathBuf, String)>,
     compiler_receipt: String,
     compiler_output: String,
     toolchain: String,
+}
+
+/// Return the compiler executable from the existing verified toolchain binding for child-test execution.
+/// The runner forwards this exact path after clearing inherited Cargo variables. It does not resolve another
+/// compiler or accept a caller's ambient binary override when launched as Incan or Oven.
+pub fn bound_compiler_executable() -> CliResult<PathBuf> {
+    Ok(compiler_engine_binding()?.compiler)
+}
+
+/// Select the policy executable bound into this compiler's source receipt; older toolchains refuse this capability.
+/// The caller observes this exact file before retaining a response, never an ambient executable override.
+pub(super) fn bound_policy_engine() -> CliResult<(PathBuf, String)> {
+    let bound = compiler_engine_binding()?;
+    let (engine, digest) = bound
+        .policy_engine
+        .ok_or_else(|| CliError::failure("compiler has no bound Oven policy engine"))?;
+    if super::file_freshness::digest_file(&engine).map_err(failure)? != digest {
+        return Err(CliError::failure(
+            "Oven policy engine differs from the bound compiler receipt",
+        ));
+    }
+    Ok((engine, digest))
+}
+
+/// Evaluate original conditions through the bound Incan policy; a response is useful only for these exact bytes.
+pub(super) fn target_predicates(
+    engine: &Path,
+    declaration: &str,
+    target: &str,
+    toolchain: &str,
+    cfg: oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot,
+    conditions: &[String],
+) -> CliResult<Vec<bool>> {
+    let request = serde_json::json!({
+        "schema":"incan.oven.target-predicates/1", "declaration":declaration, "toolchain":toolchain,
+        "target":{"triple":target,"cfg":cfg}, "conditions":conditions,
+    });
+    let bytes = serde_json::to_vec(&request).map_err(failure)?;
+    let response: TargetPredicateResponse = execute_exchange(engine, &bytes)?;
+    if response.schema != "incan.oven.target-predicates/1"
+        || response.request_digest != oven_store::digest_bytes(&bytes)
+    {
+        return Err(CliError::failure(
+            "target predicate response differs from its exact request",
+        ));
+    }
+    match (response.status.as_str(), response.matches, response.reason) {
+        ("selected", Some(matches), None) if matches.len() == conditions.len() => Ok(matches),
+        ("refused", None, Some(reason)) => Err(CliError::failure(format!("target predicate selection: {reason}"))),
+        _ => Err(CliError::failure(
+            "target predicate response is incomplete or contradictory",
+        )),
+    }
+}
+
+/// Closed target exchange envelope; false decisions remain explicit and never disappear from the ordered result.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetPredicateResponse {
+    schema: String,
+    request_digest: String,
+    status: String,
+    matches: Option<Vec<bool>>,
+    reason: Option<String>,
 }
 
 /// Resolve and verify the source-built compiler and its engine once during this compiler process.
@@ -462,17 +540,35 @@ fn compiler_engine_binding() -> CliResult<BoundCompilerEngine> {
         .map_err(CliError::failure)
 }
 
+/// Select the compiler belonging to the command's toolchain before validating its receipt and output bytes.
+/// Oven uses its adjacent compiler, never an ambient test override. Native libtest hosts keep the runner's explicit
+/// compiler.
+fn compiler_for_native_runtime(executable: &Path, test_compiler: Option<PathBuf>) -> CliResult<PathBuf> {
+    let name = executable.file_stem().and_then(|name| name.to_str());
+    match name {
+        Some("incan") => Ok(executable.to_path_buf()),
+        Some("oven") => {
+            let directory = executable
+                .parent()
+                .ok_or_else(|| CliError::failure("Oven executable has no parent"))?;
+            let compiler = directory.join(format!("incan{}", std::env::consts::EXE_SUFFIX));
+            if !compiler.is_file() {
+                return Err(CliError::failure(
+                    "Oven requires the receipt-bound incan compiler beside its executable",
+                ));
+            }
+            Ok(compiler)
+        }
+        _ => test_compiler
+            .ok_or_else(|| CliError::failure("native-runtime identity requires its receipt-bound compiler")),
+    }
+}
+
 /// Verify the selected compiler's retained output and source receipt before accepting its adjacent engine.
 fn resolve_compiler_engine() -> CliResult<BoundCompilerEngine> {
     let executable = std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?;
-    // Native libtest hosts carry the exact compiler selected by the existing runner.
-    let compiler = if executable.file_name().is_some_and(|name| name == "incan") {
-        executable
-    } else {
-        std::env::var_os("CARGO_BIN_EXE_incan")
-            .map(PathBuf::from)
-            .ok_or_else(|| CliError::failure("native-runtime identity requires its receipt-bound compiler"))?
-    };
+    let compiler =
+        compiler_for_native_runtime(&executable, std::env::var_os("CARGO_BIN_EXE_incan").map(PathBuf::from))?;
     let receipt: oven_store::OvenReceipt = read_json(&PathBuf::from(format!("{}.receipt.json", compiler.display())))?;
     let identity = oven_store::receipt_identity(
         &receipt.project,
@@ -513,7 +609,22 @@ fn resolve_compiler_engine() -> CliResult<BoundCompilerEngine> {
         .parent()
         .ok_or_else(|| CliError::failure("source compiler has no parent"))?
         .join(NATIVE_RUNTIME_ENGINE_FILE);
+    let policy_engine = receipt
+        .sources
+        .supplemental_digests
+        .get("oven-policy-engine")
+        .map(|digest| {
+            (
+                compiler
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("oven-policy-engine"),
+                digest.clone(),
+            )
+        });
     Ok(BoundCompilerEngine {
+        policy_engine,
+        compiler,
         engine,
         engine_digest: digest,
         compiler_receipt: receipt.identity,
@@ -567,7 +678,7 @@ fn exchange(
         runtime_units,
     };
     let bytes = serde_json::to_vec(&request).map_err(|error| CliError::failure(error.to_string()))?;
-    let response = execute_exchange(engine, &bytes)?;
+    let response: Response = execute_exchange(engine, &bytes)?;
     if response.schema != "incan.native-runtime-inputs.response/1"
         || response.request_digest != oven_store::digest_bytes(&bytes)
         || response.inputs.get("sdk-native-closure") != Some(&catalog_digest)
@@ -580,7 +691,7 @@ fn exchange(
 }
 
 /// Execute only the caller-owned request/response files through the already verified engine.
-fn execute_exchange(engine: &Path, bytes: &[u8]) -> CliResult<Response> {
+fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, bytes: &[u8]) -> CliResult<T> {
     let directory = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
     let request_path = directory.path().join("request.json");
     let response_path = directory.path().join("response.json");

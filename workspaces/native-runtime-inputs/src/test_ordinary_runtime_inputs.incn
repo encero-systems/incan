@@ -147,6 +147,21 @@ pub def test_ordinary_native_refuses_unknown_duplicate_malformed_and_absent_root
     return Ok(None)
 
 
+pub def test_ordinary_native_dependency_names_keep_authored_identity_and_refuse_extern_collisions() -> Result[None, str]:
+    """Hyphenated declarations are valid; their normalized extern aliases must still be unique."""
+    declaration = JsonValue.parse("{\"alias\":\"probe-leaf\",\"package\":null,\"version\":\"1\",\"features\":[],\"default_features\":true,\"optional\":false,\"source\":{\"kind\":\"registry\"}}").map_err((error) => error.message())?
+    mut request = ordinary_request()
+    request.set("dependency_records", JsonValue.array([declaration])).map_err((error) => error.message())?
+    first = ordinary_inputs(request)?
+    mut renamed = declaration
+    renamed.set("alias", JsonValue.string("probe_leaf")).map_err((error) => error.message())?
+    request.set("dependency_records", JsonValue.array([renamed])).map_err((error) => error.message())?
+    assert not first.equals(ordinary_inputs(request)?)
+    request.set("dependency_records", JsonValue.array([declaration, renamed])).map_err((error) => error.message())?
+    ordinary_refusal(request, "duplicated")?
+    return Ok(None)
+
+
 pub def test_ordinary_native_refuses_missing_duplicate_and_malformed_selected_records() -> Result[None, str]:
     """The versioned selected-record set must be nonempty, canonical and identity-shaped."""
     for values in [[], ["bad-record"], [ordinary_record_identity(), ordinary_record_identity()]]:

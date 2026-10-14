@@ -605,7 +605,7 @@ fn collect_codegraph_semantic_contexts(
         let modules = modules_by_path.into_values().collect::<Vec<_>>();
         let provider_plan = match session.provider_plan_for_modules(&modules) {
             Ok(plan) => plan,
-            Err(_) if allow_errors => Arc::clone(&session.provider_plan),
+            Err(_) if allow_errors => Arc::clone(session.provider_plan()),
             Err(error) => return Err(error.into()),
         };
         contexts.push(codegraph_semantic_context(&project_root, &session, &provider_plan));
@@ -620,9 +620,9 @@ fn codegraph_semantic_context(
     provider_plan: &ProviderPlan,
 ) -> CodegraphSemanticContext {
     let sdk = session
-        .sdk_inventory
+        .sdk_inventory()
         .as_ref()
-        .zip(session.sdk_components.as_ref())
+        .zip(session.sdk_components().as_ref())
         .map(|(inventory, components)| CodegraphSdkProjection {
             identity: inventory.identity(),
             profile: components.profile.clone(),
@@ -644,7 +644,7 @@ fn codegraph_semantic_context(
                 .collect(),
         });
     let packages = session
-        .package_feature_plan
+        .package_feature_plan()
         .iter()
         .flat_map(|plan| plan.packages())
         .map(|package| CodegraphPackageFeatureProjection {
@@ -764,6 +764,13 @@ fn codegraph_provider_provenance(provenance: &ProviderProvenance) -> CodegraphPr
             sdk_identity: sdk_identity.clone(),
             component_id: component_id.clone(),
             inventory_path: inventory_path.as_ref().map(|path| path_string(path)),
+        },
+        ProviderProvenance::StandardPublication {
+            package_name,
+            manifest_path,
+        } => CodegraphProviderProvenance::StandardPublication {
+            package_name: package_name.clone(),
+            manifest_path: path_string(manifest_path),
         },
         ProviderProvenance::Compiler => CodegraphProviderProvenance::Compiler,
     }

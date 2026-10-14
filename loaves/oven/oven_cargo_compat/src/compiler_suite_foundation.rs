@@ -320,7 +320,7 @@ pub(crate) fn select_compiler_suite_foundation_family(
     // ---- Group the current-schema partitions of this key by build, then by partition index ----
     let mut by_build = BTreeMap::<String, BTreeMap<u32, Vec<SelectedCompilerSuiteFoundationPartition>>>::new();
     for stored in candidates {
-        let Ok(payload) = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&stored.payload) else {
+        let Ok(payload) = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(stored.payload()) else {
             continue;
         };
         if payload.schema_version != OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION {
@@ -348,7 +348,7 @@ pub(crate) fn select_compiler_suite_foundation_family(
     for by_index in by_build.into_values() {
         let mut partitions = Vec::with_capacity(by_index.len());
         for (_, mut entries) in by_index {
-            entries.sort_by(|left, right| left.stored.manifest.identity.cmp(&right.stored.manifest.identity));
+            entries.sort_by(|left, right| left.stored.manifest().identity.cmp(&right.stored.manifest().identity));
             if let Some(chosen) = entries.into_iter().next() {
                 partitions.push(chosen);
             }
@@ -410,7 +410,7 @@ pub(crate) fn rehydrate_compiler_suite_foundation(
     for partition in &family.partitions {
         let materialized = partition
             .stored
-            .manifest
+            .manifest()
             .materialized_files
             .iter()
             .map(|file| (file.relative_path.as_str(), file.digest.as_str()))
@@ -422,7 +422,7 @@ pub(crate) fn rehydrate_compiler_suite_foundation(
                     partition.payload.label, artifact.relative_path
                 )));
             }
-            let source_path = partition.stored.artifact_root.join(&artifact.relative_path);
+            let source_path = partition.stored.artifact_root().join(&artifact.relative_path);
             if located
                 .insert(artifact.relative_path.clone(), (source_path, artifact.digest.clone()))
                 .is_some()
@@ -552,11 +552,11 @@ pub(crate) fn selected_partition_materialized_files(
 ) -> Vec<OvenArtifactMaterializedFile> {
     partition
         .stored
-        .manifest
+        .manifest()
         .materialized_files
         .iter()
         .map(|file| OvenArtifactMaterializedFile {
-            source_path: partition.stored.artifact_root.join(&file.relative_path),
+            source_path: partition.stored.artifact_root().join(&file.relative_path),
             relative_path: file.relative_path.clone(),
         })
         .collect()
@@ -1187,7 +1187,7 @@ mod tests {
             family
                 .partitions
                 .iter()
-                .all(|partition| published.contains(&partition.stored.manifest.identity))
+                .all(|partition| published.contains(&partition.stored.manifest().identity))
         );
 
         // ---- The planner inputs come back relocated below the admitted entries ----
@@ -1263,15 +1263,15 @@ mod tests {
                 .collect::<Vec<_>>(),
         )?;
         for entry in &held {
-            for file in &entry.manifest.materialized_files {
-                let metadata = fs::metadata(entry.artifact_root.join(&file.relative_path))?;
+            for file in &entry.manifest().materialized_files {
+                let metadata = fs::metadata(entry.artifact_root().join(&file.relative_path))?;
                 assert!(
                     metadata.nlink() >= 2,
                     "{} was copied rather than adopted by link",
                     file.relative_path
                 );
             }
-            let payload = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&entry.payload)?;
+            let payload = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(entry.payload())?;
             assert_eq!(
                 payload.family.as_ref().map(|family| family.key.as_str()),
                 Some(key.as_str())
@@ -1341,7 +1341,7 @@ mod tests {
         let partition = held
             .iter()
             .find(|entry| {
-                serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&entry.payload)
+                serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(entry.payload())
                     .ok()
                     .and_then(|payload| payload.family)
                     .is_some_and(|family| family.partition_index == partition_index)
@@ -1351,13 +1351,13 @@ mod tests {
             receipt: receipt.clone(),
             domain: "compiler-suite".to_string(),
             kind: OvenArtifactKind::CompilerTestSuiteFoundation,
-            payload: partition.payload.clone(),
+            payload: partition.payload().to_vec(),
             materialized_files: partition
-                .manifest
+                .manifest()
                 .materialized_files
                 .iter()
                 .map(|file| OvenArtifactMaterializedFile {
-                    source_path: partition.artifact_root.join(&file.relative_path),
+                    source_path: partition.artifact_root().join(&file.relative_path),
                     relative_path: file.relative_path.clone(),
                 })
                 .collect(),
@@ -1484,13 +1484,13 @@ mod tests {
         assert_eq!(family.partitions.len(), 2);
         for partition in &family.partitions {
             assert!(
-                partition.stored.artifact_root.starts_with(&local_path),
+                partition.stored.artifact_root().starts_with(&local_path),
                 "served locally after import"
             );
-            assert_eq!(partition.stored.manifest.receipt_identity, consumer.identity);
-            assert!(!on_mirror.contains(&partition.stored.manifest.identity));
-            for file in &partition.stored.manifest.materialized_files {
-                assert!(partition.stored.artifact_root.join(&file.relative_path).is_file());
+            assert_eq!(partition.stored.manifest().receipt_identity, consumer.identity);
+            assert!(!on_mirror.contains(&partition.stored.manifest().identity));
+            for file in &partition.stored.manifest().materialized_files {
+                assert!(partition.stored.artifact_root().join(&file.relative_path).is_file());
             }
         }
         drop(family);
@@ -1510,10 +1510,10 @@ mod tests {
             .iter()
             .flat_map(|entry| {
                 entry
-                    .manifest
+                    .manifest()
                     .materialized_files
                     .iter()
-                    .map(|file| entry.artifact_root.join(&file.relative_path))
+                    .map(|file| entry.artifact_root().join(&file.relative_path))
             })
             .collect::<Vec<_>>();
         drop(held);

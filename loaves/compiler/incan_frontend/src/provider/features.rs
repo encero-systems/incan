@@ -20,7 +20,7 @@ use oven_model::manifest::{ExpandedProjectFeature, LOAF_MANIFEST_FILENAME, Proje
 use super::SdkInventory;
 
 /// Root feature selection supplied by the project manifest and current command.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FeatureSelection {
     /// Explicit root-package features requested by the command or environment.
     pub requested: BTreeSet<String>,
@@ -71,9 +71,9 @@ pub enum FeatureActivationReason {
 pub struct ResolvedPackageFeatures {
     /// Active local package features after additive closure.
     pub active_features: BTreeSet<String>,
-    /// Optional Incan dependencies activated by the feature closure.
+    /// Optional Loaf dependencies activated by the feature closure.
     pub active_optional_dependencies: BTreeSet<String>,
-    /// Public feature requests grouped by active Incan dependency key.
+    /// Public feature requests grouped by active Loaf dependency key; each facet consumes its own edges.
     pub dependency_features: BTreeMap<String, BTreeSet<String>>,
     /// SDK components that must already be enabled and available.
     pub required_sdk_components: BTreeSet<String>,
@@ -102,8 +102,8 @@ pub enum FeatureGraphError {
         /// Optional edge context formatted for diagnostics.
         context: String,
     },
-    /// A feature edge names no declared Incan dependency.
-    #[error("feature `{feature}` references unknown Incan dependency `{dependency}`")]
+    /// A feature edge names no declared Loaf dependency.
+    #[error("feature `{feature}` references unknown Loaf dependency `{dependency}`")]
     UnknownDependency {
         /// Feature containing the edge.
         feature: String,
@@ -1025,11 +1025,24 @@ impl PackageFeatureGraph {
 
     /// Parse and validate every feature declaration in one project manifest.
     pub fn from_manifest(manifest: &ProjectManifest) -> Result<Self, FeatureGraphError> {
-        let dependencies = manifest.library_dependencies();
+        // Public features belong to Loaves regardless of their implementation language. Keep this declaration
+        // projection separate from provider traversal: native facets consume their own resolved feature edges.
+        // An activation is optional only when every authored target alternative declares it optional.
+        let dependencies = manifest
+            .library_dependencies()
+            .iter()
+            .map(|(name, dependency)| (name.as_str(), dependency.optional))
+            .chain(manifest.loaf_dependencies.iter().map(|(name, alternatives)| {
+                (
+                    name.as_str(),
+                    alternatives.iter().all(|dependency| dependency.spec.optional),
+                )
+            }))
+            .collect::<BTreeMap<_, _>>();
         let optional_dependencies = dependencies
             .iter()
-            .filter(|(_, dependency)| dependency.optional)
-            .map(|(name, _)| name.clone())
+            .filter(|(_, optional)| **optional)
+            .map(|(name, _)| (*name).to_string())
             .collect();
         let mut definitions = BTreeMap::new();
 
@@ -1052,13 +1065,13 @@ impl PackageFeatureGraph {
                 }
             }
             for dependency in &definition.optional_dependencies {
-                let Some(spec) = dependencies.get(dependency) else {
+                let Some(optional) = dependencies.get(dependency.as_str()) else {
                     return Err(FeatureGraphError::UnknownDependency {
                         feature: feature.clone(),
                         dependency: dependency.clone(),
                     });
                 };
-                if !spec.optional {
+                if !optional {
                     return Err(FeatureGraphError::DependencyNotOptional {
                         feature: feature.clone(),
                         dependency: dependency.clone(),
@@ -1066,7 +1079,7 @@ impl PackageFeatureGraph {
                 }
             }
             for dependency in definition.dependency_features.keys() {
-                if !dependencies.contains_key(dependency) {
+                if !dependencies.contains_key(dependency.as_str()) {
                     return Err(FeatureGraphError::UnknownDependency {
                         feature: feature.clone(),
                         dependency: dependency.clone(),
@@ -1385,6 +1398,124 @@ http_server = { path = "../http_server", optional = true, default-features = fal
         assert_eq!(resolved.dependency_features.get("serializer"), Some(&set(["json"])));
         assert_eq!(resolved.dependency_features.get("http_server"), Some(&set(["tls"])));
         assert_eq!(resolved.required_sdk_components, set(["stdlib-web"]));
+        Ok(())
+    }
+
+    /// Public feature edges include adopted native Loaves without promoting them into Incan providers.
+    #[test]
+    fn resolves_adopted_native_loaf_feature_edges() -> TestResult {
+        let manifest = manifest(
+            r#"
+[project.features]
+default = ["json"]
+json = ["dep:serializer", "serializer/derive"]
+[dependencies]
+serializer = { loaf = "crates-io/serde", version = "1", optional = true, default-features = false }
+"#,
+        )?;
+        let graph = PackageFeatureGraph::from_manifest(&manifest)?;
+        let resolved = graph.resolve(&FeatureSelection::default())?;
+        assert_eq!(resolved.active_optional_dependencies, set(["serializer"]));
+        assert_eq!(resolved.dependency_features.get("serializer"), Some(&set(["derive"])));
+        assert!(manifest.library_dependencies().is_empty());
+        let disabled = graph.resolve(&FeatureSelection {
+            no_default_features: true,
+            ..FeatureSelection::default()
+        })?;
+        assert!(disabled.active_optional_dependencies.is_empty());
+        assert!(disabled.dependency_features.is_empty());
+        Ok(())
+    }
+
+    /// A local native dependency retains its feature request without entering provider source traversal.
+    #[test]
+    fn native_loaf_feature_plan_preserves_provider_boundary() -> TestResult {
+        let workspace = tempfile::tempdir()?;
+        let child = workspace.path().join("native");
+        fs::create_dir_all(child.join("src"))?;
+        fs::write(child.join("src/lib.rs"), "pub fn value() -> u8 { 1 }")?;
+        let path = workspace.path().join("loaf.toml");
+        fs::write(
+            &path,
+            r#"
+[project]
+name = "consumer"
+[project.features]
+default = ["native/checked"]
+[dependencies]
+native = { loaf = "native", path = "native" }
+"#,
+        )?;
+        let manifest = ProjectManifest::load(&path)?;
+        let plan = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+        let root = plan
+            .packages()
+            .find(|package| package.package_name == "consumer")
+            .ok_or("missing consumer feature state")?;
+        assert_eq!(root.features.dependency_features.get("native"), Some(&set(["checked"])));
+        assert!(root.active_dependencies.is_empty());
+        assert_eq!(plan.packages().count(), 1);
+        assert_eq!(plan.edges().count(), 0);
+        Ok(())
+    }
+
+    /// Native Loaf edges obey the same unknown, non-optional and inactive dependency checks as Incan edges.
+    #[test]
+    fn native_loaf_feature_edges_preserve_dependency_refusals() -> TestResult {
+        let manifest = manifest(
+            r#"
+[project.features]
+missing = ["absent/derive"]
+[dependencies]
+serializer = { loaf = "crates-io/serde", version = "1", optional = true }
+"#,
+        )?;
+        assert!(matches!(
+            PackageFeatureGraph::from_manifest(&manifest),
+            Err(FeatureGraphError::UnknownDependency { .. })
+        ));
+        let manifest = self::manifest(
+            r#"
+[project.features]
+json = ["dep:serializer"]
+[dependencies]
+serializer = { loaf = "crates-io/serde", version = "1" }
+"#,
+        )?;
+        assert!(matches!(
+            PackageFeatureGraph::from_manifest(&manifest),
+            Err(FeatureGraphError::DependencyNotOptional { .. })
+        ));
+        let manifest = self::manifest(
+            r#"
+[project.features]
+json = ["serializer/derive"]
+[dependencies]
+serializer = { loaf = "crates-io/serde", version = "1", optional = true }
+"#,
+        )?;
+        assert!(matches!(
+            PackageFeatureGraph::from_manifest(&manifest)?.resolve(&FeatureSelection::new(["json"])),
+            Err(FeatureGraphError::InactiveOptionalDependency { .. })
+        ));
+        Ok(())
+    }
+
+    /// Legacy Rust interop declarations do not become public Loaf feature authority.
+    #[test]
+    fn public_features_reject_legacy_rust_dependency_edges() -> TestResult {
+        let manifest = manifest(
+            r#"
+[project.features]
+json = ["serializer/derive"]
+[rust-dependencies]
+serializer = { version = "1", optional = true }
+"#,
+        )?;
+        let error = PackageFeatureGraph::from_manifest(&manifest)
+            .err()
+            .ok_or("expected undeclared Loaf dependency")?;
+        assert!(matches!(error, FeatureGraphError::UnknownDependency { .. }));
         Ok(())
     }
 

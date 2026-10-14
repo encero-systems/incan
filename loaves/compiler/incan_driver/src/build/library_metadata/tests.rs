@@ -186,7 +186,7 @@ fn ordinary_metadata_refuses_changed_owner_and_extra_replay_files() -> Result<()
     selected.replay(destination.path())?;
     fs::write(destination.path().join("src/injected.rs"), "pub fn injected() {}\n")?;
     assert!(selected.replay(destination.path()).is_err());
-    let materialized = selected.owner.artifact_root.join("src/lib.rs");
+    let materialized = selected.owner.artifact_root().join("src/lib.rs");
     let original_metadata = fs::metadata(&materialized)?;
     let original_permissions = original_metadata.permissions();
     let original_modified = original_metadata.modified()?;
@@ -250,11 +250,11 @@ fn ordinary_metadata_refuses_forged_payload_and_receipt() -> Result<(), Box<dyn 
             payload: serde_json::to_vec(&payload)?,
             materialized_files: selected
                 .owner
-                .manifest
+                .manifest()
                 .materialized_files
                 .iter()
                 .map(|file| OvenArtifactMaterializedFile {
-                    source_path: selected.owner.artifact_root.join(&file.relative_path),
+                    source_path: selected.owner.artifact_root().join(&file.relative_path),
                     relative_path: file.relative_path.clone(),
                 })
                 .collect(),
@@ -417,6 +417,45 @@ fn ordinary_metadata_dependency_retention_requires_exact_checked_owner() -> Resu
     Ok(())
 }
 
+/// Re-exports retain surface-local trait proofs while shared definition structure and exact path facts stay strict.
+#[test]
+fn ordinary_metadata_preserves_reexport_trait_surfaces() -> Result<(), Box<dyn std::error::Error>> {
+    let mut first = LibraryManifest::new("first", "1.0.0");
+    let mut second = LibraryManifest::new("second", "1.0.0");
+    let item = RustItemMetadata {
+        canonical_path: "original::Thing".into(),
+        definition_path: Some("original::Thing".into()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo::default()),
+    };
+    first.rust_abi = LibraryRustAbi::from_items(vec![item.clone()]);
+    let mut reexport = item;
+    reexport.canonical_path = "facade::Thing".into();
+    let RustItemKind::Type(info) = &mut reexport.kind else {
+        return Err("expected fixture type".into());
+    };
+    info.implemented_traits.push(incan_lang::interop::RustImplementedTrait {
+        path: "facade::LocalTrait".into(),
+        mutable_reference: true,
+    });
+    second.rust_abi = LibraryRustAbi::from_items(vec![reexport.clone()]);
+    super::validate_rust_fact_agreement([&first, &second])?;
+    assert_ne!(first.rust_abi, second.rust_abi);
+
+    reexport.canonical_path = "original::Thing".into();
+    second.rust_abi = LibraryRustAbi::from_items(vec![reexport.clone()]);
+    assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
+
+    reexport.canonical_path = "facade::Thing".into();
+    let RustItemKind::Type(info) = &mut reexport.kind else {
+        return Err("expected fixture type".into());
+    };
+    info.has_const_params = true;
+    second.rust_abi = LibraryRustAbi::from_items(vec![reexport]);
+    assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
+    Ok(())
+}
+
 /// Separately valid dependency manifests cannot silently select different facts for one shared canonical definition.
 #[test]
 fn ordinary_metadata_refuses_competing_canonical_rust_facts_across_dependencies()
@@ -440,6 +479,33 @@ fn ordinary_metadata_refuses_competing_canonical_rust_facts_across_dependencies(
         type_display: "String".into(),
     };
     second.rust_abi = LibraryRustAbi::from_items(vec![alias]);
+    assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
+    Ok(())
+}
+
+/// Identical queried paths must agree on definition identity and visibility as well as item kind.
+#[test]
+fn ordinary_metadata_refuses_competing_query_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let item = RustItemMetadata {
+        canonical_path: "facade::Thing".into(),
+        definition_path: Some("original::Thing".into()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo::default()),
+    };
+    let mut first = LibraryManifest::new("first", "1.0.0");
+    first.rust_abi = LibraryRustAbi::from_items(vec![item.clone()]);
+    let mut second = LibraryManifest::new("second", "1.0.0");
+    second.rust_abi = LibraryRustAbi::from_items(vec![item.clone()]);
+    super::validate_rust_fact_agreement([&first, &second])?;
+
+    let mut competing = item.clone();
+    competing.definition_path = Some("different::Thing".into());
+    second.rust_abi = LibraryRustAbi::from_items(vec![competing]);
+    assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
+
+    let mut competing = item;
+    competing.visibility = RustVisibility::Restricted;
+    second.rust_abi = LibraryRustAbi::from_items(vec![competing]);
     assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
     Ok(())
 }

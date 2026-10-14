@@ -11,6 +11,7 @@ use crate::rustc::{rustc_host_target, rustc_identity};
 use oven_store::store::{OvenStore, OvenStoreLimits};
 
 mod dependency_identity;
+mod execution;
 pub use dependency_identity::local_native_dependency_source_digest;
 
 /// One already selected local compile unit; feature resolution belongs to the authored graph's resolver.
@@ -23,6 +24,12 @@ pub struct LocalFacetSelection {
     pub features: Vec<String>,
     /// Compilation domain, either host or target.
     pub domain: String,
+    /// Resolver-owned target decisions, matched against original declaration positions before consumption.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_predicates: Vec<crate::native_loaf::NativeLoafPredicate>,
+    /// Exact target for these decisions; required whenever conditional declarations are selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 /// Compile a selected local graph in dependency order, preserving successful branches and named failures.
@@ -56,81 +63,16 @@ pub(crate) fn compile_local_native_facets_for_profile(
     profile: &str,
     store: &OvenStore,
 ) -> Result<(), Error> {
-    if !matches!(profile, "debug" | "release") {
-        return Err("local native profile must be debug or release".into());
-    }
-    if selections.is_empty() {
-        return Ok(());
-    }
-    let target = rustc_host_target(rustc)?;
-    let mut pending: BTreeSet<_> = (0..selections.len()).collect();
-    let mut names = BTreeMap::new();
-    for (index, selection) in selections.iter().enumerate() {
-        let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(
-            owner.join(&selection.project).join("loaf.toml"),
-        )?)?;
-        let name = declaration
-            .get("project")
-            .and_then(|project| project.get("name"))
-            .and_then(toml::Value::as_str)
-            .ok_or("selected local unit has no Loaf project name")?;
-        if names
-            .insert((name.to_string(), selection.domain.clone()), index)
-            .is_some()
-        {
-            return Err(format!("duplicate selected local facet {name}").into());
-        }
-    }
-    while !pending.is_empty() {
-        let mut progressed = false;
-        for index in pending.clone() {
-            let selection = &selections[index];
-            let project = owner.join(&selection.project);
-            let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(project.join("loaf.toml"))?)?;
-            let (_, active) = local_feature_selection(&declaration, &selection.features)?;
-            let dependencies = declaration.get("dependencies").and_then(toml::Value::as_table);
-            let waits = dependencies
-                .into_iter()
-                .flatten()
-                .filter(|(alias, _)| active.contains_key(*alias))
-                .any(|(_, dependency)| {
-                    dependency
-                        .get("loaf")
-                        .and_then(toml::Value::as_str)
-                        .is_some_and(|loaf| {
-                            names
-                                .get(&(loaf.to_string(), selection.domain.clone()))
-                                .or_else(|| names.get(&(loaf.to_string(), "host".to_string())))
-                                .is_some_and(|dependency| pending.contains(dependency))
-                        })
-                });
-            if waits {
-                continue;
-            }
-            pending.remove(&index);
-            progressed = true;
-            if let Err(error) = compile_local_native_facet_for_target_and_profile(
-                closure,
-                &project,
-                &selection.features,
-                &selection.domain,
-                output,
-                rustc,
-                &target,
-                profile,
-                store,
-            ) {
-                closure
-                    .report
-                    .failed
-                    .push(format!("local facet {}: {error}", selection.project.display()));
-            }
-        }
-        if !progressed {
-            return Err("cycle in selected local Loaf facets".into());
-        }
-    }
-    Ok(())
+    execution::compile_local_graph(
+        closure,
+        selections,
+        owner,
+        output,
+        rustc,
+        profile,
+        store,
+        super::compile::worker_bound(),
+    )
 }
 
 /// Recompute a local facet's portable source snapshot identity for source-current consumer admission.
@@ -152,8 +94,19 @@ pub fn local_sdk_facet_source_digest_with(
 }
 
 /// Reproduce the current local producer mapping once for declaration-authorized native selection.
+#[cfg(test)]
 pub(crate) fn local_native_source_selection(project: &Path) -> Result<(toml::Value, String), Error> {
-    let sources = local_facet_sources(project)?;
+    local_native_source_selection_with_observer(project, &mut |_| {})
+}
+
+/// Report exact consulted declarations, enumerated directories and source files before canonical selection reads.
+/// The observer may retain the resulting selection only after reconciling these same paths again.
+pub(crate) fn local_native_source_selection_with_observer(
+    project: &Path,
+    observe: &mut impl FnMut(&Path),
+) -> Result<(toml::Value, String), Error> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::select_local_source", input = %project.display()).entered();
+    let sources = local_facet_sources_with_observer(project, observe)?;
     let digest = digest_local_facet_sources(&sources, |path| Ok(oven_store::store::digest_regular_file(path)?.1))?;
     Ok((sources.manifest, digest))
 }
@@ -191,8 +144,9 @@ fn digest_local_facet_sources(
 
 /// Enumerate the publisher's exact authored source inputs without copying or hashing their contents.
 ///
-/// Freshness observers must enumerate again on every check so additions, removals and links invalidate their old
-/// observation. Embedded compiler inputs share the publisher's mapping; neighboring Cargo files are never read.
+/// This fresh projection enumerates the current tree. Retained consumers instead observe the same publisher mapping
+/// through `local_native_source_selection_with_observer`, guarding files and enumerated directories before reuse.
+/// Embedded compiler inputs share the publisher's mapping; neighboring Cargo files are never read.
 pub fn local_sdk_facet_source_inputs(project: &Path) -> Result<Vec<std::path::PathBuf>, Error> {
     let sources = local_facet_sources(project)?;
     let mut inputs = vec![project.canonicalize()?.join("loaf.toml")];
@@ -237,7 +191,16 @@ pub fn compile_local_sdk_facet_for_target(
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
     );
     compile_local_native_facet_for_target_and_profile(
-        closure, project, features, domain, output, rustc, target, "debug", &store,
+        closure,
+        project,
+        features,
+        domain,
+        output,
+        rustc,
+        target,
+        "debug",
+        &store,
+        &[],
     )
 }
 
@@ -256,71 +219,11 @@ fn compile_local_native_facet_for_target_and_profile(
     target: &str,
     profile: &str,
     store: &OvenStore,
+    predicates: &[crate::native_loaf::NativeLoafPredicate],
 ) -> Result<(), Error> {
     if !matches!(profile, "debug" | "release") {
         return Err("local native profile must be debug or release".into());
     }
-    if !matches!(domain, "host" | "target") {
-        return Err("local SDK facet domain must be host or target".into());
-    }
-    let started = std::time::Instant::now();
-    std::fs::create_dir_all(output)?;
-    let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
-    let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
-    let edges = selected_local_edges(&unit, closure)?;
-    for (alias, index) in &edges {
-        if closure.units[*index].owner.manifest.intent.profile != profile {
-            return Err(format!("local dependency {alias} does not match requested {profile} profile").into());
-        }
-    }
-    if let Some(selected) = closure
-        .units
-        .iter()
-        .find(|selected| selected.binding.loaf == unit.binding.loaf && selected.binding.domain == domain)
-    {
-        if selected.binding.version != unit.binding.version
-            || selected.binding.archive_digest != unit.binding.archive_digest
-            || selected.binding.features != unit.binding.features
-            || selected.owner.manifest.intent.target != target
-            || selected.owner.manifest.intent.profile != profile
-            || selected.owner.manifest.intent.toolchain != rustc_identity(rustc)?
-        {
-            return Err(format!(
-                "local facet {} conflicts with an already selected binding",
-                unit.binding.loaf
-            )
-            .into());
-        }
-        let dependencies = edges
-            .iter()
-            .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
-            .collect::<Vec<_>>();
-        super::physical_edges::verify(
-            &selected.owner,
-            &selected.reproduced_receipt,
-            &selected.physical_edges,
-            &dependencies,
-        )?;
-        selected.owner.verify_admitted_payload()?;
-        closure.report.reused.push(format!(
-            "{} {} {domain} {profile}",
-            unit.binding.loaf, unit.binding.version
-        ));
-        return Ok(());
-    }
-    let (source, lease) =
-        super::environment::stable_sources(&unit.root, &unit.binding, &unit.about, unit.primary, None)?;
-    unit.root = source;
-    unit._source_lease = Some(lease);
-    let externs = edges
-        .iter()
-        .map(|(alias, index)| (alias.clone(), closure.units[*index].output.clone()))
-        .collect();
-    let searches = closure
-        .units
-        .iter()
-        .filter_map(|unit| unit.output.parent().map(Path::to_path_buf))
-        .collect();
     let toolchain = rustc_identity(rustc)?;
     let context = CompileContext {
         rustc,
@@ -333,35 +236,120 @@ fn compile_local_native_facet_for_target_and_profile(
         profile,
         unit_codegen: &[],
     };
+    let available = closure.units.iter().collect::<Vec<_>>();
+    let result = compile_local_with_owners(&available, project, features, domain, predicates, &context)?;
+    execution::append_compilation(closure, result)
+}
+
+/// Compile or reuse one local source against borrowed original owners, without mutating their graph.
+///
+/// Both the single-facet adapter and bounded graph executor use this exact selection, conflict, receipt and
+/// publication path. Successful results transfer their owner only after dependency-ordered graph assembly.
+fn compile_local_with_owners(
+    available: &[&SdkCompiledUnit],
+    project: &Path,
+    features: &[String],
+    domain: &str,
+    predicates: &[crate::native_loaf::NativeLoafPredicate],
+    context: &CompileContext<'_>,
+) -> Result<execution::LocalCompilation, Error> {
+    if !matches!(domain, "host" | "target") {
+        return Err("local SDK facet domain must be host or target".into());
+    }
+    let started = std::time::Instant::now();
+    let CompileContext {
+        output,
+        profile,
+        target,
+        rustc,
+        ..
+    } = *context;
+    std::fs::create_dir_all(output)?;
+    let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
+    let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
+    unit.binding.target_predicates = predicates.to_vec();
+    let edges = selected_local_edges(&unit, available)?;
+    for (alias, index) in &edges {
+        if available[*index].owner.manifest().intent.profile != profile {
+            return Err(format!("local dependency {alias} does not match requested {profile} profile").into());
+        }
+    }
+    if let Some(selected) = available
+        .iter()
+        .find(|selected| selected.binding.loaf == unit.binding.loaf && selected.binding.domain == domain)
+    {
+        if selected.binding.version != unit.binding.version
+            || selected.binding.archive_digest != unit.binding.archive_digest
+            || selected.binding.features != unit.binding.features
+            || selected.binding.target_predicates != unit.binding.target_predicates
+            || selected.owner.manifest().intent.target != target
+            || selected.owner.manifest().intent.profile != profile
+            || selected.owner.manifest().intent.toolchain != rustc_identity(rustc)?
+        {
+            return Err(format!(
+                "local facet {} conflicts with an already selected binding",
+                unit.binding.loaf
+            )
+            .into());
+        }
+        let dependencies = edges
+            .iter()
+            .map(|(alias, index)| (alias.as_str(), available[*index]))
+            .collect::<Vec<_>>();
+        super::physical_edges::verify(
+            &selected.owner,
+            &selected.reproduced_receipt,
+            &selected.physical_edges,
+            &dependencies,
+        )?;
+        selected.owner.verify_admitted_payload()?;
+        return Ok(execution::LocalCompilation {
+            unit: None,
+            reused: true,
+            label: format!("{} {} {domain} {profile}", unit.binding.loaf, unit.binding.version),
+            seconds: 0.0,
+        });
+    }
+    let (source, lease) =
+        super::environment::stable_sources(&unit.root, &unit.binding, &unit.about, unit.primary, None)?;
+    unit.root = source;
+    unit._source_lease = Some(lease);
+    let externs = edges
+        .iter()
+        .map(|(alias, index)| (alias.clone(), available[*index].output.clone()))
+        .collect();
+    let searches = available
+        .iter()
+        .filter_map(|unit| unit.output.parent().map(Path::to_path_buf))
+        .collect();
     let selected_dependencies = edges
         .iter()
-        .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
+        .map(|(alias, index)| (alias.as_str(), available[*index]))
         .collect::<Vec<_>>();
     let physical_bindings = super::selected_native_bindings(&selected_dependencies)?;
     let (path, reused, owner, reproduced_receipt) =
-        compile_unit(&unit, &context, externs, searches, &physical_bindings)?;
+        compile_unit(&unit, context, externs, searches, &physical_bindings)?;
     let physical_edges = super::physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
     let dependencies = edges
         .iter()
         .map(|(name, index)| serde_json::json!({"crate": index, "name": name}))
         .collect();
-    let inspection = inspection_unit(&unit, &owner.artifact_root.join("source"), dependencies)?;
+    let inspection = inspection_unit(&unit, &owner.artifact_root().join("source"), dependencies)?;
     let label = format!("{} {} {domain} {profile}", unit.binding.loaf, unit.binding.version);
-    closure.units.push(SdkCompiledUnit {
+    let compiled = SdkCompiledUnit {
         binding: unit.binding,
         output: path,
         owner,
         inspection,
         physical_edges,
         reproduced_receipt,
-    });
-    if reused {
-        closure.report.reused.push(label);
-    } else {
-        closure.report.compiled.push(label);
-    }
-    closure.report.seconds += started.elapsed().as_secs_f64();
-    Ok(())
+    };
+    Ok(execution::LocalCompilation {
+        unit: Some(Box::new(compiled)),
+        reused,
+        label,
+        seconds: started.elapsed().as_secs_f64(),
+    })
 }
 
 /// Snapshot a local Rust facet under the adopted executor's file-root convention.
@@ -371,6 +359,7 @@ fn prepare_local_unit(
     features: &[String],
     domain: &str,
 ) -> Result<PreparedUnit, Error> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_local_source", input = %project.display(), domain).entered();
     let sources = local_facet_sources(project)?;
     write_local_facet_snapshot(&sources, snapshot)?;
     let manifest = sources.manifest;
@@ -413,8 +402,17 @@ struct LocalFacetSources {
 
 /// Admit a declared or conventional Rust source tree and its compiler-owned embedded inputs.
 fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
+    local_facet_sources_with_observer(project, &mut |_| {})
+}
+
+/// Apply the publisher's one source mapping while reporting every input that can change its result.
+fn local_facet_sources_with_observer(
+    project: &Path,
+    observe: &mut impl FnMut(&Path),
+) -> Result<LocalFacetSources, Error> {
     let project = project.canonicalize()?;
     let manifest_path = project.join("loaf.toml");
+    observe(&manifest_path);
     if !std::fs::symlink_metadata(&manifest_path)?.is_file() {
         return Err("local Loaf declaration is not a plain file".into());
     }
@@ -455,7 +453,26 @@ fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
         .and_then(|value| value.get("root"))
         .and_then(toml::Value::as_str)
         .unwrap_or("");
-    let mut relative = Path::new(source_root).join("src");
+    let source_directory: std::path::PathBuf = Path::new(source_root)
+        .join("src")
+        .components()
+        .filter(|component| *component != std::path::Component::CurDir)
+        .collect();
+    let library = facet
+        .get("path")
+        .map(|value| value.as_str().ok_or("local Rust library path is not text"))
+        .transpose()?
+        .map_or_else(|| source_directory.join("lib.rs"), std::path::PathBuf::from);
+    if !library
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
+        || library.extension().is_none_or(|extension| extension != "rs")
+        || !library.starts_with(&source_directory)
+    {
+        return Err("local Rust library path must stay inside its source directory".into());
+    }
+    let library_tail = library.strip_prefix(&source_directory)?.to_path_buf();
+    let mut relative = source_directory;
     if relative
         .components()
         .any(|part| !matches!(part, std::path::Component::Normal(_) | std::path::Component::CurDir))
@@ -479,12 +496,15 @@ fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
         files.push(emitter_text_source(&project)?);
         relative = Path::new("loaves/compiler/incan_emit").join(relative);
     }
-    collect_local_sources(&source, &relative, &mut files)?;
+    collect_local_sources(&source, &relative, &mut files, observe)?;
+    for (source, _) in &files {
+        observe(source);
+    }
     facet.insert(
         "source".to_string(),
         toml::Value::Table(toml::map::Map::from_iter([(
             "root".to_string(),
-            toml::Value::String(relative.join("lib.rs").to_string_lossy().into_owned()),
+            toml::Value::String(relative.join(library_tail).to_string_lossy().into_owned()),
         )])),
     );
     Ok(LocalFacetSources {
@@ -556,7 +576,9 @@ fn collect_local_sources(
     source: &Path,
     relative: &Path,
     files: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    observe: &mut impl FnMut(&Path),
 ) -> Result<(), Error> {
+    observe(source);
     if !std::fs::symlink_metadata(source)?.is_dir() {
         return Err("local Rust source root is not a plain directory".into());
     }
@@ -566,7 +588,7 @@ fn collect_local_sources(
         let path = entry.path();
         let destination = relative.join(entry.file_name());
         if kind.is_dir() {
-            collect_local_sources(&path, &destination, files)?;
+            collect_local_sources(&path, &destination, files, observe)?;
         } else if kind.is_file() {
             if matches!(
                 entry.file_name().to_str(),
@@ -583,9 +605,8 @@ fn collect_local_sources(
 }
 
 /// Select declared aliases from the frozen closure, rejecting missing, ambiguous, or feature-incomplete bindings.
-fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Result<Vec<(String, usize)>, Error> {
-    let candidates = closure
-        .units
+fn selected_local_edges(unit: &PreparedUnit, available: &[&SdkCompiledUnit]) -> Result<Vec<(String, usize)>, Error> {
+    let candidates = available
         .iter()
         .map(|selected| LocalDependencyCandidate {
             loaf: &selected.binding.loaf,
@@ -599,7 +620,7 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
                 == Some(true),
         })
         .collect::<Vec<_>>();
-    local_dependency_demands(&unit.manifest, &unit.binding.features)?
+    local_dependency_demands(&unit.manifest, &unit.binding.features, &unit.binding.target_predicates)?
         .iter()
         .map(|demand| {
             Ok((
@@ -638,18 +659,36 @@ pub(crate) struct LocalDependencyCandidate<'a> {
 pub(crate) fn local_dependency_demands(
     manifest: &toml::Value,
     features: &[String],
+    predicates: &[crate::native_loaf::NativeLoafPredicate],
 ) -> Result<Vec<LocalDependencyDemand>, Error> {
     let mut demands = Vec::new();
-    let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) else {
-        return Ok(demands);
-    };
+    let dependencies = manifest.get("dependencies").and_then(toml::Value::as_table);
+    let mut decisions = BTreeMap::new();
+    for predicate in predicates {
+        if decisions.insert(predicate.declaration, predicate).is_some() {
+            return Err("local target decisions repeat a declaration position".into());
+        }
+    }
     let (_, activated) = local_feature_selection(manifest, features)?;
-    for (alias, declaration) in dependencies {
+    let ordered = dependencies.into_iter().flatten().collect::<BTreeMap<_, _>>();
+    for (index, (alias, declaration)) in ordered.into_iter().enumerate() {
+        if declaration.is_array() {
+            return Err(format!("local dependency {alias} requires selected alternative declarations").into());
+        }
+        if let Some(target) = declaration.get("target") {
+            let condition = target.as_str().ok_or("local dependency target must be a string")?;
+            let predicate = decisions
+                .remove(&index)
+                .ok_or_else(|| format!("local dependency {alias} needs resolved target predicates"))?;
+            if predicate.target != condition {
+                return Err(format!("local dependency {alias} target decision does not match its declaration").into());
+            }
+            if !predicate.matches {
+                continue;
+            }
+        }
         if declaration.get("optional").and_then(toml::Value::as_bool) == Some(true) && !activated.contains_key(alias) {
             continue;
-        }
-        if declaration.is_array() || declaration.get("target").is_some() {
-            return Err(format!("local dependency {alias} needs resolved target predicates").into());
         }
         let loaf = declaration
             .get("loaf")
@@ -681,6 +720,9 @@ pub(crate) fn local_dependency_demands(
             version,
             required,
         });
+    }
+    if !decisions.is_empty() {
+        return Err("local target decisions include undeclared conditions".into());
     }
     Ok(demands)
 }
@@ -830,6 +872,52 @@ mod tests {
         Ok(())
     }
 
+    /// The existing snapshot preserves a custom library entry and its sibling module geometry.
+    #[test]
+    fn authored_library_root_survives_native_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        std::fs::create_dir_all(project.path().join("src"))?;
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname='custom'\nversion='1.0.0'\n[rust]\npath='src/mod.rs'\n",
+        )?;
+        std::fs::write(project.path().join("src/mod.rs"), "mod value; pub use value::answer;")?;
+        std::fs::write(project.path().join("src/value.rs"), "pub fn answer() -> u8 { 42 }")?;
+        let sources = super::local_facet_sources(project.path())?;
+        assert_eq!(sources.manifest["rust"]["source"]["root"].as_str(), Some("src/mod.rs"));
+        assert!(
+            sources
+                .files
+                .iter()
+                .any(|(_, relative)| relative == std::path::Path::new("src/value.rs"))
+        );
+        for entry in ["path='src/mod.rs'\n", ""] {
+            std::fs::write(
+                project.path().join("loaf.toml"),
+                format!("[project]\nname='custom'\nversion='1.0.0'\n[rust]\n{entry}[rust.source]\nroot='.'\n"),
+            )?;
+            let dotted = super::local_facet_sources(project.path())?;
+            let expected = if entry.is_empty() { "src/lib.rs" } else { "src/mod.rs" };
+            assert_eq!(dotted.manifest["rust"]["source"]["root"].as_str(), Some(expected));
+        }
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname='custom'\nversion='1.0.0'\n[rust]\npath='src/mod.rs'\n",
+        )?;
+        let first = super::local_sdk_facet_source_digest(project.path(), project.path())?;
+        std::fs::write(project.path().join("src/value.rs"), "pub fn answer() -> u8 { 43 }")?;
+        assert_ne!(
+            first,
+            super::local_sdk_facet_source_digest(project.path(), project.path())?
+        );
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname='custom'\n[rust]\npath='src/../outside.rs'\n",
+        )?;
+        assert!(super::local_facet_sources(project.path()).is_err());
+        Ok(())
+    }
+
     /// The native executor orders a selected local graph and refuses Cargo metadata as an execution input.
     #[test]
     fn local_graph_compiles_dependencies_before_consumers() -> Result<(), Box<dyn std::error::Error>> {
@@ -862,6 +950,8 @@ mod tests {
         let selections: Vec<_> = ["consumer", "leaf"]
             .into_iter()
             .map(|name| LocalFacetSelection {
+                target_predicates: Vec::new(),
+                target: None,
                 project: name.into(),
                 features: Vec::new(),
                 domain: "target".to_string(),
@@ -914,7 +1004,7 @@ mod tests {
             )?;
             let unit = &closure.units[0];
             results.push((
-                unit.owner.manifest.build_unit_identity.clone(),
+                unit.owner.manifest().build_unit_identity.clone(),
                 std::fs::read(&unit.output)?,
             ));
         }
@@ -1021,6 +1111,7 @@ mod tests {
             &target,
             "release",
             &store,
+            &[],
         )
         .err()
         .ok_or("selected debug owner was accepted as release")?;
@@ -1035,6 +1126,7 @@ mod tests {
             &target,
             "release",
             &store,
+            &[],
         )
         .err()
         .ok_or("debug dependency was accepted in release consumer")?;
@@ -1071,6 +1163,7 @@ mod tests {
             "unused-target",
             "fast",
             &store,
+            &[],
         )
         .err()
         .ok_or("unsupported profile was accepted")?;
@@ -1102,3 +1195,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod predicate_tests;

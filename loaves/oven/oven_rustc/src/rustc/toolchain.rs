@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -236,10 +237,22 @@ pub struct RustcProbe {
     commit_hash: Option<String>,
 }
 
-/// Process-local `rustc -vV` answers keyed by canonical executable coordinate and observed content digest.
-/// Replacement-sensitive file observation avoids rereading unchanged bytes while preserved-mtime edits invalidate.
-pub fn rustc_probe_memo() -> &'static Mutex<HashMap<RustcFileStamp, RustcProbe>> {
-    static MEMO: OnceLock<Mutex<HashMap<RustcFileStamp, RustcProbe>>> = OnceLock::new();
+/// Related compiler facts share one memo and one executable generation; runtime changes discard both answers.
+#[derive(Default)]
+struct CompilerProbes {
+    version: Option<RustcProbe>,
+    sysroot: Option<RetainedCompilerSysroot>,
+}
+
+/// A compiler-owned sysroot answer guarded by the existing replacement-sensitive input observations.
+struct RetainedCompilerSysroot {
+    path: PathBuf,
+    inputs: oven_model::observed_inputs::InputObservations,
+}
+
+/// Process-local compiler answers keyed by canonical executable coordinate and observed content digest.
+fn rustc_probe_memo() -> &'static Mutex<HashMap<RustcFileStamp, CompilerProbes>> {
+    static MEMO: OnceLock<Mutex<HashMap<RustcFileStamp, CompilerProbes>>> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -248,19 +261,29 @@ pub type RustcFileStamp = (PathBuf, String);
 
 /// Probe one regular Rust compiler with `-vV`, sharing identity/host/commit under its current observed bytes.
 pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::probe_compiler_identity", input = %rustc.display()).entered();
     let rustc = verified_regular_file(rustc, "rustc")?;
     let rustc = rustc.canonicalize().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
     })?;
     let key = (rustc.clone(), digest_regular_file(&rustc, "rustc")?);
-    if let Ok(memo) = rustc_probe_memo().lock()
-        && let Some(probe) = memo.get(&key)
-    {
-        return Ok(probe.clone());
+    if let Ok(mut memo) = rustc_probe_memo().lock() {
+        if memo
+            .get(&key)
+            .and_then(|entry| entry.sysroot.as_ref())
+            .is_some_and(|root| !root.inputs.current())
+        {
+            memo.remove(&key);
+        }
+        if let Some(probe) = memo.get(&key).and_then(|entry| entry.version.as_ref()) {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_rustc_version_probe", subprocesses = 0_u64);
+            return Ok(probe.clone());
+        }
     }
     let mut command = rustc_probe_command(&rustc);
     command.arg("-vV");
+    tracing::trace!(target: "incan::invocation", decision = "run_rustc_version_probe", subprocesses = 1_u64);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
@@ -308,7 +331,7 @@ pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
     };
     if let Ok(mut memo) = rustc_probe_memo().lock() {
         memo.retain(|previous, _| previous.0 != rustc);
-        memo.insert(key, probe.clone());
+        memo.entry(key).or_default().version = Some(probe.clone());
     }
     Ok(probe)
 }
@@ -434,9 +457,99 @@ fn parse_rustc_cfg_snapshot(stdout: &str) -> Result<OvenSelectedRustFacetCfgSnap
 /// The answer is the sysroot the compiler stands in, not the one an inherited loader path would steer it to; see
 /// [`rustc_probe_command`] for why the two can differ for a copied or store-retained compiler.
 pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::probe_compiler_sysroot", input = %rustc.display()).entered();
+    rustc_sysroot_with_probe(rustc, run_rustc_sysroot_probe)
+}
+
+/// Reuse only a native compiler's own plain runtime layout, otherwise execute the canonical probe every time.
+/// The returned path is a locator, not content authority: native receipts still validate their selected inputs.
+fn rustc_sysroot_with_probe(
+    rustc: &Path,
+    probe: impl FnOnce(&Path) -> Result<PathBuf, OvenRustcError>,
+) -> Result<PathBuf, OvenRustcError> {
+    let rustc = verified_regular_file(rustc, "rustc")?
+        .canonicalize()
+        .map_err(|source| OvenRustcError::Io {
+            path: rustc.to_path_buf(),
+            source,
+        })?;
+    let key = (rustc.clone(), digest_regular_file(&rustc, "rustc")?);
+    if let Ok(mut memo) = rustc_probe_memo().lock()
+        && let Some(retained) = memo.get(&key).and_then(|entry| entry.sysroot.as_ref())
+    {
+        if retained.inputs.current() {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_rustc_sysroot_probe", subprocesses = 0_u64);
+            return Ok(retained.path.clone());
+        }
+        memo.remove(&key);
+    }
+    let inputs = compiler_sysroot_inputs(&rustc);
+    let sysroot = probe(&rustc)?;
+    if digest_regular_file(&rustc, "rustc")? != key.1 || inputs.as_ref().is_some_and(|inputs| !inputs.current()) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "rustc",
+            message: "compiler or runtime inputs changed during the sysroot probe".to_string(),
+        });
+    }
+    if let Some(inputs) = inputs
+        && Some(sysroot.as_path()) == rustc.parent().and_then(Path::parent)
+        && let Ok(mut memo) = rustc_probe_memo().lock()
+    {
+        memo.retain(|previous, _| previous.0 != rustc || previous == &key);
+        memo.entry(key).or_default().sysroot = Some(RetainedCompilerSysroot {
+            path: sysroot.clone(),
+            inputs,
+        });
+    }
+    Ok(sysroot)
+}
+
+/// Guard the native executable and complete top-level runtime-library membership using the shared observer.
+/// Scripts, foreign layouts, symlinked runtime members and unsupported platforms keep ordinary probing. Target
+/// standard libraries do not determine the sysroot locator and remain checked by their native receipt consumers.
+fn compiler_sysroot_inputs(rustc: &Path) -> Option<oven_model::observed_inputs::InputObservations> {
+    let bin = rustc.parent()?;
+    if bin.file_name()? != "bin" {
+        return None;
+    }
+    let root = bin.parent()?;
+    let mut inputs = oven_model::observed_inputs::InputObservations::default();
+    inputs.observe(rustc);
+    let mut magic = [0; 4];
+    fs::File::open(rustc).ok()?.read_exact(&mut magic).ok()?;
+    if !matches!(
+        magic,
+        [0x7f, b'E', b'L', b'F'] | [0xcf, 0xfa, 0xed, 0xfe] | [0xce, 0xfa, 0xed, 0xfe]
+    ) {
+        return None;
+    }
+    let library = root.join("lib");
+    inputs.observe(&library);
+    let mut driver = false;
+    for entry in fs::read_dir(&library).ok()? {
+        let entry = entry.ok()?;
+        let kind = entry.file_type().ok()?;
+        if kind.is_dir() {
+            continue;
+        }
+        if !kind.is_file() {
+            return None;
+        }
+        let name = entry.file_name();
+        driver |= name.to_str().is_some_and(|name| {
+            name.starts_with("librustc_driver-") && (name.ends_with(".dylib") || name.ends_with(".so"))
+        });
+        inputs.observe(&entry.path());
+    }
+    (driver && inputs.supports_retention()).then_some(inputs)
+}
+
+/// Ask the selected compiler about its own runtime closure with ambient loader overrides removed.
+fn run_rustc_sysroot_probe(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     let rustc = verified_regular_file(rustc, "rustc")?;
     let mut command = rustc_probe_command(&rustc);
     command.args(["--print", "sysroot"]);
+    tracing::trace!(target: "incan::invocation", decision = "run_rustc_sysroot_probe", subprocesses = 1_u64);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
@@ -471,6 +584,8 @@ pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
 /// The directory is keyed by the normalization policy, compiler commit and manifest digest, built once per temporary
 /// root, and reused.
 pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, OvenRustcError> {
+    let _trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::normalized_std_sysroot", target).entered();
     let sysroot = rustc_sysroot(rustc)?;
     let manifest_path = sysroot.join("lib/rustlib").join(format!("manifest-rust-std-{target}"));
     let manifest = fs::read(&manifest_path).map_err(|source| OvenRustcError::Io {
@@ -853,6 +968,129 @@ mod tests {
             Err(OvenRustcError::InvalidInput { message, .. })
                 if message == "compiler bytes changed during the `-vV` probe"
         ));
+        Ok(())
+    }
+
+    /// The retained locator avoids probes but detects executable, runtime, membership and directory changes.
+    #[test]
+    #[cfg(unix)]
+    fn sysroot_probe_reuses_observed_native_inputs_and_invalidates_changes() -> TestResult {
+        use std::cell::Cell;
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        fs::create_dir(root.join("bin"))?;
+        fs::create_dir(root.join("lib"))?;
+        let compiler = root.join("bin/rustc");
+        fs::write(&compiler, b"\x7fELFfixture-a")?;
+        let driver = root.join("lib/librustc_driver-fixture.so");
+        fs::write(&driver, b"runtime first")?;
+        let calls = Cell::new(0);
+        let run = || {
+            rustc_sysroot_with_probe(&compiler, |_| {
+                calls.set(calls.get() + 1);
+                Ok(root.clone())
+            })
+        };
+        assert_eq!(run()?, root);
+        assert_eq!(run()?, root);
+        assert_eq!(calls.get(), 1);
+        let old_time = fs::metadata(&driver)?.modified()?;
+        fs::write(&driver, b"runtime other")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&driver)?
+            .set_times(fs::FileTimes::new().set_modified(old_time))?;
+        assert_eq!(run()?, root);
+        assert_eq!(calls.get(), 2);
+        fs::write(root.join("lib/new-runtime.so"), b"extra")?;
+        assert_eq!(run()?, root);
+        assert_eq!(calls.get(), 3);
+        let old_time = fs::metadata(&compiler)?.modified()?;
+        fs::write(&compiler, b"\x7fELFfixture-b")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&compiler)?
+            .set_times(fs::FileTimes::new().set_modified(old_time))?;
+        assert_eq!(run()?, root);
+        assert_eq!(calls.get(), 4);
+        fs::rename(root.join("lib"), root.join("previous-lib"))?;
+        fs::create_dir(root.join("lib"))?;
+        fs::write(&driver, b"runtime first")?;
+        assert_eq!(run()?, root);
+        assert_eq!(calls.get(), 5);
+        fs::remove_file(&compiler)?;
+        assert!(run().is_err());
+        assert_eq!(calls.get(), 5);
+        Ok(())
+    }
+
+    /// Unsupported script/runtime layouts are always probed, and mid-probe native changes refuse retention.
+    #[test]
+    #[cfg(unix)]
+    fn sysroot_probe_falls_back_and_refuses_runtime_change_during_probe() -> TestResult {
+        use std::cell::Cell;
+        use std::os::unix::fs::symlink;
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        fs::create_dir(root.join("bin"))?;
+        fs::create_dir(root.join("lib"))?;
+        let compiler = root.join("bin/rustc");
+        let driver = root.join("lib/librustc_driver-fixture.so");
+        fs::write(&compiler, b"#!/bin/sh\nexit 0\n")?;
+        fs::write(&driver, b"runtime first")?;
+        let calls = Cell::new(0);
+        let run = || {
+            rustc_sysroot_with_probe(&compiler, |_| {
+                calls.set(calls.get() + 1);
+                Ok(root.clone())
+            })
+        };
+        run()?;
+        run()?;
+        assert_eq!(calls.get(), 2);
+        fs::write(&compiler, b"\x7fELFfixture-a")?;
+        assert!(
+            rustc_sysroot_with_probe(&compiler, |_| {
+                fs::write(&driver, b"changed while probing").map_err(|source| OvenRustcError::Io {
+                    path: driver.clone(),
+                    source,
+                })?;
+                Ok(root.clone())
+            })
+            .is_err()
+        );
+        run()?;
+        run()?;
+        assert_eq!(calls.get(), 3);
+        let target = root.join("outside-driver");
+        fs::rename(&driver, &target)?;
+        symlink(&target, &driver)?;
+        run()?;
+        run()?;
+        assert_eq!(calls.get(), 5);
+        Ok(())
+    }
+
+    /// A native executable that reports a foreign sysroot never establishes an own-installation retained answer.
+    #[test]
+    #[cfg(unix)]
+    fn sysroot_probe_does_not_retain_foreign_roots() -> TestResult {
+        use std::cell::Cell;
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        fs::create_dir(root.join("bin"))?;
+        fs::create_dir(root.join("lib"))?;
+        let compiler = root.join("bin/rustc");
+        fs::write(&compiler, b"\x7fELFfixture-a")?;
+        fs::write(root.join("lib/librustc_driver-fixture.so"), b"runtime")?;
+        let calls = Cell::new(0);
+        for _ in 0..2 {
+            rustc_sysroot_with_probe(&compiler, |_| {
+                calls.set(calls.get() + 1);
+                Ok(root.join("foreign"))
+            })?;
+        }
+        assert_eq!(calls.get(), 2);
         Ok(())
     }
 

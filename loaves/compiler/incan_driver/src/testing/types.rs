@@ -8,7 +8,7 @@ use crate::cargo_policy::CargoPolicy;
 /// Output format for `incan test` results.
 ///
 /// The `clap` derive rides the `cli` feature: the runner owns the choice, the command line is one way to make it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum TestOutputFormat {
     /// Human-oriented pytest-style console output.
@@ -17,18 +17,21 @@ pub enum TestOutputFormat {
     Json,
 }
 
-/// Summary of test run
+/// Authoritative counts and elapsed time from one fresh test run.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct TestSummary {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
     pub xfailed: usize,
+    /// Unexpected passes contribute to a failed run.
+    pub xpassed: usize,
     pub duration: Duration,
 }
 
 /// Information about a discovered test
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestInfo {
     pub file_path: PathBuf,
     pub function_name: String,
@@ -45,7 +48,7 @@ pub struct TestInfo {
 }
 
 /// A single parametrized test variant's call information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParametrizeCall {
     /// Display ID shown in test output (e.g. `"test_add[1-2-3]"`).
     pub display_id: String,
@@ -64,7 +67,7 @@ impl ParametrizeCall {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TestMarker {
     /// Explicit discovery marker from `@std.testing.test`.
     Test,
@@ -83,7 +86,7 @@ pub enum TestMarker {
 }
 
 /// One parameter set inside a `@parametrize` decorator.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParametrizeCase {
     /// Dash-separated display ID used in test names (e.g. `"1-2-3"`).
     pub display_id: String,
@@ -96,7 +99,7 @@ pub struct ParametrizeCase {
 }
 
 /// Fixture scope determines lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum FixtureScope {
     #[default]
     Function,
@@ -116,7 +119,7 @@ impl FixtureScope {
 }
 
 /// Information about a discovered fixture.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FixtureInfo {
     pub name: String,
     #[allow(dead_code)]
@@ -130,7 +133,7 @@ pub struct FixtureInfo {
 }
 
 /// Result of running a single test.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum TestResult {
     Passed(Duration),
     Failed(Duration, String),
@@ -138,6 +141,64 @@ pub enum TestResult {
     XFailed(Duration, String),
     #[allow(dead_code)]
     XPassed(Duration),
+}
+
+/// One completed case with its already resolved portable identity and original typed result.
+/// Clients format these facts without consulting source files or reinterpreting execution outcomes.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct TestCaseResult {
+    /// Stable root-relative identifier established by the executing request.
+    pub id: String,
+    /// Original collection facts, including display parameters and markers.
+    pub test: TestInfo,
+    /// Fresh execution result after skip and expected-failure policy.
+    pub result: TestResult,
+}
+
+/// Completed test facts crossing the owner/client boundary, independent of the requested display format.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct TestRunReport {
+    /// Results in selected execution/report order; passing results are never retained for another invocation.
+    pub results: Vec<TestCaseResult>,
+    /// Counts and duration calculated by the single runner.
+    pub summary: TestSummary,
+    /// Actual shuffle seed, if shuffling was requested.
+    pub shuffle_seed: Option<u64>,
+    /// Command outcome, including fail-on-empty policy.
+    pub exit_code: i32,
+}
+
+/// Request-local test progress facts. Presentation and terminal styling belong to the invoking client.
+/// Raw child output remains a separate byte-preserving stream rather than being interpreted as progress.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum TestProgress {
+    /// Current fixture metadata requested by verbose collection, in discovery order.
+    FixturesDiscovered { fixtures: Vec<FixtureInfo> },
+    /// Selection completed without any cases; failure policy remains in the completion result.
+    NoTestsCollected,
+    /// Selected inventory and execution policy, emitted before any test body runs.
+    SessionStarted {
+        collected: usize,
+        shuffle_seed: Option<u64>,
+        jobs: usize,
+    },
+    /// Existing scheduler finished grouping selected cases into execution units.
+    UnitsPlanned { units: usize, elapsed: Duration },
+    /// One selected unit is queued for execution; filenames retain sorted source order.
+    UnitStarting { files: Vec<PathBuf>, tests: usize },
+    /// Fresh execution completed, before result policy and final report assembly.
+    ExecutionCompleted { elapsed: Duration },
+    /// Detailed timing facts for an Incan harness; no display strings are produced by the worker.
+    HarnessCompleted {
+        file: PathBuf,
+        frontend: Duration,
+        generation: Duration,
+        receipt: Duration,
+        selection: Duration,
+        native: Duration,
+        execution: Duration,
+        native_reused: bool,
+    },
 }
 
 /// Result of discovering tests and fixtures in a file.
@@ -148,8 +209,22 @@ pub struct DiscoveryResult {
     pub known_markers: Vec<String>,
 }
 
+/// Source languages admitted to the common test inventory and scheduler.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TestLanguages {
+    /// Collect Incan tests and preserve their fixture scopes.
+    #[default]
+    Incan,
+    /// Collect native libtest cases from authored Rust crate roots.
+    Rust,
+    /// Combine both adapters in the same selection and reporting lifecycle.
+    All,
+}
+
 /// Configuration for a test run, grouping the many options that `run_tests` needs.
 pub struct TestRunConfig<'a> {
+    /// Source adapters selected by the command; Incan's wrapper always selects only Incan.
+    pub languages: TestLanguages,
     pub path: &'a str,
     pub verbose: bool,
     pub stop_on_fail: bool,
@@ -166,7 +241,10 @@ pub struct TestRunConfig<'a> {
     pub run_xfail: bool,
     pub marker_expr: Option<&'a str>,
     pub strict_markers: bool,
+    /// Global native thread / execution-unit budget.
     pub jobs: usize,
+    /// Preserve individual Rust test processes rather than sharing one native root.
+    pub isolate: bool,
     pub test_features: Vec<String>,
     pub package_features: FeatureSelection,
     pub sdk_profile: Option<String>,
@@ -184,7 +262,8 @@ pub struct TestRunConfig<'a> {
 ///
 /// The runner does not discover workspaces itself: it only projects this context into JSON Lines test records and
 /// summaries after the CLI has validated scope selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceTestContext {
     pub workspace_root: PathBuf,
     pub scope_origin: String,

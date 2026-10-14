@@ -7,13 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Metadata for the exact open file whose bytes were hashed, including replacement and preserved-mtime edits.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct FileStamp {
-    length: u64,
-    modified: u128,
-    identity: Vec<u64>,
-}
+pub(super) use oven_model::observed_inputs::{FileStamp, observation_stamp};
 
 /// A local acceleration record; its path is excluded from the returned portable content identity.
 #[derive(Serialize, Deserialize)]
@@ -55,33 +49,6 @@ fn stamp_metadata(metadata: &fs::Metadata) -> io::Result<FileStamp> {
         return Err(io::Error::other("build input must be a regular file"));
     }
     observation_stamp(metadata)
-}
-
-/// Observe identity, permissions and nanosecond change times for either a regular file or a directory.
-fn observation_stamp(metadata: &fs::Metadata) -> io::Result<FileStamp> {
-    let modified = metadata
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(io::Error::other)?
-        .as_nanos();
-    #[cfg(unix)]
-    let identity = {
-        use std::os::unix::fs::MetadataExt;
-        vec![
-            metadata.dev(),
-            metadata.ino(),
-            metadata.ctime().cast_unsigned(),
-            metadata.ctime_nsec().cast_unsigned(),
-            u64::from(metadata.mode()),
-        ]
-    };
-    #[cfg(not(unix))]
-    let identity = Vec::new();
-    Ok(FileStamp {
-        length: metadata.len(),
-        modified,
-        identity,
-    })
 }
 
 /// Cached child names share the existing observation store; source content authority remains in file records.
@@ -154,7 +121,7 @@ fn directory_entries_in(path: &Path, cache: Option<&Path>) -> io::Result<(Vec<Pa
         .and_then(|path| fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice::<DirectoryRecord>(&bytes).ok())
         .filter(|record| {
-            !before.identity.is_empty() && record.schema == "directory-children/1" && record.stamp == before
+            before.supports_retention() && record.schema == "directory-children/1" && record.stamp == before
         })
         .filter(|record| {
             record.children.windows(2).all(|pair| pair[0] < pair[1])
@@ -251,7 +218,7 @@ fn digest_file_with_in(
     });
     let mut file = fs::File::open(&path)?;
     let before = stamp(&file)?;
-    if !before.identity.is_empty()
+    if before.supports_retention()
         && let Some(record) = cache_path
             .as_ref()
             .and_then(|path| fs::read(path).ok())
@@ -282,7 +249,10 @@ fn digest_file_with_in(
         None => compute(&bytes)?,
     };
     if stamp(&file)? != before {
-        return Err(io::Error::other("build input changed while hashing"));
+        return Err(io::Error::other(format!(
+            "build input changed while hashing {} with {scheme}",
+            path.display()
+        )));
     }
     if let Some(path) = content_path {
         let record = AuthorityDigestRecord {

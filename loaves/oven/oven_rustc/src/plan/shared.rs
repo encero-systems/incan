@@ -66,6 +66,7 @@ impl OvenSharedNativeOwners {
     ///
     /// The native-Loaf admission boundary must first verify complete producer recipe, source, intent, native member,
     /// and physical extern authority. This capability does not bless arbitrary Engine entries supplied by callers.
+    /// Index construction retains that admission; plan selection revalidates the original owners before use.
     pub(crate) fn from_record_bound(
         owners: &[Arc<OvenStoreExecutionPayload>],
         read_only: bool,
@@ -82,17 +83,19 @@ impl OvenSharedNativeOwners {
         let mut indexed = BTreeMap::new();
         let mut domains = BTreeMap::new();
         for owner in owners {
-            verify_retained_owner(owner, read_only, record_bound)?;
+            if !record_bound {
+                verify_retained_owner(owner, read_only, false)?;
+            }
             let store = owner
-                .artifact_root
+                .artifact_root()
                 .parent()
                 .and_then(Path::parent)
                 .and_then(Path::parent)
                 .ok_or_else(|| OvenPlanError::selection("retained native owner has no store root"))?
                 .to_path_buf();
-            let key = (store, owner.manifest.identity.clone());
+            let key = (store, owner.manifest().identity.clone());
             if record_bound {
-                domains.insert(key.clone(), owner.manifest.domain.clone());
+                domains.insert(key.clone(), owner.manifest().domain.clone());
             }
             indexed.entry(key).or_insert_with(|| Arc::clone(owner));
         }
@@ -151,7 +154,7 @@ impl OvenSharedNativeOwners {
     fn permits_record_bound_domain(&self, reference: &OvenSharedNativeRoot, owner: &OvenStoreExecutionPayload) -> bool {
         self.record_bound_domains
             .get(&(reference.store.clone(), reference.identity.clone()))
-            == Some(&owner.manifest.domain)
+            == Some(&owner.manifest().domain)
     }
 }
 
@@ -320,10 +323,10 @@ fn bind_shared_owner(
     record_bound: bool,
 ) -> OvenPlanResult<()> {
     safe_relative(&reference.prefix)?;
-    if owner.manifest.receipt_identity != reference.receipt_identity
-        || owner.manifest.intent.target != artifacts.intent.target
-        || owner.manifest.intent.toolchain != artifacts.intent.toolchain
-        || (!record_bound && !owner.manifest.domain.starts_with("sdk-source-unit-"))
+    if owner.manifest().receipt_identity != reference.receipt_identity
+        || owner.manifest().intent.target != artifacts.intent.target
+        || owner.manifest().intent.toolchain != artifacts.intent.toolchain
+        || (!record_bound && !owner.manifest().domain.starts_with("sdk-source-unit-"))
     {
         return Err(OvenPlanError::selection(
             "shared native unit receipt or compiler differs from consumer",
@@ -337,7 +340,7 @@ fn bind_shared_owner(
         let logical = format!("{}/{}", reference.prefix, file.relative_path);
         if expected.get(&logical) != Some(&file.digest)
             || locations
-                .insert(logical, owner.artifact_root.join(&file.relative_path))
+                .insert(logical, owner.artifact_root().join(&file.relative_path))
                 .is_some()
         {
             return Err(OvenPlanError::selection(
@@ -351,10 +354,10 @@ fn bind_shared_owner(
         .chain(&artifacts.native_search_paths)
     {
         if directory == &reference.prefix {
-            directories.insert(directory.clone(), owner.artifact_root.clone());
+            directories.insert(directory.clone(), owner.artifact_root().to_path_buf());
         } else if let Some(relative) = directory.strip_prefix(&format!("{}/", reference.prefix)) {
             safe_relative(relative)?;
-            directories.insert(directory.clone(), owner.artifact_root.join(relative));
+            directories.insert(directory.clone(), owner.artifact_root().join(relative));
         }
     }
     Ok(())
@@ -565,7 +568,7 @@ mod tests {
         );
         // Supplied owner indexes use the selector's stable physical root rather than a temporary-directory alias.
         let admitted_store = owner
-            .artifact_root
+            .artifact_root()
             .parent()
             .and_then(Path::parent)
             .and_then(Path::parent)
@@ -601,8 +604,8 @@ mod tests {
             artifacts: artifacts.clone(),
             shared_native_roots: vec![OvenSharedNativeRoot {
                 store: admitted_store,
-                identity: owner.manifest.identity.clone(),
-                receipt_identity: owner.manifest.receipt_identity.clone(),
+                identity: owner.manifest().identity.clone(),
+                receipt_identity: owner.manifest().receipt_identity.clone(),
                 prefix: "units/0".to_string(),
             }],
         })?;
@@ -650,7 +653,7 @@ mod tests {
         );
         let witness = first
             .owner
-            .artifact_root
+            .artifact_root()
             .parent()
             .ok_or("owner entry missing")?
             .join("native-receipt.json");
@@ -684,7 +687,7 @@ mod tests {
             materialize_with_owners(&payload, &artifacts, root.path(), &receipt.intent, Some(&admitted))?
                 .ok_or("shared materialization missing")?;
         assert!(Arc::ptr_eq(&owner, held.first().ok_or("retained owner missing")?));
-        let path = owner.artifact_root.join("libfixture.rlib");
+        let path = owner.artifact_root().join("libfixture.rlib");
         drop(owner);
         drop(admitted);
         let bounded = OvenStore::new(store.root(), OvenStoreLimits::new(1, 1, 1));
@@ -716,7 +719,7 @@ mod tests {
         assert!(!proof_root.exists());
         let witness = f
             .owner
-            .artifact_root
+            .artifact_root()
             .parent()
             .ok_or("owner entry missing")?
             .join("native-receipt.json");
@@ -825,7 +828,7 @@ mod tests {
         let admitted = OvenSharedNativeOwners::from_selected(&[Arc::clone(&f.owner)])?;
         let witness = f
             .owner
-            .artifact_root
+            .artifact_root()
             .parent()
             .ok_or("fixture entry missing")?
             .join("native-receipt.json");

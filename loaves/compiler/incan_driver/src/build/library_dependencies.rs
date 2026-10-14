@@ -87,6 +87,60 @@ impl std::fmt::Debug for PreparedLibraryDependencies {
 }
 
 impl PreparedLibraryDependencies {
+    /// Select checked handoffs from the current resolver's explicit source dependency edges.
+    ///
+    /// An authored path selects its current publication; the captured digest then binds every later admission and
+    /// verification to those exact bytes. This does not grant reserved namespaces or infer an installed-set reference.
+    /// Source-free dependencies require their original selected handoff through `admit` instead.
+    pub(crate) fn from_source_feature_plan(
+        features: &PackageFeaturePlan,
+        target: &str,
+        toolchain: &str,
+        limits: OvenStoreLimits,
+    ) -> CliResult<Self> {
+        Self::from_source_feature_plan_with_namespaces(features, Vec::new(), target, toolchain, limits)
+    }
+
+    /// Join producer-selected namespace handoffs with the same resolver edges and checked admission path.
+    pub(crate) fn from_source_feature_plan_with_namespaces(
+        features: &PackageFeaturePlan,
+        mut inputs: Vec<LibraryDependencyInput>,
+        target: &str,
+        toolchain: &str,
+        limits: OvenStoreLimits,
+    ) -> CliResult<Self> {
+        for input in &inputs {
+            if input.namespace.is_none() || input.import_alias.is_some() {
+                return Err(invalid(
+                    "implicit standard dependency requires its original namespace grant",
+                ));
+            }
+        }
+        for edge in features.edges() {
+            let state = features
+                .package(&edge.to)
+                .ok_or_else(|| invalid("ordinary source dependency has no resolved feature state"))?;
+            if state.manifest.is_none() {
+                return Err(invalid(
+                    "ordinary installed dependency requires its originally selected package handoff",
+                ));
+            }
+            let artifact_root = selected_artifact_root(state)?;
+            let handoff = fs::read(packaged_library_loaf_manifest_path(&artifact_root))
+                .map_err(|error| invalid(error.to_string()))?;
+            inputs.push(LibraryDependencyInput {
+                artifact_root,
+                handoff_digest: digest_bytes(&handoff),
+                features: state.features.active_features.clone(),
+                import_alias: (edge.from == features.root()).then(|| edge.dependency_key.clone()),
+                namespace: None,
+            });
+        }
+        let admitted = Self::admit(&inputs, target, toolchain, limits)?;
+        admitted.validate_feature_plan(features)?;
+        Ok(admitted)
+    }
+
     /// Admit exact ordinary package handoffs and complete checked dependency owners, without selecting native plans.
     pub fn admit(
         inputs: &[LibraryDependencyInput],
@@ -139,7 +193,15 @@ impl PreparedLibraryDependencies {
                 limits,
                 &incan_oven_facet::compiler_identity(),
             );
-            let metadata = select_library_metadata_reference(&store, reference)?;
+            let metadata = select_library_metadata_reference(&store, reference).map_err(|error| {
+                invalid(format!(
+                    "ordinary dependency `{}` at {} could not select checked owner {} from {}: {error}",
+                    manifest.name,
+                    artifact_root.display(),
+                    reference.owner_identity,
+                    store.root().display(),
+                ))
+            })?;
             metadata.verify_materialization(&artifact_root)?;
             let generation = select_library_generation_reference(
                 &store,
@@ -191,6 +253,7 @@ impl PreparedLibraryDependencies {
                 );
             }
             if let Some(namespace) = &input.namespace {
+                namespace.verify().map_err(invalid)?;
                 let record = namespace.record();
                 let granted_manifest = record
                     .manifest
@@ -310,6 +373,100 @@ impl PreparedLibraryDependencies {
         &self.aliases
     }
 
+    /// Borrow a direct dependency's original checked owner without selecting its mutable handoff again.
+    pub(crate) fn checked_dependency(&self, alias: &str) -> CliResult<&Arc<SelectedLibraryMetadata>> {
+        self.aliases
+            .get(alias)
+            .and_then(|identity| self.nodes.get(identity))
+            .map(|node| &node.metadata)
+            .ok_or_else(|| invalid("ordinary direct dependency has no retained checked owner"))
+    }
+
+    /// Validate a module-use projection against the immutable catalog issued by this dependency admission.
+    /// Module usage can change the projection, but cannot substitute identities, manifests, namespaces or artifacts.
+    pub(crate) fn validate_provider_projection(&self, plan: &ProviderPlan) -> CliResult<()> {
+        self.verify()?;
+        let original = if let Some(source) = plan.standard_source_publication() {
+            let (name, version) = source.package_identity();
+            self.provider_plan
+                .as_ref()
+                .clone()
+                .with_standard_source_publication(
+                    Arc::clone(source),
+                    source
+                        .verified_package_root()
+                        .map_err(|error| invalid(error.to_string()))?,
+                    name,
+                    version,
+                )
+                .map_err(invalid)?
+        } else {
+            self.provider_plan.as_ref().clone()
+        };
+        if plan.semantic_projection_persistent_key().map_err(invalid)?
+            != original.semantic_projection_persistent_key().map_err(invalid)?
+        {
+            return Err(invalid(
+                "ordinary provider projection differs from its admitted checked catalog",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reconstruct the checked source projection before generated provider coordinates participate in planning.
+    /// The same admitted catalog validates fresh source demands and portable metadata replay.
+    pub(crate) fn source_requirements(
+        &self,
+        plan: &ProviderPlan,
+    ) -> CliResult<incan_provider::requirements::ProjectRequirements> {
+        self.validate_provider_projection(plan)?;
+        incan_provider::requirements::collect_project_requirements(&[], plan.library_manifest_index())
+            .map_err(|error| invalid(error.to_string()))
+    }
+
+    /// Add current provider coordinates to the original checked source projection for physical planning.
+    /// Source-inferred native or macro demands remain separate and cannot be added to this permitted projection.
+    pub(crate) fn projected_requirements(
+        &self,
+        plan: &ProviderPlan,
+    ) -> CliResult<incan_provider::requirements::ProjectRequirements> {
+        let mut requirements = self.source_requirements(plan)?;
+        incan_provider::inventory::extend_requirements_with_provider_plan(&mut requirements, plan)
+            .map_err(|error| invalid(error.to_string()))?;
+        Ok(requirements)
+    }
+
+    /// Keep authored Rust facets separate from exact generated Incan package projections.
+    /// The canonical lock retains both. Only a complete dependency specification from this original checked
+    /// catalog is omitted from Rust facet selection; changed paths, features and aliases remain native demands.
+    pub(crate) fn physical_native_dependencies(
+        &self,
+        plan: &ProviderPlan,
+        dependencies: &[oven_model::manifest::DependencySpec],
+    ) -> CliResult<Vec<oven_model::manifest::DependencySpec>> {
+        self.validate_provider_projection(plan)?;
+        Ok(dependencies
+            .iter()
+            .filter(|dependency| {
+                !plan
+                    .public_artifacts()
+                    .map(|provider| &provider.artifact)
+                    .chain(
+                        plan.active_records()
+                            .filter(|provider| {
+                                matches!(
+                                    provider.provenance,
+                                    incan_provider::ProviderProvenance::StandardPublication { .. }
+                                )
+                            })
+                            .filter_map(|provider| provider.artifact.as_ref()),
+                    )
+                    .any(|artifact| artifact.to_dependency_spec() == **dependency)
+            })
+            .cloned()
+            .collect())
+    }
+
     /// Borrow original checked owners and planning contracts retained by this preparation.
     ///
     /// Current plan construction consumes their checked requirements; it must not copy or replay an old native plan.
@@ -390,6 +547,7 @@ impl PreparedLibraryDependencies {
     /// Revalidate original owners and mutable handoff coordinates; changed authored sources refuse through the shared
     /// validator.
     pub fn verify(&self) -> CliResult<()> {
+        self.provider_plan.verify_namespace_grants().map_err(invalid)?;
         for node in self.nodes.values() {
             if node.source_available
                 && !dependency_project_root(&node.artifact.crate_root)

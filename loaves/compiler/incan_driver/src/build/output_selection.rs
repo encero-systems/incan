@@ -26,7 +26,87 @@ use oven_rustc::rustc::{
     OvenLoadedProjectInspectionAuthority, resolve_active_rustc, rustc_host_target, rustc_identity,
 };
 use oven_store::digest_bytes;
-use oven_store::store::{OvenArtifactKind, OvenStore};
+use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreExecutionRequest, OvenStorePayloadIndex};
+
+/// Profile, native target and optional explicit target/toolchain constraint for one output lookup partition.
+type ProjectOutputIndexPartition = (String, String, Option<(String, String)>);
+
+/// The Store retains this payload projection alongside its existing parsed manifests, without retaining leases.
+static PROJECT_OUTPUT_INDEX: OvenStorePayloadIndex = OvenStorePayloadIndex {
+    namespace: "incan.project-output/1",
+    matches_partition: project_output_index_partition_matches,
+    key: project_output_payload_index_key,
+};
+
+/// Select exactly the manifest partition used by ordinary output lookup, preserving explicit toolchain constraints.
+fn project_output_index_partition_matches(partition: &str, manifest: &oven_store::store::OvenArtifactManifest) -> bool {
+    let Ok((profile, target, required_toolchain)) = serde_json::from_str::<ProjectOutputIndexPartition>(partition)
+    else {
+        return false;
+    };
+    manifest.kind == OvenArtifactKind::ProjectOutput
+        && manifest.intent.profile == profile
+        && manifest.intent.target == target
+        && required_toolchain.is_none_or(|(target, toolchain)| {
+            manifest.intent.target == target && manifest.intent.toolchain == toolchain
+        })
+}
+
+/// Encode the source and preparation facts that identify reusable output, independently of replaceable lock hints.
+fn project_output_request_key(
+    project_target: &str,
+    target_identity: &str,
+    source_authority: &str,
+    compiler_version: &str,
+    entrypoint: &str,
+    preparation_identity: Option<&str>,
+) -> CliResult<String> {
+    serde_json::to_string(&(
+        project_target,
+        target_identity,
+        source_authority,
+        compiler_version,
+        entrypoint,
+        preparation_identity,
+    ))
+    .map_err(|error| CliError::failure(format!("failed to encode Oven project-output lookup key: {error}")))
+}
+
+/// Project only structurally understood, receipt-bound payloads; final selection still verifies their exact owners.
+fn project_output_payload_index_key(
+    manifest: &oven_store::store::OvenArtifactManifest,
+    bytes: &[u8],
+) -> Option<String> {
+    let payload = serde_json::from_slice::<OvenProjectOutputPayload>(bytes).ok()?;
+    if payload.schema_version != OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
+        || payload.receipt_identity != manifest.receipt_identity
+        || payload.build_unit_identity != manifest.build_unit_identity
+        || payload.plan_identity.trim().is_empty()
+    {
+        return None;
+    }
+    project_output_request_key(
+        &payload.project_target,
+        &payload.target_identity,
+        &payload.source_authority_digest,
+        &payload.compiler_version,
+        &payload.entrypoint_relative_path,
+        payload.preparation_identity_digest.as_deref(),
+    )
+    .ok()
+}
+
+/// Read the existing replaceable output address; only Store admission can turn this hint into authority.
+pub(super) fn project_output_locator(receipt_path: &Path) -> Option<String> {
+    fs::read(receipt_path.with_extension("output.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .filter(|identity| {
+            identity
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        })
+}
 
 /// Resolve an optional local locator through the store's verified payload and active-lease boundary.
 ///
@@ -42,15 +122,7 @@ pub(super) fn located_project_output(
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
     let caller = std::panic::Location::caller();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::located_project_output", input = %receipt_path.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
-    let Some(identity) = fs::read(receipt_path.with_extension("output.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
-        .filter(|identity| {
-            identity
-                .strip_prefix("sha256:")
-                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        })
-    else {
+    let Some(identity) = project_output_locator(receipt_path) else {
         return Ok(None);
     };
     let Ok((manifest, root, bytes, lease)) = store.select_payload_for_execution(&identity) else {
@@ -99,6 +171,19 @@ pub(super) fn remember_project_output(receipt_path: &Path, identity: &str) {
         .and_then(|()| fs::rename(&staged, &locator));
     if result.is_err() {
         let _removed = fs::remove_file(staged);
+    }
+}
+
+/// Match the selected preparation route without allowing legacy output to satisfy a required ordinary identity.
+/// Legacy explicit outputs remain selectable when no ordinary library route was requested.
+pub(super) fn project_output_preparation_matches(
+    payload: &OvenProjectOutputPayload,
+    preparation_identity: Option<&str>,
+    required: bool,
+) -> bool {
+    match payload.preparation_identity_digest.as_deref() {
+        Some(identity) => Some(identity) == preparation_identity,
+        None => !required,
     }
 }
 
@@ -198,7 +283,7 @@ pub fn has_stale_baked_project_output(
         )
         .map_err(|error| CliError::failure(format!("failed to inspect Oven project-output Loafs: {error}")))?;
     for candidate in candidates {
-        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&candidate.payload) else {
+        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(candidate.payload()) else {
             continue;
         };
         if payload.schema_version == OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
@@ -234,6 +319,36 @@ pub fn select_baked_project_output_with_source_authority(
         source_authority_digest,
         required_target_toolchain,
         true,
+        None,
+        None,
+    )?
+    .into_iter()
+    .next())
+}
+
+/// Select with a canonical lock fingerprint already reconciled by the request owner, sharing all admission checks.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn select_baked_project_output_with_fingerprint(
+    store: &OvenStore,
+    project_root: &Path,
+    entrypoint: &Path,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+    source_authority_digest: &str,
+    required_target_toolchain: Option<(&str, &str)>,
+    fingerprint: &Option<String>,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
+    Ok(project_outputs_with_source_authority(
+        store,
+        project_root,
+        entrypoint,
+        target,
+        profile,
+        source_authority_digest,
+        required_target_toolchain,
+        true,
+        Some(fingerprint),
+        None,
     )?
     .into_iter()
     .next())
@@ -260,15 +375,19 @@ pub fn matching_baked_project_outputs_with_source_authority(
         source_authority_digest,
         required_target_toolchain,
         false,
+        None,
+        None,
     )
 }
 
 /// Apply the same intent, payload and lineage checks to an exact locator and the fallback collection.
 ///
 /// Multi-profile consumers retain the complete ordered candidate set. A single-output consumer may avoid the scan
-/// only when its verified hint has the preferred receipt lineage and current lock fingerprint.
+/// only when its verified hint has the preferred receipt lineage and current lock fingerprint. Compiler tooling may
+/// additionally require exact publisher-compiler and dependency authority; those predicates apply identically to the
+/// locator and fallback collection, so rejecting a stale locator cannot hide another valid candidate.
 #[allow(clippy::too_many_arguments)]
-fn project_outputs_with_source_authority(
+pub(super) fn project_outputs_with_source_authority(
     store: &OvenStore,
     project_root: &Path,
     entrypoint: &Path,
@@ -277,6 +396,8 @@ fn project_outputs_with_source_authority(
     source_authority_digest: &str,
     required_target_toolchain: Option<(&str, &str)>,
     first_only: bool,
+    observed_fingerprint: Option<&Option<String>>,
+    required_authority: Option<(&str, &str)>,
 ) -> CliResult<Vec<OvenStoredProjectOutput>> {
     let Some(entrypoint_relative_path) = project_relative_entrypoint(project_root, entrypoint) else {
         return Ok(Vec::new());
@@ -288,7 +409,19 @@ fn project_outputs_with_source_authority(
     let Some(native_target) = native_project_output_target() else {
         return Ok(Vec::new());
     };
-    let preparation_identity = super::source_authority::ordinary_preparation_identity_digest().ok();
+    let ordinary_library = target == OvenBakeProjectTarget::Library
+        && super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_some();
+    let preparation_identity = if ordinary_library {
+        Some(super::source_authority::ordinary_library_preparation_identity_digest(
+            None,
+        )?)
+    } else if let Some((compiler, _dependencies)) = required_authority {
+        Some(super::source_authority::ordinary_preparation_identity_for_compiler(
+            compiler.to_owned(),
+        )?)
+    } else {
+        super::source_authority::ordinary_preparation_identity_digest().ok()
+    };
     let manifest_matches = |manifest: &oven_store::store::OvenArtifactManifest| {
         manifest.kind == OvenArtifactKind::ProjectOutput
             && manifest.intent.profile == profile
@@ -305,10 +438,11 @@ fn project_outputs_with_source_authority(
             && payload.project_target == target.as_str()
             && payload.target_identity == target_identity
             && payload.source_authority_digest == source_authority_digest
-            && payload
-                .preparation_identity_digest
-                .as_ref()
-                .is_none_or(|identity| Some(identity) == preparation_identity.as_ref())
+            && required_authority.is_none_or(|(compiler, dependencies)| {
+                payload.compiler_identity_digest.as_deref() == Some(compiler)
+                    && payload.dependency_authority_digest.as_deref() == Some(dependencies)
+            })
+            && project_output_preparation_matches(&payload, preparation_identity.as_deref(), ordinary_library)
             && payload.compiler_version == INCAN_VERSION
             && payload.entrypoint_relative_path == entrypoint_relative_path
             && payload.receipt_identity == manifest.receipt_identity
@@ -316,7 +450,10 @@ fn project_outputs_with_source_authority(
             && !payload.plan_identity.trim().is_empty()
     };
     let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
-    let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
+    let current_fingerprint = match observed_fingerprint {
+        Some(fingerprint) => fingerprint.clone(),
+        None => baked_project_lock_dependencies_fingerprint(project_root)?,
+    };
     let receipt_path = project_bake_receipt_path(project_root, target, entrypoint, profile)?;
     if first_only
         && let Some(located) =
@@ -328,12 +465,45 @@ fn project_outputs_with_source_authority(
         tracing::trace!(target: "incan::invocation", decision = "reuse_project_output_locator", input = %located.identity);
         return Ok(vec![located]);
     }
+    let partition = serde_json::to_string(&(profile, &native_target, required_target_toolchain)).map_err(|error| {
+        CliError::failure(format!(
+            "failed to encode Oven project-output lookup partition: {error}"
+        ))
+    })?;
+    let mut keys = Vec::with_capacity(2);
+    if let Some(preparation) = preparation_identity.as_deref() {
+        keys.push(project_output_request_key(
+            target.as_str(),
+            &target_identity,
+            source_authority_digest,
+            INCAN_VERSION,
+            &entrypoint_relative_path,
+            Some(preparation),
+        )?);
+    }
+    if !ordinary_library {
+        keys.push(project_output_request_key(
+            target.as_str(),
+            &target_identity,
+            source_authority_digest,
+            INCAN_VERSION,
+            &entrypoint_relative_path,
+            None,
+        )?);
+    }
     let selected = store
-        .select_payloads_matching_for_execution(manifest_matches, payload_matches)
+        .select_payloads_for_execution(OvenStoreExecutionRequest::Indexed {
+            index: &PROJECT_OUTPUT_INDEX,
+            partition: &partition,
+            keys: &keys,
+        })
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loaf: {error}")))?;
     let mut matches = Vec::new();
     for selected in selected {
-        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&selected.payload) else {
+        if !manifest_matches(selected.manifest()) || !payload_matches(selected.manifest(), selected.payload()) {
+            continue;
+        }
+        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(selected.payload()) else {
             // Selection already checked these immutable payload bytes before acquiring the execution lease.
             continue;
         };
@@ -347,6 +517,9 @@ fn project_outputs_with_source_authority(
     }
     // Prefer the explicit bake's verified lineage before the derived lock fingerprint: a non-strict stale lock
     // must not make an older SDK output outrank the current bake. Missing local receipts still permit store reuse.
+    // Equivalent receipts can name distinct checked metadata generations. Prefer the exact published locator among
+    // already admitted candidates so replay cannot replace a new package handoff with an older generation.
+    let current_output = project_output_locator(&receipt_path);
     matches.sort_by_key(|output| {
         let current_lineage = current_receipt.as_ref().is_some_and(|receipt| {
             output.payload.receipt_identity == receipt.identity
@@ -356,6 +529,7 @@ fn project_outputs_with_source_authority(
         (
             !current_lineage,
             output.payload.lock_dependencies_fingerprint != current_fingerprint,
+            current_output.as_deref() != Some(output.identity.as_str()),
             output.identity.clone(),
         )
     });
@@ -479,9 +653,9 @@ fn select_debug_project_outputs(
             .iter()
             .enumerate()
             .filter(|(_, expected)| {
-                candidate.manifest.receipt_identity == expected.receipt.identity
-                    && candidate.manifest.build_unit_identity == expected.receipt.build_unit_identity
-                    && candidate.manifest.intent == expected.receipt.intent
+                candidate.manifest().receipt_identity == expected.receipt.identity
+                    && candidate.manifest().build_unit_identity == expected.receipt.build_unit_identity
+                    && candidate.manifest().intent == expected.receipt.intent
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
@@ -503,17 +677,17 @@ fn select_debug_project_outputs(
         if candidates.is_empty() {
             return Ok(None);
         }
-        candidates.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+        candidates.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
         let mut exact = Vec::with_capacity(candidates.len());
         let mut rejected = Vec::new();
         for candidate in candidates {
-            let payload = match serde_json::from_slice::<OvenProjectOutputPayload>(&candidate.payload) {
+            let payload = match serde_json::from_slice::<OvenProjectOutputPayload>(candidate.payload()) {
                 Ok(payload) => payload,
                 Err(error) => {
                     rejected.push(CliError::failure(format!(
                         "exact debug {} project-output Loaf `{}` has an invalid payload: {error}",
                         expected.target.as_str(),
-                        candidate.manifest.identity
+                        candidate.manifest().identity
                     )));
                     continue;
                 }
@@ -532,7 +706,7 @@ fn select_debug_project_outputs(
                 rejected.push(CliError::failure(format!(
                     "exact debug {} project-output Loaf `{}` disagrees with its source-current lineage; rerun `incan oven bake --project .`",
                     expected.target.as_str(),
-                    candidate.manifest.identity
+                    candidate.manifest().identity
                 )));
                 continue;
             }
@@ -920,7 +1094,41 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
-    /// An exact existing locator selects through verified Store admission without enumerating unrelated owners.
+    /// Count real catalog queries in one controlled selection without production counters or another selector.
+    #[derive(Clone, Default)]
+    struct CatalogQueries {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    impl tracing::Subscriber for CatalogQueries {
+        /// Enable the existing invocation spans in this thread's controlled dispatch.
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        /// Count actual index lookups, assigning a unique ID to every observed span.
+        fn new_span(&self, attributes: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            use std::sync::atomic::Ordering;
+            if attributes.metadata().name() == "oven_store::lookup_payload_index" {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+            }
+            tracing::span::Id::from_u64(self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
+        }
+
+        /// Field updates do not represent another catalog query.
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        /// Causal links do not represent catalog queries.
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        /// Events are excluded from invocation counts.
+        fn event(&self, _event: &tracing::Event<'_>) {}
+        /// Entering an existing span is not a new invocation.
+        fn enter(&self, _span: &tracing::span::Id) {}
+        /// Exiting an existing span does not change invocation counts.
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// Both ordinary and compiler-client selection use an exact locator without querying unrelated owners.
     #[test]
     fn ordinary_project_output_locator_avoids_unrelated_manifest_walk() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
@@ -933,6 +1141,10 @@ mod tests {
         payload.inspection_authority = None;
         payload.preparation_identity_digest =
             Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let compiler_identity = super::super::source_authority::current_compiler_identity_digest()?;
+        let dependency_identity = digest_bytes(b"fixture dependencies");
+        payload.compiler_identity_digest = Some(compiler_identity.clone());
+        payload.dependency_authority_digest = Some(dependency_identity.clone());
         let store_root = tempfile::tempdir()?;
         let store = OvenStore::new(
             store_root.path(),
@@ -960,8 +1172,118 @@ mod tests {
         )?
         .ok_or("exact ordinary output locator missed")?;
         assert_eq!(selected.identity, output.identity);
+        let select = |compiler: &str, dependencies: &str, target: &str, toolchain: &str| {
+            super::super::native_runtime_inputs::select_project_output_for_incan(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                target,
+                toolchain,
+                compiler,
+                dependencies,
+            )
+        };
+        let queries = CatalogQueries::default();
+        let selected = tracing::subscriber::with_default(queries.clone(), || {
+            select(
+                &compiler_identity,
+                &dependency_identity,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+            )
+        })?
+        .ok_or("exact compiler-client output locator missed")?;
+        assert_eq!(selected.identity, output.identity);
+        assert_eq!(
+            queries.calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a compiler client with an exact existing output locator must not query the Store catalog"
+        );
         fs::remove_dir_all(&unrelated)?;
+
+        // ---- Current authority: every bound dimension rejects a stale candidate ----
+        let other = digest_bytes(b"other generation");
+        for (compiler, dependencies, target, toolchain) in [
+            (
+                other.as_str(),
+                dependency_identity.as_str(),
+                receipt.intent.target.as_str(),
+                receipt.intent.toolchain.as_str(),
+            ),
+            (
+                compiler_identity.as_str(),
+                other.as_str(),
+                receipt.intent.target.as_str(),
+                receipt.intent.toolchain.as_str(),
+            ),
+            (
+                compiler_identity.as_str(),
+                dependency_identity.as_str(),
+                "other-target",
+                receipt.intent.toolchain.as_str(),
+            ),
+            (
+                compiler_identity.as_str(),
+                dependency_identity.as_str(),
+                receipt.intent.target.as_str(),
+                "other-toolchain",
+            ),
+        ] {
+            assert!(select(compiler, dependencies, target, toolchain)?.is_none());
+        }
+
+        // ---- Fallback: a wrong generation at the locator must not hide an exact published candidate ----
+        for stale_compiler in [true, false] {
+            let mut stale = payload.clone();
+            if stale_compiler {
+                stale.compiler_identity_digest = Some(other.clone());
+            } else {
+                stale.dependency_authority_digest = Some(other.clone());
+            }
+            let stale = publish_project_output_loaf(&store, &receipt, &stale, &files)?;
+            fs::write(
+                receipt_path.with_extension("output.json"),
+                serde_json::to_vec(&stale.identity)?,
+            )?;
+            assert_eq!(
+                select(
+                    &compiler_identity,
+                    &dependency_identity,
+                    &receipt.intent.target,
+                    &receipt.intent.toolchain
+                )?
+                .ok_or("stale locator hid the exact compiler/dependency output")?
+                .identity,
+                output.identity
+            );
+        }
+        fs::remove_file(receipt_path.with_extension("output.json"))?;
+        assert_eq!(
+            select(
+                &compiler_identity,
+                &dependency_identity,
+                &receipt.intent.target,
+                &receipt.intent.toolchain
+            )?
+            .ok_or("missing locator prevented exact fallback")?
+            .identity,
+            output.identity
+        );
         fs::write(receipt_path.with_extension("output.json"), b"\"../../foreign\"")?;
+        assert_eq!(
+            select(
+                &compiler_identity,
+                &dependency_identity,
+                &receipt.intent.target,
+                &receipt.intent.toolchain
+            )?
+            .ok_or("malformed locator prevented exact fallback")?
+            .identity,
+            output.identity
+        );
         assert_eq!(
             select_baked_project_output(
                 &store,
@@ -974,6 +1296,58 @@ mod tests {
             .identity,
             output.identity
         );
+        Ok(())
+    }
+
+    /// Multi-profile selection must prefer the exact published output, even when equivalent lineage has older owners.
+    #[test]
+    fn project_output_candidates_prefer_verified_locator() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "cohort")?;
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let first = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        payload.plan_identity = "another checked preparation".into();
+        let second = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert_ne!(first.identity, second.identity);
+        let receipt_path =
+            project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?;
+        fs::create_dir_all(receipt_path.parent().ok_or("receipt has no parent")?)?;
+        let select = || {
+            matching_baked_project_outputs_with_source_authority(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                None,
+            )
+        };
+        // Both orders matter: the locator must win regardless of lexicographic identity ordering.
+        for expected in [&first.identity, &second.identity] {
+            remember_project_output(&receipt_path, expected);
+            let selected = select()?;
+            assert_eq!(selected.len(), 2);
+            assert_eq!(&selected.first().ok_or("missing candidates")?.identity, expected);
+        }
+        let mut stale = payload.clone();
+        stale.source_authority_digest = digest_bytes(b"different authored inputs");
+        let stale = publish_project_output_loaf(&store, &receipt, &stale, &files)?;
+        remember_project_output(&receipt_path, &stale.identity);
+        let selected = select()?;
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().all(|output| output.identity != stale.identity));
         Ok(())
     }
 
@@ -1036,6 +1410,75 @@ mod tests {
             "rejected source generation became hot"
         );
         drop(compiler_lease);
+        Ok(())
+    }
+
+    /// A bootstrap client selects its exact publisher's preparation, never its own executable's identity.
+    #[test]
+    fn explicit_publisher_selection_preserves_preparation_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "publisher")?;
+        let publisher = digest_bytes(b"separate stage-zero compiler");
+        let dependencies = super::super::source_authority::digest_project_development_dependencies(project.path())?;
+        payload.compiler_identity_digest = Some(publisher.clone());
+        payload.dependency_authority_digest = Some(dependencies.clone());
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_for_compiler(publisher.clone())?);
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let select = |compiler: &str| {
+            super::super::native_runtime_inputs::select_project_output_for_incan(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                compiler,
+                &dependencies,
+            )
+        };
+        assert_eq!(
+            select(&publisher)?
+                .ok_or("publisher output was rejected by the client identity")?
+                .identity,
+            published.identity
+        );
+        assert!(select(&digest_bytes(b"another publisher"))?.is_none());
+        let wrong_preparation_root = tempfile::tempdir()?;
+        let wrong_preparation_store = OvenStore::new(
+            wrong_preparation_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let mut mismatched = payload.clone();
+        mismatched.preparation_identity_digest = Some(digest_bytes(b"changed preparation configuration"));
+        publish_project_output_loaf(&wrong_preparation_store, &receipt, &mismatched, &files)?;
+        assert!(
+            super::super::native_runtime_inputs::select_project_output_for_incan(
+                &wrong_preparation_store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                &publisher,
+                &dependencies,
+            )?
+            .is_none()
+        );
         Ok(())
     }
 
@@ -1116,6 +1559,25 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    /// A requested ordinary library cannot reuse an SDK-era output with no preparation identity.
+    #[test]
+    fn ordinary_library_selection_requires_its_preparation_route() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (_, mut payload, _) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "route")?;
+        payload.preparation_identity_digest = None;
+        assert!(project_output_preparation_matches(&payload, Some("ordinary"), false));
+        assert!(!project_output_preparation_matches(&payload, Some("ordinary"), true));
+        payload.preparation_identity_digest = Some("ordinary".into());
+        assert!(project_output_preparation_matches(&payload, Some("ordinary"), true));
+        assert!(!project_output_preparation_matches(&payload, Some("other route"), true));
+        assert!(!project_output_preparation_matches(&payload, None, true));
         Ok(())
     }
 

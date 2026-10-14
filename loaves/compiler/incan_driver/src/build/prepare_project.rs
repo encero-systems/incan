@@ -150,7 +150,7 @@ fn prepare_project_with_options(
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
         .unwrap_or(inferred_project_root);
-    let package_feature_plan = compilation_session.package_feature_plan.clone();
+    let package_feature_plan = compilation_session.package_feature_plan().clone();
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
@@ -160,8 +160,8 @@ fn prepare_project_with_options(
     let semantic = semantic_lock_state(
         &project_root,
         manifest.as_ref().and_then(ProjectManifest::interop_c),
-        compilation_session.sdk_inventory.as_deref(),
-        compilation_session.sdk_components.as_ref(),
+        compilation_session.sdk_inventory().as_deref(),
+        compilation_session.sdk_components().as_ref(),
         package_feature_plan.as_ref(),
         &provider_plan,
         &semantic_sdk_paths,
@@ -438,8 +438,7 @@ mod tests {
             "def main() -> None:\n    println(\"ok\")\n",
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,

@@ -500,6 +500,37 @@
       "version": "0.8.8"
     },
     {
+      "archive_digest": "sha256:bbddeeddd6685c6e3db268434db07c1172a4e1a7355028d9f57681b2c7b87866",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bit-vec",
+          "domain": "target",
+          "loaf": "crates-io/bit-vec",
+          "version": "0.8.0"
+        }
+      ],
+      "features": [
+        "default",
+        "std"
+      ],
+      "loaf": "crates-io/bit-set",
+      "target_predicates": [],
+      "version": "0.8.0"
+    },
+    {
+      "archive_digest": "sha256:a183cbdcce2015b62b44052c7af9b154a8af85a2bae38f26663382f9d931ad0b",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "default",
+        "std"
+      ],
+      "loaf": "crates-io/bit-vec",
+      "target_predicates": [],
+      "version": "0.8.0"
+    },
+    {
       "archive_digest": "sha256:307792fdd235b064ebd29c3f2d027d4ef321bc8c1d143cb73207e778374cd5cc",
       "domain": "host",
       "edges": [],
@@ -1186,6 +1217,36 @@
       "loaf": "crates-io/colorchoice",
       "target_predicates": [],
       "version": "1.0.5"
+    },
+    {
+      "archive_digest": "sha256:b93a1ff27e270270e2d45ced63684f2740cfdf5a9b0fbee087ae05c1c1a74310",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "loaf": "crates-io/console",
+      "target_predicates": [
+        {
+          "declaration": 0,
+          "matches": false,
+          "target": "cfg(windows)"
+        },
+        {
+          "declaration": 3,
+          "matches": false,
+          "target": "cfg(windows)"
+        }
+      ],
+      "version": "0.16.6"
     },
     {
       "archive_digest": "sha256:a1bde8737e521e00427d5298942c24bc784334612286f1cc470dae1352d01a8e",
@@ -2040,6 +2101,18 @@
       "version": "1.1.10"
     },
     {
+      "archive_digest": "sha256:7dabfab1fcbe1b026164cfc692b7dc00436ceb6a58b5a7164c625d22a27865eb",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "default",
+        "std"
+      ],
+      "loaf": "crates-io/fnv",
+      "target_predicates": [],
+      "version": "1.0.7"
+    },
+    {
       "archive_digest": "sha256:0a7dd6e4c4961d11cb618e8bee630d5d3a26bcf32274e7cf04a874609e9ed5c1",
       "domain": "target",
       "edges": [],
@@ -2351,6 +2424,91 @@
         }
       ],
       "version": "0.2.17"
+    },
+    {
+      "archive_digest": "sha256:de891b725908a37e925ce8b7280bc98bcd2b7bd327f63cdf828021b197fc2097",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "cfg-if",
+          "domain": "target",
+          "loaf": "crates-io/cfg-if",
+          "version": "1.0.5"
+        },
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
+      "features": [
+        "std"
+      ],
+      "loaf": "crates-io/getrandom",
+      "target_predicates": [
+        {
+          "declaration": 1,
+          "matches": false,
+          "target": "cfg(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\"), target_feature = \"atomics\"))"
+        },
+        {
+          "declaration": 2,
+          "matches": false,
+          "target": "cfg(all(any(target_os = \"linux\", target_os = \"android\"), not(any(all(target_os = \"linux\", target_env = \"\"), getrandom_backend = \"custom\", getrandom_backend = \"linux_raw\", getrandom_backend = \"rdrand\", getrandom_backend = \"rndr\"))))"
+        },
+        {
+          "declaration": 3,
+          "matches": false,
+          "target": "cfg(any(target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"hurd\", target_os = \"illumos\", target_os = \"cygwin\", all(target_os = \"horizon\", target_arch = \"arm\")))"
+        },
+        {
+          "declaration": 4,
+          "matches": false,
+          "target": "cfg(any(target_os = \"haiku\", target_os = \"redox\", target_os = \"nto\", target_os = \"aix\"))"
+        },
+        {
+          "declaration": 5,
+          "matches": false,
+          "target": "cfg(any(target_os = \"ios\", target_os = \"visionos\", target_os = \"watchos\", target_os = \"tvos\"))"
+        },
+        {
+          "declaration": 6,
+          "matches": true,
+          "target": "cfg(any(target_os = \"macos\", target_os = \"openbsd\", target_os = \"vita\", target_os = \"emscripten\"))"
+        },
+        {
+          "declaration": 7,
+          "matches": false,
+          "target": "cfg(target_os = \"netbsd\")"
+        },
+        {
+          "declaration": 8,
+          "matches": false,
+          "target": "cfg(target_os = \"solaris\")"
+        },
+        {
+          "declaration": 9,
+          "matches": false,
+          "target": "cfg(target_os = \"vxworks\")"
+        },
+        {
+          "declaration": 10,
+          "matches": false,
+          "target": "cfg(all(target_os = \"uefi\", getrandom_backend = \"efi_rng\"))"
+        },
+        {
+          "declaration": 11,
+          "matches": false,
+          "target": "cfg(all(target_arch = \"wasm32\", target_os = \"wasi\", target_env = \"p2\"))"
+        },
+        {
+          "declaration": 12,
+          "matches": false,
+          "target": "cfg(all(target_arch = \"wasm32\", any(target_os = \"unknown\", target_os = \"none\")))"
+        }
+      ],
+      "version": "0.3.4"
     },
     {
       "archive_digest": "sha256:8617610be75a052665d09f967cd645c33ef7741ed52b8e5222b6f5ccc2399536",
@@ -3438,6 +3596,59 @@
       "version": "2.14.2"
     },
     {
+      "archive_digest": "sha256:e2f27037a567facea2e21fb7879968c2b5f7818544fabd75b56989aee38f9b59",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "console",
+          "domain": "target",
+          "loaf": "crates-io/console",
+          "version": "0.16.6"
+        },
+        {
+          "dependency_key": "globset",
+          "domain": "target",
+          "loaf": "crates-io/globset",
+          "version": "0.4.20"
+        },
+        {
+          "dependency_key": "once_cell",
+          "domain": "target",
+          "loaf": "crates-io/once_cell",
+          "version": "1.21.4"
+        },
+        {
+          "dependency_key": "similar",
+          "domain": "target",
+          "loaf": "crates-io/similar",
+          "version": "2.7.0"
+        },
+        {
+          "dependency_key": "tempfile",
+          "domain": "target",
+          "loaf": "crates-io/tempfile",
+          "version": "3.27.0"
+        },
+        {
+          "dependency_key": "walkdir",
+          "domain": "target",
+          "loaf": "crates-io/walkdir",
+          "version": "2.5.0"
+        }
+      ],
+      "features": [
+        "colors",
+        "console",
+        "default",
+        "glob",
+        "globset",
+        "walkdir"
+      ],
+      "loaf": "crates-io/insta",
+      "target_predicates": [],
+      "version": "1.49.0"
+    },
+    {
       "archive_digest": "sha256:5b55d58d0a015ddcf3ca67eb725afa0c12c31228897d2c3e495b48e2e173799b",
       "domain": "target",
       "edges": [
@@ -4210,6 +4421,17 @@
       "version": "0.2.2"
     },
     {
+      "archive_digest": "sha256:90cc91e4a743ae3cf242f1c479ce90dbdc4c176c76a077a701bea52817f6e819",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "std"
+      ],
+      "loaf": "crates-io/num-traits",
+      "target_predicates": [],
+      "version": "0.2.19"
+    },
+    {
       "archive_digest": "sha256:0b4d6d1d744bb8b857cf6bfd66dfc2836268bed96c083d765d720266a597e1fd",
       "domain": "target",
       "edges": [
@@ -4597,6 +4819,91 @@
       "version": "1.0.107"
     },
     {
+      "archive_digest": "sha256:056aa8beff7d9b47852ccdc108c88c510629735bcec818d2d4de7dc763e74b4c",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bit-set",
+          "domain": "target",
+          "loaf": "crates-io/bit-set",
+          "version": "0.8.0"
+        },
+        {
+          "dependency_key": "bit-vec",
+          "domain": "target",
+          "loaf": "crates-io/bit-vec",
+          "version": "0.8.0"
+        },
+        {
+          "dependency_key": "bitflags",
+          "domain": "target",
+          "loaf": "crates-io/bitflags",
+          "version": "2.13.2"
+        },
+        {
+          "dependency_key": "num-traits",
+          "domain": "target",
+          "loaf": "crates-io/num-traits",
+          "version": "0.2.19"
+        },
+        {
+          "dependency_key": "rand",
+          "domain": "target",
+          "loaf": "crates-io/rand",
+          "version": "0.9.5"
+        },
+        {
+          "dependency_key": "rand_chacha",
+          "domain": "target",
+          "loaf": "crates-io/rand_chacha",
+          "version": "0.9.0"
+        },
+        {
+          "dependency_key": "rand_xorshift",
+          "domain": "target",
+          "loaf": "crates-io/rand_xorshift",
+          "version": "0.4.0"
+        },
+        {
+          "dependency_key": "regex-syntax",
+          "domain": "target",
+          "loaf": "crates-io/regex-syntax",
+          "version": "0.8.11"
+        },
+        {
+          "dependency_key": "rusty-fork",
+          "domain": "target",
+          "loaf": "crates-io/rusty-fork",
+          "version": "0.3.1"
+        },
+        {
+          "dependency_key": "tempfile",
+          "domain": "target",
+          "loaf": "crates-io/tempfile",
+          "version": "3.27.0"
+        },
+        {
+          "dependency_key": "unarray",
+          "domain": "target",
+          "loaf": "crates-io/unarray",
+          "version": "0.1.4"
+        }
+      ],
+      "features": [
+        "bit-set",
+        "default",
+        "fork",
+        "regex-syntax",
+        "rusty-fork",
+        "std",
+        "tempfile",
+        "timeout"
+      ],
+      "loaf": "crates-io/proptest",
+      "target_predicates": [],
+      "version": "1.11.0"
+    },
+    {
       "archive_digest": "sha256:0d607fb9aa622cce9370226b99efb2a467469402950e558e91294093db174033",
       "domain": "target",
       "edges": [
@@ -4663,6 +4970,15 @@
       "loaf": "crates-io/pulley-macros",
       "target_predicates": [],
       "version": "36.0.17"
+    },
+    {
+      "archive_digest": "sha256:b11d068da74234e39694b93938bccdc05b42299d9ec0fe62483a3bb9ef2f16cc",
+      "domain": "target",
+      "edges": [],
+      "features": [],
+      "loaf": "crates-io/quick-error",
+      "target_predicates": [],
+      "version": "1.2.3"
     },
     {
       "archive_digest": "sha256:13dde5b3676f73d06ce192241223020aeb4935cb990a1101a2681107b87583d2",
@@ -7297,6 +7613,26 @@
       "version": "0.8.6"
     },
     {
+      "archive_digest": "sha256:65a7232288dbb71d8928c3e0befa52325de23adebae42bea1aad6599ad0bbc7b",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "rand_core",
+          "domain": "target",
+          "loaf": "crates-io/rand_core",
+          "version": "0.9.5"
+        }
+      ],
+      "features": [
+        "alloc",
+        "os_rng",
+        "std"
+      ],
+      "loaf": "crates-io/rand",
+      "target_predicates": [],
+      "version": "0.9.5"
+    },
+    {
       "archive_digest": "sha256:65a835a096edfb7e6d3dc2c231727d4c57fc831ef8217e2ad7d31a6bfc23af90",
       "domain": "target",
       "edges": [
@@ -7321,6 +7657,28 @@
       "version": "0.3.1"
     },
     {
+      "archive_digest": "sha256:83892607590b67773a95faea0e77eafb1dbb820c16a91feaa20d69bf21e3f93a",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "ppv-lite86",
+          "domain": "target",
+          "loaf": "crates-io/ppv-lite86",
+          "version": "0.2.21"
+        },
+        {
+          "dependency_key": "rand_core",
+          "domain": "target",
+          "loaf": "crates-io/rand_core",
+          "version": "0.9.5"
+        }
+      ],
+      "features": [],
+      "loaf": "crates-io/rand_chacha",
+      "target_predicates": [],
+      "version": "0.9.0"
+    },
+    {
       "archive_digest": "sha256:0d5d806808704064c3250e4330e651ff40fd2f32517cc04bfbd953226227310d",
       "domain": "target",
       "edges": [
@@ -7339,6 +7697,41 @@
       "loaf": "crates-io/rand_core",
       "target_predicates": [],
       "version": "0.6.4"
+    },
+    {
+      "archive_digest": "sha256:86e32f146be4b1f7b4039566cdd873d6069844545cf12f34dde9ff38e05a8708",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "getrandom",
+          "domain": "target",
+          "loaf": "crates-io/getrandom",
+          "version": "0.3.4"
+        }
+      ],
+      "features": [
+        "os_rng",
+        "std"
+      ],
+      "loaf": "crates-io/rand_core",
+      "target_predicates": [],
+      "version": "0.9.5"
+    },
+    {
+      "archive_digest": "sha256:ff4b6436f39a8960126888f6106b29cfa04b145b36198341a1e174d1acbd2ec7",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "rand_core",
+          "domain": "target",
+          "loaf": "crates-io/rand_core",
+          "version": "0.9.5"
+        }
+      ],
+      "features": [],
+      "loaf": "crates-io/rand_xorshift",
+      "target_predicates": [],
+      "version": "0.4.0"
     },
     {
       "archive_digest": "sha256:ec4a0ccae1b8033e2ee2e7e567a9e98f48e7faadd92656e4b8df23c6215ecbcf",
@@ -7870,6 +8263,43 @@
         }
       ],
       "version": "1.1.5"
+    },
+    {
+      "archive_digest": "sha256:0ce140e65b3d3467c7ed00e5cac8071595ed9c22f3583168e0aaf4e995bedc9b",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "fnv",
+          "domain": "target",
+          "loaf": "crates-io/fnv",
+          "version": "1.0.7"
+        },
+        {
+          "dependency_key": "quick-error",
+          "domain": "target",
+          "loaf": "crates-io/quick-error",
+          "version": "1.2.3"
+        },
+        {
+          "dependency_key": "tempfile",
+          "domain": "target",
+          "loaf": "crates-io/tempfile",
+          "version": "3.27.0"
+        },
+        {
+          "dependency_key": "wait-timeout",
+          "domain": "target",
+          "loaf": "crates-io/wait-timeout",
+          "version": "0.2.1"
+        }
+      ],
+      "features": [
+        "timeout",
+        "wait-timeout"
+      ],
+      "loaf": "crates-io/rusty-fork",
+      "target_predicates": [],
+      "version": "0.3.1"
     },
     {
       "archive_digest": "sha256:95455475ab4fa142c0a2ff4bf2acbb7e435058430b2d9d258a2ee65f662423a6",
@@ -8538,6 +8968,19 @@
       "loaf": "crates-io/simd-adler32",
       "target_predicates": [],
       "version": "0.3.10"
+    },
+    {
+      "archive_digest": "sha256:71d9180827d3ec5e63f403a6fa0b875f6e0b2568e508cdee09ffc733ef4f4b56",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "default",
+        "inline",
+        "text"
+      ],
+      "loaf": "crates-io/similar",
+      "target_predicates": [],
+      "version": "2.7.0"
     },
     {
       "archive_digest": "sha256:67e78476a0ae46e950e0efc18f4feb8b38f12919a108881b109b67d7c3f0a7e5",
@@ -9932,6 +10375,15 @@
       "version": "1.20.1"
     },
     {
+      "archive_digest": "sha256:fa4d22493e7abd0fa55baa9743af73f6e9eed07be9161d63d0f3db3e20ffa084",
+      "domain": "target",
+      "edges": [],
+      "features": [],
+      "loaf": "crates-io/unarray",
+      "target_predicates": [],
+      "version": "0.1.4"
+    },
+    {
       "archive_digest": "sha256:d8fb134fce081f3df28654a548970d4d596498160d12ce434f55607983b06504",
       "domain": "host",
       "edges": [],
@@ -9971,6 +10423,18 @@
       "loaf": "crates-io/unicode-width",
       "target_predicates": [],
       "version": "0.1.14"
+    },
+    {
+      "archive_digest": "sha256:e1495e6b6858bfce0aea035aafc8fe99dd925d2ce7797274f316ef43ac4d1c2c",
+      "domain": "target",
+      "edges": [],
+      "features": [
+        "cjk",
+        "default"
+      ],
+      "loaf": "crates-io/unicode-width",
+      "target_predicates": [],
+      "version": "0.2.2"
     },
     {
       "archive_digest": "sha256:267c21290e03b82d2f2b0633c7e7b8e4bdcc17d0827ac03fe399b966825efee3",
@@ -10046,6 +10510,28 @@
       "version": "0.2.2"
     },
     {
+      "archive_digest": "sha256:d5d57903c5235b93908cb67fd3b85b39615762365c7cbaf345e00acce3e6d852",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "libc",
+          "domain": "target",
+          "loaf": "crates-io/libc",
+          "version": "0.2.190"
+        }
+      ],
+      "features": [],
+      "loaf": "crates-io/wait-timeout",
+      "target_predicates": [
+        {
+          "declaration": 0,
+          "matches": true,
+          "target": "cfg(unix)"
+        }
+      ],
+      "version": "0.2.1"
+    },
+    {
       "archive_digest": "sha256:efdf587072c5bd707d7e09e6296e92d8fa5985dba7d2858df5275b86a83cc133",
       "domain": "target",
       "edges": [
@@ -10086,6 +10572,25 @@
       "loaf": "crates-io/wasm-encoder",
       "target_predicates": [],
       "version": "0.236.1"
+    },
+    {
+      "archive_digest": "sha256:db68451837b3eb460196a2ac248dd743e403cb1a86e5848004b5e27faa0b6626",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "leb128fmt",
+          "domain": "target",
+          "loaf": "crates-io/leb128fmt",
+          "version": "0.1.0"
+        }
+      ],
+      "features": [
+        "component-model",
+        "std"
+      ],
+      "loaf": "crates-io/wasm-encoder",
+      "target_predicates": [],
+      "version": "0.261.0"
     },
     {
       "archive_digest": "sha256:a7b44db83b219aa782c22f14cd72f0cde172e4e2711d3b390519d3e154a1dbfb",
@@ -11240,6 +11745,68 @@
       "loaf": "crates-io/wast",
       "target_predicates": [],
       "version": "35.0.2"
+    },
+    {
+      "archive_digest": "sha256:e6a314c9f2f4d3f21db40b1dbb0a97827f7cbb552a1e4b1480e8fe8e899fbba3",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "bumpalo",
+          "domain": "target",
+          "loaf": "crates-io/bumpalo",
+          "version": "3.20.3"
+        },
+        {
+          "dependency_key": "leb128fmt",
+          "domain": "target",
+          "loaf": "crates-io/leb128fmt",
+          "version": "0.1.0"
+        },
+        {
+          "dependency_key": "memchr",
+          "domain": "target",
+          "loaf": "crates-io/memchr",
+          "version": "2.8.3"
+        },
+        {
+          "dependency_key": "unicode-width",
+          "domain": "target",
+          "loaf": "crates-io/unicode-width",
+          "version": "0.2.2"
+        },
+        {
+          "dependency_key": "wasm-encoder",
+          "domain": "target",
+          "loaf": "crates-io/wasm-encoder",
+          "version": "0.261.0"
+        }
+      ],
+      "features": [
+        "component-model",
+        "wasm-module"
+      ],
+      "loaf": "crates-io/wast",
+      "target_predicates": [],
+      "version": "261.0.0"
+    },
+    {
+      "archive_digest": "sha256:17a96b8d1893bd13a0d5853559221c2107f3f7f239c4498ce2bd2078b8133a0e",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "wast",
+          "domain": "target",
+          "loaf": "crates-io/wast",
+          "version": "261.0.0"
+        }
+      ],
+      "features": [
+        "component-model",
+        "default"
+      ],
+      "loaf": "crates-io/wat",
+      "target_predicates": [],
+      "version": "1.261.0"
     },
     {
       "archive_digest": "sha256:4c18497ec7b32004b44c258eb614f4ea5f2d51dacd274e01a1f6af7eb6a7d3b1",

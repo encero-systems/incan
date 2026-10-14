@@ -71,6 +71,9 @@ const DRIVER_APPLE_SDK_INPUTS: &[&str] = &[
 
 /// Select the ordinary closure or the explicit driver's additional SDK inputs before computing its identity.
 fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result<Option<PinnedLink>, OvenRustcError> {
+    let _trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::pinned_native_link", target, declared_driver)
+            .entered();
     if matches!(target, "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu") {
         let host = rustc_host_target(rustc)?;
         let sysroot = super::toolchain::normalized_std_sysroot(rustc, target)?;
@@ -90,18 +93,13 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
     let sdk = std::env::var_os("INCAN_OVEN_LINK_SDK")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"));
-    let mut members = BTreeMap::new();
     let driver_inputs = if declared_driver { DRIVER_APPLE_SDK_INPUTS } else { &[] };
-    for relative in ORDINARY_APPLE_SDK_INPUTS.iter().chain(driver_inputs).copied() {
-        let path = sdk.join(relative);
-        let bytes = fs::read(&path).map_err(|source| OvenRustcError::Io { path, source })?;
-        members.insert(relative, bytes);
-    }
+    let members = apple_sdk_member_identities(&sdk, ORDINARY_APPLE_SDK_INPUTS.iter().chain(driver_inputs).copied())?;
     // The normalized sysroot always places LLD's LLVM runtime (from the `rustc` component), so it is always bound.
     let llvm = host_root.join("lib/libLLVM.dylib");
     let mut identities = apple_linker_identities(&linker, &llvm)?;
-    for (relative, bytes) in &members {
-        identities.insert(relative, digest_bytes(bytes));
+    for (relative, digest) in &members {
+        identities.insert(relative, digest.clone());
     }
     // SDK version is an explicit link policy, never inferred from the machine's selected developer directory.
     identities.insert("platform-policy", "macos:min=11.0:sdk=26.5:direct-lld:v4".to_string());
@@ -110,6 +108,7 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
         message: error.to_string(),
     })?;
     let identity = digest_bytes(&encoded);
+    let source_sdk = sdk;
     let sdk = std::env::temp_dir()
         .join("incan-oven-link-sdk")
         .join(identity.replace(':', "-"));
@@ -117,7 +116,7 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
         path: sdk.clone(),
         source,
     })?;
-    stage_link_members(&sdk, members)?;
+    stage_link_members(&source_sdk, &sdk, &members)?;
     Ok(Some(PinnedLink {
         linker,
         sdk,
@@ -134,33 +133,64 @@ fn apple_linker_identities(linker: &Path, llvm: &Path) -> Result<BTreeMap<&'stat
     ]))
 }
 
-/// Revalidate staged bytes and atomically restore each admitted SDK member at its original relative path.
-fn stage_link_members(sdk: &Path, members: BTreeMap<&str, Vec<u8>>) -> Result<(), OvenRustcError> {
-    for (relative, bytes) in members {
+/// Observe exact SDK member identities through the existing replacement-sensitive file observations.
+/// Source symlinks retain the system installation's ordinary resolution; their current target is reconciled on each
+/// call. Only byte identities enter the link policy, so this acceleration does not change native receipts.
+fn apple_sdk_member_identities<'a>(
+    sdk: &Path,
+    members: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeMap<&'a str, String>, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::observe_sdk_link_members").entered();
+    members
+        .into_iter()
+        .map(|relative| Ok((relative, oven_store::store::digest_regular_file(&sdk.join(relative))?.1)))
+        .collect()
+}
+
+/// Reconcile staged members with their exact observed source identities, restoring only missing or changed bytes.
+/// The temporary projection grants no authority: each member uses the existing file observer, and source bytes
+/// read for restoration must still match the identity used by the receipt before atomic publication.
+fn stage_link_members(source_sdk: &Path, sdk: &Path, members: &BTreeMap<&str, String>) -> Result<(), OvenRustcError> {
+    let _trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_staged_link_members").entered();
+    for (relative, expected) in members {
         let path = sdk.join(relative);
-        // Recheck the staged bytes even on reuse; an ambient temp directory is not an authority.
-        if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
-            let parent = path.parent().ok_or_else(|| OvenRustcError::InvalidInput {
-                field: "link closure",
-                message: "SDK member has no parent directory".to_string(),
-            })?;
-            fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-            let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|source| OvenRustcError::Io {
-                path: path.clone(),
-                source,
-            })?;
-            temporary.write_all(&bytes).map_err(|source| OvenRustcError::Io {
-                path: path.clone(),
-                source,
-            })?;
-            temporary.persist(&path).map_err(|error| OvenRustcError::Io {
-                path,
-                source: error.error,
-            })?;
+        let current = fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file())
+            && oven_store::store::digest_regular_file(&path).is_ok_and(|(_, digest)| digest == *expected);
+        if current {
+            continue;
         }
+        let source = source_sdk.join(relative);
+        let bytes = fs::read(&source).map_err(|error| OvenRustcError::Io {
+            path: source,
+            source: error,
+        })?;
+        if digest_bytes(&bytes) != *expected {
+            return Err(OvenRustcError::InvalidInput {
+                field: "link closure",
+                message: format!("SDK member {relative} changed before projection"),
+            });
+        }
+        let parent = path.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "link closure",
+            message: "SDK member has no parent directory".to_string(),
+        })?;
+        fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|source| OvenRustcError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        temporary.write_all(&bytes).map_err(|source| OvenRustcError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        temporary.persist(&path).map_err(|error| OvenRustcError::Io {
+            path,
+            source: error.error,
+        })?;
     }
     Ok(())
 }
@@ -552,6 +582,69 @@ mod tests {
                     .collect())
             },
         )
+    }
+
+    /// SDK stubs use the same observer as compiler binaries, preserving symlink retarget and restored-mtime detection.
+    #[cfg(unix)]
+    #[test]
+    fn sdk_member_observations_preserve_identity_and_freshness() -> Result<(), Box<dyn std::error::Error>> {
+        crate::sdk_closure::digest_reuse_tests::assert_file_observation(
+            "rustc::linking::tests::sdk_member_observations_preserve_identity_and_freshness",
+            ["rust-lld", "libLLVM.dylib"],
+            |first, _| {
+                let root = first.parent().ok_or("missing SDK fixture parent")?;
+                Ok(super::apple_sdk_member_identities(root, ["rust-lld", "libLLVM.dylib"])?
+                    .into_iter()
+                    .map(|(name, digest)| (name.to_string(), digest))
+                    .collect())
+            },
+        )
+    }
+
+    /// Staged members retain inode/time on reuse, repair preserved-mtime corruption, and refuse stale source
+    /// identities.
+    #[cfg(unix)]
+    #[test]
+    fn staged_sdk_members_reuse_restore_and_refuse_source_drift() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::{MetadataExt, symlink};
+        let source = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        let relative = "usr/lib/member.tbd";
+        fs::create_dir_all(source.path().join("usr/lib"))?;
+        let input = source.path().join(relative);
+        fs::write(&input, b"stub first")?;
+        let identities = super::apple_sdk_member_identities(source.path(), [relative])?;
+        assert_eq!(identities[relative], oven_store::digest_bytes(b"stub first"));
+        super::stage_link_members(source.path(), output.path(), &identities)?;
+        let staged = output.path().join(relative);
+        let before = fs::metadata(&staged)?;
+        super::stage_link_members(source.path(), output.path(), &identities)?;
+        let repeated = fs::metadata(&staged)?;
+        assert_eq!(before.ino(), repeated.ino());
+        assert_eq!(before.modified()?, repeated.modified()?);
+        fs::write(&staged, b"stub other")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&staged)?
+            .set_times(fs::FileTimes::new().set_modified(before.modified()?))?;
+        super::stage_link_members(source.path(), output.path(), &identities)?;
+        assert_eq!(fs::read(&staged)?, b"stub first");
+        fs::remove_file(&staged)?;
+        let outside = output.path().join("unrelated");
+        fs::write(&outside, b"stub first")?;
+        symlink(&outside, &staged)?;
+        super::stage_link_members(source.path(), output.path(), &identities)?;
+        assert!(!fs::symlink_metadata(&staged)?.file_type().is_symlink());
+        assert_eq!(fs::read(&outside)?, b"stub first");
+        fs::remove_file(&staged)?;
+        fs::write(&input, b"stub other")?;
+        assert!(super::stage_link_members(source.path(), output.path(), &identities).is_err());
+        assert!(!staged.exists());
+        let changed = super::apple_sdk_member_identities(source.path(), [relative])?;
+        assert_ne!(changed, identities);
+        super::stage_link_members(source.path(), output.path(), &changed)?;
+        assert_eq!(fs::read(&staged)?, b"stub other");
+        Ok(())
     }
 
     /// A declared rustc-dev driver links and starts against its content-bound SDK while ordinary units keep their

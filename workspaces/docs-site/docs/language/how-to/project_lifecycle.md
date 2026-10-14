@@ -141,10 +141,10 @@ Project-aware execution commands enforce this before they do real work. If the a
 You can make a named env stricter for release or CI workflows:
 
 ```toml
-[tool.incan.envs.ci]
+[envs.ci]
 requires-incan = ">=0.3,<0.4"
 
-[tool.incan.envs.ci.scripts]
+[envs.ci.scripts]
 test = ["incan", "test", "--locked"]
 ```
 
@@ -162,7 +162,7 @@ Use `incan env` when a project has commands that should always run with the same
 The important mental model is:
 
 - `[project.scripts]` is for Incan entry points such as `main = "src/main.incn"`
-- `[tool.incan.envs.<name>.scripts]` is for named shell-style commands such as `["incan", "test", "--locked"]`
+- `[envs.<name>.scripts]` is for named shell-style commands such as `["incan", "test", "--locked"]`
 - `incan env` does not create a virtual environment or a shell session; it resolves a named command context and runs it explicitly
 
 If all you want is "run the app" or "run the tests", plain `incan run` and `incan test` are still the normal commands. Reach for `incan env` when the project starts to accumulate named workflows such as local test runs, CI runs, docs builds, or release checks.
@@ -172,32 +172,32 @@ If all you want is "run the app" or "run the tests", plain `incan run` and `inca
 This is a realistic small-project setup:
 
 ```toml title="loaf.toml"
-[tool.incan.envs.default]
+[envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
-[tool.incan.envs.default.scripts]
+[envs.default.scripts]
 run = ["incan", "run"]
 test = ["incan", "test"]
 lock = ["incan", "lock"]
 
-[tool.incan.envs.unit]
+[envs.unit]
 env-vars = { INCAN_FANCY_ERRORS = "1" }
 
-[tool.incan.envs.unit.scripts]
+[envs.unit.scripts]
 test = ["incan", "test", "tests/"]
 
-[tool.incan.envs.ci]
+[envs.ci]
 extends = ["unit"]
 
-[tool.incan.envs.ci.scripts]
+[envs.ci.scripts]
 test = ["incan", "test", "--locked", "tests/"]
 build = ["incan", "build", "src/main.incn", "--locked"]
 
-[tool.incan.envs.docs]
+[envs.docs]
 detached = true
 cwd = "workspaces/docs-site"
 
-[tool.incan.envs.docs.scripts]
+[envs.docs.scripts]
 build = ["python3", "-m", "mkdocs", "build", "--strict"]
 serve = ["python3", "-m", "mkdocs", "serve"]
 ```
@@ -272,34 +272,34 @@ Poor uses:
 
 ## Use environment inheritance carefully
 
-Every project has an ambient `default` env, even if you never declare `[tool.incan.envs.default]`. Declaring it customizes that baseline rather than creating a special extra env.
+Every project has an ambient `default` env, even if you never declare `[envs.default]`. Declaring it customizes that baseline rather than creating a special extra env.
 
 Other envs include `default` automatically unless they set `detached = true`.
 
 Use `default` for shared baseline behavior:
 
 ```toml
-[tool.incan.envs.default]
+[envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
-[tool.incan.envs.default.scripts]
+[envs.default.scripts]
 test = ["incan", "test"]
 ```
 
 Use `extends` when one env is a stricter or more specialized version of another:
 
 ```toml
-[tool.incan.envs.ci]
+[envs.ci]
 extends = ["unit"]
 
-[tool.incan.envs.ci.scripts]
+[envs.ci.scripts]
 test = ["incan", "test", "--locked", "tests/"]
 ```
 
 Use `detached = true` when an env should stand on its own:
 
 ```toml
-[tool.incan.envs.docs]
+[envs.docs]
 detached = true
 cwd = "workspaces/docs-site"
 ```

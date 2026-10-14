@@ -155,23 +155,38 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use incan_test_support::{incan_command, strip_ansi_escapes};
     use std::fs;
 
+    /// Exercise the real command owner and require the intended diagnostic after a valid source changes.
     #[test]
     fn check_file_reports_type_errors() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source_path = tmp.path().join("main.incn");
-        fs::write(
-            &source_path,
-            r#"
-def main() -> None:
-    missing_symbol()
-"#,
-        )?;
+        fs::write(&source_path, "def main() -> None:\n    pass\n")?;
+        let valid = incan_command()
+            .current_dir(tmp.path())
+            .arg("--check")
+            .arg(&source_path)
+            .output()?;
+        assert!(
+            valid.status.success(),
+            "valid source must pass the actual CLI: {}",
+            String::from_utf8_lossy(&valid.stderr)
+        );
 
-        let result = check_file(source_path.to_string_lossy().as_ref());
-        assert!(result.is_err(), "expected unresolved symbol to fail check_file");
+        fs::write(&source_path, "def main() -> None:\n    missing_symbol()\n")?;
+        let invalid = incan_command()
+            .current_dir(tmp.path())
+            .arg("--check")
+            .arg(&source_path)
+            .output()?;
+        assert!(!invalid.status.success(), "expected unresolved symbol to fail the CLI");
+        let diagnostic = strip_ansi_escapes(&String::from_utf8_lossy(&invalid.stderr));
+        assert!(
+            diagnostic.contains("Unknown symbol 'missing_symbol'"),
+            "expected unresolved-symbol diagnostic, got: {diagnostic}"
+        );
         Ok(())
     }
 }

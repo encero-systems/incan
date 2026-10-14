@@ -34,7 +34,10 @@
 #![deny(clippy::expect_used)]
 
 pub mod commands;
-pub mod test_runner;
+/// Canonical project owner shared with Oven.
+pub use oven_cli::project_owner;
+/// Canonical test runner shared with Oven.
+pub use oven_cli::test_runner;
 
 use std::env;
 use std::io::{self, IsTerminal};
@@ -54,8 +57,11 @@ use incan_driver::build_report::{BuildReportFormat, BuildReportOptions, RustInsp
 use incan_driver::cargo_policy::{CargoPolicy, CargoPolicyCliFlags};
 use incan_provider::FeatureSelection;
 use incan_provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
+use oven_cli::workspace_scope::{
+    resolve_workspace_command_scope, resolve_workspace_library_build_scope, workspace_member_relative_path,
+};
 use oven_model::manifest::ProjectManifest;
-use oven_model::workspace::{ResolvedWorkspaceScope, WorkspaceGraph, WorkspaceMember, WorkspaceScopeRequest};
+use oven_model::workspace::WorkspaceMember;
 
 // ============================================================================
 // CLI Error handling
@@ -399,110 +405,10 @@ pub enum Command {
         command: InspectCommand,
     },
 
-    /// Run tests (pytest-style)
+    /// Run Incan tests through the shared Oven runner
     Test {
-        /// Path to test file or directory
-        #[arg(value_name = "PATH", default_value = ".")]
-        path: PathBuf,
-        /// Select Incan package features for collection and generated test batches
         #[command(flatten)]
-        package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for collection and generated test batches
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
-        /// Verbose output
-        #[arg(short, long)]
-        verbose: bool,
-        /// Stop on first failure
-        #[arg(short = 'x', long = "exitfirst")]
-        stop_on_fail: bool,
-        /// Include slow tests
-        #[arg(long)]
-        slow: bool,
-        /// Filter tests by keyword expression
-        #[arg(short = 'k', value_name = "EXPR")]
-        filter: Option<String>,
-        /// Filter tests by marker expression
-        #[arg(short = 'm', long = "markers", value_name = "EXPR")]
-        marker_expr: Option<String>,
-        /// Treat unknown marker names as collection errors
-        #[arg(long = "strict-markers")]
-        strict_markers: bool,
-        /// Maximum number of runner execution units to run concurrently
-        #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = 1)]
-        jobs: usize,
-        /// Enable a collection-time testing feature for std.testing.feature("name")
-        #[arg(long = "feature", value_name = "NAME")]
-        test_features: Vec<String>,
-        /// Default generated test-batch timeout, such as 250ms, 5s, or 2m
-        #[arg(long = "timeout", value_name = "DURATION")]
-        timeout: Option<String>,
-        /// Show test stdout/stderr even when tests pass
-        #[arg(long = "nocapture")]
-        no_capture: bool,
-        /// Fail if no tests are collected
-        #[arg(long = "fail-on-empty")]
-        fail_on_empty: bool,
-        /// List collected tests after filtering and do not execute them
-        #[arg(long = "list")]
-        list_only: bool,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "console")]
-        report_format: test_runner::TestOutputFormat,
-        /// Write a JUnit XML report to this path
-        #[arg(long = "junit", value_name = "PATH")]
-        junit_path: Option<PathBuf>,
-        /// Show the slowest N test durations after the run
-        #[arg(long = "durations", value_name = "N")]
-        durations: Option<usize>,
-        /// Shuffle test execution order
-        #[arg(long)]
-        shuffle: bool,
-        /// Seed used with --shuffle
-        #[arg(long, value_name = "N")]
-        seed: Option<u64>,
-        /// Run xfail tests as ordinary tests
-        #[arg(long = "run-xfail")]
-        run_xfail: bool,
-        /// Require up-to-date oven.lock; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        locked: bool,
-        /// Disable INCAN_LOCKED for this invocation
-        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
-        no_locked: bool,
-        /// Require offline-compatible locked inputs; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        offline: bool,
-        /// Disable INCAN_OFFLINE for this invocation
-        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
-        no_offline: bool,
-        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        frozen: bool,
-        /// Disable INCAN_FROZEN for this invocation
-        #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
-        no_frozen: bool,
-        /// Retired Cargo argument surface; normal Oven commands reject it
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-        cargo_args: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-        cargo_features: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-no-default-features", hide = true)]
-        cargo_no_default_features: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-all-features", hide = true)]
-        cargo_all_features: bool,
-        /// Select every member in the active workspace
-        #[arg(long, conflicts_with = "members")]
-        workspace: bool,
-        /// Select one workspace member by name or root-relative path; may be repeated
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
-        members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
+        arguments: oven_cli::cli::TestArgs,
     },
 
     /// Create a new Incan project directory
@@ -1041,84 +947,9 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             workspace,
             members,
         }) => execute_format(path, check, diff, workspace, members),
-        Some(Command::Test {
-            path,
-            package_features,
-            sdk_profile,
-            verbose,
-            stop_on_fail,
-            slow,
-            filter,
-            marker_expr,
-            strict_markers,
-            jobs,
-            test_features,
-            timeout,
-            no_capture,
-            fail_on_empty,
-            list_only,
-            report_format,
-            junit_path,
-            durations,
-            shuffle,
-            seed,
-            run_xfail,
-            locked,
-            offline,
-            no_offline,
-            frozen,
-            no_frozen,
-            no_locked,
-            cargo_args,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-            workspace,
-            members,
-            cargo_passthrough,
-        }) => execute_tests(
-            TestCommandOptions {
-                path,
-                verbose,
-                stop_on_fail,
-                include_slow: slow,
-                filter,
-                marker_expr,
-                strict_markers,
-                jobs,
-                test_features,
-                timeout,
-                no_capture,
-                use_color,
-                fail_on_empty,
-                list_only,
-                report_format,
-                junit_path,
-                durations,
-                shuffle,
-                seed,
-                run_xfail,
-                package_features: package_features.into(),
-                sdk_profile: sdk_profile.sdk_profile,
-                cargo_policy: CargoPolicy::from_cli_and_env(
-                    CargoPolicyCliFlags {
-                        offline,
-                        no_offline,
-                        locked,
-                        no_locked,
-                        frozen,
-                        no_frozen,
-                    },
-                    cargo_args,
-                    cargo_passthrough,
-                ),
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
-            },
-            workspace,
-            members,
-        ),
+        Some(Command::Test { arguments }) => {
+            oven_cli::test_command::run(arguments, use_color, oven_cli::test_runner::TestLanguages::Incan)
+        }
         Some(Command::Version {
             bump,
             set,
@@ -1234,54 +1065,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             }
         }
     }
-}
-
-/// Resolve the active RFC 077 scope once for a command, retaining compiler-owned selection identity after graph
-/// discovery has finished. Commands without workspace selectors preserve their historical single-project behavior
-/// when discovery finds no containing workspace.
-fn resolve_workspace_command_scope(
-    select_workspace: bool,
-    member_selectors: &[String],
-) -> CliResult<Option<ResolvedWorkspaceScope>> {
-    resolve_workspace_command_scope_with_library_build_order(select_workspace, member_selectors, false)
-}
-
-/// Resolve a workspace scope for a library build, retaining provider-before-consumer execution order from the
-/// compiler-owned workspace graph.
-fn resolve_workspace_library_build_scope(
-    select_workspace: bool,
-    member_selectors: &[String],
-) -> CliResult<Option<ResolvedWorkspaceScope>> {
-    resolve_workspace_command_scope_with_library_build_order(select_workspace, member_selectors, true)
-}
-
-/// Resolve the active RFC 077 scope once, optionally applying its library-specific execution order.
-fn resolve_workspace_command_scope_with_library_build_order(
-    select_workspace: bool,
-    member_selectors: &[String],
-    library_build_order: bool,
-) -> CliResult<Option<ResolvedWorkspaceScope>> {
-    let current_dir = env::current_dir()
-        .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?;
-    let workspace = WorkspaceGraph::discover(&current_dir).map_err(|error| CliError::failure(error.to_string()))?;
-    let Some(workspace) = workspace else {
-        if select_workspace || !member_selectors.is_empty() {
-            return Err(CliError::failure(
-                "--workspace and --member require an active RFC 077 workspace",
-            ));
-        }
-        return Ok(None);
-    };
-    let request = WorkspaceScopeRequest::new(&current_dir, select_workspace, member_selectors);
-    let scope = if library_build_order {
-        workspace.resolve_library_build_scope(request)
-    } else {
-        workspace
-            .resolve_scope(request)
-            .map(|selection| selection.to_owned_scope())
-    }
-    .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok(Some(scope))
 }
 
 /// Owned build inputs that can be applied once per compiler-selected workspace member.
@@ -1698,10 +1481,11 @@ fn execute_build(
     }
 }
 
+/// One member result from the canonical owner, retaining its existing diagnostic envelope for workspace rendering.
 struct WorkspaceCheckMemberOutcome {
     member: WorkspaceMember,
     target: Option<PathBuf>,
-    report: Option<commands::diagnostics::DiagnosticReport>,
+    report: Option<incan_driver::build::check::CheckOutput>,
     error: Option<String>,
 }
 
@@ -1716,6 +1500,11 @@ fn execute_check(
     member_selectors: Vec<String>,
 ) -> CliResult<ExitCode> {
     let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        let path = if path == Path::new(".") {
+            resolve_main_script_entry_file(None, "check", "a file path")?
+        } else {
+            path
+        };
         return commands::diagnostics::check_path_with_interop_target_selection(
             &path,
             format,
@@ -1739,18 +1528,23 @@ fn execute_check(
                 continue;
             }
         };
-        match commands::diagnostics::check_path_report_with_interop_target_selection(
+        match oven_cli::project_owner::check(
             &target,
             &package_features,
             sdk_profile.as_deref(),
             interop_target.as_deref(),
         ) {
-            Ok(report) => outcomes.push(WorkspaceCheckMemberOutcome {
-                member: member.clone(),
-                target: Some(target),
-                report: Some(report),
-                error: None,
-            }),
+            Ok(report) => {
+                for warning in &report.warnings {
+                    eprint!("{warning}");
+                }
+                outcomes.push(WorkspaceCheckMemberOutcome {
+                    member: member.clone(),
+                    target: Some(target),
+                    report: Some(report),
+                    error: None,
+                });
+            }
             Err(error) => outcomes.push(WorkspaceCheckMemberOutcome {
                 member: member.clone(),
                 target: Some(target),
@@ -1762,7 +1556,7 @@ fn execute_check(
 
     let ok = outcomes
         .iter()
-        .all(|outcome| outcome.error.is_none() && outcome.report.as_ref().is_some_and(|report| report.ok()));
+        .all(|outcome| outcome.error.is_none() && outcome.report.as_ref().is_some_and(|report| report.exit_code == 0));
 
     match format {
         DiagnosticOutputFormat::Text => {
@@ -1774,13 +1568,22 @@ fn execute_check(
                     .unwrap_or_else(|| "<unresolved>".to_string());
                 println!("workspace member {}: {target}", outcome.member.name());
                 if let Some(report) = &outcome.report {
-                    if report.ok() {
+                    if report.exit_code == 0 {
                         println!("✓ Type check passed!");
+                    } else if report.json.is_none() {
+                        eprintln!(
+                            "{}",
+                            report
+                                .human_message
+                                .as_deref()
+                                .unwrap_or("type check failed without diagnostics")
+                        );
                     } else {
                         eprint!(
                             "{}",
                             report
-                                .human_message()
+                                .human_message
+                                .as_deref()
                                 .unwrap_or("type check failed without diagnostics\n")
                         );
                     }
@@ -1803,16 +1606,32 @@ fn execute_check(
                     });
                     if let Some(object) = result.as_object_mut() {
                         if let Some(report) = &outcome.report {
-                            object.insert("report".to_string(), serde_json::json!(report));
+                            if let Some(json) = &report.json {
+                                let diagnostics = serde_json::from_str(json).map_err(|error| {
+                                    CliError::failure(format!("invalid member diagnostic report: {error}"))
+                                })?;
+                                object.insert("report".to_string(), diagnostics);
+                            } else {
+                                object.insert("ok".to_string(), serde_json::Value::Bool(false));
+                                object.insert(
+                                    "error".to_string(),
+                                    serde_json::Value::String(
+                                        report
+                                            .human_message
+                                            .clone()
+                                            .unwrap_or_else(|| "type check failed without diagnostics".to_string()),
+                                    ),
+                                );
+                            }
                         }
                         if let Some(error) = &outcome.error {
                             object.insert("ok".to_string(), serde_json::Value::Bool(false));
                             object.insert("error".to_string(), serde_json::Value::String(error.clone()));
                         }
                     }
-                    result
+                    Ok(result)
                 })
-                .collect::<Vec<_>>();
+                .collect::<CliResult<Vec<_>>>()?;
             let report = serde_json::json!({
                 "schema_version": "incan.workspace.check.v1",
                 "workspace": {
@@ -1871,161 +1690,6 @@ fn workspace_member_main_script_target(member: &WorkspaceMember, command_name: &
     Ok(manifest.project_root().join(main))
 }
 
-/// Owned test command inputs that can be replayed once for each validated workspace member.
-struct TestCommandOptions {
-    path: PathBuf,
-    verbose: bool,
-    stop_on_fail: bool,
-    include_slow: bool,
-    filter: Option<String>,
-    marker_expr: Option<String>,
-    strict_markers: bool,
-    jobs: usize,
-    test_features: Vec<String>,
-    timeout: Option<String>,
-    no_capture: bool,
-    use_color: bool,
-    fail_on_empty: bool,
-    list_only: bool,
-    report_format: test_runner::TestOutputFormat,
-    junit_path: Option<PathBuf>,
-    durations: Option<usize>,
-    shuffle: bool,
-    seed: Option<u64>,
-    run_xfail: bool,
-    package_features: FeatureSelection,
-    sdk_profile: Option<String>,
-    cargo_policy: CargoPolicy,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
-}
-
-impl TestCommandOptions {
-    /// Run one member-local test batch without asking the runner to rediscover workspace topology.
-    fn run_for(
-        &self,
-        path: &Path,
-        workspace_context: Option<test_runner::WorkspaceTestContext>,
-    ) -> CliResult<ExitCode> {
-        let path = path.to_string_lossy();
-        test_runner::run_tests(test_runner::TestRunConfig {
-            path: &path,
-            verbose: self.verbose,
-            stop_on_fail: self.stop_on_fail,
-            include_slow: self.include_slow,
-            filter: self.filter.as_deref(),
-            marker_expr: self.marker_expr.as_deref(),
-            strict_markers: self.strict_markers,
-            jobs: self.jobs,
-            test_features: self.test_features.clone(),
-            package_features: self.package_features.clone(),
-            sdk_profile: self.sdk_profile.clone(),
-            timeout: self.timeout.as_deref(),
-            no_capture: self.no_capture,
-            use_color: self.use_color,
-            fail_on_empty: self.fail_on_empty,
-            list_only: self.list_only,
-            report_format: self.report_format,
-            junit_path: self.junit_path.clone(),
-            durations: self.durations,
-            shuffle: self.shuffle,
-            seed: self.seed,
-            run_xfail: self.run_xfail,
-            cargo_policy: self.cargo_policy.clone(),
-            cargo_features: self.cargo_features.clone(),
-            cargo_no_default_features: self.cargo_no_default_features,
-            cargo_all_features: self.cargo_all_features,
-            workspace_context,
-        })
-    }
-}
-
-/// Fan out test batches only after compiler-owned workspace scope selection has completed.
-fn execute_tests(
-    options: TestCommandOptions,
-    select_workspace: bool,
-    member_selectors: Vec<String>,
-) -> CliResult<ExitCode> {
-    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
-        return options.run_for(&options.path, None);
-    };
-    if !scope.is_single_member() && options.junit_path.is_some() {
-        return Err(CliError::failure(
-            "--junit requires exactly one workspace member; select one with --member <name-or-path>",
-        ));
-    }
-
-    if options.report_format == test_runner::TestOutputFormat::Json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "schema_version": "incan.test.v1",
-                "event": "workspace_scope",
-                "workspace": {
-                    "root": scope.workspace_root().display().to_string(),
-                    "selected_scope": {
-                        "origin": scope.origin().as_str(),
-                        "members": scope.members().map(|member| serde_json::json!({
-                            "name": member.name(),
-                            "root": member.root().display().to_string(),
-                        })).collect::<Vec<_>>(),
-                    },
-                },
-            })
-        );
-    }
-
-    let mut failures = Vec::new();
-    for member in scope.members() {
-        let target = match workspace_member_relative_path(&options.path, member.root()) {
-            Ok(target) => target,
-            Err(error) => {
-                failures.push(format!("{}: {}", member.name(), error.message));
-                continue;
-            }
-        };
-        if options.report_format == test_runner::TestOutputFormat::Console {
-            println!("workspace member {}: {}", member.name(), target.display());
-        }
-        let workspace_context = test_runner::WorkspaceTestContext {
-            workspace_root: scope.workspace_root().to_path_buf(),
-            scope_origin: scope.origin().as_str().to_string(),
-            member_name: member.name().to_string(),
-            member_root: member.root().to_path_buf(),
-        };
-        if let Err(error) = options.run_for(&target, Some(workspace_context)) {
-            if options.report_format == test_runner::TestOutputFormat::Json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "schema_version": "incan.test.v1",
-                        "event": "workspace_member_error",
-                        "workspace": {
-                            "root": scope.workspace_root().display().to_string(),
-                            "scope_origin": scope.origin().as_str(),
-                            "member": {
-                                "name": member.name(),
-                                "root": member.root().display().to_string(),
-                            },
-                        },
-                        "error": error.message,
-                    })
-                );
-            } else if !error.message.is_empty() {
-                eprintln!("{}", error.message);
-            }
-            failures.push(member.name().to_string());
-        }
-    }
-
-    if failures.is_empty() {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Err(CliError::new("", ExitCode::FAILURE))
-    }
-}
-
 /// Apply `incan fmt` to the deterministic RFC 077 member scope when a workspace is active.
 fn execute_format(
     path: PathBuf,
@@ -2058,24 +1722,6 @@ fn execute_format(
             failures.join("\n")
         )))
     }
-}
-
-/// Resolve a formatting path against one selected member without allowing a multi-member command to escape scope.
-fn workspace_member_relative_path(path: &Path, member_root: &Path) -> CliResult<PathBuf> {
-    if path == Path::new(".") {
-        return Ok(member_root.to_path_buf());
-    }
-    if path.is_absolute() {
-        if path.starts_with(member_root) {
-            return Ok(path.to_path_buf());
-        }
-        return Err(CliError::failure(format!(
-            "format path {} is outside selected workspace member {}",
-            path.display(),
-            member_root.display()
-        )));
-    }
-    Ok(member_root.join(path))
 }
 
 /// Render top-level CLI help text.
@@ -3106,10 +2752,13 @@ mod tests {
     fn test_cli_parse_test() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "test", "-v", "-x", "-k", "unit"])?;
         let Some(Command::Test {
-            verbose,
-            stop_on_fail,
-            filter,
-            ..
+            arguments:
+                oven_cli::cli::TestArgs {
+                    verbose,
+                    stop_on_fail,
+                    filter,
+                    ..
+                },
         }) = cli.command
         else {
             return Err(expected_command("test"));
@@ -3123,7 +2772,10 @@ mod tests {
     #[test]
     fn test_cli_parse_test_collection_features() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "test", "tests/", "--feature", "known_bug", "--feature", "beta"])?;
-        let Some(Command::Test { test_features, .. }) = cli.command else {
+        let Some(Command::Test {
+            arguments: oven_cli::cli::TestArgs { test_features, .. },
+        }) = cli.command
+        else {
             return Err(expected_command("test"));
         };
         assert_eq!(test_features, ["known_bug", "beta"]);
@@ -3133,7 +2785,10 @@ mod tests {
     #[test]
     fn test_cli_parse_test_cargo_policy() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "test", "tests/", "--frozen", "--cargo-args", "--timings"])?;
-        let Some(Command::Test { frozen, cargo_args, .. }) = cli.command else {
+        let Some(Command::Test {
+            arguments: oven_cli::cli::TestArgs { frozen, cargo_args, .. },
+        }) = cli.command
+        else {
             return Err(expected_command("test"));
         };
         assert!(frozen);

@@ -136,23 +136,7 @@ pub(crate) fn capture_checked_native_demands(
         .collect::<BTreeSet<_>>();
     let selected =
         provider_plan.project_module_usage(used_module_paths.union(&public_dependency_modules).cloned().collect());
-    let mut provider_contracts = BTreeMap::new();
-    for record in selected
-        .records()
-        .filter(|record| !selected.used_modules(record).is_empty())
-    {
-        let contract = serde_json::json!({
-            "identity": record.identity, "authority": record.authority,
-            "namespace_claims": record.namespace_claims, "available": record.available,
-            "enabled": record.enabled, "implementation_facets": record.implementation_facets,
-            "checked_manifest": record.manifest.as_ref().map(|manifest| manifest.to_json_string()).transpose().map_err(|error| invalid(error.to_string()))?,
-            "used_modules": selected.used_modules(record),
-        });
-        provider_contracts.insert(
-            record.identity.stable_key(),
-            oven_store::digest_bytes(&serde_json::to_vec(&contract).map_err(|error| invalid(error.to_string()))?),
-        );
-    }
+    let provider_contracts = captured_provider_contracts(&selected)?;
     // ---- Authored structure proof ----
     let mut source_modules = BTreeMap::new();
     let mut unsupported_source = BTreeSet::new();
@@ -257,16 +241,110 @@ pub(crate) fn capture_checked_native_demands(
     })
 }
 
+/// Encode actual module-use contracts from one retained immutable provider catalog.
+fn captured_provider_contracts(selected: &ProviderPlan) -> CliResult<BTreeMap<String, String>> {
+    let mut provider_contracts = BTreeMap::new();
+    for record in selected
+        .records()
+        .filter(|record| !selected.used_modules(record).is_empty())
+    {
+        let contract = serde_json::json!({
+            "identity": record.identity, "authority": record.authority,
+            "namespace_claims": record.namespace_claims, "available": record.available,
+            "enabled": record.enabled, "implementation_facets": record.implementation_facets,
+            "checked_manifest": record.manifest.as_ref().map(|manifest| manifest.to_json_string()).transpose().map_err(|error| invalid(error.to_string()))?,
+            "used_modules": selected.used_modules(record),
+        });
+        provider_contracts.insert(
+            record.identity.stable_key(),
+            oven_store::digest_bytes(&serde_json::to_vec(&contract).map_err(|error| invalid(error.to_string()))?),
+        );
+    }
+    Ok(provider_contracts)
+}
+
 impl CheckedNativeDemands {
     /// Admit loaded ordinary source for checking while keeping every native, provider and macro demand explicit.
     /// Old scalar metadata retains its narrower coverage; no source fact alone certifies a checked publication.
-    pub(crate) fn require_ordinary_source_inspection(&self) -> CliResult<()> {
+    pub(crate) fn require_ordinary_source_inspection(
+        &self,
+        admitted: Option<(
+            &crate::build::library_dependencies::PreparedLibraryDependencies,
+            &ProviderPlan,
+        )>,
+    ) -> CliResult<()> {
         let facts = self
             .observed
             .as_ref()
             .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        let mut dependencies = BTreeSet::new();
+        let mut modules = BTreeSet::new();
+        if let Some((owners, plan)) = admitted {
+            let selected = plan.project_module_usage(
+                facts
+                    .used_module_paths
+                    .union(&facts.public_dependency_modules)
+                    .cloned()
+                    .collect(),
+            );
+            let requirements = owners.source_requirements(&selected)?;
+            dependencies.extend(
+                requirements
+                    .dependencies
+                    .iter()
+                    .map(|dependency| dependency.crate_name.clone()),
+            );
+            if captured_provider_contracts(&selected)? != facts.provider_contracts {
+                return Err(invalid(
+                    "ordinary native demands differ from their admitted provider contracts",
+                ));
+            }
+            for path in facts.used_module_paths.union(&facts.public_dependency_modules) {
+                if path.first().map(String::as_str) == Some("std") {
+                    // The checked catalog already owns selected standard modules. A publisher's own source
+                    // namespace remains separate and is checked by its original publication capability below.
+                    if matches!(
+                        selected.resolve_module(path),
+                        incan_provider::ProviderModuleResolution::Active(_)
+                    ) || selected.catalogs_modules_below(path)
+                    {
+                        modules.insert(path.clone());
+                    }
+                    continue;
+                }
+                if path.first().map(String::as_str) != Some("pub") {
+                    continue;
+                }
+                let (alias, module) = path[1..]
+                    .split_first()
+                    .ok_or_else(|| invalid("ordinary public module has no dependency alias"))?;
+                let owner = owners.checked_dependency(alias)?;
+                // A plain library's root exports are owned by its checked manifest; provider namespace claims
+                // describe additional module routes and are not required to import that root.
+                let public_api_module = owner.manifest().contract_metadata.api.as_ref().is_some_and(|api| {
+                    incan_frontend::api_metadata::checked_api_public_namespace(api, module).is_some()
+                });
+                if !module.is_empty()
+                    && !public_api_module
+                    && !matches!(
+                        selected.resolve_module(path),
+                        incan_provider::ProviderModuleResolution::Active(_)
+                    )
+                    && !selected.catalogs_modules_below(path)
+                {
+                    return Err(invalid(
+                        "ordinary public dependency module has no admitted checked owner",
+                    ));
+                }
+                modules.insert(path.clone());
+            }
+        } else if !facts.provider_contracts.is_empty() {
+            return Err(invalid(
+                "ordinary provider demand requires original checked dependency owners",
+            ));
+        }
         match &facts.ordinary_source {
-            Some(source) => source.require_inspection(facts),
+            Some(source) => source.require_inspection(facts, &modules, &dependencies),
             None => self.require_source_inspection(),
         }
     }
@@ -362,13 +440,7 @@ impl CheckedNativeDemands {
     }
 
     /// Require exact declared-crate coverage for ordinary replay; legacy sysroot facts grant no foreign imports.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
-        )
-    )]
+    #[cfg(test)]
     pub(super) fn require_declared_crates(&self, crates: &BTreeSet<String>) -> CliResult<()> {
         let facts = self
             .observed

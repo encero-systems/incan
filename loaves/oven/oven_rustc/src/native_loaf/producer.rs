@@ -68,7 +68,7 @@ impl NativeLoafInspectionUnit {
     pub fn source_root(&self) -> Result<std::path::PathBuf> {
         self.selected.verify()?;
         self.selected.native_owner.verify_admitted_payload().map_err(failed)?;
-        Ok(self.selected.native_owner.artifact_root.join("source"))
+        Ok(self.selected.native_owner.artifact_root().join("source"))
     }
 
     /// Declared host procedural-macro source role; this grants no macro execution permission.
@@ -146,7 +146,7 @@ impl NativeLoafInspectionInputs {
                     &unit.selected.record.source.features,
                     source.environment,
                     source.fact.as_ref(),
-                    &unit.selected.native_owner.artifact_root.join("source"),
+                    &unit.selected.native_owner.artifact_root().join("source"),
                     dependencies,
                 )
                 .map_err(NativeLoafError::Failed)?,
@@ -203,7 +203,12 @@ struct SourceProjection {
 /// Verify original complete inventories, then reconstruct source/fact inputs without a live producer shortcut.
 fn source_projection(unit: &SelectedNativeLoaf, work: &mut NativeLoafInspectionWork) -> Result<SourceProjection> {
     work.source_projection_attempts += 1;
-    verify_record(&unit.record, &unit.record_owner, &unit.native_owner)?;
+    verify_record(
+        &unit.record,
+        &unit.record_owner,
+        &unit.native_owner,
+        super::NativeInventory::Execution,
+    )?;
     unit.native_owner.verify_admitted_payload().map_err(failed)?;
     let manifest = super::selection::source_manifest_with_reader(unit, &mut |path| {
         work.manifest_read_attempts += 1;
@@ -373,7 +378,7 @@ fn source_member(unit: &SelectedNativeLoaf, relative: &str) -> Result<PathBuf> {
             "inspection source member is not inventoried by the native owner",
         ));
     }
-    Ok(unit.native_owner.artifact_root.join(relative))
+    Ok(unit.native_owner.artifact_root().join(relative))
 }
 
 /// Admit portable owner-relative members without traversal, empty names or foreign separators.

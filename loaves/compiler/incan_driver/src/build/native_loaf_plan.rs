@@ -5,8 +5,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use oven_rustc::native_loaf::NativeLoafClosure;
+use oven_rustc::native_loaf::{NativeLoafClosure, NativeLoafConsumerPreparation};
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain;
 use oven_rustc::plan::shared::OvenSharedNativePlan;
@@ -17,22 +18,26 @@ use oven_rustc::rustc::{
 use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
 use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 
+use super::retained_inputs::{ModelInputs, RetainedExecutableDependencies};
 use crate::error::{CliError, CliResult};
 
 const DOMAIN: &str = "ordinary-native-consumer-plan";
 
 /// Explicit producer coordinates shared by Rust-unit builds and ordinary executable inspection.
 /// These are inputs to the existing native producer, never an SDK catalog or independent source authority.
-pub(crate) struct ConfiguredNativeLoafInputs {
-    pub(crate) graph: PathBuf,
-    pub(crate) index: PathBuf,
-    pub(crate) blobs: PathBuf,
+pub struct ConfiguredNativeLoafInputs {
+    /// Existing producer graph identifying admitted native Loaf declarations.
+    pub graph: PathBuf,
+    /// Pinned adopted-Loaf index used by that producer.
+    pub index: PathBuf,
+    /// Content-addressed archive inputs used by that producer.
+    pub blobs: PathBuf,
 }
 
 impl ConfiguredNativeLoafInputs {
     /// Read the existing source-toolchain transport; a configured graph requires both producer inputs.
     /// SDK-prefixed environment spellings remain removable transport debt under #1698.
-    pub(crate) fn discover() -> CliResult<Option<Self>> {
+    pub fn discover() -> CliResult<Option<Self>> {
         Self::from_values(|name| std::env::var_os(name))
     }
 
@@ -105,30 +110,168 @@ pub fn select_declared_native_loaf_plan(
     output: &Path,
 ) -> CliResult<(OvenReceipt, OvenDirectRustcPlanSelection, String)> {
     let declaration = declaration.canonicalize().map_err(failure)?;
-    let owner = declaration
-        .parent()
-        .ok_or_else(|| CliError::failure("ordinary native declaration has no owner"))?;
     let manifest = oven_model::manifest::ProjectManifest::load(&declaration).map_err(failure)?;
     let dependencies = manifest.rust_dependency_values();
-    let prepared = oven_rustc::native_loaf::prepare_declared_native_loafs_in_store(
-        &oven_rustc::native_loaf::NativeLoafConsumerRequest {
-            graph,
-            index,
-            blobs,
-            output,
-            rustc,
-            target: &source_receipt.intent.target,
-            profile: &source_receipt.intent.profile,
-            dependencies: &dependencies,
-            declaration_owner: owner,
-            domain: "target",
-        },
-        store,
-    )
-    .map_err(failure)?;
-    let (receipt, plan) = select_native_loaf_plan(store, source_receipt, prepared.closure())?;
-    let report = serde_json::to_string(prepared.report()).map_err(failure)?;
-    Ok((receipt, plan, report))
+    let request = oven_rustc::native_loaf::NativeLoafConsumerRequest {
+        graph,
+        index,
+        blobs,
+        output,
+        rustc,
+        target: &source_receipt.intent.target,
+        profile: &source_receipt.intent.profile,
+        dependencies: &dependencies,
+        declaration_owner: manifest.project_root(),
+        domain: "target",
+    };
+    let mut retained = RetainedNativeLoafPlan::default();
+    let (receipt, selection, report, _) = retained.select(store, source_receipt, &request)?;
+    drop(retained);
+    let selection = Arc::try_unwrap(selection)
+        .map_err(|_| CliError::failure("unretained native selection unexpectedly has another owner"))?;
+    Ok((receipt, selection, report))
+}
+
+/// One ordinary native preparation and original leased consumer selections in the existing serial command service.
+/// Request reconciliation is supplied by the native producer; physical plan observations use the existing model.
+#[derive(Default)]
+pub(super) struct RetainedNativeLoafPlan {
+    store: Option<(PathBuf, oven_store::store::OvenStoreLimits)>,
+    preparation: Option<NativeLoafConsumerPreparation>,
+    plans: BTreeMap<PathBuf, RetainedNativeConsumerPlan>,
+}
+
+/// The original consumer plan and its already selected immutable forward graph share one owner entry.
+struct RetainedNativeConsumerPlan {
+    plan: RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>>,
+    consumer: Option<RetainedNativeConsumerClosure>,
+}
+
+/// Retained declaration projection, usable only inside the same freshly reconciled producer graph.
+/// This is metadata attached to the existing plan, not independent dependency or disk authority.
+struct RetainedNativeConsumerClosure {
+    dependencies: Vec<oven_model::manifest::DependencySpec>,
+    declaration_owner: PathBuf,
+    domain: String,
+    closure: NativeLoafClosure,
+}
+
+impl RetainedNativeConsumerClosure {
+    /// Compare the complete declaration and original sealed vertex owners after producer reconciliation.
+    /// Equal digests or coordinates alone cannot substitute new owners. The complete forward closure was checked
+    /// when selected; unchanged private vertices preserve its edges while the producer rechecks physical inputs.
+    fn matches(
+        &self,
+        request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+        prepared: &NativeLoafConsumerPreparation,
+    ) -> bool {
+        self.dependencies == request.dependencies
+            && self.declaration_owner == request.declaration_owner
+            && self.domain == request.domain
+            && self.closure.graph().units().iter().all(|(identity, unit)| {
+                prepared
+                    .closure()
+                    .graph()
+                    .units()
+                    .get(identity)
+                    .is_some_and(|current| Arc::ptr_eq(unit, current))
+            })
+    }
+}
+
+impl RetainedNativeLoafPlan {
+    /// Reconcile exact current producer inputs before sharing the original selection and its execution leases.
+    /// Unsupported or changed observations use canonical preparation; errors consume previous capabilities.
+    pub(super) fn select(
+        &mut self,
+        store: &OvenStore,
+        source_receipt: &OvenReceipt,
+        request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+    ) -> CliResult<(OvenReceipt, Arc<OvenDirectRustcPlanSelection>, String, bool)> {
+        self.select_group(store, source_receipt, request, request)
+    }
+
+    /// Reconcile one selected dependency group, then retain each consumer's own forward closure and output plan.
+    /// The owner constructs the preparation request from the consumer request, changing only dependency demands
+    /// and staging coordinates. Group membership never grants another consumer's direct imports.
+    pub(super) fn select_group(
+        &mut self,
+        store: &OvenStore,
+        source_receipt: &OvenReceipt,
+        request: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+        consumer: &oven_rustc::native_loaf::NativeLoafConsumerRequest<'_>,
+    ) -> CliResult<(OvenReceipt, Arc<OvenDirectRustcPlanSelection>, String, bool)> {
+        let store_key = (store.root().to_path_buf(), *store.limits());
+        if self.store.as_ref() != Some(&store_key) {
+            self.preparation = None;
+            self.plans.clear();
+            self.store = Some(store_key);
+        }
+        // Consume this consumer's plan and the group preparation before fallible reconciliation.
+        let mut previous_plan = self.plans.remove(consumer.output);
+        let previous = self
+            .preparation
+            .take()
+            .map(|prepared| prepared.reconcile(request))
+            .transpose()
+            .map_err(failure)?
+            .flatten();
+        let prepared = match previous {
+            Some(prepared) => prepared,
+            None => oven_rustc::native_loaf::prepare_declared_native_loafs_in_store(request, store).map_err(failure)?,
+        };
+        let selected = if std::ptr::eq(request, consumer) {
+            None
+        } else if let Some(retained) = previous_plan
+            .as_mut()
+            .and_then(|previous| previous.consumer.take())
+            .filter(|retained| retained.matches(consumer, &prepared))
+        {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_native_consumer_closure");
+            Some(retained)
+        } else {
+            let graph = prepared.closure().graph();
+            let roots = graph
+                .select_dependency_roots(consumer.dependencies, consumer.declaration_owner, consumer.domain)
+                .map_err(failure)?;
+            let closure = graph.select(&roots).map_err(failure)?;
+            Some(RetainedNativeConsumerClosure {
+                dependencies: consumer.dependencies.to_vec(),
+                declaration_owner: consumer.declaration_owner.to_path_buf(),
+                domain: consumer.domain.to_string(),
+                closure,
+            })
+        };
+        let closure = selected
+            .as_ref()
+            .map_or(prepared.closure(), |selected| &selected.closure);
+        let receipt = native_loaf_receipt(source_receipt, closure)?;
+        let previous = previous_plan
+            .map(|previous| previous.plan)
+            .filter(|plan| plan.matches_receipt(&receipt) && plan.native_inputs_current());
+        let plan_reused = previous.is_some();
+        let plan = match previous {
+            Some(plan) => plan,
+            None => {
+                let selection = select_native_loaf_plan_for_receipt(store, &receipt, closure)?;
+                RetainedExecutableDependencies::admitted_native_plan(&receipt, selection)?.into_shared()
+            }
+        };
+        let report = serde_json::to_string(prepared.report()).map_err(failure)?;
+        let selection = Arc::clone(&plan.selection);
+        if plan.native_inputs_current() {
+            self.plans.insert(
+                consumer.output.to_path_buf(),
+                RetainedNativeConsumerPlan {
+                    plan,
+                    consumer: selected,
+                },
+            );
+            self.preparation = Some(prepared);
+        }
+        tracing::trace!(target: "incan::invocation", decision = if plan_reused { "reuse_ordinary_native_plan" } else { "select_ordinary_native_plan" });
+        Ok((receipt, selection, report, plan_reused))
+    }
 }
 
 /// Bind current declaration-selected physical roots into a consumer receipt and retain its exact native inputs.
@@ -141,6 +284,13 @@ pub fn select_native_loaf_plan(
     source_receipt: &OvenReceipt,
     closure: &NativeLoafClosure,
 ) -> CliResult<(OvenReceipt, OvenDirectRustcPlanSelection)> {
+    let receipt = native_loaf_receipt(source_receipt, closure)?;
+    let plan = select_native_loaf_plan_for_receipt(store, &receipt, closure)?;
+    Ok((receipt, plan))
+}
+
+/// Bind exact current native roots before applying the existing build-unit/intent plan-selection contract.
+fn native_loaf_receipt(source_receipt: &OvenReceipt, closure: &NativeLoafClosure) -> CliResult<OvenReceipt> {
     let roots_digest = super::native_runtime_inputs::ordinary_roots_digest(closure.roots())?;
     if source_receipt
         .sources
@@ -152,19 +302,26 @@ pub fn select_native_loaf_plan(
             "ordinary native plan roots differ from the original runtime projection",
         ));
     }
-    let receipt =
-        receipt_with_build_unit_input(source_receipt, "ordinary-native-roots", roots_digest).map_err(failure)?;
+    receipt_with_build_unit_input(source_receipt, "ordinary-native-roots", roots_digest).map_err(failure)
+}
+
+/// Select or publish through the single canonical Store plan path after current roots are bound into the receipt.
+fn select_native_loaf_plan_for_receipt(
+    store: &OvenStore,
+    receipt: &OvenReceipt,
+    closure: &NativeLoafClosure,
+) -> CliResult<OvenDirectRustcPlanSelection> {
     let owners = closure.shared_owners().map_err(failure)?;
     if let Some(plan) =
-        select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, &receipt, &owners, DOMAIN)
+        select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, receipt, &owners, DOMAIN)
             .map_err(failure)?
     {
-        return Ok((receipt, OvenDirectRustcPlanSelection::Stored(Box::new(plan))));
+        return Ok(OvenDirectRustcPlanSelection::Stored(Box::new(plan)));
     }
-    let mut artifacts = empty_manifest(&receipt);
+    let mut artifacts = empty_manifest(receipt);
     let mut shared_roots = Vec::new();
-    append_native_loaf_closure(closure, &receipt, &mut artifacts, &mut shared_roots, "units")?;
-    seal_source_roles(&receipt, &mut artifacts);
+    append_native_loaf_closure(closure, receipt, &mut artifacts, &mut shared_roots, "units")?;
+    seal_source_roles(receipt, &mut artifacts);
     artifacts.validate_shape(&receipt.intent).map_err(failure)?;
     let payload = if shared_roots.is_empty() {
         serde_json::to_vec(&artifacts)
@@ -186,10 +343,10 @@ pub fn select_native_loaf_plan(
         })
         .map_err(failure)?;
     let plan =
-        select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, &receipt, &owners, DOMAIN)
+        select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, receipt, &owners, DOMAIN)
             .map_err(failure)?
             .ok_or_else(|| CliError::failure("published ordinary native consumer plan is unavailable"))?;
-    Ok((receipt, OvenDirectRustcPlanSelection::Stored(Box::new(plan))))
+    Ok(OvenDirectRustcPlanSelection::Stored(Box::new(plan)))
 }
 
 /// Append one original ordinary closure to an existing physical manifest without copying its native members.

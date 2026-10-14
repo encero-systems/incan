@@ -7,7 +7,7 @@ use super::*;
 fn native_input_view_refuses_selected_symlink_after_admission() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = native_input_fixture("debug")?;
     let view = super::super::native_input::OvenNativeInputView::from_store_payload(&fixture.owner)?;
-    let selected = fixture.owner.artifact_root.join("release/deps/libserde_fixture.rlib");
+    let selected = fixture.owner.artifact_root().join("release/deps/libserde_fixture.rlib");
     let foreign = fixture.root.path().join("foreign.rlib");
     fs::write(&foreign, b"registry bytes")?;
     fs::remove_file(&selected)?;
@@ -27,7 +27,7 @@ fn native_input_view_exposes_original_facts_without_path_profile_selection() -> 
     let release = native_input_fixture("release")?;
     for fixture in [&debug, &release] {
         let view = super::super::native_input::OvenNativeInputView::from_store_payload(&fixture.owner)?;
-        assert_eq!(view.identity(), fixture.owner.manifest.identity);
+        assert_eq!(view.identity(), fixture.owner.manifest().identity);
         assert_eq!(view.receipt_identity(), Some(fixture.receipt.identity.as_str()));
         assert_eq!(view.build_unit_identity(), fixture.receipt.build_unit_identity);
         assert_eq!(view.intent(), &fixture.receipt.intent);
@@ -181,7 +181,7 @@ fn compiler_runtime_member_roundtrip_preserves_original_role_and_rechecks_bytes(
     assert!(view.attach_for_source("compiler-helper", &selected).is_err());
     // Admission seals materialized files read-only; replace this test-owned entry rather than writing
     // through the seal.
-    let runtime_member = fixture.owner.artifact_root.join("release/deps/libruntime.rlib");
+    let runtime_member = fixture.owner.artifact_root().join("release/deps/libruntime.rlib");
     fs::remove_file(&runtime_member)?;
     fs::write(&runtime_member, b"changed named runtime")?;
     assert!(matches!(
@@ -199,7 +199,7 @@ fn native_input_view_queries_are_read_free_but_attachment_rechecks_selected_byte
     let original_plan = view.plan.clone();
     // Admission seals materialized files read-only, so replacing this test-owned entry models the external
     // mutation under test rather than writing through the seal.
-    let file = fixture.owner.artifact_root.join("release/deps/libserde_fixture.rlib");
+    let file = fixture.owner.artifact_root().join("release/deps/libserde_fixture.rlib");
     fs::remove_file(&file)?;
     fs::write(&file, b"changed after admission")?;
     let chosen = view
@@ -216,30 +216,29 @@ fn native_input_view_queries_are_read_free_but_attachment_rechecks_selected_byte
     Ok(())
 }
 
+/// Sealed in-memory authority does not hide changed original payload or manifest files from native consumers.
 #[test]
-fn native_input_view_rejects_mutated_payload_manifest_and_coordinated_retargeting()
--> Result<(), Box<dyn std::error::Error>> {
-    let mut first = native_input_fixture("debug")?;
-    let second = native_input_fixture("debug")?;
-    assert_eq!(first.owner.manifest, second.owner.manifest);
-    assert_eq!(first.owner.payload, second.owner.payload);
-    assert_ne!(first.owner.artifact_root, second.owner.artifact_root);
-    let original_payload = first.owner.payload.clone();
-    first.owner.payload.push(b' ');
-    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&first.owner).is_err());
-    first.owner.payload = original_payload;
-    let original_manifest = first.owner.manifest.clone();
-    first.owner.manifest.intent.profile = "release".to_string();
-    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&first.owner).is_err());
-    first.owner.manifest = original_manifest;
-    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&first.owner).is_ok());
-    first.owner.manifest = second.owner.manifest.clone();
-    first.owner.artifact_root = second.owner.artifact_root.clone();
-    first.owner.payload = second.owner.payload.clone();
-    assert!(
-        super::super::native_input::OvenNativeInputView::from_store_payload(&first.owner).is_err(),
-        "even identical valid records cannot retarget the original selected lease to another root"
-    );
+fn native_input_view_rejects_changed_original_payload_and_manifest() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = native_input_fixture("debug")?;
+    let entry = fixture.owner.artifact_root().parent().ok_or("original entry absent")?;
+    let payload_path = entry.join("payload");
+    let original_payload = fixture.owner.payload().to_vec();
+    fs::remove_file(&payload_path)?;
+    fs::write(&payload_path, b"changed original payload")?;
+    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&fixture.owner).is_err());
+    fs::write(&payload_path, &original_payload)?;
+    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&fixture.owner).is_ok());
+
+    let manifest_path = entry.join("loaf.json");
+    let original_manifest = fs::read(&manifest_path)?;
+    let mut changed = fixture.owner.manifest().clone();
+    changed.intent.profile = "release".to_string();
+    fs::remove_file(&manifest_path)?;
+    fs::write(&manifest_path, serde_json::to_vec(&changed)?)?;
+    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&fixture.owner).is_err());
+    assert_eq!(fixture.owner.manifest().intent.profile, "debug");
+    fs::write(&manifest_path, original_manifest)?;
+    assert!(super::super::native_input::OvenNativeInputView::from_store_payload(&fixture.owner).is_ok());
     Ok(())
 }
 

@@ -285,8 +285,8 @@ fn run_bounded_process_unix(
 /// descendant containment must use a supported platform or [`run_bounded_process`], which refuses unsupported hosts.
 ///
 /// Cargo, Rustdoc, libtest, build scripts, compilers, and linkers inherit the isolated group unless they explicitly
-/// create a new session, which none of the supported Oven child paths permit or require. GNU `kill` needs `--`
-/// before a negative process-group ID, while the BSD implementation shipped by macOS rejects that separator.
+/// create a new session, which none of the supported Oven child paths permit or require. Unix signaling goes
+/// directly to the operating system, without launching a helper process for each supervised child.
 pub fn terminate_process_group(child: &mut Child) -> io::Result<ExitStatus> {
     #[cfg(unix)]
     {
@@ -440,21 +440,29 @@ struct LimitedStream {
     limit_exceeded: bool,
 }
 
-/// Kill a Unix process group and report whether the operating system accepted the signal.
+/// Kill only the positive isolated group ID supplied by a supervised child, without launching a utility.
+/// A missing group or denied signal returns false, matching the former utility exit status; the supervisor then
+/// checks whether its child has exited. On macOS an exited but unreaped group can report EPERM rather than ESRCH.
+/// Invalid IDs and other operating-system failures remain errors: zero, one or an overflowing ID must never select
+/// the supervisor's own group or a wider process set.
 #[cfg(unix)]
 fn terminate_process_group_id(process_id: u32) -> io::Result<bool> {
-    let process_group = format!("-{process_id}");
-    let mut command = Command::new("/bin/kill");
-    command.arg("-KILL");
-    #[cfg(target_os = "linux")]
-    command.arg("--");
-    Ok(command
-        .arg(process_group)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?
-        .success())
+    let process_group = libc::pid_t::try_from(process_id)
+        .ok()
+        .filter(|group| *group > 1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "isolated process group ID must exceed one"))?;
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_store::signal_process_group", process_id = u64::from(process_id)).entered();
+    // SAFETY: The caller owns a child spawned with its PID as its group ID. Negating the checked ID greater than one
+    // selects that group only; kill takes no pointers and SIGKILL is the platform's declared signal constant.
+    if unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    if matches!(error.raw_os_error(), Some(libc::ESRCH | libc::EPERM)) {
+        Ok(false)
+    } else {
+        Err(error)
+    }
 }
 
 /// Ensure an output-limit observation made after direct-child exit cannot leave a Unix descendant alive.
@@ -510,6 +518,27 @@ mod tests {
     use super::{BoundedProcessLimits, BoundedProcessTermination, process_is_running, run_bounded_process};
 
     const SHORT_TIMEOUT: Duration = Duration::from_secs(1);
+
+    /// Invalid group coordinates cannot signal the supervisor itself or a wider process set.
+    #[test]
+    fn group_signaling_refuses_reserved_and_overflowing_ids() {
+        for id in [0, 1, u32::MAX] {
+            let result = super::terminate_process_group_id(id);
+            assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::InvalidInput));
+        }
+    }
+
+    /// A reaped task-owned process group is an ordinary already-completed result.
+    #[test]
+    fn group_signaling_accepts_an_already_completed_child() -> Result<(), Box<dyn Error>> {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        super::isolate_process_group(&mut command);
+        let mut child = command.spawn()?;
+        assert!(child.wait()?.success());
+        assert!(!super::terminate_process_group_id(child.id())?);
+        Ok(())
+    }
 
     #[test]
     /// Preserve separate stdout and stderr from a successful bounded command.

@@ -507,10 +507,10 @@ fn env_requires_incan_is_reported_and_enforced_for_env_run() -> Result<(), Box<d
 name = "env_toolchain_guard"
 version = "0.1.0"
 
-[tool.incan.envs.release]
+[envs.release]
 requires-incan = ">999.0.0"
 
-[tool.incan.envs.release.scripts]
+[envs.release.scripts]
 probe = ["incan", "--version"]
 "#,
     )?;

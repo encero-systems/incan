@@ -25,7 +25,7 @@ pub use artifact::{
     NativeProviderArtifact, NativeProviderOutput, ProviderArtifactDigestError, ProviderSemanticToolchainDependency,
     digest_cargo_path_source_tree_with_cache, digest_provider_artifact,
     digest_provider_semantic_artifact_with_context_and_cache, digest_provider_source_inputs,
-    digest_toolchain_source_tree_with_cache, read_native_provider_artifact,
+    digest_toolchain_source_tree_with_cache, read_native_provider_artifact, visit_provider_artifact_inputs,
 };
 pub use checked_replay::CheckedExportReplay;
 pub use model::*;

@@ -210,6 +210,10 @@ incan build [OPTIONS] [FILE] [OUTPUT_DIR]
 
 Compiles `FILE`, or the project entrypoint, to an executable and prints the generated project path and the binary path. Generated source and the binary go under `target/incan/`, or under `OUTPUT_DIR` when given.
 
+On Unix, ordinary executable builds automatically start or connect to a compatible background build owner. The owner retains the existing project model, canonical `oven.lock`, dependency admission and selected native plans between requests. Commands keep their own output and diagnostics; a failed request does not prevent later requests from using the owner. Other platforms execute the same driver operation within the command process.
+
+Before reusing a completed output, the owner checks the observed inputs for changes. Unchanged directory metadata allows reuse of its previous child list; changed file candidates are read and hashed before deciding whether build inputs changed. Changed manifests, locks, compiler selections or selected output files invalidate the corresponding retained state. An unchanged lock does not hide a source edit, and an invalid replacement never exposes the previous valid record.
+
 With no `FILE`, a project that declares one or more `[[rust.bin]]` entries and no `[project.scripts].main` builds the declared toolchain binaries from stored direct-`rustc` plans. This mode accepts `OUTPUT_DIR`. It refuses `--release`, package-feature options, `--sdk-profile`, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. `INCAN_OVEN_COMPILER_SUITE_STORE` selects the compiler-suite store for this mode.
 
 Options:
@@ -296,7 +300,7 @@ incan oven compiler-libtests [--compiler-root PATH] [--rustc PATH] [--feature NA
 | `store inspect` | Reports physical allocation and logical artifact bytes, reclaimable and lease-protected allocation, and, for a direct-`rustc` plan, the full receipt of the compilation that produced it. |
 | `store prune` | Removes inactive entries to meet the store policy. `--dry-run` reports them and removes nothing. |
 | `test` | Compiles a native test binary from a stored plan, lists its tests, refuses any `--exact` name that is not listed, then runs the named tests. `--edition` defaults to `2024`. |
-| `run` | Compiles one binary from a stored plan and runs it, holding the store entry's lease until the process exits, and passes it the arguments after `--`. `--edition` defaults to `2024`. |
+| `run` | Compiles or reuses one binary from a stored plan, then runs it with the arguments after `--`. On Unix, native preparation uses the same compatible owner as build and tests, retaining guarded compiler observations between requests. The invoking command retains stdin/stdout/stderr and the original Store lease until the child exits. Receipt, source, selected plan, compiler and output checks still apply to every request. Other platforms prepare in process. `--edition` defaults to `2024`. |
 | `compiler-libtests` | Compiles and runs the compiler repository's native test suite through a stored direct-`rustc` plan; `--target` and `--exact` select part of it. |
 
 Store policy:
@@ -562,7 +566,9 @@ incan fmt --diff path/to/file.incn
 incan test [OPTIONS] [PATH]
 ```
 
-Collects and runs the tests under `PATH` (default `.`).
+Collects and runs Incan tests under `PATH` (default `.`), delegating to the same runner as `oven tests --incan-only`. Use [`oven tests`](#oven-tests) to combine Incan and Rust tests.
+
+On Unix, test commands automatically connect to the same compatible project owner as builds. It retains canonical project and dependency-session preparation while reading current test and conftest sources for each request. Build and test share native dependency admission under the same reconciled lock, compiler and provider identity; changed selected native inputs discard that admission before it can be reused. Each execution runs fresh test processes and fixtures; passing results are never cached. The invoking CLI formats completed console, JSON Lines and JUnit reports from the runner’s typed results. Stable result IDs retain their collected file identity even if a test changes or removes its source file. Progress streams as typed events and the requesting CLI renders session banners, fixture details and phase timings. JSON Lines mode suppresses these human-readable notices, including with `--verbose`. Diagnostics and uncaptured test output retain their original streams, including output from parallel workers. A report-file write failure fails the command even when all tests passed. Incan `--list` uses parser-only preparation without preparing test artifacts. Rust listing prepares or reuses each libtest executable to discover cases without running test bodies. Other platforms invoke the same runner within the command process.
 
 | Option | Effect |
 | --- | --- |
@@ -572,7 +578,8 @@ Collects and runs the tests under `PATH` (default `.`).
 | `-x`, `--exitfirst` | Stop after the first failure. |
 | `--slow` | Include tests marked `@slow`. |
 | `--strict-markers` | Refuse unknown marker names at collection, unless registered in `TEST_MARKERS`. |
-| `-j <N>`, `--jobs <N>` | Run up to `N` test batches at once (default `1`); each batch runs its tests on one thread. |
+| `-j <N>`, `--jobs <N>` | Total test worker budget; defaults to four workers. Incan batches each use one worker. A compatible shared Rust root reserves the budget and uses up to `N` libtest threads. |
+| `--isolate` | Execute Rust cases in separate processes. Incan fixture groups retain their existing scope. |
 | `--feature <NAME>` | Enable the collection-time `std.testing.feature("NAME")` probe for `skipif` and `xfailif`. |
 | `--timeout <DURATION>` | Time limit for each test batch, such as `250ms`, `5s` or `2m`. A test's `@timeout(...)` overrides it. A batch that exceeds its limit is stopped and fails. |
 | `--nocapture` | Print test output for passing tests too. |
@@ -599,6 +606,57 @@ incan test --shuffle --seed 12345 tests/
 incan test --frozen
 incan test tests/ --no-default-features --features json --sdk-profile minimal
 ```
+
+## `oven tests`
+
+```text
+oven tests [--incan-only | --rust-only] [OPTIONS] [PATH]
+incan oven tests [--incan-only | --rust-only] [OPTIONS] [PATH]
+```
+
+Runs both Incan and Rust tests by default. The language flags are mutually exclusive; `incan test` always selects Incan only. All three spellings use the same option conversion, project owner, selection, scheduler, reporting and failure status. The [test options](#incan-test) apply to either language, while Incan decorators and fixtures apply only to Incan sources.
+
+| Surface | Contract |
+| --- | --- |
+| `--incan-only` | Collect only Incan tests. `--list` uses parser-only preparation. |
+| `--rust-only` | Collect only Rust tests from the selected package. |
+| Rust roots | Conventional `src/lib.rs`, `src/main.rs`, declared `[[rust.bin]]` paths and direct `tests/*.rs` roots. `[rust].path` selects a different library entry, such as `src/mod.rs`; it must be a plain project-relative `.rs` path inside the Rust source directory, with no parent traversal. The exception replaces the conventional library root and also governs its native dependency snapshot. A mixed Loaf's `[rust.source].root` owns its `src/` directory. Nested modules belong to their crate root. |
+| Rust collection | Prepare the receipt-bound native harness and query its libtest inventory. `--list` may compile a Rust harness, but runs no test bodies. |
+| Rust selection | Stable IDs contain the source path and exact libtest name. `-k` selects those IDs; excluded cases never execute. `#[ignore]` cases remain skipped. |
+| Rust snapshots | Insta receives `INSTA_WORKSPACE_ROOT` at test execution, defaulting to the owning Loaf’s project directory. Set that variable explicitly when snapshots use a different workspace root. This prevents Insta’s workspace discovery from launching `cargo metadata`; snapshot assertions still run normally. |
+| Rust preparation | Resolves requested package features against the authored `loaf.toml`, then applies `[envs.test.dependencies]` and uses prebuilt Loaves. Making an optional dependency mandatory for tests preserves its authored `dep:` feature edges. Mixed Loaf dependencies retain their selected features and must provide a valid Rust facet. A sibling `.loaf.toml` can supply an integration root's declaration. Roots requiring unsupported build-script facts are refused. |
+| Conditional dependencies | Evaluate each authored target condition against the selected Rust toolchain's target configuration before projecting native dependencies. False alternatives are excluded; compatible active alternatives combine their feature demands. Missing target evidence, incompatible active alternatives, malformed conditions or an unavailable compiler-bound policy engine fail preparation. The existing owner reuses unchanged decisions while observing compiler and engine files; tests still execute afresh. |
+| Own library | Binary and integration-test roots link the package's authored `src/lib.rs` with the selected package features. Library unit tests compile that source directly. A sibling `.loaf.toml` is a complete target declaration and must declare any library dependency it needs. |
+| Procedural macros | A library declared with `[rust].type = "proc-macro"` uses the selected Rust toolchain's macro support when preparing its unit-test harness. Its integration tests remain ordinary Rust test binaries. |
+| Scheduling | Compatible selected Rust cases from one root share a process, reserving the global `--jobs` budget while it runs. `--isolate`, `--shuffle`, `--exitfirst`, deadlines or serial markers retain separate Rust case processes. Resource constraints remain enforced. Compatible Incan cases retain existing fixture groups. Outcomes come from the supervised harness result channel, not nested stdout. |
+| Result | A failed selected test or preparation error fails the command. Passing outcomes are never cached. JSON retains `incan.test.v1`; JUnit combines selected cases from both languages. |
+
+```bash
+oven tests
+oven tests tests/ --rust-only -k native_case
+oven tests --incan-only --list
+oven tests --format json --junit reports/all-tests.xml
+```
+
+## `oven convert-cargo`
+
+```text
+oven convert-cargo [--workspace PATH] --project RELATIVE_PATH [--project RELATIVE_PATH ...]
+incan oven convert-cargo [--workspace PATH] --project RELATIVE_PATH [--project RELATIVE_PATH ...]
+```
+
+Adopts selected Cargo workspace libraries and their local dependency closure into `loaf.toml` without invoking Cargo. `--workspace` defaults to the current directory and must contain `Cargo.toml` and `Cargo.lock`; each required `--project` path is relative to that workspace. Upstream source and Cargo files are unchanged. Existing Loaf-specific policy is preserved while imported declarations are replaced.
+
+| Imported input | Loaf contract |
+| --- | --- |
+| Ordinary dependencies | `[dependencies]`, including workspace inheritance and target predicates. |
+| Dev dependencies | `[envs.test.dependencies]`; they are required for tests without changing production optionality. Local dev packages are adopted too. Reimport replaces this dependency table, removing deleted imported requirements. |
+| Overlapping normal/dev dependencies | The existing test environment combines feature demands. Incompatible source/version identities, overlapping target alternatives, and optional production-only features that cannot be represented faithfully are refused. |
+| Package features | Preserve authored feature edges and expose implicit optional-dependency aliases as explicit Loaf features. A `dep:` reference suppresses an implicit alias, matching Cargo; explicitly declared features remain visible. Reimport replaces imported feature definitions. |
+| Build dependencies | Adoption inventory only; conversion does not execute build scripts or establish build facts. |
+| Unsupported inputs | Git dependencies without registered Loaf adaptation and nonconventional library roots are refused. All converted declarations are validated before publication. |
+
+Successful conversion exits with `0`; invalid or unsupported declarations exit with `1`. Conversion does not compile, test, or prove native dependency availability. Run [`oven tests`](#oven-tests) after the selected dependency closure has been admitted.
 
 ## `incan new`
 
@@ -673,7 +731,7 @@ incan env show [OPTIONS] [ENV]
 incan env run [OPTIONS] <ENV> <SCRIPT> [-- <ARGS>...]
 ```
 
-Works with the environments declared in `[tool.incan.envs]` of `loaf.toml`. The `default` environment always exists.
+Works with the environments declared in `[envs]` of `loaf.toml`. The `default` environment always exists.
 
 - `list` lists the environments. `show` prints one environment resolved, or an overview of all when `ENV` is omitted. `run` runs a script of an environment, with the arguments after `--` appended.
 - `--format text|json` (default `text`), for `list` and `show`.

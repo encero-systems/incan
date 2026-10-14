@@ -8,6 +8,7 @@ use toml::{Value, map::Map};
 use crate::{CliError, CliResult, ExitCode};
 
 mod dependencies;
+mod features;
 
 type Error = Box<dyn std::error::Error>;
 
@@ -57,6 +58,18 @@ fn render(loaf: &Value) -> Result<String, Error> {
         }
         document.insert("dependencies", toml_edit::Item::Table(table));
     }
+    if let Some(dependencies) = loaf
+        .get("envs")
+        .and_then(|envs| envs.get("test"))
+        .and_then(|test| test.get("dependencies"))
+        .and_then(Value::as_table)
+    {
+        let mut table = toml_edit::Table::new();
+        for (alias, declaration) in dependencies {
+            table.insert(alias, toml_edit::Item::Value(inline(declaration)?));
+        }
+        document["envs"]["test"]["dependencies"] = toml_edit::Item::Table(table);
+    }
     Ok(document.to_string())
 }
 
@@ -103,9 +116,6 @@ fn declaration(project: &Path, cargo: &Value, workspace: &Value) -> Result<Value
         }
     }
     metadata.insert("private".to_string(), Value::Boolean(true));
-    if let Some(features) = cargo.get("features") {
-        metadata.insert("features".to_string(), features.clone());
-    }
     loaf.as_table_mut()
         .ok_or("Loaf declaration is not a table")?
         .insert("project".to_string(), Value::Table(metadata));
@@ -139,15 +149,17 @@ fn declaration(project: &Path, cargo: &Value, workspace: &Value) -> Result<Value
     {
         facet.insert("build-script".to_string(), Value::Boolean(true));
     }
-    if lib
+    let library = lib
         .and_then(|lib| lib.get("path"))
         .and_then(Value::as_str)
-        .is_some_and(|path| path != "src/lib.rs")
-    {
-        return Err("nonconventional library roots need an explicit source adaptation".into());
+        .unwrap_or("src/lib.rs");
+    if library == "src/lib.rs" {
+        facet.remove("path");
+    } else {
+        facet.insert("path".to_string(), Value::String(library.to_string()));
     }
-    if !project.join("src/lib.rs").is_file() {
-        return Err(format!("{} is not a conventional library package", project.display()).into());
+    if !project.join(library).is_file() {
+        return Err(format!("{} has no library source `{library}`", project.display()).into());
     }
     loaf.as_table_mut()
         .ok_or("Loaf declaration is not a table")?
@@ -220,6 +232,36 @@ mod tests {
         Ok(())
     }
 
+    /// Adoption preserves a custom proc-macro root and removes the exception when Cargo returns to convention.
+    #[test]
+    fn adopts_authored_library_root_and_reimport() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("member/src"))?;
+        std::fs::write(root.path().join("Cargo.toml"), "[workspace]\nmembers=['member']\n")?;
+        std::fs::write(root.path().join("Cargo.lock"), "version=4\npackage=[]\n")?;
+        let declaration = "[package]\nname='member'\nversion='1.0.0'\n[lib]\nproc-macro=true\npath='src/user_doc.rs'\n";
+        std::fs::write(root.path().join("member/Cargo.toml"), declaration)?;
+        for file in ["user_doc.rs", "lib.rs"] {
+            std::fs::write(root.path().join("member/src").join(file), "")?;
+        }
+        convert(root.path(), &["member".into()])?;
+        let path = root.path().join("member/loaf.toml");
+        let manifest = oven_model::manifest::ProjectManifest::load(&path)?;
+        assert_eq!(manifest.rust_library_path(), root.path().join("member/src/user_doc.rs"));
+        let first = std::fs::read(&path)?;
+        convert(root.path(), &["member".into()])?;
+        assert_eq!(first, std::fs::read(&path)?);
+        std::fs::write(
+            root.path().join("member/Cargo.toml"),
+            declaration.replace("src/user_doc.rs", "src/lib.rs"),
+        )?;
+        convert(root.path(), &["member".into()])?;
+        let manifest = oven_model::manifest::ProjectManifest::load(&path)?;
+        assert_eq!(manifest.rust_library_path(), root.path().join("member/src/lib.rs"));
+        assert!(manifest.rust_facet.as_ref().is_some_and(|facet| facet.path.is_none()));
+        Ok(())
+    }
+
     /// An unsupported dependency prevents writes to the entire conversion closure.
     #[test]
     fn refuses_before_writing_any_manifest() -> Result<(), Box<dyn std::error::Error>> {
@@ -237,3 +279,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "convert_cargo/test_dependencies.rs"]
+mod test_dependencies;

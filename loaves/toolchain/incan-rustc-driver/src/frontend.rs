@@ -74,14 +74,14 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         .into_iter()
         .filter(|identity| match &identity.origin {
             incan_semantics_core::SymbolOrigin::Package { library, .. } => !session
-                .provider_plan
+                .provider_plan()
                 .active_sdk_records()
                 .any(|provider| &provider.identity.name == library),
             _ => false,
         })
         .collect();
     let resolved =
-        incan_frontend::executable_resolution::resolve_executable_requirements(&session.provider_plan, &required)
+        incan_frontend::executable_resolution::resolve_executable_requirements(session.provider_plan(), &required)
             .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
     let mut bodies = resolved.modules;
     // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the

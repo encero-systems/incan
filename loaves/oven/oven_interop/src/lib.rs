@@ -475,7 +475,7 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
         bundle_names.dedup();
         return Ok(OvenInteropNativeBake {
             receipt: final_receipt,
-            plan_identity: selected.manifest.identity,
+            plan_identity: selected.manifest().identity.clone(),
             archive_names,
             bundle_names,
             reused: true,
@@ -499,17 +499,17 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
             "Oven interop bake has no compatible base direct-Rustc runtime plan; prepare the sealed runtime Loaf before baking native interop"
                 .to_string()
         })?;
-        let base_manifest = &selected.manifest;
+        let base_manifest = selected.manifest();
         if base_manifest.kind != OvenArtifactKind::DirectRustcPlan
             || base_manifest.build_unit_identity != request.base_receipt.build_unit_identity
             || base_manifest.intent != request.base_receipt.intent
         {
             return Err("selected base Oven entry is not authorized by the runtime receipt".to_string());
         }
-        let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload)
+        let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(selected.payload())
             .map_err(|error| format!("selected base Oven runtime payload is not a direct-Rustc plan: {error}"))?;
         let files = plan
-            .materialized_artifacts(&selected.artifact_root, &request.base_receipt.intent)
+            .materialized_artifacts(selected.artifact_root(), &request.base_receipt.intent)
             .map_err(|error| format!("selected base Oven runtime plan is invalid: {error}"))?;
         (plan, files)
     };
@@ -653,10 +653,10 @@ fn validate_existing_interop_plan(
     execution_receipt: &OvenInteropExecutionReceipt,
     target: &LockedInteropTarget,
 ) -> Result<ValidatedInteropPlan, String> {
-    let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload)
+    let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(selected.payload())
         .map_err(|error| format!("existing Oven interop payload is not a direct-Rustc plan: {error}"))?;
     let artifacts = plan
-        .materialized_artifacts(&selected.artifact_root, &receipt.intent)
+        .materialized_artifacts(selected.artifact_root(), &receipt.intent)
         .map_err(|error| format!("existing Oven interop plan is invalid: {error}"))?;
     let provenance = artifacts
         .iter()
@@ -709,7 +709,7 @@ pub fn stage_interop_adapter(request: OvenInteropAdapterStageRequest<'_>) -> Res
             "Oven interop adapter staging has no compatible final direct-Rustc plan; run `incan oven interop bake` for this locked target first"
                 .to_string()
         })?;
-    let plan_identity = selected.manifest.identity.clone();
+    let plan_identity = selected.manifest().identity.clone();
     let validated = validate_existing_interop_plan(&selected, &receipt, request.execution_receipt, request.target)?;
     let output = request.output;
     match fs::symlink_metadata(output) {
@@ -2973,7 +2973,11 @@ fn main() {
         assert!(baked.archive_names.contains(&"llama".to_string()));
         let selected_plan = select_direct_rustc_plan_for_execution(&store, &baked.receipt)?
             .ok_or("llama.cpp interop bake did not publish a selected plan")?;
-        let provenance = fs::read_to_string(selected_plan.artifact_root.join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH))?;
+        let provenance = fs::read_to_string(
+            selected_plan
+                .artifact_root()
+                .join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH),
+        )?;
         assert!(provenance.contains("apple.library.c++"));
         let direct = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
             store: &store,
@@ -3222,7 +3226,11 @@ fn main() {
         assert!(baked.archive_names.contains(&"curl".to_string()));
         let selected_plan = select_direct_rustc_plan_for_execution(&store, &baked.receipt)?
             .ok_or("curl interop bake did not publish a selected plan")?;
-        let provenance = fs::read_to_string(selected_plan.artifact_root.join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH))?;
+        let provenance = fs::read_to_string(
+            selected_plan
+                .artifact_root()
+                .join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH),
+        )?;
         assert!(provenance.contains("https://github.com/curl/curl"));
         assert!(provenance.contains("apple.framework.SystemConfiguration"));
         let direct = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
@@ -3732,13 +3740,17 @@ fn main() {
         assert!(baked.archive_names.contains(&"tflite_bridge".to_string()));
         let selected_plan = select_direct_rustc_plan_for_execution(&store, &baked.receipt)?
             .ok_or("TensorFlow Lite interop bake did not publish a selected plan")?;
-        let stored_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected_plan.payload)?;
+        let stored_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(selected_plan.payload())?;
         assert!(
             stored_plan
                 .native_search_paths
                 .contains(&"interop-bundled/tensorflowlite_c".to_string())
         );
-        let provenance = fs::read_to_string(selected_plan.artifact_root.join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH))?;
+        let provenance = fs::read_to_string(
+            selected_plan
+                .artifact_root()
+                .join(OVEN_INTEROP_EXECUTION_PROVENANCE_PATH),
+        )?;
         assert!(provenance.contains("https://github.com/tensorflow/tensorflow"));
         assert!(provenance.contains(TENSORFLOW_REVISION));
         let direct = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {

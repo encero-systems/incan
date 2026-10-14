@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use oven_model::manifest::{DependencySource, DependencySpec};
+use oven_model::observed_inputs::InputObservations;
 
 use super::{
     NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, NativeLoafSource, Result, SelectedNativeLoaf,
-    failed, refused,
+    failed, input_failure, refused,
 };
 
 /// Match already active declarations without resolving, compiling, or granting undeclared graph namespaces.
@@ -26,26 +27,73 @@ pub(super) fn select_roots(
     )
 }
 
-/// Command-local mapped source observations shared by current-graph validation and declaration projection.
+/// Existing local source selections retained by the serial owner under replacement-sensitive observations.
 #[derive(Default)]
 pub(super) struct LocalSources {
-    selections: BTreeMap<PathBuf, (toml::Value, String)>,
-    /// Actual mapping/hash demands; cache hits do not increment this counter.
+    selections: BTreeMap<PathBuf, ObservedSelection>,
+    checked: BTreeSet<PathBuf>,
+    /// Actual mapping/hash demands; metadata-only retained checks do not increment this counter.
     pub(super) loads: usize,
 }
 
+/// The publisher's original portable mapping and the exact filesystem inputs consulted to produce it.
+struct ObservedSelection {
+    selected: (toml::Value, String),
+    inputs: InputObservations,
+}
+
 impl LocalSources {
-    /// Reproduce each canonical current source mapping once during this command, never across commands.
+    /// Begin one current-input reconciliation without discarding prior source selections.
+    pub(super) fn begin_request(&mut self) {
+        self.loads = 0;
+        self.checked.clear();
+    }
+
+    /// Reuse a reconciled selection, returning to the canonical publisher mapper on any metadata change.
+    /// Unsupported identities never authorize reuse across commands; repeated demands within one command still share
+    /// their freshly mapped result. Final reconciliation rejects inputs changed during selection or handoff.
     pub(super) fn get(&mut self, path: &Path) -> Result<&(toml::Value, String)> {
-        let path = path.canonicalize().map_err(failed)?;
-        if !self.selections.contains_key(&path) {
-            let selected = crate::sdk_closure::local_native_source_selection(&path).map_err(NativeLoafError::Failed)?;
-            self.loads += 1;
-            self.selections.insert(path.clone(), selected);
+        let path = path
+            .canonicalize()
+            .map_err(|error| input_failure("canonicalize local source", path, error))?;
+        if !self.checked.contains(&path) {
+            let retained = self
+                .selections
+                .get(&path)
+                .is_some_and(|entry| entry.inputs.supports_retention() && entry.inputs.current());
+            if !retained {
+                let mut inputs = InputObservations::default();
+                let selected = crate::sdk_closure::local_native_source_selection_with_observer(&path, &mut |input| {
+                    inputs.observe(input)
+                })
+                .map_err(|error| input_failure("map local source", &path, error))?;
+                if inputs.supports_retention() && !inputs.current() {
+                    return Err(refused("local source changed during canonical selection"));
+                }
+                self.loads += 1;
+                self.selections
+                    .insert(path.clone(), ObservedSelection { selected, inputs });
+            }
+            self.checked.insert(path.clone());
         }
         self.selections
             .get(&path)
+            .map(|entry| &entry.selected)
             .ok_or_else(|| refused("current local source selection is missing"))
+    }
+
+    /// Reconcile every selection actually used by this command before retaining its source authority.
+    pub(super) fn finish_request(&self) -> Result<()> {
+        for path in &self.checked {
+            let entry = self
+                .selections
+                .get(path)
+                .ok_or_else(|| refused("checked local source selection missing"))?;
+            if entry.inputs.supports_retention() && !entry.inputs.current() {
+                return Err(refused("local source changed during native selection"));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -112,7 +160,9 @@ pub(super) fn declared_root_demands<'a>(
     declaration_owner: &Path,
     local: &mut LocalSources,
 ) -> Result<Vec<DeclaredRootDemand<'a>>> {
-    let owner = declaration_owner.canonicalize().map_err(failed)?;
+    let owner = declaration_owner
+        .canonicalize()
+        .map_err(|error| input_failure("canonicalize declaration owner", declaration_owner, error))?;
     if !owner.is_dir() {
         return Err(refused("native declaration owner must be a directory"));
     }
@@ -141,7 +191,10 @@ pub(super) fn declared_root_demands<'a>(
             DependencySource::Path { path } => {
                 // Parsed absolute declarations already contain their manifest owner. Raw relative paths are
                 // explicitly owner-relative; callers parsing a relative manifest must canonicalize it first.
-                let path = owner.join(path).canonicalize().map_err(failed)?;
+                let declared_path = owner.join(path);
+                let path = declared_path
+                    .canonicalize()
+                    .map_err(|error| input_failure("canonicalize declared dependency", &declared_path, error))?;
                 let selected = local.get(&path)?;
                 let loaf = project_string(&selected.0, "name")?;
                 if dependency.package.as_deref().is_some_and(|package| package != loaf) {
@@ -226,39 +279,75 @@ impl DeclaredRootDemand<'_> {
     }
 }
 
-/// Read only an exact inventoried source declaration and verify the bytes used for semantic root projection.
+/// Reconcile the exact inventoried declaration and reuse its parsed metadata under the original Loaf owner.
 pub(crate) fn source_manifest(unit: &SelectedNativeLoaf) -> Result<toml::Value> {
     source_manifest_with_reader(unit, &mut |path| std::fs::read(path).map_err(failed))
 }
 
-/// Share exact declaration admission while allowing command-owned observation of actual file-read attempts.
+/// Parse one admitted declaration per retained owner; the reader records actual reads, not retained lookups.
+///
+/// A retained syntax tree is usable only while the existing file observer verifies its immutable member digest.
+/// Changed bytes, replacements, missing files and source-root links never inherit the previous declaration.
 pub(super) fn source_manifest_with_reader(
     unit: &SelectedNativeLoaf,
     read: &mut dyn FnMut(&Path) -> Result<Vec<u8>>,
 ) -> Result<toml::Value> {
+    if let Some(manifest) = unit.source_declaration.get() {
+        verify_native_source_declaration(&unit.native_owner)?;
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_declaration", input = %unit.identity());
+        return Ok(manifest.clone());
+    }
     let bytes = source_declaration_bytes(&unit.native_owner, read)?;
-    toml::from_str(std::str::from_utf8(&bytes).map_err(failed)?).map_err(failed)
+    let manifest = toml::from_str(std::str::from_utf8(&bytes).map_err(failed)?).map_err(failed)?;
+    let _already_initialized = unit.source_declaration.set(manifest);
+    unit.source_declaration
+        .get()
+        .cloned()
+        .ok_or_else(|| refused("native source declaration was not retained"))
 }
 
-/// Retain declaration integrity on native handoffs without visiting archived source bodies.
+/// Retain declaration integrity on native handoffs using the existing replacement-sensitive file observer.
 pub(crate) fn verify_native_source_declaration(owner: &oven_store::store::OvenStoreExecutionPayload) -> Result<()> {
-    if owner
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::verify_native_source_declaration", input = %owner.manifest().identity, inventory_members = owner.admitted_materialized_files().len()).entered();
+    if let Some(member) = owner
         .admitted_materialized_files()
         .iter()
-        .any(|member| member.relative_path == "source/loaf.toml")
+        .find(|member| member.relative_path == "source/loaf.toml")
     {
-        source_declaration_bytes(owner, &mut |path| std::fs::read(path).map_err(failed))?;
+        let (length, digest) = owner
+            .digest_materialized_member(&member.relative_path)
+            .map_err(failed)?;
+        if length != member.logical_bytes || digest != member.digest {
+            return Err(refused("native source declaration changed after admission"));
+        }
     }
     Ok(())
 }
 
-/// Read the exact declaration beneath its original plain source directory and match its admitted byte digest.
+/// Read the exact declaration and match its admitted byte digest before retaining any parsed metadata.
 fn source_declaration_bytes(
     owner: &oven_store::store::OvenStoreExecutionPayload,
     read: &mut dyn FnMut(&Path) -> Result<Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    let source_root = owner.artifact_root.join("source");
-    let source_metadata = std::fs::symlink_metadata(&source_root).map_err(failed)?;
+    let (path, member) = source_declaration_member(owner)?;
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::read_native_source_declaration", input = %path.display()).entered();
+    let bytes = read(&path)?;
+    if u64::try_from(bytes.len()).ok() != Some(member.logical_bytes)
+        || oven_store::digest_bytes(&bytes) != member.digest
+    {
+        return Err(refused("native source declaration changed after admission"));
+    }
+    tracing::trace!(target: "incan::invocation", declaration_bytes_read = member.logical_bytes, declaration_reads = 1_u64);
+    Ok(bytes)
+}
+
+/// Require the original plain source directory and exact inventoried non-link declaration before observation.
+fn source_declaration_member(
+    owner: &oven_store::store::OvenStoreExecutionPayload,
+) -> Result<(PathBuf, &oven_store::store::OvenArtifactMaterializedFileManifest)> {
+    let source_root = owner.artifact_root().join("source");
+    let source_metadata = std::fs::symlink_metadata(&source_root)
+        .map_err(|error| input_failure("inspect admitted source directory", &source_root, error))?;
     if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
         return Err(refused(
             "native source declaration requires its original plain source directory",
@@ -269,15 +358,14 @@ fn source_declaration_bytes(
         .iter()
         .find(|member| member.relative_path == "source/loaf.toml")
         .ok_or_else(|| refused("native owner has no admitted source declaration"))?;
-    let path = owner.artifact_root.join(&member.relative_path);
-    if !std::fs::symlink_metadata(&path).map_err(failed)?.is_file() {
+    let path = owner.artifact_root().join(&member.relative_path);
+    if !std::fs::symlink_metadata(&path)
+        .map_err(|error| input_failure("inspect admitted source declaration", &path, error))?
+        .is_file()
+    {
         return Err(refused("native source declaration is not a plain file"));
     }
-    let bytes = read(&path)?;
-    if bytes.len() as u64 != member.logical_bytes || oven_store::digest_bytes(&bytes) != member.digest {
-        return Err(refused("native source declaration changed after admission"));
-    }
-    Ok(bytes)
+    Ok((path, member))
 }
 
 /// Require exact authored project fields instead of inferring them from filenames or Rust crate aliases.

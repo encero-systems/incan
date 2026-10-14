@@ -609,6 +609,7 @@ def complete(device: Device) -> None:
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+/// Specialize borrowed-slice callback parameters using a complete seeded nominal metadata contract.
 fn rust_method_type_args_contextualize_inline_borrowed_slice_callback_issue835()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -656,6 +657,29 @@ def run(device: Device) -> None:
                         is_unsafe: false,
                     },
                 }],
+                implemented_traits: Vec::new(),
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        },
+    )?;
+
+    // This nominal callback parameter belongs to the seeded contract, not to the empty probe source.
+    checker.rust_inspect_cache.insert_test_item(
+        &manifest_dir,
+        RustItemMetadata {
+            canonical_path: "demo::OutputCallbackInfo".to_string(),
+            definition_path: Some("demo::OutputCallbackInfo".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                type_params: Vec::new(),
+                type_param_defaults: Vec::new(),
+                mutable_reference_type_params: Vec::new(),
+                expanded_derive_traits: Vec::new(),
+                has_const_params: false,
+                alias_target: None,
+                metadata_completeness: Default::default(),
+                methods: Vec::new(),
                 implemented_traits: Vec::new(),
                 fields: Vec::new(),
                 variants: Vec::new(),

@@ -14,6 +14,10 @@ std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driv
 std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
+incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab" }
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
@@ -45,3 +49,9 @@ edition = "2024"
 [[rust.bin]]
 name = "oven"
 path = "src/main.rs"
+
+# Test-only dependencies and helper features; production defaults are unchanged.
+[envs.test.dependencies]
+incan_test_support = { loaf = "incan_test_support", path = "../../compiler/incan_test_support" }
+incan_driver = { features = ["test_support"] }
+oven_rustc = { features = ["test_support"] }

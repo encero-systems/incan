@@ -13,7 +13,7 @@ use crate::commands::build_report::{emit_build_report, emit_rust_inspection_repo
 use crate::{CliError, CliResult, ExitCode};
 use incan_driver::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
 use incan_driver::build::bake::{
-    bake_oven_library, bake_oven_project, publish_ordinary_project_output, select_default_executable_project_output,
+    bake_oven_library, bake_oven_project, publish_configured_ordinary_library, publish_ordinary_project_output,
 };
 use incan_driver::build::inline_command::{inline_command_project, wrap_inline_command_source};
 use incan_driver::build::library_exports::resolve_library_project_root;
@@ -22,10 +22,9 @@ use incan_driver::build::library_outputs::{
 };
 use incan_driver::build::library_project::prepare_library_project;
 use incan_driver::build::output_materialization::{
-    completed_executable_output_report, completed_library_output_report, completed_output_default_backend_receipt,
-    materialize_completed_executable_output, materialize_completed_library_outputs, materialize_project_output,
-    select_default_library_project_outputs, select_default_project_output, verify_stored_project_output_native,
-    warn_for_completed_output_lock_fingerprint_drift,
+    completed_library_output_report, completed_output_default_backend_receipt, materialize_completed_library_outputs,
+    materialize_project_output, select_default_library_project_outputs, select_default_project_output,
+    verify_stored_project_output_native, warn_for_completed_output_lock_fingerprint_drift,
 };
 use incan_driver::build::output_paths::{normalized_project_entrypoint, project_root_for_completed_output};
 use incan_driver::build::oven_project::prepare_oven_project;
@@ -162,103 +161,21 @@ pub fn build_file(
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
     incan_driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
-    if !report_options.enabled()
-        && let Some((project_root, selected, backend_receipt)) =
-            select_default_executable_project_output(file_path, output_dir, &options)?
-    {
-        materialize_completed_executable_output(&project_root, &selected, &backend_receipt)?;
-        println!(
-            "✓ Oven build reused sealed project Loaf: {}",
-            selected.native_output.display()
-        );
-        return Ok(ExitCode::SUCCESS);
-    }
     let report = build_file_report(file_path, output_dir, options, &report_options)?;
     emit_workspace_build_report(&report, &report_options)?;
     Ok(ExitCode::SUCCESS)
 }
 
-/// Build one executable project and retain its completed report for workspace-level aggregation.
+/// Submit an executable build to the shared owner; presentation remains local to this request.
 pub(crate) fn build_file_report(
     file_path: &str,
     output_dir: Option<&String>,
     options: BuildCommandOptions,
     report_options: &BuildReportOptions,
 ) -> CliResult<serde_json::Value> {
-    reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-    let total_start = Instant::now();
-    if let Some((project_root, selected, backend_receipt)) =
-        select_default_executable_project_output(file_path, output_dir, &options)?
-    {
-        materialize_completed_executable_output(&project_root, &selected, &backend_receipt)?;
-        print_build_progress(
-            report_options,
-            format!(
-                "✓ Oven build reused sealed project Loaf: {}",
-                selected.native_output.display()
-            ),
-        );
-        return completed_executable_output_report(&project_root, &selected, &backend_receipt, total_start);
-    }
-    // Retain authority before any frontend work; the same existing loaf selector consumes this on the next command.
-    let completed_authority = if output_dir.is_none() {
-        ordinary_project_output_authority(file_path, &options.package_features, options.sdk_profile.as_deref())?
-    } else {
-        None
-    };
-    let prepare_start = Instant::now();
-    let prepared = prepare_oven_project(
-        file_path,
-        output_dir.map(|path| path.as_str()),
-        &options.cargo_policy,
-        &options.package_features,
-        options.sdk_profile.as_deref(),
-        options.cargo_features,
-        options.cargo_no_default_features,
-        options.cargo_all_features,
-        "release",
-        OvenProjectPlanMode::ConsumeOnly,
-        None,
-    )?;
-    let prepare_ms = elapsed_ms(prepare_start);
-
-    print_build_progress(
-        report_options,
-        format!(
-            "Generated Rust project in: {}",
-            prepared.generator.output_dir().display()
-        ),
-    );
-    print_build_progress(report_options, "Building with Oven Alpha...");
-    let oven_build_start = Instant::now();
-    let bake = bake_oven_project(&prepared, "release", None)?;
-    let oven_build_ms = elapsed_ms(oven_build_start);
-    print_build_progress(report_options, "✓ Oven build successful!");
-    print_build_progress(report_options, format!("Binary: {}", bake.output.display()));
-    let mut report_draft = prepared.report.clone();
-    report_draft.artifacts.push(artifact_report("binary", &bake.output));
-    // Published only now that the whole build — codegen, Oven plan selection, and the rustc bake above — has actually
-    // succeeded (#986); `prepare_oven_project` itself never persists this, since it also runs for internal/dependency
-    // callers that must not overwrite a real receipt.
-    if let Some(backend_receipt) = report_draft.backend.as_ref() {
-        write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
-    }
-    let mut timings_ms = prepared.prepare_timings.clone();
-    timings_ms.insert("prepare".to_string(), prepare_ms);
-    timings_ms.insert("oven_build".to_string(), oven_build_ms);
-    timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-    let report = report_draft.finish(timings_ms);
-    if let Some((source_authority, preparation_identity)) = completed_authority {
-        publish_ordinary_project_output(
-            &prepared,
-            &bake.output,
-            &source_authority,
-            &preparation_identity,
-            &report,
-        )?;
-    }
-    serde_json::to_value(report)
-        .map_err(|error| CliError::failure(format!("failed to serialize Oven build report: {error}")))
+    crate::project_owner::build(file_path, output_dir, options, |message| {
+        print_build_progress(report_options, message);
+    })
 }
 
 /// Validate RFC 031 library-mode preconditions.
@@ -339,9 +256,29 @@ pub(crate) fn build_library_report(
             cargo_no_default_features: options.cargo_no_default_features,
             cargo_all_features: options.cargo_all_features,
         };
-        if output_dir.is_none()
-            && let Some(outputs) = select_default_library_project_outputs(file_path, &completed_output_policy)?
-        {
+        let mut completed = if output_dir.is_none() {
+            select_default_library_project_outputs(file_path, &completed_output_policy)?
+        } else {
+            None
+        };
+        let prepared_ordinary = completed.is_none()
+            && output_dir.is_none()
+            && options.cargo_features.is_empty()
+            && !options.cargo_no_default_features
+            && !options.cargo_all_features
+            && options.sdk_profile.is_none()
+            && publish_configured_ordinary_library(
+                &resolve_library_project_root(file_path)?,
+                &options.package_features,
+            )?;
+        if prepared_ordinary {
+            completed = Some(
+                select_default_library_project_outputs(file_path, &completed_output_policy)?.ok_or_else(|| {
+                    CliError::failure("ordinary library publication did not produce current completed outputs")
+                })?,
+            );
+        }
+        if let Some(outputs) = completed {
             let project_root = resolve_library_project_root(file_path)?;
             warn_for_completed_output_lock_fingerprint_drift(&project_root, outputs.iter())?;
             // Prefer the release output's backend receipt, but accept the profile this project actually baked.
@@ -354,7 +291,19 @@ pub(crate) fn build_library_report(
                 .and_then(completed_output_default_backend_receipt)
                 .ok_or_else(|| CliError::failure("completed Oven library output has no verified backend receipt"))?;
             return materialize_completed_library_outputs(&project_root, &outputs, &backend_receipt, || {
-                completed_library_output_report(&project_root, &outputs, total_start)
+                let mut report = completed_library_output_report(&project_root, &outputs, total_start)?;
+                if prepared_ordinary {
+                    if let Some(elapsed) = report.timings_ms.remove("completed_project_output_reuse") {
+                        report
+                            .timings_ms
+                            .insert("ordinary_library_preparation".to_string(), elapsed);
+                    }
+                    report.notes = vec![
+                        "Prepared an ordinary library Loaf; source and dependency details are retained in its checked metadata."
+                            .to_string(),
+                    ];
+                }
+                Ok(report)
             });
         }
     }
@@ -726,11 +675,14 @@ mod tests {
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::InspectorConfig;
 
-    /// Copy a source tree into an isolated component fixture without following symlinks.
+    /// Copy authored component inputs without following symlinks or carrying generated build/cache directories.
     fn copy_source_tree(from: &Path, to: &Path) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(to)?;
         for entry in fs::read_dir(from)? {
             let entry = entry?;
+            if matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+                continue;
+            }
             let source = entry.path();
             let destination = to.join(entry.file_name());
             if entry.file_type()?.is_dir() {
@@ -750,10 +702,12 @@ mod tests {
         const ENTRY: &str = "INCAN_TEST_1976_STDLIB_SOURCE_ENTRY";
         if env::var_os(CHILD).is_some() {
             let entry = env::var(ENTRY)?;
-            crate::commands::diagnostics::check_path(
+            let report = incan_driver::build::check::check_path_report_with_selections(
                 Path::new(&entry),
-                crate::commands::diagnostics::DiagnosticOutputFormat::Text,
+                &FeatureSelection::default(),
+                None,
             )?;
+            assert!(report.ok(), "async component source check failed: {report:?}");
             return Ok(());
         }
 
@@ -839,13 +793,13 @@ mod tests {
         fs::create_dir_all(root.join("src"))?;
         fs::create_dir_all(dependency.join("src"))?;
         fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\n",
+            root.join("loaf.toml"),
+            "[project]\nname='root'\nversion='0.1.0'\n[rust]\nname='root'\ntype='lib'\nedition='2021'\n[dependencies]\nsource-dep={path='../source-dep'}\n",
         )?;
         fs::write(root.join("src/lib.rs"), "pub fn keep() {}\n")?;
         fs::write(
-            dependency.join("Cargo.toml"),
-            "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n",
+            dependency.join("loaf.toml"),
+            "[project]\nname='source-dep'\nversion='0.1.0'\n[rust]\nname='source_dep'\ntype='lib'\nedition='2021'\n",
         )?;
         fs::write(
             dependency.join("src/lib.rs"),
@@ -860,8 +814,41 @@ impl ChildId {
 "#,
         )?;
 
+        // Both the root lookup and the dependency-local complete extraction use the existing direct source loader.
+        // These authored fixtures have only local path edges and no registry closure to resolve.
+        for manifest_dir in [&root, &dependency] {
+            rust_inspect::write_oven_inspection_source_authority(manifest_dir, Vec::new())?;
+            fs::write(manifest_dir.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
+        }
+        assert!(!root.join("Cargo.toml").exists());
+        assert!(!dependency.join("Cargo.toml").exists());
+
         let query_path = "source_dep::ChildId".to_string();
         let inspector = Inspector::new(InspectorConfig::new(root.clone()));
+        // Reproduce a persisted partial prewarm record explicitly: complete Oven extraction now eagerly includes
+        // methods, but ABI publication must also upgrade records left by the source-only metadata path.
+        inspector.cache().insert_test_item(
+            &root,
+            incan_lang::interop::RustItemMetadata {
+                canonical_path: query_path.clone(),
+                definition_path: Some(query_path.clone()),
+                visibility: incan_lang::interop::RustVisibility::Public,
+                kind: incan_lang::interop::RustItemKind::Type(incan_lang::interop::RustTypeInfo {
+                    type_params: Vec::new(),
+                    type_param_defaults: Vec::new(),
+                    mutable_reference_type_params: Vec::new(),
+                    expanded_derive_traits: Vec::new(),
+                    has_const_params: false,
+                    alias_target: None,
+                    metadata_completeness: incan_lang::interop::RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+                    methods: Vec::new(),
+                    implemented_traits: Vec::new(),
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )?;
+        inspector.cache().persist_manifest_dir(&root)?;
         inspector.prewarm([query_path.clone()], &|_| ())?;
         let prewarmed = inspector.get(&query_path)?;
         let incan_lang::interop::RustItemKind::Type(prewarmed_type) = &prewarmed.metadata.kind else {
@@ -869,7 +856,7 @@ impl ChildId {
         };
         assert!(
             !prewarmed_type.metadata_completeness.has_methods(),
-            "the regression requires the fast prewarm route to persist partial source metadata"
+            "the regression requires prewarm to reuse the persisted partial metadata"
         );
 
         let query_paths = vec![query_path.clone()];
@@ -893,6 +880,12 @@ impl ChildId {
     #[test]
     fn build_library_canonicalizes_explicit_and_implicit_nested_module_imports()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::build::tests::build_library_canonicalizes_explicit_and_implicit_nested_module_imports",
+        )? {
+            return Ok(());
+        }
+
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         let src_dir = project_root.join("src");
@@ -915,8 +908,7 @@ impl ChildId {
             "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,
@@ -969,6 +961,12 @@ impl ChildId {
     #[test]
     fn build_library_publishes_an_executable_surface_joined_to_the_manifest_by_identity()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::build::tests::build_library_publishes_an_executable_surface_joined_to_the_manifest_by_identity",
+        )? {
+            return Ok(());
+        }
+
         // RFC 123's core claim is that the manifest and the representation are joined by the identity space rather
         // than by file naming or ordering. This proves exactly that: the identity is taken from the manifest the
         // build published, hydrated, and looked up in the surface. Nothing here reconstructs an identity or matches
@@ -989,8 +987,7 @@ impl ChildId {
             "pub def doubled(value: int) -> int:\n    return value * 2\n",
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         IncanLock::new(
             incan_lang::version::INCAN_VERSION,
@@ -1086,8 +1083,7 @@ pub def answer() -> int:
 "#,
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,
@@ -1150,6 +1146,12 @@ pub def answer() -> int:
     #[test]
     fn build_library_publishes_public_registry_metadata_and_facade_projections()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::build::tests::build_library_publishes_public_registry_metadata_and_facade_projections",
+        )? {
+            return Ok(());
+        }
+
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         let src_dir = project_root.join("src");
@@ -1212,8 +1214,7 @@ pub def normalize(value: str) -> str:
 "#,
         )?;
 
-        let cargo_lock_payload =
-            std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
+        let cargo_lock_payload = std::fs::read_to_string(incan_test_support::repo_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
             incan_lang::version::INCAN_VERSION,

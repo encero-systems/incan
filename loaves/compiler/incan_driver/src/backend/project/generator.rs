@@ -19,7 +19,9 @@ use incan_frontend::library_manifest::{LibraryManifest, ProviderDependencyKind, 
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
 use incan_lang::lang::{rust_keywords, stdlib};
 use incan_provider::compiled_sdk::CompiledSdkModules;
-use incan_provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
+use incan_provider::{
+    ProviderPlan, ProviderProvenance, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding,
+};
 use oven_model::manifest::{DependencySource, DependencySpec};
 use sha2::{Digest as _, Sha256};
 use toml_edit::{DocumentMut, Item, value};
@@ -583,6 +585,10 @@ impl ProjectGenerator {
     }
 
     /// Configure generated Rust facade links from the shared compiler provider plan.
+    ///
+    /// Ordinary standard publications are already selected native dependencies, including core support invoked by
+    /// generated code without an authored import. Reuse their checked artifact facade without adding SDK paths or
+    /// synthetic source imports. Legacy SDK catalogs keep their existing semantic link-root selection.
     pub fn set_provider_plan(&mut self, plan: &ProviderPlan) {
         self.compiled_provider_modules.clear();
         self.compiled_sdk_modules = CompiledSdkModules::from_provider_plan(plan);
@@ -590,6 +596,7 @@ impl ProjectGenerator {
         self.sdk_artifact_projections = plan.sdk_artifact_projections().to_vec();
         self.set_sdk_path_dependencies(
             plan.active_sdk_records()
+                .filter(|provider| matches!(provider.provenance, ProviderProvenance::Sdk { .. }))
                 .filter_map(|provider| {
                     provider
                         .artifact
@@ -598,7 +605,10 @@ impl ProjectGenerator {
                 })
                 .collect(),
         );
-        for provider in plan.sdk_link_roots() {
+        for provider in plan.sdk_link_roots().into_iter().chain(
+            plan.active_sdk_records()
+                .filter(|provider| matches!(provider.provenance, ProviderProvenance::StandardPublication { .. })),
+        ) {
             let Some(artifact) = provider.artifact.as_ref() else {
                 continue;
             };
@@ -1376,7 +1386,8 @@ impl ProjectGenerator {
             facade.push_str(&format!("    pub use crate::{escaped_module};\n"));
         }
         for crate_name in self.compiled_provider_modules.keys() {
-            let escaped_crate = rust_keywords::escape_keyword(crate_name);
+            let crate_name = crate_name.replace('-', "_");
+            let escaped_crate = rust_keywords::escape_keyword(&crate_name);
             // A provider's compatibility facade includes the provider modules of its component dependencies. Reuse
             // that checked artifact projection so compiler-generated paths such as `crate::__incan_std::traits` keep
             // working without making transitive component crates direct Cargo dependencies of the consumer.
@@ -1445,12 +1456,12 @@ impl ProjectGenerator {
         crate_root.insert_str(insertion, PROVIDER_LINTS);
     }
 
-    /// Return whether this generated project links at least one compiled SDK provider.
+    /// Return whether this generated project links a compiled standard-library artifact.
     ///
     /// The artifact preserves a narrow `__incan_std` facade for compiler-generated compatibility paths. Consumers
     /// re-export that facade instead of regenerating any stdlib source; the bridge can be removed once every emitted
     /// compiler path is artifact-qualified.
-    fn links_compiled_sdk_provider(&self) -> bool {
+    fn links_compiled_standard_provider(&self) -> bool {
         !self.compiled_provider_modules.is_empty()
     }
 
@@ -1472,7 +1483,7 @@ impl ProjectGenerator {
         // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
         let mut full_main = rust_code.to_string();
         self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
-        if self.links_compiled_sdk_provider()
+        if self.links_compiled_standard_provider()
             && !(self.native_sdk_publication || is_sdk_provider_build())
             && !full_main.contains("mod __incan_std")
         {
@@ -1809,7 +1820,7 @@ impl ProjectGenerator {
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
-        let consumer_stdlib_facade = self.links_compiled_sdk_provider()
+        let consumer_stdlib_facade = self.links_compiled_standard_provider()
             && !(self.native_sdk_publication || is_sdk_provider_build())
             && !sorted_top.iter().any(|module| module == "__incan_std");
         if !sorted_top.is_empty() || consumer_stdlib_facade {

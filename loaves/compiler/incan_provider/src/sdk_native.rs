@@ -175,7 +175,7 @@ pub fn sdk_native_runtime_loaves(selection: &SdkNativeSelection, required: &[&st
             .iter()
             .find(|file| file.relative_path == relative)
             .ok_or_else(|| ProviderError::failure("native runtime unit has no admitted Loaf declaration"))?;
-        let path = owner.artifact_root.join(relative);
+        let path = owner.artifact_root().join(relative);
         let bytes = std::fs::read(&path).map_err(|error| ProviderError::failure(error.to_string()))?;
         if oven_store::digest_bytes(&bytes) != admitted.digest {
             return Err(ProviderError::failure(
@@ -303,15 +303,15 @@ fn verify_sdk_native_artifact(
         .verify_proven_native_payload()
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     let actual: oven_rustc::sdk_closure::SdkLockedUnit =
-        serde_json::from_slice(&owner.payload).map_err(|error| ProviderError::failure(error.to_string()))?;
+        serde_json::from_slice(owner.payload()).map_err(|error| ProviderError::failure(error.to_string()))?;
     let actual =
         serde_json::to_value(actual.identity_binding()).map_err(|error| ProviderError::failure(error.to_string()))?;
     let expected = serde_json::to_value(unit.binding.identity_binding())
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     if actual != expected
-        || unit.store_identity != owner.manifest.identity
-        || owner.manifest.domain != format!("sdk-source-unit-{}", unit.binding.domain)
-        || owner.manifest.receipt_identity != unit.receipt_identity
+        || unit.store_identity != owner.manifest().identity
+        || owner.manifest().domain != format!("sdk-source-unit-{}", unit.binding.domain)
+        || owner.manifest().receipt_identity != unit.receipt_identity
         || unit.relative_path.contains(['/', '\\'])
         || !matches!(
             Path::new(&unit.relative_path)
@@ -921,7 +921,7 @@ mod tests {
         selection.units[0].binding.domain = "host".to_string();
         assert!(super::sdk_native_runtime_loaves(&selection, &["companion"]).is_err());
         selection.units[0].binding.domain = "target".to_string();
-        let declaration = selection.owners[0].artifact_root.join("source/loaf.toml");
+        let declaration = selection.owners[0].artifact_root().join("source/loaf.toml");
         let admitted_bytes = std::fs::read(&declaration)?;
         let replacement = declaration.with_extension("replacement");
         std::fs::write(
@@ -992,7 +992,7 @@ mod tests {
     /// Component imports parse using their Loaf dependency declarations instead of removed inline version hints.
     #[test]
     fn system_sources_use_loaf_dependency_declarations() -> Result<(), Box<dyn std::error::Error>> {
-        let root = oven_model::toolchain_layout::development_root().join("loaves/stdlib/system/src");
+        let root = incan_test_support::repo_root().join("loaves/stdlib/system/src");
         for relative in [
             "fs/file.incn",
             "fs/locking.incn",

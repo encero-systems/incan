@@ -11,7 +11,9 @@ use crate::build::library_project::metadata_replay::ordinary_native::OrdinaryNat
 use crate::build::ordinary_support::CompilerSupportSources;
 use crate::error::{CliError, CliResult};
 use oven_model::manifest::DependencySpec;
-use oven_rustc::native_loaf::{NativeLoafClosure, NativeLoafPreparationReport, prepare_resolved_native_loafs_in_store};
+#[cfg(test)]
+use oven_rustc::native_loaf::NativeLoafPreparationReport;
+use oven_rustc::native_loaf::{NativeLoafClosure, prepare_resolved_native_loafs_in_store};
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_store::store::OvenStore;
 use oven_store::{OvenBuildIntent, OvenReceipt};
@@ -41,6 +43,7 @@ pub(crate) struct OrdinaryLibraryNativeRequest<'a> {
 /// capability can prepare library metadata or run compiler macros.
 pub(crate) struct OrdinaryLibraryNativeProfiles {
     metadata: Arc<OrdinaryNativeMetadataAuthority>,
+    #[cfg(test)]
     reports: BTreeMap<String, NativeLoafPreparationReport>,
 }
 
@@ -70,6 +73,7 @@ impl OrdinaryLibraryNativeProfiles {
         request.support.verify()?;
         let toolchain = oven_rustc::rustc::rustc_identity(request.rustc).map_err(failure)?;
         let mut observations = BTreeMap::new();
+        #[cfg(test)]
         let mut reports = BTreeMap::new();
         let store = crate::oven_store::open_default_oven_store()?;
         for profile in request.profiles {
@@ -85,6 +89,7 @@ impl OrdinaryLibraryNativeProfiles {
             )
             .map_err(failure)?;
             observations.insert((*profile).to_string(), prepared.request_observation().map_err(failure)?);
+            #[cfg(test)]
             reports.insert(
                 (*profile).to_string(),
                 NativeLoafPreparationReport {
@@ -102,7 +107,11 @@ impl OrdinaryLibraryNativeProfiles {
             request.target,
             &toolchain,
         )?);
-        Ok(Self { metadata, reports })
+        Ok(Self {
+            metadata,
+            #[cfg(test)]
+            reports,
+        })
     }
 
     /// Borrow the same original complete semantic request through selection, replay and publication handoffs.
@@ -111,34 +120,47 @@ impl OrdinaryLibraryNativeProfiles {
     }
 
     /// Observe real compile/reuse work without synthesizing successful preparation from cached output paths.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn reports(&self) -> &BTreeMap<String, NativeLoafPreparationReport> {
         &self.reports
     }
 
     /// Revalidate every original request and mandatory support declaration without reacquiring owners.
+    #[track_caller]
     pub(crate) fn verify(&self) -> CliResult<()> {
         self.metadata.verify()
     }
 
     /// Bind a canonical normal/dev dependency surface to every original profile before its lock is published.
-    /// This verifies declared roots and their transitive physical closure without granting macro execution.
+    /// Root selection checks current declarations and selected physical owners, but grants no execution or publication
+    /// authority. Verify the complete original requests once after that tentative projection, including profiles and
+    /// units the declarations do not select, before returning success.
     pub(crate) fn verify_dependencies(&self, dependencies: &[DependencySpec], owner: &Path) -> CliResult<()> {
-        self.verify()?;
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::verify_ordinary_dependency_projection", dependencies = dependencies.len(), profiles = self.metadata.observations().len()).entered();
+        #[cfg(test)]
+        let requests_before =
+            super::library_project::metadata_replay::ordinary_native::metadata_request_verifications();
         for observation in self.metadata.observations().values() {
             let graph = observation.graph();
             let roots = graph
                 .select_dependency_roots(dependencies, owner, "target")
-                .map_err(failure)?;
+                .map_err(|error| {
+                    failure(format!(
+                        "cannot verify ordinary declared dependencies {dependencies:?} for {}: {error}",
+                        owner.display()
+                    ))
+                })?;
             graph.select(&roots).map_err(failure)?;
         }
-        self.verify()
+        self.verify()?;
+        #[cfg(test)]
+        assert_eq!(
+            super::library_project::metadata_replay::ordinary_native::metadata_request_verifications()
+                - requests_before,
+            self.metadata.observations().len(),
+            "dependency projection must validate each complete original profile once before returning",
+        );
+        Ok(())
     }
 
     /// Check provider semantics against the original mandatory support declarations.
@@ -150,14 +172,22 @@ impl OrdinaryLibraryNativeProfiles {
         &self,
         plan: &incan_provider::ProviderPlan,
         requirements: &incan_provider::requirements::ProjectRequirements,
+        admitted: Option<&super::library_dependencies::PreparedLibraryDependencies>,
     ) -> CliResult<Vec<DependencySpec>> {
+        let permitted = match admitted {
+            Some(dependencies) => dependencies.projected_requirements(plan)?,
+            None if plan.records().next().is_none() => incan_provider::requirements::ProjectRequirements::default(),
+            None => {
+                return Err(failure(
+                    "ordinary provider semantics require original checked dependency owners",
+                ));
+            }
+        };
         let support = self.metadata.support().dependencies()?;
-        if plan.records().next().is_some()
-            || requirements.stdlib_facets.iter().any(|facet| {
-                !incan_lang::lang::stdlib::facets::is_facet(facet)
-                    || !support.iter().any(|dependency| dependency.crate_name == *facet)
-            })
-            || !requirements.dependencies.is_empty()
+        if requirements.stdlib_facets.iter().any(|facet| {
+            !incan_lang::lang::stdlib::facets::is_facet(facet)
+                || !support.iter().any(|dependency| dependency.crate_name == *facet)
+        }) || requirements.dependencies != permitted.dependencies
             || !requirements.sdk_dependency_rebindings.is_empty()
             || !requirements.sdk_path_dependencies.is_empty()
             || !requirements.sdk_artifact_projections.is_empty()
@@ -203,15 +233,25 @@ impl OrdinaryLibraryNativeProfiles {
         dependencies: &[DependencySpec],
         owner: &Path,
     ) -> CliResult<NativeLoafClosure> {
-        let observation = self.metadata.verify_profile(intent)?;
+        let observation = self.metadata.verify_profile(intent).map_err(|error| {
+            failure(format!(
+                "cannot verify ordinary native profile for {}: {error}",
+                owner.display()
+            ))
+        })?;
         let graph = observation.graph();
         let support = self.metadata.support();
         let mut roots = graph
             .select_dependency_roots(support.dependencies()?, support.declaration_owner()?, "target")
-            .map_err(failure)?;
+            .map_err(|error| failure(format!("cannot select mandatory ordinary support: {error}")))?;
         for root in graph
             .select_dependency_roots(dependencies, owner, "target")
-            .map_err(failure)?
+            .map_err(|error| {
+                failure(format!(
+                    "cannot select ordinary native declarations {dependencies:?} for {}: {error}",
+                    owner.display()
+                ))
+            })?
         {
             if let Some(original) = roots.iter().find(|original| original.alias == root.alias) {
                 if original.record_identity != root.record_identity {
@@ -272,14 +312,19 @@ impl OrdinaryLibraryNativeProfiles {
         receipt: &OvenReceipt,
         resolved: &incan_provider::dependency_resolver::ResolvedDependencies,
         owner: &Path,
+        session: &crate::session::CompilationSession,
     ) -> CliResult<super::PreparedOvenTestDependencyEnvelope> {
         let dependencies = crate::build_unit::promoted_oven_test_dependencies(resolved)?;
+        let owners = session
+            .admitted_library_dependencies()
+            .ok_or_else(|| failure("ordinary test envelope lacks checked package owners"))?;
+        let physical = owners.physical_native_dependencies(session.provider_plan(), &dependencies)?;
         // ---- Complete promoted declaration and original physical-root coverage ----
         let dependency_surface_digest =
             oven_store::digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
                 .map_err(failure)?;
         let dependency_root_digests = super::plan_selection::oven_test_dependency_root_digests(&dependencies)?;
-        let inputs = self.runtime_inputs(&receipt.intent, &[], &[], &dependencies, &dependencies, owner)?;
+        let inputs = self.runtime_inputs(&receipt.intent, &[], &[], &dependencies, &physical, owner)?;
         // ---- Reuse the actual library receipt only when every native input already covers the test surface ----
         let selected_receipt = if inputs
             .iter()
@@ -318,7 +363,7 @@ impl OrdinaryLibraryNativeProfiles {
             oven_store::receipt_generated_project(&request).map_err(failure)?
         };
         // ---- Select and retain the same genuine producer graph for future generated tests ----
-        let (receipt, plan_selection) = self.select_plan(store, &selected_receipt, &dependencies, owner)?;
+        let (receipt, plan_selection) = self.select_plan(store, &selected_receipt, &physical, owner)?;
         Ok(super::PreparedOvenTestDependencyEnvelope {
             receipt,
             dependency_surface_digest,

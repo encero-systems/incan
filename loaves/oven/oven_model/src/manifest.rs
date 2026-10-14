@@ -990,9 +990,9 @@ pub struct ToolSection {
 /// the subsection they own.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IncanToolSection {
-    /// Named RFC 015 environment definitions.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub envs: HashMap<String, EnvSection>,
+    /// Retired environment namespace, recognized only to emit a targeted migration error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub envs: Option<toml::Value>,
     /// RFC 048 checked metadata configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<MetadataToolSection>,
@@ -1007,7 +1007,7 @@ pub struct MetadataToolSection {
     pub model_bundles: Vec<String>,
 }
 
-/// Serializable shape for `[tool.incan.envs.<name>]`.
+/// Serializable shape for `[envs.<name>]`.
 ///
 /// This canonical manifest-side type owns the RFC 015 env schema. Unknown keys inside an env definition are rejected
 /// here through `deny_unknown_fields`, and downstream lifecycle helpers resolve overlays from this parsed shape instead
@@ -1016,7 +1016,11 @@ pub struct MetadataToolSection {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EnvSection {
     /// Env names to apply before this env.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_env_extends",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub extends: Vec<String>,
     /// Required Incan toolchain version requirement for this env.
     #[serde(rename = "requires-incan", skip_serializing_if = "Option::is_none")]
@@ -1053,6 +1057,20 @@ pub struct EnvSection {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub dev_dependencies: HashMap<String, toml::Value>,
+}
+
+/// Normalize the single-name shorthand and ordered inheritance lists into one environment representation.
+fn deserialize_env_extends<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Names {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Names::deserialize(deserializer)? {
+        Names::One(name) => vec![name],
+        Names::Many(names) => names,
+    })
 }
 
 /// `[workspace]` topology declarations from RFC 077.
@@ -1142,6 +1160,8 @@ pub struct ProjectManifest {
     pub vocab: Option<VocabSection>,
     /// `[tool]` configuration (optional).
     pub tool: Option<ToolSection>,
+    /// Named command environments from the canonical `[envs]` root.
+    pub envs: BTreeMap<String, EnvSection>,
     /// `[sdk]` profile and component selection (optional).
     pub sdk: Option<SdkSection>,
     /// `[interop]` declared foreign-binding requirements, one table per binding kind.
@@ -1178,6 +1198,25 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
+    /// Return the authored Rust source directory, shared by library and test-root discovery.
+    pub fn rust_source_directory(&self) -> PathBuf {
+        let root = self.project_root();
+        self.rust_source
+            .as_ref()
+            .map_or_else(|| root.join("src"), |source| root.join(&source.root).join("src"))
+    }
+
+    /// Return this Loaf's library crate root; manifest admission has checked any explicit path's source containment.
+    pub fn rust_library_path(&self) -> PathBuf {
+        self.rust_facet
+            .as_ref()
+            .and_then(|facet| facet.path.as_deref())
+            .map_or_else(
+                || self.rust_source_directory().join("lib.rs"),
+                |path| self.project_root().join(path),
+            )
+    }
+
     /// Discover and parse a `loaf.toml` manifest by walking upward from `start_dir`.
     ///
     /// Returns `Ok(None)` when no manifest is found at all, which is single-file mode rather than an error. Returns
@@ -1185,21 +1224,31 @@ impl ProjectManifest {
     /// the retired `incan.toml` — RFC 117 rule 10 makes that a targeted diagnostic rather than a parse or a silent
     /// walk past it, because such a directory looks like a project root to whoever authored it.
     pub fn discover(start_dir: &Path) -> Result<Option<Self>, ManifestError> {
+        Self::discover_observed(start_dir, &mut |_| {})
+    }
+
+    /// Discover through the ordinary grammar while reporting every filesystem input before it is consulted.
+    ///
+    /// The observer owns freshness policy; this model neither retains state nor assigns content identities. Absent
+    /// discovery candidates and filesystem-dependent parse probes are inputs too. Nested-command overrides retain
+    /// their existing meaning and the actual override content path is reported.
+    pub fn discover_observed(start_dir: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Option<Self>, ManifestError> {
         let manifest_path = match internal_project_root_override().map(|root| root.join(LOAF_MANIFEST_FILENAME)) {
             Some(path) => path,
-            None => match find_manifest(start_dir)? {
+            None => match find_manifest_observed(start_dir, observe)? {
                 Some(path) => path,
                 None => return Ok(None),
             },
         };
 
         let content_path = internal_manifest_override_path().unwrap_or_else(|| manifest_path.clone());
+        observe(&content_path);
         let content = std::fs::read_to_string(&content_path).map_err(|e| ManifestError::Read {
             path: content_path.clone(),
             source: e,
         })?;
 
-        let manifest = parse_manifest_content(&content, &manifest_path)?;
+        let manifest = parse_manifest_content(&content, &manifest_path, observe)?;
         Ok(Some(manifest))
     }
 
@@ -1207,7 +1256,7 @@ impl ProjectManifest {
     ///
     /// Source files need not exist, but existing script paths are resolved to detect library aliases.
     pub fn from_str(content: &str, path: &Path) -> Result<Self, ManifestError> {
-        parse_manifest_content(content, path)
+        parse_manifest_content(content, path, &mut |_| {})
     }
 
     /// Read and parse one manifest at its exact path without applying nested-command discovery overrides.
@@ -1215,11 +1264,17 @@ impl ProjectManifest {
     /// Workspace graph construction uses this boundary to inspect ancestor manifests as they exist on disk. Callers
     /// that need ordinary current-directory project discovery should continue to use [`Self::discover`].
     pub fn load(path: &Path) -> Result<Self, ManifestError> {
+        Self::load_observed(path, &mut |_| {})
+    }
+
+    /// Load an exact manifest through the existing parser, reporting content and path-classification inputs.
+    pub fn load_observed(path: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Self, ManifestError> {
+        observe(path);
         let content = std::fs::read_to_string(path).map_err(|source| ManifestError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_str(&content, path)
+        parse_manifest_content(&content, path, observe)
     }
 
     /// The set of crate names declared in `[rust-dependencies]` (normal deps only).
@@ -1355,6 +1410,14 @@ impl ProjectManifest {
     /// Members never reach this method directly: their `{ workspace = true }` requests are resolved by the workspace
     /// graph against these root-owned declarations. A root cannot itself inherit an identity from another workspace.
     pub fn workspace_shared_dependencies(&self) -> Result<WorkspaceSharedDependencies, ManifestError> {
+        self.workspace_shared_dependencies_observed(&mut |_| {})
+    }
+
+    /// Project shared dependency identities while reporting local Rust classification probes to the graph owner.
+    pub fn workspace_shared_dependencies_observed(
+        &self,
+        observe: &mut dyn FnMut(&Path),
+    ) -> Result<WorkspaceSharedDependencies, ManifestError> {
         let Some(workspace) = self.workspace() else {
             return Ok(WorkspaceSharedDependencies::default());
         };
@@ -1375,7 +1438,7 @@ impl ProjectManifest {
             entries,
             optional: HashMap::new(),
         };
-        let loaf_dependencies = parse_loaf_dependencies(Some(&table), &spans, &self.path)?;
+        let loaf_dependencies = parse_loaf_dependencies(Some(&table), &spans, &self.path, observe)?;
         let mut rust_dependencies = parse_workspace_rust_dependency_table(
             &workspace.rust_dependencies,
             &self.path,
@@ -1394,7 +1457,11 @@ impl ProjectManifest {
             }
         }
         Ok(WorkspaceSharedDependencies {
-            library_dependencies: parse_workspace_library_dependency_table(&workspace.dependencies, &self.path)?,
+            library_dependencies: parse_workspace_library_dependency_table(
+                &workspace.dependencies,
+                &self.path,
+                observe,
+            )?,
             loaf_dependencies,
             rust_dependencies,
             rust_dev_dependencies: parse_workspace_rust_dependency_table(
@@ -1443,24 +1510,69 @@ impl ProjectManifest {
             .unwrap_or_default()
     }
 
-    /// Canonical env definitions as parsed from `[tool.incan.envs]`.
+    /// Canonical env definitions as parsed from `[envs]`.
     pub fn env_sections(&self) -> BTreeMap<String, EnvSection> {
-        self.incan_tool()
-            .map(|tool| {
-                tool.envs
-                    .iter()
-                    .map(|(name, env)| (name.clone(), env.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.envs.clone()
     }
 
     /// Canonical project-level Rust dependency overlay used as the base for env resolution.
     pub fn env_base_dependency_overlay(&self) -> BTreeMap<String, toml::Value> {
-        self.rust_dependencies
+        let mut values = self
+            .rust_dependencies
             .iter()
             .map(|(name, spec)| (name.clone(), dependency_spec_to_toml_value(spec)))
-            .collect()
+            .collect::<BTreeMap<_, _>>();
+        for (name, entries) in &self.loaf_dependencies {
+            let entries = entries
+                .iter()
+                .map(|entry| {
+                    let mut value = dependency_spec_to_toml_value(&entry.spec);
+                    if let toml::Value::Table(table) = &mut value {
+                        table.remove("package");
+                        table.insert("loaf".into(), toml::Value::String(entry.loaf.clone()));
+                        if let Some(target) = &entry.target {
+                            table.insert("target".into(), toml::Value::String(target.clone()));
+                        }
+                    }
+                    value
+                })
+                .collect::<Vec<_>>();
+            let value = match entries.as_slice() {
+                [entry] => entry.clone(),
+                _ => toml::Value::Array(entries),
+            };
+            values.insert(name.clone(), value);
+        }
+        values
+    }
+
+    /// Materialize resolved environment dependencies through the canonical manifest parser.
+    /// The original source identity and non-dependency settings are preserved. Native Loaf declarations retain
+    /// their feature and target metadata; this derived view never mutates the production manifest on disk.
+    pub fn with_environment_dependencies(
+        &self,
+        dependencies: &BTreeMap<String, toml::Value>,
+    ) -> Result<Self, ManifestError> {
+        let mut canonical = toml::map::Map::new();
+        let mut legacy = toml::map::Map::new();
+        for (name, value) in dependencies {
+            if value.get("loaf").is_some() || value.is_array() {
+                canonical.insert(name.clone(), value.clone());
+            } else {
+                legacy.insert(name.clone(), value.clone());
+            }
+        }
+        let mut document = toml::map::Map::new();
+        document.insert("dependencies".into(), toml::Value::Table(canonical));
+        document.insert("rust-dependencies".into(), toml::Value::Table(legacy));
+        let content =
+            toml::to_string(&document).map_err(|error| manifest_invalid(&self.path, None, error.to_string()))?;
+        let resolved = Self::from_str(&content, &self.path)?;
+        let mut effective = self.clone();
+        effective.library_dependencies.extend(resolved.library_dependencies);
+        effective.rust_dependencies = resolved.rust_dependencies;
+        effective.loaf_dependencies = resolved.loaf_dependencies;
+        Ok(effective)
     }
 
     /// Canonical project-level Rust dev-dependency overlay used as the base for env resolution.
@@ -1511,8 +1623,15 @@ pub fn discovered_manifest_kind(dir: &Path) -> DiscoveredManifest {
 /// put it there meant it as a project root, and continuing upward would silently build a different project than the
 /// one they were standing in.
 pub fn find_manifest(start_dir: &Path) -> Result<Option<PathBuf>, ManifestError> {
+    find_manifest_observed(start_dir, &mut |_| {})
+}
+
+/// Report both positive and negative nearest-project candidates without changing discovery precedence.
+fn find_manifest_observed(start_dir: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Option<PathBuf>, ManifestError> {
     let mut current = start_dir.to_path_buf();
     loop {
+        observe(&current.join(LOAF_MANIFEST_FILENAME));
+        observe(&current.join(LEGACY_MANIFEST_FILENAME));
         match discovered_manifest_kind(&current) {
             DiscoveredManifest::Loaf(path) => return Ok(Some(path)),
             DiscoveredManifest::LegacyIncanOnly(path) => return Err(ManifestError::LegacyIncanOnly { path }),
@@ -1582,6 +1701,8 @@ struct RawManifest {
     #[serde(default)]
     tool: Option<ToolSection>,
     #[serde(default)]
+    envs: BTreeMap<String, EnvSection>,
+    #[serde(default)]
     sdk: Option<SdkSection>,
     #[serde(default)]
     interop: Option<InteropSection>,
@@ -1617,6 +1738,8 @@ pub struct RustFacet {
     pub kind: Option<String>,
     /// Explicit Rust language edition.
     pub edition: Option<String>,
+    /// Library crate entry point relative to the project, inside its Rust source directory.
+    pub path: Option<String>,
     /// Whether the upstream package declared a build script; when true, a binding compiles only with a recorded fact.
     pub build_script: Option<bool>,
 }
@@ -1632,18 +1755,50 @@ pub struct LoafDependency {
     pub spec: DependencySpec,
 }
 
-/// Identify Rust registry edges and existing local Rust roots without interpreting Cargo files.
-fn is_rust_loaf_entry(entry: &DependencyEntry, manifest_path: &Path) -> bool {
+/// Identify Rust registry edges and authored local Rust roots without interpreting Cargo files or resolving children.
+/// Observe a nonconventional child's declaration and selected source so changing either invalidates classification.
+fn is_rust_loaf_entry(
+    entry: &DependencyEntry,
+    manifest_path: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<bool, ManifestError> {
     match entry {
-        DependencyEntry::Targets(_) => true,
+        DependencyEntry::Targets(_) => Ok(true),
         DependencyEntry::Table(table) => {
-            table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/"))
-                || table.path.as_deref().is_some_and(|root| {
-                    let root = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(root);
-                    root.join("src/lib.rs").is_file() || root.join("src/main.rs").is_file()
-                })
+            if table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/")) {
+                return Ok(true);
+            }
+            let Some(root) = table.path.as_deref() else {
+                return Ok(false);
+            };
+            let root = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(root);
+            observe(&root.join("src/lib.rs"));
+            observe(&root.join("src/main.rs"));
+            if root.join("src/lib.rs").is_file() || root.join("src/main.rs").is_file() {
+                return Ok(true);
+            }
+            let path = root.join(LOAF_MANIFEST_FILENAME);
+            observe(&path);
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(source) => return Err(ManifestError::Read { path, source }),
+            };
+            let document: Document<String> = content
+                .parse()
+                .map_err(|error| manifest_parse_error(&path, &content, error))?;
+            let spans = ManifestSpans::new(&content, &document);
+            let raw: RawManifest = toml_edit::de::from_document(document.clone())
+                .map_err(|error| manifest_parse_error(&path, &content, error))?;
+            validate_rust_library_path(&raw, &spans, &path)?;
+            let Some(library) = raw.rust.as_ref().and_then(|rust| rust.path.as_deref()) else {
+                return Ok(false);
+            };
+            let library = root.join(library);
+            observe(&library);
+            Ok(library.is_file())
         }
-        DependencyEntry::Version(_) => false,
+        DependencyEntry::Version(_) => Ok(false),
     }
 }
 
@@ -1673,7 +1828,7 @@ pub fn registry_loaf_dependencies_from_str(
         }
         DependencyEntry::Version(_) => false,
     });
-    parse_loaf_dependencies(Some(&dependencies), &spans, path)
+    parse_loaf_dependencies(Some(&dependencies), &spans, path, &mut |_| {})
 }
 
 /// Admit scoped Rust Loaves, retaining target alternatives before any consumer selection.
@@ -1681,11 +1836,12 @@ fn parse_loaf_dependencies(
     table: Option<&DependencyTable>,
     spans: &ManifestSpans<'_>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<BTreeMap<String, Vec<LoafDependency>>, ManifestError> {
     let mut result = BTreeMap::new();
     let Some(table) = table else { return Ok(result) };
     for (name, entry) in &table.entries {
-        if !is_rust_loaf_entry(entry, path) {
+        if !is_rust_loaf_entry(entry, path, observe)? {
             continue;
         }
         let entries = match entry {
@@ -1788,6 +1944,8 @@ struct RustTables {
     kind: Option<String>,
     #[serde(default)]
     edition: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
     #[serde(rename = "build-script", default)]
     build_script: Option<bool>,
     #[serde(default)]
@@ -2657,7 +2815,11 @@ fn byte_offset_to_line_col(content: &str, index: usize) -> (usize, usize) {
 }
 
 /// Parse and validate one complete `loaf.toml` document.
-fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest, ManifestError> {
+fn parse_manifest_content(
+    content: &str,
+    path: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<ProjectManifest, ManifestError> {
     let document: Document<String> = content
         .parse()
         .map_err(|error| manifest_parse_error(path, content, error))?;
@@ -2677,12 +2839,24 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
             "workspace.rust-dev-dependencies is outside the Loaf grammar; use workspace.dependencies",
         ));
     }
+    if raw
+        .tool
+        .as_ref()
+        .and_then(|tool| tool.incan.as_ref())
+        .is_some_and(|incan| incan.envs.is_some())
+    {
+        return Err(manifest_invalid(
+            path,
+            spans.table_location(&["tool", "incan", "envs"]),
+            "[tool.incan.envs] is retired; move named environments to [envs]",
+        ));
+    }
     validate_manifest_rust_facet(&raw, &spans, path)?;
 
     let library_dependencies = raw
         .dependencies
         .as_ref()
-        .map(|table| parse_library_dependency_table(table, &spans, path))
+        .map(|table| parse_library_dependency_table(table, &spans, path, observe))
         .transpose()?
         .unwrap_or_default();
 
@@ -2704,7 +2878,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         .transpose()?
         .unwrap_or_default();
 
-    let loaf_dependencies = parse_loaf_dependencies(raw.dependencies.as_ref(), &spans, path)?;
+    let loaf_dependencies = parse_loaf_dependencies(raw.dependencies.as_ref(), &spans, path, observe)?;
     for (name, entries) in &loaf_dependencies {
         if let [entry] = entries.as_slice()
             && entry.target.is_none()
@@ -2722,7 +2896,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
     }
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
 
-    validate_manifest_metadata(&raw, &spans, path)?;
+    validate_manifest_metadata(&raw, &spans, path, observe)?;
     let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
     validate_rust_fact_records(&rust_facts, path, &spans)?;
     let rust_bins = raw.rust.as_ref().map(|rust| rust.bin.clone()).unwrap_or_default();
@@ -2739,6 +2913,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         build: raw.build,
         vocab: raw.vocab,
         tool: raw.tool,
+        envs: raw.envs,
         sdk: raw.sdk,
         interop: raw.interop,
         rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
@@ -2746,6 +2921,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
             name: rust.name.clone(),
             kind: rust.kind.clone(),
             edition: rust.edition.clone(),
+            path: rust.path.clone(),
             build_script: rust.build_script,
         }),
         loaf_dependencies,
@@ -2825,10 +3001,45 @@ fn validate_manifest_rust_facet(
     Ok(())
 }
 
+/// Validate the library entry without dependency discovery, shared by full admission and local-edge classification.
+fn validate_rust_library_path(raw: &RawManifest, spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
+    if let Some(entry) = raw.rust.as_ref().and_then(|rust| rust.path.as_deref()) {
+        let relative = Path::new(entry);
+        let source_root = raw
+            .rust
+            .as_ref()
+            .and_then(|rust| rust.source.as_ref())
+            .map_or("", |source| source.root.as_str());
+        let source_directory: PathBuf = Path::new(source_root)
+            .join("src")
+            .components()
+            .filter(|component| *component != Component::CurDir)
+            .collect();
+        if entry.trim() != entry
+            || entry.is_empty()
+            || !relative.components().all(|part| matches!(part, Component::Normal(_)))
+            || relative.extension().is_none_or(|extension| extension != "rs")
+            || !relative.starts_with(&source_directory)
+        {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust"], "path"),
+                "[rust].path must name a plain relative .rs file inside the Loaf's Rust source directory",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validate authority roots and owned metadata before dependency or source consumers run.
-fn validate_manifest_metadata(raw: &RawManifest, spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
+fn validate_manifest_metadata(
+    raw: &RawManifest,
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<(), ManifestError> {
     validate_requires_incan_constraints(raw, spans, path)?;
-    validate_script_library_collisions(raw, spans, path)?;
+    validate_script_library_collisions(raw, spans, path, observe)?;
     if raw.oven.is_some() {
         return Err(manifest_invalid(
             path,
@@ -2868,6 +3079,7 @@ fn validate_manifest_metadata(raw: &RawManifest, spans: &ManifestSpans<'_>, path
             ));
         }
     }
+    validate_rust_library_path(raw, spans, path)?;
     if let Some(vocab) = &raw.vocab {
         if let Some(crate_path) = &vocab.crate_path {
             if crate_path.trim().is_empty() {
@@ -2915,17 +3127,20 @@ fn validate_script_library_collisions(
     raw: &RawManifest,
     spans: &ManifestSpans<'_>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<(), ManifestError> {
     let Some(project) = &raw.project else {
         return Ok(());
     };
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     let library = root.join("src/lib.incn");
+    observe(&library);
     let resolved_library = std::fs::canonicalize(&library).ok();
     let mut scripts = project.scripts.iter().collect::<Vec<_>>();
     scripts.sort_by(|left, right| left.0.cmp(right.0));
     for (name, configured) in scripts {
         let script = root.join(configured);
+        observe(&script);
         let aliases_library = resolved_library
             .as_ref()
             .is_some_and(|library| std::fs::canonicalize(&script).is_ok_and(|resolved| &resolved == library));
@@ -2958,20 +3173,13 @@ fn validate_requires_incan_constraints(
         validate_requires_incan_requirement(requirement, path, spans.entry_location(&["project"], "requires-incan"))?;
     }
 
-    if let Some(envs) = raw
-        .tool
-        .as_ref()
-        .and_then(|tool| tool.incan.as_ref())
-        .map(|incan| &incan.envs)
-    {
-        for (env_name, env) in envs {
-            if let Some(requirement) = env.requires_incan.as_deref() {
-                validate_requires_incan_requirement(
-                    requirement,
-                    path,
-                    spans.entry_location(&["tool", "incan", "envs", env_name.as_str()], "requires-incan"),
-                )?;
-            }
+    for (env_name, env) in &raw.envs {
+        if let Some(requirement) = env.requires_incan.as_deref() {
+            validate_requires_incan_requirement(
+                requirement,
+                path,
+                spans.entry_location(&["envs", env_name.as_str()], "requires-incan"),
+            )?;
         }
     }
 
@@ -3315,6 +3523,7 @@ fn parse_library_dependency_table(
     table: &DependencyTable,
     spans: &ManifestSpans<'_>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<ParsedLibraryDependencyTable, ManifestError> {
     if !table.optional.is_empty() {
         return Err(manifest_invalid(
@@ -3327,7 +3536,7 @@ fn parse_library_dependency_table(
     let mut result = ParsedLibraryDependencyTable::default();
     for (name, entry) in &table.entries {
         let location = spans.entry_location(&["dependencies"], name);
-        if is_rust_loaf_entry(entry, path) {
+        if is_rust_loaf_entry(entry, path, observe)? {
             continue;
         }
 
@@ -3613,6 +3822,7 @@ fn workspace_rust_dependency_request(
 fn parse_workspace_library_dependency_table(
     entries: &BTreeMap<String, toml::Value>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<BTreeMap<String, LibraryDependencySpec>, ManifestError> {
     let mut parsed = BTreeMap::new();
     for (name, value) in entries {
@@ -3624,7 +3834,7 @@ fn parse_workspace_library_dependency_table(
                 format!("workspace root dependency `{name}` cannot inherit from another workspace"),
             ));
         }
-        if is_rust_loaf_entry(&entry, path) {
+        if is_rust_loaf_entry(&entry, path, observe)? {
             continue;
         }
         parsed.insert(name.clone(), library_dependency_from_entry(name, &entry, path, None)?);
@@ -4368,15 +4578,14 @@ serde = "1.0"
     #[test]
     fn parse_env_rust_dependency_overlay_tables() -> TestResult {
         let content = r#"
-[tool.incan.envs.unit.rust-dependencies.serde]
+[envs.unit.rust-dependencies.serde]
 version = "1.0"
 
-[tool.incan.envs.unit.rust-dev-dependencies.proptest]
+[envs.unit.rust-dev-dependencies.proptest]
 version = "1"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
-        let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
-        let unit = tool.envs.get("unit").ok_or("missing unit env")?;
+        let unit = manifest.envs.get("unit").ok_or("missing unit env")?;
 
         assert!(unit.dependencies.contains_key("serde"));
         assert!(unit.dev_dependencies.contains_key("proptest"));
@@ -4386,15 +4595,14 @@ version = "1"
     #[test]
     fn parse_env_legacy_dependency_overlay_aliases() -> TestResult {
         let content = r#"
-[tool.incan.envs.unit.dependencies.serde]
+[envs.unit.dependencies.serde]
 version = "1.0"
 
-[tool.incan.envs.unit.dev-dependencies.proptest]
+[envs.unit.dev-dependencies.proptest]
 version = "1"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
-        let tool = manifest.incan_tool().ok_or("missing [tool.incan]")?;
-        let unit = tool.envs.get("unit").ok_or("missing unit env")?;
+        let unit = manifest.envs.get("unit").ok_or("missing unit env")?;
 
         assert!(unit.dependencies.contains_key("serde"));
         assert!(unit.dev_dependencies.contains_key("proptest"));
@@ -4451,6 +4659,34 @@ version = "1"
         Ok(())
     }
 
+    /// An explicit local library root is a Rust dependency and contributes its declaration to observed inputs.
+    #[test]
+    fn custom_rust_dependency_root_is_not_an_incan_package() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("leaf/src"))?;
+        std::fs::write(
+            root.join("leaf/loaf.toml"),
+            "[project]\nname='leaf'\n[rust]\npath='src/mod.rs'\n",
+        )?;
+        std::fs::write(root.join("leaf/src/mod.rs"), "")?;
+        let source = "[project]\nname='consumer'\n[dependencies]\nleaf={loaf='leaf',path='leaf'}\n";
+        let manifest = ProjectManifest::from_str(source, &root.join("loaf.toml"))?;
+        assert!(manifest.library_dependencies().is_empty());
+        assert!(manifest.loaf_dependencies.contains_key("leaf"));
+        let dot_source = ProjectManifest::from_str(
+            "[project]\nname='leaf'\n[rust]\npath='src/mod.rs'\n[rust.source]\nroot='.'\n",
+            &root.join("leaf/loaf.toml"),
+        )?;
+        assert_eq!(dot_source.rust_library_path(), root.join("leaf/src/mod.rs"));
+        std::fs::write(
+            root.join("leaf/loaf.toml"),
+            "[project]\nname='leaf'\n[rust]\npath='../escape.rs'\n",
+        )?;
+        assert!(ProjectManifest::from_str(source, &root.join("loaf.toml")).is_err());
+        Ok(())
+    }
+
     /// Canonical comparison catches aliases introduced by symlinked parent directories.
     #[cfg(unix)]
     #[test]
@@ -4499,7 +4735,7 @@ features = ["derive"]
 [rust-dependencies.proptest]
 version = "1"
 
-[tool.incan.envs.unit]
+[envs.unit]
 extends = ["default"]
 env-vars = { INCAN_NO_BANNER = "1" }
 "#;

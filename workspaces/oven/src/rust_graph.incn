@@ -17,6 +17,9 @@ already carries that split and this propagation keeps it: one accumulated demand
 package alone. Build-script declarations remain inventory-only and never enter this graph.
 """
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from std.collections import Deque, OrderedSet
 from std.json import JsonValue
 from manifest_errors import IntakeError, IntakeErrorKind

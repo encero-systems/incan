@@ -453,8 +453,10 @@ fn ordinary_semantic_sdk_paths(
     native: &OrdinaryNative,
     session_manifest: &ProjectManifest,
     project_requirement_modules: &[ParsedModule],
+    source_requirements: &incan_provider::requirements::ProjectRequirements,
     project_requirements: &incan_provider::requirements::ProjectRequirements,
     provider_plan: &incan_provider::ProviderPlan,
+    session: &CompilationSession,
 ) -> CliResult<Vec<DependencySpec>> {
     native.verify()?;
     #[cfg(feature = "rust_inspect")]
@@ -469,12 +471,20 @@ fn ordinary_semantic_sdk_paths(
     crate::build::library_metadata::requirements::capture_checked_native_demands(
         session_manifest,
         project_requirement_modules,
-        project_requirements,
+        source_requirements,
         provider_plan,
         &queries,
     )?
-    .require_ordinary_source_inspection()?;
-    native.provider_semantic_dependencies(provider_plan, project_requirements)
+    .require_ordinary_source_inspection(
+        session
+            .admitted_library_dependencies()
+            .map(|owners| (owners.as_ref(), provider_plan)),
+    )?;
+    native.provider_semantic_dependencies(
+        provider_plan,
+        project_requirements,
+        session.admitted_library_dependencies().map(|owners| owners.as_ref()),
+    )
 }
 
 /// No ordinary native authority can exist without the build pipeline, so this is never reached.
@@ -483,8 +493,10 @@ fn ordinary_semantic_sdk_paths(
     native: &OrdinaryNative,
     _session_manifest: &ProjectManifest,
     _project_requirement_modules: &[ParsedModule],
+    _source_requirements: &incan_provider::requirements::ProjectRequirements,
     _project_requirements: &incan_provider::requirements::ProjectRequirements,
     _provider_plan: &incan_provider::ProviderPlan,
+    _session: &CompilationSession,
 ) -> CliResult<Vec<DependencySpec>> {
     match *native {}
 }
@@ -580,11 +592,17 @@ fn collect_project_lock_context_impl(
             manifest.project_root().display()
         )));
     }
-    require_sdk_inventory_for_lock_write(
-        session_manifest.project_root(),
-        workspace,
-        session.sdk_inventory.is_some(),
-    )?;
+    // Ordinary publication replaces the recorded SDK with an original verified native request. The demand and
+    // provider checks below must succeed before any replacement lock can be published.
+    if let Some(native) = ordinary_native {
+        native.verify()?;
+    } else {
+        require_sdk_inventory_for_lock_write(
+            session_manifest.project_root(),
+            workspace,
+            session.sdk_inventory().is_some(),
+        )?;
+    }
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_authority_snapshot_read();
     let entry_paths = project_lock_entry_paths(session_manifest, explicit_entry_file);
@@ -607,7 +625,7 @@ fn collect_project_lock_context_impl(
         Some(&session.library_imported_vocab),
         Some(&session.library_imported_dsl_surfaces),
         Some(&session.library_manifest_index),
-        session.provider_plan.as_ref(),
+        session.provider_plan().as_ref(),
         session,
     )?;
 
@@ -620,6 +638,9 @@ fn collect_project_lock_context_impl(
     project_requirement_modules.extend(test_requirement_modules);
     let mut project_requirements =
         collect_project_requirements(&project_requirement_modules, &session.library_manifest_index)?;
+    // Source demand validation uses authored requirements. Provider coordinates belong to the resolved lock and
+    // are added below only after preserving that source contract, as in library preparation.
+    let source_requirements = project_requirements.clone();
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_provider_plan_projection();
     let provider_plan = session
@@ -630,17 +651,19 @@ fn collect_project_lock_context_impl(
             native,
             session_manifest,
             &project_requirement_modules,
+            &source_requirements,
             &project_requirements,
             &provider_plan,
+            session,
         )?,
         None => semantic_sdk_path_dependencies(&project_requirements),
     };
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
         session_manifest.interop_c(),
-        session.sdk_inventory.as_deref(),
-        session.sdk_components.as_ref(),
-        session.package_feature_plan.as_ref(),
+        session.sdk_inventory().as_deref(),
+        session.sdk_components().as_ref(),
+        session.package_feature_plan().as_ref(),
         &provider_plan,
         &semantic_sdk_paths,
     )

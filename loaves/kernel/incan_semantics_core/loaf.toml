@@ -17,3 +17,7 @@ version = "0.6.0-dev.6"
 edition = "2024"
 name = "incan_semantics_core"
 type = "lib"
+
+# Receipt wire-format tests use JSON without adding it to the production dependency closure.
+[envs.test.dependencies]
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }

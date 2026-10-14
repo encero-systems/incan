@@ -71,9 +71,9 @@ fn dev7_native_publication_success_removes_private_staging() -> Result<(), Error
         second,
     )?;
     assert!(!second_path.exists());
-    assert_eq!(selected.manifest.identity, repeated.manifest.identity);
+    assert_eq!(selected.manifest().identity, repeated.manifest().identity);
     assert_eq!(
-        std::fs::read(selected.artifact_root.join("libfixture.rlib"))?,
+        std::fs::read(selected.artifact_root().join("libfixture.rlib"))?,
         b"native data"
     );
     assert!(!root.path().join(receipt.identity.replace(':', "-")).exists());

@@ -1,3 +1,4 @@
+use super::trace_test_stage;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,22 +52,27 @@ use incan_driver::testing::types::{FixtureScope, TestInfo, TestResult};
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
 const INCAN_SESSION_FIXTURE_MOD: &str = "__incan_session_fixtures";
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct TestExecutionOptions {
     pub no_capture: bool,
     pub timeout: Option<Duration>,
     pub verbose: bool,
-    pub emit_progress: bool,
+    /// Output destination belonging to this request, including parallel workers.
+    pub output: super::output::TestOutputSink,
 }
 
 /// Store and immutable source authority opened once for one `incan test` command.
 pub(super) struct OvenTestCommandContext {
+    /// Prepared Rust roots retain their original dependency plan leases through execution.
+    pub(super) rust_roots: BTreeMap<PathBuf, super::rust::PreparedRustRoot>,
+    /// Completed generated harnesses belonging to this exact reconciled artifact session.
+    pub(super) test_generation: Option<Arc<incan_driver::build::test_generation::RetainedTestGeneration>>,
     /// Native admission and original owner leases shared by every parallel harness in this command.
-    native_sdk_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
-    project_root: PathBuf,
+    pub(super) native_sdk_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
+    pub(super) project_root: PathBuf,
     planned_test_files: BTreeSet<PathBuf>,
-    session: Arc<incan_driver::session::CompilationSession>,
-    store: oven_store::store::OvenStore,
+    pub(super) session: Arc<incan_driver::session::CompilationSession>,
+    pub(super) store: oven_store::store::OvenStore,
     project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
 }
 
@@ -75,6 +81,7 @@ pub(super) fn prepare_oven_test_command_context(
     session: Arc<incan_driver::session::CompilationSession>,
     representative_test: &Path,
     planned_test_files: &[PathBuf],
+    retained_native_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
 ) -> crate::CliResult<Arc<OvenTestCommandContext>> {
     let project_root = absolute_project_root(
         &session
@@ -83,8 +90,16 @@ pub(super) fn prepare_oven_test_command_context(
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or_else(|| infer_test_project_root_without_manifest(representative_test)),
     );
+    let stage = trace_test_stage("open_test_store");
     let store = incan_driver::oven_store::open_default_oven_store()?;
-    let native_sdk_context = incan_driver::build::NativeSdkCommandContext::discover()?;
+    drop(stage);
+    let stage = trace_test_stage("admit_test_native_inputs");
+    let native_sdk_context = match retained_native_context {
+        Some(context) => Some(context),
+        None => incan_driver::build::NativeSdkCommandContext::discover()?,
+    };
+    drop(stage);
+    let _authority = trace_test_stage("test_project_authority");
     let has_conventional_target =
         project_root.join("src/lib.incn").is_file() || project_root.join("src/main.incn").is_file();
     let project_source_authorities = if session.manifest.is_some() && has_conventional_target {
@@ -111,6 +126,8 @@ pub(super) fn prepare_oven_test_command_context(
         None
     };
     Ok(Arc::new(OvenTestCommandContext {
+        rust_roots: BTreeMap::new(),
+        test_generation: None,
         native_sdk_context,
         project_root,
         planned_test_files: planned_test_files
@@ -440,7 +457,9 @@ fn prepare_runner_program(
     let semantics = match testing_marker_semantics {
         Some(semantics) => semantics,
         None if !requires_testing_semantics => &default_semantics,
-        None => return Err("std.testing fixture execution requires the compiled std.testing provider".to_string()),
+        None => {
+            return Err("std.testing fixture execution requires the compiled std.testing provider".to_string());
+        }
     };
     prune_shadowed_fixture_declarations(&mut runner_ast, semantics);
     dedupe_import_declarations(&mut runner_ast);
@@ -600,7 +619,7 @@ fn prepare_isolated_source_module_batch(
             Some(library_imported_vocab),
             Some(library_imported_dsl_surfaces),
             Some(library_manifest_index),
-            compilation_session.provider_plan.as_ref(),
+            compilation_session.provider_plan().as_ref(),
         )? {
             deferred_dependencies.push(dependency);
         }
@@ -2220,6 +2239,8 @@ fn run_file_tests_batch_oven(
         return Vec::new();
     }
 
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::test_batch", tests = tests.len(), input = %tests[0].file_path.display()).entered();
+    let stage = trace_test_stage("read_test_sources");
     let start = Instant::now();
     let frontend_start = Instant::now();
     let first = &tests[0];
@@ -2258,7 +2279,9 @@ fn run_file_tests_batch_oven(
                         source_parts.push(source.clone());
                         batch_parse_sources.push((conftest.clone(), source));
                     }
-                    Err(error) => return failure(format!("failed to read conftest {}: {error}", conftest.display())),
+                    Err(error) => {
+                        return failure(format!("failed to read conftest {}: {error}", conftest.display()));
+                    }
                 }
             }
         }
@@ -2268,11 +2291,15 @@ fn run_file_tests_batch_oven(
                 batch_parse_sources.push((test.file_path.clone(), source.clone()));
                 sources_by_file.push((test.file_path.clone(), source));
             }
-            Err(error) => return failure(format!("failed to read test {}: {error}", test.file_path.display())),
+            Err(error) => {
+                return failure(format!("failed to read test {}: {error}", test.file_path.display()));
+            }
         }
     }
     let source = source_parts.join("\n");
 
+    drop(stage);
+    let stage = trace_test_stage("prepare_test_modules");
     let session = match command_session_for_execution_unit(command_context, &first.file_path) {
         Ok(session) => session,
         Err(message) => return failure(message),
@@ -2324,13 +2351,15 @@ fn run_file_tests_batch_oven(
             Some(&library_imported_vocab),
             Some(&library_imported_dsl_surfaces),
             Some(&library_manifest_index),
-            session.provider_plan.as_ref(),
+            session.provider_plan().as_ref(),
         ) {
             Ok(modules) => modules,
             Err(error) => return failure(format!("failed to collect source modules: {error}")),
         };
         (runner_ast, fixtures, source_modules, Vec::new())
     };
+    drop(stage);
+    let stage = trace_test_stage("test_dependency_requirements");
     let module_for_imports = ParsedModule {
         name: "test".to_string(),
         path_segments: vec!["test".to_string()],
@@ -2388,15 +2417,6 @@ fn run_file_tests_batch_oven(
         Ok(plan) => plan,
         Err(error) => return failure(error.message),
     };
-    // A compiled `pub::` package is a caller-owned direct-Rustc artifact. Keep its prior direct output as an explicit
-    // precondition, then replace it below when a compiler-suite consumer selects a different complete Rustc cohort.
-    // The immutable native plan remains responsible only for compiler-owned SDK/runtime inputs; no missing or stale
-    // library authorizes a Cargo path.
-    let mut caller_owned_libraries =
-        match incan_driver::build::caller_owned::oven_caller_owned_libraries(&provider_plan, "debug") {
-            Ok(libraries) => libraries,
-            Err(error) => return failure(error.message),
-        };
     if let Err(error) =
         incan_provider::inventory::extend_requirements_with_provider_plan(&mut requirements, &provider_plan)
     {
@@ -2419,6 +2439,9 @@ fn run_file_tests_batch_oven(
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
     let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &project_root);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
+    drop(stage);
+    let stage = trace_test_stage("test_native_inputs");
+    let compiler_identity_trace = trace_test_stage("test_compiler_identity");
     let rustc = match resolve_active_rustc() {
         Ok(rustc) => rustc,
         Err(error) => return failure(error.to_string()),
@@ -2431,15 +2454,37 @@ fn run_file_tests_batch_oven(
         Ok(identity) => identity,
         Err(error) => return failure(error.to_string()),
     };
-    let mut build_unit_inputs = match incan_driver::build_unit::oven_build_unit_inputs_with_native_sdk(
+    drop(compiler_identity_trace);
+    // Attach package outputs only after the consumer's target and toolchain are known. Ordinary namespace owners
+    // use the same checked library boundary as public imports; an absent output never authorizes a Cargo path.
+    let mut caller_owned_libraries = match incan_driver::build::caller_owned::oven_caller_owned_libraries(
         &provider_plan,
-        &requirements,
-        &resolved,
-        command_context.native_sdk_context.as_deref(),
+        "debug",
+        &rustc_target,
+        &rustc_toolchain,
+        None,
     ) {
-        Ok(inputs) => inputs,
+        Ok(libraries) => libraries,
         Err(error) => return failure(error.message),
     };
+    let semantic_identities = match session.provider_semantic_identities(
+        &provider_plan,
+        &incan_provider::requirements::semantic_sdk_path_dependencies(&requirements),
+    ) {
+        Ok(identities) => identities,
+        Err(error) => return failure(error.message),
+    };
+    let mut build_unit_inputs =
+        match incan_driver::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
+            &provider_plan,
+            &requirements,
+            &resolved,
+            &semantic_identities,
+            command_context.native_sdk_context.as_deref(),
+        ) {
+            Ok(inputs) => inputs,
+            Err(error) => return failure(error.message),
+        };
     if let Err(error) = incan_driver::build::caller_owned::append_oven_interop_execution_build_inputs(
         &mut build_unit_inputs,
         manifest.as_ref(),
@@ -2460,6 +2505,7 @@ fn run_file_tests_batch_oven(
     }
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
+        let _trace = trace_test_stage("test_inspection_workspace");
         let metadata_query_paths =
             incan_driver::rust_inspect_workspace::collect_rust_inspect_query_paths(&dependency_modules);
         match incan_driver::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
@@ -2503,95 +2549,13 @@ fn run_file_tests_batch_oven(
             Err(error) => return failure(error.message),
         }
     };
-    let analysis = match session.analyze_modules(
-        &dependency_modules,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir
-            .as_ref()
-            .map(|workspace| workspace.manifest_dir()),
-    ) {
-        Ok(analysis) => analysis,
-        Err(analysis_failure) => return failure(analysis_failure.render_human()),
-    };
-    let Some(main_type_info) = analysis
-        .type_info_for_module_path(&module_for_imports.path_segments)
-        .cloned()
-    else {
-        return failure(format!("missing Oven test analysis for {}", first.file_path.display()));
-    };
-    let mut dependency_type_info = HashMap::with_capacity(source_modules.len());
-    for module in &source_modules {
-        let Some(type_info) = analysis.type_info_for_module_path(&module.path_segments).cloned() else {
-            return failure(format!("missing Oven test analysis for {}", module.file_path.display()));
-        };
-        dependency_type_info.insert(module.path_segments.clone(), type_info);
-    }
-    let frontend_elapsed = frontend_start.elapsed();
-
-    let generation_start = Instant::now();
-    let mut codegen = IrCodegen::new();
-    #[cfg(feature = "rust_inspect")]
-    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
-        codegen.set_rust_inspect_manifest_dir(workspace.manifest_dir().to_path_buf());
-    }
-    codegen.set_provider_plan(Arc::clone(&provider_plan));
-    codegen.set_stdlib_cache(analysis.stdlib_cache().clone());
-    codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
-    codegen.set_registry_package_identity(Some(project_name.clone()));
-    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
-    for module in source_modules
-        .iter()
-        .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
-    {
-        codegen.add_dependency_symbol_module_with_path_segments(
-            &module.name,
-            &module.ast,
-            module.path_segments.clone(),
-        );
-    }
-    let emitted_source_modules = source_modules
-        .iter()
-        .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
-        .collect::<Vec<_>>();
-    // A test runner normally compiles against provider crates, where root reachability safely prunes unused public
-    // declarations. When a provider falls back to source emission, its public protocols can still construct sibling
-    // public adapter models that the test root does not name directly. Retain that implementation closure whenever
-    // such a source module is emitted; otherwise generated `std.io` methods can reference omitted iterator adapters.
-    codegen.set_preserve_dependency_public_items(!emitted_source_modules.is_empty());
-    for module in &emitted_source_modules {
-        codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
-    }
-    if module_harnesses.is_empty() {
-        codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
-    } else {
-        codegen.set_public_typecheck_module_paths(
-            module_harnesses
-                .iter()
-                .map(|harness| harness.module_path.clone())
-                .collect(),
-        );
-        let reachable_by_module = module_harnesses
-            .iter()
-            .map(|harness| {
-                let file_tests = tests
-                    .iter()
-                    .filter(|test| test.file_path == harness.file_path)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                (
-                    harness.module_path.clone(),
-                    collect_harness_entrypoints(&file_tests, &harness.fixtures),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        codegen.set_externally_reachable_items_by_module(reachable_by_module);
-    }
+    drop(stage);
     let native_output_name = native_test_output_name(&runner_crate_name, tests);
     let generated_root = project_root.join("target/incan_tests").join(&dir_suffix);
     let mut generator = ProjectGenerator::new(&generated_root, &runner_crate_name, false);
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(requirements.sdk_path_dependencies.clone());
-    generator.set_package_name(Some(project_name));
+    generator.set_package_name(Some(project_name.clone()));
     generator.set_stdlib_facets(test_runner_stdlib_facets_for_batch(
         &requirements.stdlib_facets,
         tests,
@@ -2610,87 +2574,202 @@ fn run_file_tests_batch_oven(
     let test_dependency_surface = runner_dependencies.clone();
     generator.set_dependencies(runner_dependencies);
     generator.set_dev_dependencies(Vec::new());
-    let generated: Result<(), String> = if emitted_source_modules.is_empty() {
-        let source = match codegen.try_generate(&runner_ast) {
-            Ok(source) => inject_file_test_harness(&source, tests, &project_root, &fixtures),
-            Err(error) => return failure(format!("code generation error: {error}")),
-        };
-        generator
-            .generate(&source)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    } else {
-        let module_paths = emitted_source_modules
-            .iter()
-            .map(|module| module.path_segments.clone())
-            .collect::<Vec<_>>();
-        codegen
-            .try_generate_multi_file_nested(&runner_ast, &module_paths)
-            .map_err(|error| error.to_string())
-            .and_then(|(mut main, mut modules)| {
-                let session_cache_module = if module_harnesses.is_empty() {
-                    None
-                } else {
-                    render_shared_session_fixture_cache_module(&module_harnesses).map(|module_code| {
-                        modules.insert(vec![INCAN_SESSION_FIXTURE_MOD.to_string()], module_code);
-                        INCAN_SESSION_FIXTURE_MOD
-                    })
-                };
-                if module_harnesses.is_empty() {
-                    main = inject_file_test_harness(&main, tests, &project_root, &fixtures);
-                } else {
-                    for harness in &module_harnesses {
-                        let tests_with_indices = tests
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, test)| test.file_path == harness.file_path)
-                            .collect::<Vec<_>>();
-                        let file_tests = tests_with_indices
-                            .iter()
-                            .map(|(_, test)| (*test).clone())
-                            .collect::<Vec<_>>();
-                        let test_indices = tests_with_indices.iter().map(|(index, _)| *index).collect::<Vec<_>>();
-                        let Some(module_code) = modules.get_mut(&harness.module_path) else {
-                            return Err(format!(
-                                "generated Oven test harness module `{}` was not emitted",
-                                harness.module_path.join(".")
-                            ));
-                        };
-                        *module_code = inject_file_test_harness_with_indices(
-                            module_code,
-                            &file_tests,
-                            &test_indices,
-                            &project_root,
-                            &harness.fixtures,
-                            session_cache_module,
-                        );
-                    }
-                }
-                generator
-                    .generate_nested(&main, &modules)
-                    .map(|_| ())
-                    .map_err(|error| error.to_string())
-            })
+    let generation_request = incan_driver::build::test_generation::TestGenerationRequest {
+        modules: &dependency_modules,
+        authored_sources: &batch_parse_sources,
+        tests,
+        build_unit_inputs: &build_unit_inputs,
+        rustc: &rustc,
+        target: &rustc_target,
+        toolchain: &rustc_toolchain,
     };
-    if let Err(error) = generated {
-        return failure(format!("failed to generate Oven test harness: {error}"));
-    }
-    let generation_elapsed = generation_start.elapsed();
+    // Rust inspection has additional workspace inputs; retain only the closed, compiled-provider path for now.
+    #[cfg(feature = "rust_inspect")]
+    let generation_owner = command_context
+        .test_generation
+        .as_ref()
+        .filter(|_| rust_inspect_manifest_dir.is_none());
+    #[cfg(not(feature = "rust_inspect"))]
+    let generation_owner = command_context.test_generation.as_ref();
+    let generation_reused = generation_owner.is_some_and(|owner| owner.reuses(&generated_root, &generation_request));
+    let generation_observation = generation_owner.map(|_| generation_request.observe());
+    let mut generation_sources = None;
+    let (frontend_elapsed, generation_elapsed) = if generation_reused {
+        (frontend_start.elapsed(), Duration::ZERO)
+    } else {
+        let stage = trace_test_stage("test_analysis");
+        let analysis = match session.analyze_modules(
+            &dependency_modules,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir
+                .as_ref()
+                .map(|workspace| workspace.manifest_dir()),
+        ) {
+            Ok(analysis) => analysis,
+            Err(analysis_failure) => return failure(analysis_failure.render_human()),
+        };
+        generation_sources = analysis.test_generation_sources();
+        let Some(main_type_info) = analysis
+            .type_info_for_module_path(&module_for_imports.path_segments)
+            .cloned()
+        else {
+            return failure(format!("missing Oven test analysis for {}", first.file_path.display()));
+        };
+        let mut dependency_type_info = HashMap::with_capacity(source_modules.len());
+        for module in &source_modules {
+            let Some(type_info) = analysis.type_info_for_module_path(&module.path_segments).cloned() else {
+                return failure(format!("missing Oven test analysis for {}", module.file_path.display()));
+            };
+            dependency_type_info.insert(module.path_segments.clone(), type_info);
+        }
+        let frontend_elapsed = frontend_start.elapsed();
 
+        drop(stage);
+        let stage = trace_test_stage("test_codegen");
+        let generation_start = Instant::now();
+        let mut codegen = IrCodegen::new();
+        #[cfg(feature = "rust_inspect")]
+        if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+            codegen.set_rust_inspect_manifest_dir(workspace.manifest_dir().to_path_buf());
+        }
+        codegen.set_provider_plan(Arc::clone(&provider_plan));
+        codegen.set_stdlib_cache(analysis.stdlib_cache().clone());
+        codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
+        codegen.set_registry_package_identity(Some(project_name.clone()));
+        let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
+        for module in source_modules
+            .iter()
+            .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
+        {
+            codegen.add_dependency_symbol_module_with_path_segments(
+                &module.name,
+                &module.ast,
+                module.path_segments.clone(),
+            );
+        }
+        let emitted_source_modules = source_modules
+            .iter()
+            .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
+            .collect::<Vec<_>>();
+        // A test runner normally compiles against provider crates, where root reachability safely prunes unused public
+        // declarations. When a provider falls back to source emission, its public protocols can still construct sibling
+        // public adapter models that the test root does not name directly. Retain that implementation closure whenever
+        // such a source module is emitted; otherwise generated `std.io` methods can reference omitted iterator
+        // adapters.
+        codegen.set_preserve_dependency_public_items(!emitted_source_modules.is_empty());
+        for module in &emitted_source_modules {
+            codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
+        }
+        if module_harnesses.is_empty() {
+            codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
+        } else {
+            codegen.set_public_typecheck_module_paths(
+                module_harnesses
+                    .iter()
+                    .map(|harness| harness.module_path.clone())
+                    .collect(),
+            );
+            let reachable_by_module = module_harnesses
+                .iter()
+                .map(|harness| {
+                    let file_tests = tests
+                        .iter()
+                        .filter(|test| test.file_path == harness.file_path)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    (
+                        harness.module_path.clone(),
+                        collect_harness_entrypoints(&file_tests, &harness.fixtures),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            codegen.set_externally_reachable_items_by_module(reachable_by_module);
+        }
+        let generated: Result<(), String> = if emitted_source_modules.is_empty() {
+            let source = match codegen.try_generate(&runner_ast) {
+                Ok(source) => inject_file_test_harness(&source, tests, &project_root, &fixtures),
+                Err(error) => return failure(format!("code generation error: {error}")),
+            };
+            generator
+                .generate(&source)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        } else {
+            let module_paths = emitted_source_modules
+                .iter()
+                .map(|module| module.path_segments.clone())
+                .collect::<Vec<_>>();
+            codegen
+                .try_generate_multi_file_nested(&runner_ast, &module_paths)
+                .map_err(|error| error.to_string())
+                .and_then(|(mut main, mut modules)| {
+                    let session_cache_module = if module_harnesses.is_empty() {
+                        None
+                    } else {
+                        render_shared_session_fixture_cache_module(&module_harnesses).map(|module_code| {
+                            modules.insert(vec![INCAN_SESSION_FIXTURE_MOD.to_string()], module_code);
+                            INCAN_SESSION_FIXTURE_MOD
+                        })
+                    };
+                    if module_harnesses.is_empty() {
+                        main = inject_file_test_harness(&main, tests, &project_root, &fixtures);
+                    } else {
+                        for harness in &module_harnesses {
+                            let tests_with_indices = tests
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, test)| test.file_path == harness.file_path)
+                                .collect::<Vec<_>>();
+                            let file_tests = tests_with_indices
+                                .iter()
+                                .map(|(_, test)| (*test).clone())
+                                .collect::<Vec<_>>();
+                            let test_indices = tests_with_indices.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                            let Some(module_code) = modules.get_mut(&harness.module_path) else {
+                                return Err(format!(
+                                    "generated Oven test harness module `{}` was not emitted",
+                                    harness.module_path.join(".")
+                                ));
+                            };
+                            *module_code = inject_file_test_harness_with_indices(
+                                module_code,
+                                &file_tests,
+                                &test_indices,
+                                &project_root,
+                                &harness.fixtures,
+                                session_cache_module,
+                            );
+                        }
+                    }
+                    generator
+                        .generate_nested(&main, &modules)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                })
+        };
+        if let Err(error) = generated {
+            return failure(format!("failed to generate Oven test harness: {error}"));
+        }
+        let generation_elapsed = generation_start.elapsed();
+        drop(stage);
+        (frontend_elapsed, generation_elapsed)
+    };
+
+    let stage = trace_test_stage("test_receipt");
     let receipt_start = Instant::now();
     let mut receipt_request = OvenGeneratedProjectRequest::new(
         &project_root,
         &runner_crate_name,
         "0.1.0",
-        rustc_target,
-        rustc_toolchain,
+        rustc_target.clone(),
+        rustc_toolchain.clone(),
         "debug",
         Vec::new(),
     )
     .with_generated_source("generated-root", generator.crate_root_path())
     .with_generated_source_tree("generated-source-tree", generator.output_dir().join("src"));
-    for (name, value) in build_unit_inputs {
-        receipt_request = receipt_request.with_build_unit_input(name, value);
+    for (name, value) in &build_unit_inputs {
+        receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
     }
     let receipt = match receipt_generated_project(&receipt_request) {
         Ok(receipt) => receipt,
@@ -2702,6 +2781,8 @@ fn run_file_tests_batch_oven(
     }
     let receipt_elapsed = receipt_start.elapsed();
 
+    drop(stage);
+    let stage = trace_test_stage("test_plan_selection");
     let selection_start = Instant::now();
     let shared_plan_selection = match command_context.project_source_authorities.as_ref() {
         Some(authority) => match authority.test_dependency_plan(&test_dependency_surface) {
@@ -2711,7 +2792,7 @@ fn run_file_tests_batch_oven(
         None => None,
     };
     let owned_plan_selection = if shared_plan_selection.is_none() {
-        match incan_driver::build::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
+        match incan_driver::build::oven_project::select_retained_oven_direct_rustc_plan(
             &command_context.store,
             &receipt,
             &inline_path_dependencies,
@@ -2732,11 +2813,16 @@ fn run_file_tests_batch_oven(
     } else {
         None
     };
-    let plan_selection = match shared_plan_selection.or(owned_plan_selection.as_ref()) {
+    let plan_selection = match shared_plan_selection.or(owned_plan_selection.as_deref()) {
         Some(selection) => selection,
-        None => return failure("Oven test dependency plan selection lost its exact authority".to_string()),
+        None => {
+            return failure("Oven test dependency plan selection lost its exact authority".to_string());
+        }
     };
     let selection_elapsed = selection_start.elapsed();
+
+    drop(stage);
+    let stage = trace_test_stage("test_runtime_libraries");
 
     // Classify caller declarations against the source projection, while retaining full-plan path authority for an
     // exact compiler-owned dependency. The complete plan may include private compiler helpers whose names overlap
@@ -2834,6 +2920,8 @@ fn run_file_tests_batch_oven(
     {
         return failure("Oven Alpha resolved duplicate caller-owned Rust library crate names".to_string());
     }
+    drop(stage);
+    let stage = trace_test_stage("test_native_output");
     let bake_start = Instant::now();
     let mut artifact_plan = match plan_selection.source_artifact_plan("generated-root") {
         Ok(plan) => plan,
@@ -2871,9 +2959,17 @@ fn run_file_tests_batch_oven(
     });
     let bake = match bake {
         Ok(bake) => bake,
-        Err(error) => return failure(format!("Oven direct-rustc test compilation failed: {error}")),
+        Err(error) => {
+            return failure(format!("Oven direct-rustc test compilation failed: {error}"));
+        }
     };
     let bake_elapsed = bake_start.elapsed();
+    if !generation_reused
+        && let (Some(owner), Some(observation), Some(sources)) =
+            (generation_owner, generation_observation, generation_sources)
+    {
+        owner.remember(&generated_root, &generation_request, observation, sources);
+    }
     let native_reused = bake.reused;
     let exact_names = tests
         .iter()
@@ -2887,6 +2983,8 @@ fn run_file_tests_batch_oven(
                 .unwrap_or(harness_name)
         })
         .collect::<Vec<_>>();
+    drop(stage);
+    let stage = trace_test_stage("test_execution");
     let execute_start = Instant::now();
     let report = match run_native_test_batch(&OvenNativeTestRequest {
         executable: bake.output,
@@ -2898,22 +2996,23 @@ fn run_file_tests_batch_oven(
         Err(error) => return failure(error.to_string()),
     };
     let execute_elapsed = execute_start.elapsed();
-    if options.verbose && options.emit_progress {
-        println!(
-            "Oven test phases for {}: front-end {:.2}s, generation {:.2}s, receipt {:.2}s, selection {:.2}s, native {} {:.2}s, execution {:.2}s",
-            first.file_path.display(),
-            frontend_elapsed.as_secs_f64(),
-            generation_elapsed.as_secs_f64(),
-            receipt_elapsed.as_secs_f64(),
-            selection_elapsed.as_secs_f64(),
-            if native_reused { "reuse" } else { "bake" },
-            bake_elapsed.as_secs_f64(),
-            execute_elapsed.as_secs_f64(),
-        );
+    if options.verbose {
+        options.output.progress(super::TestProgress::HarnessCompleted {
+            file: first.file_path.clone(),
+            frontend: frontend_elapsed,
+            generation: generation_elapsed,
+            receipt: receipt_elapsed,
+            selection: selection_elapsed,
+            native: bake_elapsed,
+            execution: execute_elapsed,
+            native_reused,
+        });
     }
     if options.no_capture && !report.output.trim().is_empty() {
-        print!("{}", report.output);
+        options.output.stdout(report.output.clone());
     }
+    drop(stage);
+    let _results = trace_test_stage("test_outcomes");
     map_batch_results(
         tests,
         &report.output,
@@ -3190,7 +3289,9 @@ def captured_resource() -> int:
         )?);
         let store_root = tempfile::tempdir()?;
         let context = OvenTestCommandContext {
+            rust_roots: BTreeMap::new(),
             native_sdk_context: None,
+            test_generation: None,
             project_root: absolute_project_root(project.path()),
             planned_test_files: BTreeSet::from([
                 canonical_path_for_cache_key(&first_test),
@@ -3335,6 +3436,7 @@ def captured_resource() -> int:
         Ok(())
     }
 
+    /// Only authored dependencies enter the caller-owned registry surface, including the selected test overlay.
     #[test]
     fn manifest_declared_rust_dependencies_are_the_manifest_tables_only_issue2005()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3343,15 +3445,26 @@ def captured_resource() -> int:
 name = "declared_surface"
 version = "0.1.0"
 
-[rust-dependencies]
-terminal_unit = "1"
+[dependencies]
+terminal_unit = { loaf = "crates-io/terminal_unit", version = "1" }
 
-[rust-dev-dependencies]
-assert_unit = "1"
+[envs.test.dependencies]
+assert_unit = { loaf = "crates-io/assert_unit", version = "1" }
 "#,
             Path::new("loaf.toml"),
         )?;
 
+        let production = manifest_declared_rust_dependencies(Some(&manifest));
+        assert_eq!(
+            production
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            ["terminal_unit"]
+        );
+        let environment =
+            oven_model::project_lifecycle::env::EnvConfigSet::from_manifest(&manifest).resolve_env("test")?;
+        let manifest = manifest.with_environment_dependencies(&environment.dependencies)?;
         let declared = manifest_declared_rust_dependencies(Some(&manifest));
 
         assert_eq!(

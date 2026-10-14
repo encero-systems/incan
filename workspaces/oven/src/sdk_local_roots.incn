@@ -37,7 +37,12 @@ def declaration(alias: str, value: TomlValue) -> Result[JsonValue, str]:
 
 
 pub def host_roots(document: JsonValue, roots_file: str) -> Result[str, str]:
-    """Read explicitly named local proc-macro manifests relative to the root document; never discover Cargo metadata."""
+    """Forward selected host requests, or read legacy explicit macro manifests; never rediscover a selected graph."""
+    if let Some(selected) = document.get("host-roots"):
+        if let Some(_) = document.get("host-projects"):
+            return Err("host-roots and host-projects are alternative inputs")
+        selected.expect_array().map_err((e) => e.message())?
+        return selected.to_json().map_err((e) => e.message())
     mut requests: list[JsonValue] = []
     if let Some(projects) = document.get("host-projects"):
         paths = projects.expect_array().map_err((e) => e.message())?

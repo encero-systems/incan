@@ -1,6 +1,6 @@
 # Testing in Incan
 
-Incan provides a pytest-like test runner with `incan test`.
+Incan provides a pytest-like test runner with `incan test`. For a project containing both Incan and Rust, use `oven tests` to select and report both through the same runner.
 
 For the **language model for writing tests** (inline `module tests:`, assertions, markers, fixtures, parametrization), see: [Language → Testing in Incan](../../language/how-to/testing_stdlib.md).
 
@@ -50,6 +50,20 @@ incan test tests/
 ```
 
 For long suites, use `incan test -v` to see collection, per-test timing, and the Oven front-end/generation/receipt/selection/native/execution phases. Compatible source files are module-isolated but share one native libtest harness; the batch selects one prepared Oven closure, inventories native test names, and runs verified exact tests without a Cargo consumer.
+
+## Run Incan and Rust together
+
+Run `oven tests` from the package directory to combine Incan tests with the Rust facet's unit tests and direct Rust integration roots in `tests/`. Use `oven tests --rust-only` to focus on Rust, or `incan test` for Incan only. `incan oven tests` mounts the same command when using the Incan executable.
+
+```bash
+oven tests --list
+oven tests --jobs 4
+oven tests --rust-only -k parse
+```
+
+Use `--jobs N` to set the total test worker budget; the default is four workers. Compatible Rust cases from one crate share a test process with up to N test threads. That root reserves the budget until it finishes. Use `--isolate` for separate Rust test processes. `--shuffle`, `--exitfirst`, time limits and serial markers retain individual Rust execution boundaries. Incan cases retain their worker-batch fixture scopes; the scheduler never combines the two languages into one harness. Serial and resource constraints still limit concurrency.
+
+Rust listing may prepare a native test harness. Ignored Rust tests stay skipped, and selected tests execute afresh on every run. See the [command reference](../reference/cli_reference.md#oven-tests) for root selection and preparation constraints.
 
 ## Test Discovery
 

@@ -3,7 +3,6 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -14,12 +13,15 @@ use incan_driver::cargo_policy::CargoPolicy;
 use incan_driver::session::CompilationSession;
 
 mod execution;
+pub(crate) mod output;
 mod reporter;
+mod rust;
 
 pub use incan_driver::testing::discovery::{discover_test_files, discover_tests_and_fixtures};
 pub use incan_driver::testing::types::{
-    DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,
-    TestOutputFormat, TestResult, TestRunConfig, TestSummary, WorkspaceTestContext,
+    DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestCaseResult, TestInfo,
+    TestLanguages, TestMarker, TestOutputFormat, TestProgress, TestResult, TestRunConfig, TestRunReport, TestSummary,
+    WorkspaceTestContext,
 };
 pub use reporter::{ConsoleReporter, TestReporter};
 
@@ -31,6 +33,7 @@ use incan_driver::testing::discovery::{
     CollectionEvalContext, discover_test_file_candidates, discover_test_files_with_session,
     discover_tests_and_fixtures_with_context, get_autouse_fixtures, parse_duration_literal,
 };
+use output::TestOutputSink;
 use reporter::{print_test_result, style};
 
 const RED: &str = "1;31";
@@ -38,12 +41,18 @@ const GREEN: &str = "1;32";
 const YELLOW: &str = "33";
 const BANNER_WIDTH: usize = 58;
 
+/// Attribute one existing test stage without opening a sink or constructing fields when tracing is disabled.
+fn trace_test_stage(stage: &'static str) -> tracing::span::EnteredSpan {
+    tracing::trace_span!(target: "incan::invocation", "incan_cli::test_stage", stage).entered()
+}
+
 #[cfg(test)]
 thread_local! {
     static TEST_COMMAND_SESSION_CONSTRUCTIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Create the only compilation session owned by one `incan test` invocation.
+/// Construct an uncached canonical session for unit controls of collection and lock behavior.
+#[cfg(test)]
 fn prepare_test_command_session(
     representative_test: &Path,
     list_only: bool,
@@ -225,19 +234,6 @@ fn stable_id_root(path: &Path) -> PathBuf {
     }
 }
 
-/// Discover and enforce project-level toolchain constraints for a test path, when it belongs to a project.
-fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
-    let start = if path.is_file() {
-        path.parent().unwrap_or_else(|| Path::new("."))
-    } else {
-        path
-    };
-    if let Some(manifest) = incan_driver::project::discover_effective_project_manifest(start)? {
-        incan_driver::cargo_policy::enforce_project_toolchain_constraint(&manifest)?;
-    }
-    Ok(())
-}
-
 /// Stable test identifier used by `-k`, `--list`, and machine-readable reports.
 fn stable_test_id(test: &TestInfo, root: &Path) -> String {
     let file_path = test.file_path.canonicalize().unwrap_or_else(|_| test.file_path.clone());
@@ -339,12 +335,13 @@ fn marker_names(test: &TestInfo) -> BTreeSet<String> {
 fn emit_json_result(
     test: &TestInfo,
     result: &TestResult,
-    root: &Path,
+    id: &str,
     workspace_context: Option<&WorkspaceTestContext>,
+    output: &TestOutputSink,
 ) {
     let mut record = serde_json::json!({
         "schema_version": "incan.test.v1",
-        "test_id": stable_test_id(test, root),
+        "test_id": id,
         "file": test.file_path.to_string_lossy(),
         "name": test_display_name(test),
         "status": result_status(result),
@@ -380,7 +377,7 @@ fn emit_json_result(
             );
         }
     }
-    println!("{record}");
+    output.line(format_args!("{record}"));
 }
 
 /// Escape text for the small JUnit XML writer.
@@ -393,18 +390,14 @@ fn xml_escape(raw: &str) -> String {
 }
 
 /// Write a JUnit XML report for the completed run.
-fn write_junit_report(
-    path: &Path,
-    results: &[(TestInfo, TestResult)],
-    total_time: std::time::Duration,
-) -> CliResult<()> {
+fn write_junit_report(path: &Path, results: &[TestCaseResult], total_time: std::time::Duration) -> CliResult<()> {
     let failures = results
         .iter()
-        .filter(|(_, result)| matches!(result, TestResult::Failed(_, _) | TestResult::XPassed(_)))
+        .filter(|case| matches!(case.result, TestResult::Failed(_, _) | TestResult::XPassed(_)))
         .count();
     let skipped = results
         .iter()
-        .filter(|(_, result)| matches!(result, TestResult::Skipped(_) | TestResult::XFailed(_, _)))
+        .filter(|case| matches!(case.result, TestResult::Skipped(_) | TestResult::XFailed(_, _)))
         .count();
     let mut body = String::new();
     body.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -415,7 +408,7 @@ fn write_junit_report(
         skipped,
         total_time.as_secs_f64()
     ));
-    for (test, result) in results {
+    for TestCaseResult { test, result, .. } in results {
         body.push_str(&format!(
             "  <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
             xml_escape(&test.file_path.to_string_lossy()),
@@ -448,17 +441,20 @@ fn write_junit_report(
 }
 
 /// Print the slowest collected test cases.
-fn print_durations(results: &[(TestInfo, TestResult)], count: usize, use_color: bool, root: &Path) {
+fn print_durations(results: &[TestCaseResult], count: usize, use_color: bool, output: &TestOutputSink) {
     if count == 0 || results.is_empty() {
         return;
     }
     let mut ordered: Vec<_> = results.iter().collect();
-    ordered.sort_by_key(|(_, result)| std::cmp::Reverse(result_duration_ms(result)));
+    ordered.sort_by_key(|case| std::cmp::Reverse(result_duration_ms(&case.result)));
 
-    println!();
-    println!("{}", style(centered_eq_banner("slowest durations"), "1", use_color));
-    for (test, result) in ordered.into_iter().take(count) {
-        println!("{:>6}ms {}", result_duration_ms(result), stable_test_id(test, root));
+    output.line("");
+    output.line(format_args!(
+        "{}",
+        style(centered_eq_banner("slowest durations"), "1", use_color)
+    ));
+    for case in ordered.into_iter().take(count) {
+        output.line(format_args!("{:>6}ms {}", result_duration_ms(&case.result), case.id));
     }
 }
 
@@ -903,6 +899,8 @@ struct ExecutionUnit {
     timeout: Option<Duration>,
     resources: BTreeSet<String>,
     serial: bool,
+    /// A shared Rust root reserves this entire global budget while it executes.
+    shared_threads: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -924,8 +922,22 @@ fn run_execution_unit(
     command_context: &Arc<OvenTestCommandContext>,
     no_capture: bool,
     verbose: bool,
-    emit_progress: bool,
+    output: TestOutputSink,
 ) -> Vec<(TestInfo, TestResult)> {
+    if unit
+        .tests
+        .first()
+        .is_some_and(|test| test.file_path.extension().is_some_and(|extension| extension == "rs"))
+    {
+        return rust::execute(
+            &unit.tests,
+            command_context,
+            unit.timeout,
+            no_capture,
+            &output,
+            unit.shared_threads,
+        );
+    }
     run_file_tests_batch(
         &unit.tests,
         &unit.conftest_files_by_file,
@@ -938,7 +950,7 @@ fn run_execution_unit(
             no_capture,
             timeout: unit.timeout,
             verbose,
-            emit_progress,
+            output,
         },
     )
 }
@@ -971,6 +983,11 @@ fn unit_can_include(
     allow_cross_file_batches: bool,
 ) -> bool {
     !unit.serial
+        && test.file_path.extension().is_none_or(|extension| extension != "rs")
+        && unit
+            .file_paths
+            .iter()
+            .all(|path| path.extension().is_none_or(|extension| extension != "rs"))
         && !test_is_serial(test)
         && (allow_cross_file_batches || unit.file_paths.contains(&test.file_path))
         && unit.timeout == effective_timeout(test, default_timeout)
@@ -1027,6 +1044,7 @@ fn build_execution_units(
                 continue;
             }
             let provisional = ExecutionUnit {
+                shared_threads: None,
                 index: units.len(),
                 file_paths: BTreeSet::from([file_path.clone()]),
                 tests: Vec::new(),
@@ -1050,6 +1068,7 @@ fn build_execution_units(
         }
 
         units.push(ExecutionUnit {
+            shared_threads: None,
             index: units.len(),
             file_paths,
             tests: batch,
@@ -1066,10 +1085,46 @@ fn build_execution_units(
     }
 }
 
-/// Return whether two planned units can share one generated worker-batch harness.
+/// Group compatible Rust cases without changing Incan fixtures, per-case deadlines or explicit ordering.
+/// A shared root reserves the whole worker budget and runs exclusively in the existing scheduler. Other roots
+/// cannot multiply that budget. Deadline-bearing, resource-constrained or serial cases retain individual process
+/// execution.
+fn share_native_execution_units(units: Vec<ExecutionUnit>, jobs: usize, isolate: bool) -> Vec<ExecutionUnit> {
+    if isolate {
+        return units;
+    }
+    let mut groups: Vec<ExecutionUnit> = Vec::new();
+    for mut unit in units {
+        if unit_contains_rust(&unit) && !unit.serial && unit.timeout.is_none() && unit.resources.is_empty() {
+            if let Some(group) = groups.iter_mut().find(|group| {
+                group.shared_threads.is_some()
+                    && group.file_paths == unit.file_paths
+                    && group.resources == unit.resources
+            }) {
+                merge_execution_unit(group, unit);
+                continue;
+            }
+            unit.shared_threads = Some(jobs.max(1));
+            unit.serial = true;
+        }
+        groups.push(unit);
+    }
+    groups
+}
+
+/// Prepared Rust cases have no generated Incan harness or process-local Incan fixtures to coalesce.
+fn unit_contains_rust(unit: &ExecutionUnit) -> bool {
+    unit.file_paths
+        .iter()
+        .any(|path| path.extension().is_some_and(|extension| extension == "rs"))
+}
+
+/// Return whether two Incan units can share one generated worker-batch harness.
 fn units_share_worker_profile(left: &ExecutionUnit, right: &ExecutionUnit) -> bool {
     !left.serial
         && !right.serial
+        && !unit_contains_rust(left)
+        && !unit_contains_rust(right)
         && left.timeout == right.timeout
         && left.resources == right.resources
         && left.conftest_files_by_file.values().next() == right.conftest_files_by_file.values().next()
@@ -1089,7 +1144,7 @@ fn merge_execution_unit(target: &mut ExecutionUnit, source: ExecutionUnit) {
 fn coalesce_worker_batches(units: Vec<ExecutionUnit>, jobs: usize) -> Vec<ExecutionUnit> {
     let mut batches: Vec<ExecutionUnit> = Vec::new();
     for unit in units {
-        if unit.serial {
+        if unit.serial || unit_contains_rust(&unit) {
             batches.push(unit);
             continue;
         }
@@ -1121,12 +1176,14 @@ fn coalesce_worker_batches(units: Vec<ExecutionUnit>, jobs: usize) -> Vec<Execut
     batches
 }
 
-/// Return whether a candidate unit may start alongside the currently active units.
+/// Admit independent prepared Rust cases concurrently while excluding shared generated Incan outputs.
+/// Resource and serial constraints apply to both languages, regardless of whether their executable is already built.
 fn active_units_allow(active: &[ActiveUnit], candidate: &ExecutionUnit) -> bool {
-    if active
-        .iter()
-        .any(|unit| !unit.file_paths.is_disjoint(&candidate.file_paths))
-    {
+    if active.iter().any(|unit| {
+        unit.file_paths
+            .intersection(&candidate.file_paths)
+            .any(|path| path.extension().is_none_or(|extension| extension != "rs"))
+    }) {
         return false;
     }
     if candidate.serial {
@@ -1160,9 +1217,11 @@ fn run_scheduled_execution_units(
     stop_on_fail: bool,
     no_capture: bool,
     verbose: bool,
-    emit_progress: bool,
+    output: TestOutputSink,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
-    if jobs <= 1 {
+    // A single compilation batch has no parallel work. Keep it on the owner thread, avoiding a worker allocation
+    // and its smaller default stack when compiling a large imported Incan module graph.
+    if jobs <= 1 || units.len() <= 1 {
         let mut completed = Vec::new();
         for unit in &units {
             let results = run_execution_unit(
@@ -1174,7 +1233,7 @@ fn run_scheduled_execution_units(
                 &command_context,
                 no_capture,
                 verbose,
-                emit_progress,
+                output.clone(),
             );
             let failed = batch_has_failure(&results);
             completed.push((unit.index, results));
@@ -1210,6 +1269,7 @@ fn run_scheduled_execution_units(
             let cargo_features = cargo_features.to_vec();
             let cargo_policy = cargo_policy.clone();
             let command_context = Arc::clone(&command_context);
+            let output = output.clone();
             active.push(ActiveUnit {
                 index: unit.index,
                 file_paths: unit.file_paths.clone(),
@@ -1217,7 +1277,9 @@ fn run_scheduled_execution_units(
                 serial: unit.serial,
             });
             launched += 1;
+            let trace_parent = tracing::Span::current();
             thread::spawn(move || {
+                let _parent = trace_parent.enter();
                 let unit_index = unit.index;
                 let results = run_execution_unit(
                     &unit,
@@ -1228,7 +1290,7 @@ fn run_scheduled_execution_units(
                     &command_context,
                     no_capture,
                     verbose,
-                    emit_progress,
+                    output,
                 );
                 let _ = sender.send((unit_index, results));
             });
@@ -1252,64 +1314,221 @@ fn run_scheduled_execution_units(
     completed
 }
 
-/// Run all tests in the given path.
-pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
-    let TestRunConfig {
+/// Owned collection inputs carried by the existing owner transport; no compiler authority crosses the socket.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TestCollectionOptions {
+    languages: TestLanguages,
+    /// Explicit client-resolved collection path.
+    pub(crate) path: String,
+    verbose: bool,
+    include_slow: bool,
+    filter: Option<String>,
+    marker_expr: Option<String>,
+    strict_markers: bool,
+    test_features: Vec<String>,
+    package_features: incan_provider::FeatureSelection,
+    sdk_profile: Option<String>,
+    timeout: Option<String>,
+    cargo_policy: CargoPolicy,
+}
+
+impl TestCollectionOptions {
+    /// Own the collection subset of the existing request configuration without changing selection semantics.
+    pub(crate) fn from_config(config: &TestRunConfig<'_>) -> Self {
+        Self {
+            languages: config.languages,
+            path: config.path.to_string(),
+            verbose: config.verbose,
+            include_slow: config.include_slow,
+            filter: config.filter.map(str::to_string),
+            marker_expr: config.marker_expr.map(str::to_string),
+            strict_markers: config.strict_markers,
+            test_features: config.test_features.clone(),
+            package_features: config.package_features.clone(),
+            sdk_profile: config.sdk_profile.clone(),
+            timeout: config.timeout.map(str::to_string),
+            cargo_policy: config.cargo_policy.clone(),
+        }
+    }
+}
+
+/// Owned execution intent for the same runner; it carries configuration, never retained compiler authority.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TestExecutionRequest {
+    /// Collection choices shared verbatim with list-only requests.
+    pub(crate) collection: TestCollectionOptions,
+    stop_on_fail: bool,
+    use_color: bool,
+    fail_on_empty: bool,
+    report_format: TestOutputFormat,
+    /// Client-resolved report destination; the owner never changes its working directory.
+    pub(crate) junit_path: Option<PathBuf>,
+    durations: Option<usize>,
+    shuffle: bool,
+    seed: Option<u64>,
+    run_xfail: bool,
+    jobs: usize,
+    isolate: bool,
+    no_capture: bool,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    workspace_context: Option<WorkspaceTestContext>,
+}
+
+impl TestExecutionRequest {
+    /// Own an existing test configuration at the transport boundary without changing its semantics.
+    pub(crate) fn from_config(config: &TestRunConfig<'_>) -> Self {
+        Self {
+            collection: TestCollectionOptions::from_config(config),
+            stop_on_fail: config.stop_on_fail,
+            use_color: config.use_color,
+            fail_on_empty: config.fail_on_empty,
+            report_format: config.report_format,
+            junit_path: config.junit_path.clone(),
+            durations: config.durations,
+            shuffle: config.shuffle,
+            seed: config.seed,
+            run_xfail: config.run_xfail,
+            jobs: config.jobs,
+            isolate: config.isolate,
+            no_capture: config.no_capture,
+            cargo_features: config.cargo_features.clone(),
+            cargo_no_default_features: config.cargo_no_default_features,
+            cargo_all_features: config.cargo_all_features,
+            workspace_context: config.workspace_context.clone(),
+        }
+    }
+
+    /// Recreate the existing borrowed runner configuration only for this request's execution lifetime.
+    fn as_config(&self) -> TestRunConfig<'_> {
+        TestRunConfig {
+            languages: self.collection.languages,
+            path: &self.collection.path,
+            verbose: self.collection.verbose,
+            include_slow: self.collection.include_slow,
+            filter: self.collection.filter.as_deref(),
+            list_only: false,
+            marker_expr: self.collection.marker_expr.as_deref(),
+            strict_markers: self.collection.strict_markers,
+            test_features: self.collection.test_features.clone(),
+            package_features: self.collection.package_features.clone(),
+            sdk_profile: self.collection.sdk_profile.clone(),
+            timeout: self.collection.timeout.as_deref(),
+            cargo_policy: self.collection.cargo_policy.clone(),
+            stop_on_fail: self.stop_on_fail,
+            use_color: self.use_color,
+            fail_on_empty: self.fail_on_empty,
+            report_format: self.report_format,
+            junit_path: self.junit_path.clone(),
+            durations: self.durations,
+            shuffle: self.shuffle,
+            seed: self.seed,
+            run_xfail: self.run_xfail,
+            jobs: self.jobs,
+            isolate: self.isolate,
+            no_capture: self.no_capture,
+            cargo_features: self.cargo_features.clone(),
+            cargo_no_default_features: self.cargo_no_default_features,
+            cargo_all_features: self.cargo_all_features,
+            workspace_context: self.workspace_context.clone(),
+        }
+    }
+
+    /// Reject implicit working-directory authority before the owner executes or writes a report.
+    pub(crate) fn validate_paths(&self) -> CliResult<()> {
+        if !Path::new(&self.collection.path).is_absolute()
+            || self.junit_path.as_ref().is_some_and(|path| !path.is_absolute())
+            || self.workspace_context.as_ref().is_some_and(|workspace| {
+                !workspace.workspace_root.is_absolute() || !workspace.member_root.is_absolute()
+            })
+        {
+            return Err(CliError::failure("owner requires absolute test and report paths"));
+        }
+        Ok(())
+    }
+}
+
+/// Fresh collection and selection, retaining only the session's original compiler authority inside its owner.
+struct SelectedTestCollection {
+    command_context: Option<Arc<OvenTestCommandContext>>,
+    filtered_tests: Vec<TestInfo>,
+    stable_id_root: PathBuf,
+    default_timeout: Option<Duration>,
+}
+
+/// Run the single discovery/collection/selection implementation with a canonical or retained session supplier.
+fn collect_selected_tests(
+    options: &TestCollectionOptions,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    list_only: bool,
+    mut emit: impl FnMut(TestProgress),
+) -> CliResult<SelectedTestCollection> {
+    let TestCollectionOptions {
+        languages,
         path,
         verbose,
-        stop_on_fail,
         include_slow,
         filter,
-        use_color,
-        fail_on_empty,
-        list_only,
-        report_format,
-        junit_path,
-        durations,
-        shuffle,
-        seed,
-        run_xfail,
         marker_expr,
         strict_markers,
-        jobs,
         test_features,
         package_features,
         sdk_profile,
         timeout,
-        no_capture,
         cargo_policy,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-        workspace_context,
-    } = config;
-
-    let start_time = Instant::now();
-    let jobs = jobs.max(1);
-
+    } = options;
+    let stage = trace_test_stage("discovery");
     let path = Path::new(path);
-    enforce_test_path_toolchain_constraint(path)?;
-    // `incan test` builds and runs under Oven authority like `build` and `run`, so RFC 117 rule 11 applies here too.
-    incan_driver::project::warn_once_about_ignored_cargo_manifest(&incan_driver::project::resolve_project_root(path));
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
-    if candidates.is_empty() {
+    let rust_roots = if *languages != TestLanguages::Incan {
+        rust::discover_roots(path)?
+    } else {
+        Vec::new()
+    };
+    if (candidates.is_empty() || *languages == TestLanguages::Rust) && rust_roots.is_empty() {
         return Err(CliError::failure(format!(
             "No test files found in '{}'\nTest files should be named test_*.incn or *_test.incn",
             path.display()
         )));
     }
-    let authority_root = candidates.command_authority_root().map_err(CliError::failure)?;
-    let representative_test = candidates
-        .representative_path(&authority_root)
-        .ok_or_else(|| CliError::failure("test candidate inventory lost its representative source"))?;
-    let session = prepare_test_command_session(
-        representative_test,
-        list_only,
-        &package_features,
-        sdk_profile.as_deref(),
-    )?;
+    let authority_root = if candidates.is_empty() || *languages == TestLanguages::Rust {
+        rust::project_root(path)?.ok_or_else(|| CliError::failure("Rust tests require an authored project"))?
+    } else {
+        candidates.command_authority_root().map_err(CliError::failure)?
+    };
+    let representative_test = if *languages == TestLanguages::Rust {
+        rust_roots.first().cloned()
+    } else {
+        candidates
+            .representative_path(&authority_root)
+            .map(Path::to_path_buf)
+            .or_else(|| rust_roots.first().cloned())
+    };
+    let representative_test =
+        representative_test.ok_or_else(|| CliError::failure("test inventory lost its representative source"))?;
+    drop(stage);
+    let stage = trace_test_stage("session");
+    let session = if list_only && *languages == TestLanguages::Incan {
+        owner.test_collection_session(
+            &authority_root,
+            &representative_test,
+            package_features,
+            sdk_profile.as_deref(),
+        )?
+    } else {
+        owner.test_execution_session(
+            &authority_root,
+            &representative_test,
+            package_features,
+            sdk_profile.as_deref(),
+        )?
+    };
     if let Some(manifest) = session.manifest.as_ref() {
+        incan_driver::cargo_policy::enforce_project_toolchain_constraint(manifest)?;
         let session_root =
             std::fs::canonicalize(manifest.project_root()).unwrap_or_else(|_| manifest.project_root().to_path_buf());
         if session_root != authority_root {
@@ -1320,52 +1539,70 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             )));
         }
     }
-    let test_files = discover_test_files_with_session(&candidates, &authority_root, session.as_ref());
-    if test_files.is_empty() {
+    drop(stage);
+    let stage = trace_test_stage("candidate_selection");
+    let test_files = if *languages == TestLanguages::Rust {
+        Vec::new()
+    } else {
+        discover_test_files_with_session(&candidates, &authority_root, session.as_ref())
+    };
+    if test_files.is_empty() && rust_roots.is_empty() {
         return Err(CliError::failure(format!(
             "No test files found in '{}'\nTest files should be named test_*.incn or *_test.incn",
             path.display()
         )));
     }
+    drop(stage);
+    let stage = trace_test_stage("lock_policy");
     validate_oven_test_lock_policy(
         session.as_ref(),
-        &test_files[0],
-        &cargo_policy,
-        &package_features,
+        &representative_test,
+        cargo_policy,
+        package_features,
         sdk_profile.as_deref(),
     )?;
 
-    let eval_context = CollectionEvalContext::new(test_features.into_iter().collect());
+    drop(stage);
+    let stage = trace_test_stage("collection");
+    let eval_context = CollectionEvalContext::new(test_features.iter().cloned().collect());
     let mut conftest_cache = ConftestDiscoveryCache::default();
     let inventory = collect_test_inventory(&test_files, path, &eval_context, session.as_ref(), &mut conftest_cache)
         .map_err(CliError::failure)?;
-    let all_tests = inventory.tests;
+    let mut all_tests = inventory.tests;
+    let command_context = if !list_only || !rust_roots.is_empty() {
+        let _admission = trace_test_stage("dependency_admission");
+        let native_context = owner.native_dependency_context(&session)?;
+        let mut planned = test_files.clone();
+        planned.extend(rust_roots.iter().cloned());
+        let mut context =
+            prepare_oven_test_command_context(Arc::clone(&session), &representative_test, &planned, native_context)?;
+        let context_mut = Arc::get_mut(&mut context)
+            .ok_or_else(|| CliError::failure("test command context escaped before collection"))?;
+        context_mut.test_generation = owner.test_generation(&session)?;
+        for (root, prepared) in rust::prepare_roots(&rust_roots, context_mut, package_features, owner)? {
+            all_tests.extend(prepared.tests.iter().cloned());
+            context_mut.rust_roots.insert(root, prepared);
+        }
+        Some(context)
+    } else {
+        None
+    };
     let all_fixtures = inventory.fixtures;
     let known_markers = inventory.known_markers;
 
-    if verbose && !all_fixtures.is_empty() {
-        println!("Discovered {} fixture(s):", all_fixtures.len());
-        for (name, fixture) in &all_fixtures {
-            let scope_str = match fixture.scope {
-                FixtureScope::Function => "function",
-                FixtureScope::Module => "module",
-                FixtureScope::Session => "session",
-            };
-            let autouse_str = if fixture.autouse { " (autouse)" } else { "" };
-            let async_str = if fixture.is_async { " async" } else { "" };
-            let teardown_str = if fixture.has_teardown { " (with teardown)" } else { "" };
-            println!(
-                "  - {}: scope={}{}{}{}",
-                name, scope_str, autouse_str, async_str, teardown_str
-            );
-        }
-        println!();
+    if *verbose && !all_fixtures.is_empty() {
+        emit(TestProgress::FixturesDiscovered {
+            fixtures: all_fixtures.into_values().collect(),
+        });
     }
+
+    drop(stage);
+    let _selection = trace_test_stage("test_selection");
 
     // ---- Expand parametrized tests into individual variants ----
     let all_tests = expand_parametrized_tests(all_tests);
 
-    let default_timeout = match timeout {
+    let default_timeout = match timeout.as_deref() {
         Some(raw) => Some(parse_duration_literal(raw).ok_or_else(|| {
             CliError::failure(format!(
                 "invalid --timeout value `{raw}`; use a duration like 250ms, 5s, or 2m"
@@ -1373,7 +1610,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         })?),
         None => None,
     };
-    let marker_tokens = match marker_expr {
+    let marker_tokens = match marker_expr.as_deref() {
         Some(expr) => {
             let tokens = tokenize_marker_expr(expr).map_err(CliError::failure)?;
             let _ = MarkerExprParser::parse(&tokens, &BTreeSet::new()).map_err(CliError::failure)?;
@@ -1384,32 +1621,142 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let marker_expr_names = marker_tokens
         .as_ref()
         .map_or_else(BTreeSet::new, |tokens| marker_expr_names(tokens));
-    validate_markers(&all_tests, &known_markers, strict_markers, &marker_expr_names).map_err(CliError::failure)?;
+    validate_markers(&all_tests, &known_markers, *strict_markers, &marker_expr_names).map_err(CliError::failure)?;
 
-    let mut filtered_tests = filter_collected_tests(
+    let filtered_tests = filter_collected_tests(
         all_tests,
-        filter,
-        include_slow,
+        filter.as_deref(),
+        *include_slow,
         marker_tokens.as_deref(),
         &stable_id_root,
     );
 
+    Ok(SelectedTestCollection {
+        command_context,
+        filtered_tests,
+        stable_id_root,
+        default_timeout,
+    })
+}
+
+/// Only portable display identities leave the owner; sessions, provider state and leases stay server-side.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TestListReport {
+    /// Current selected test identities, recomputed from current source every request.
+    pub(crate) ids: Vec<String>,
+}
+
+/// Collect a list through the same operation as execution, borrowing the existing owner's parser-only session.
+pub(crate) fn list_tests_with_owner(
+    options: &TestCollectionOptions,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    emit: impl FnMut(TestProgress),
+) -> CliResult<TestListReport> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = %options.path, list_only = true, jobs = 1).entered();
+    let collected = collect_selected_tests(options, owner, true, emit)?;
+    Ok(TestListReport {
+        ids: collected
+            .filtered_tests
+            .iter()
+            .map(|test| stable_test_id(test, &collected.stable_id_root))
+            .collect(),
+    })
+}
+
+/// Run all tests in the given path.
+pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
+    incan_driver::project::warn_once_about_ignored_cargo_manifest(&incan_driver::project::resolve_project_root(
+        Path::new(config.path),
+    ));
+    if config.list_only {
+        return crate::project_owner::list_tests(&config);
+    }
+    crate::project_owner::execute_tests(&config)
+}
+
+/// Execute fresh tests through the single scheduler, borrowing canonical preparation from this request's owner.
+pub(crate) fn execute_tests_with_owner(
+    request: &TestExecutionRequest,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    output: TestOutputSink,
+) -> CliResult<TestRunReport> {
+    request.validate_paths()?;
+    let config = request.as_config();
+    let collection_options = TestCollectionOptions::from_config(&config);
+    let TestRunConfig {
+        languages: _,
+        path,
+        verbose,
+        stop_on_fail,
+        include_slow: _,
+        filter: _,
+        use_color: _,
+        fail_on_empty,
+        list_only: _,
+        report_format: _,
+        junit_path: _,
+        durations: _,
+        shuffle,
+        seed,
+        run_xfail,
+        marker_expr: _,
+        strict_markers: _,
+        jobs,
+        isolate,
+        test_features: _,
+        package_features: _,
+        sdk_profile: _,
+        timeout: _,
+        no_capture,
+        cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        workspace_context: _,
+    } = config;
+
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = path, list_only = false, jobs)
+            .entered();
+    let start_time = Instant::now();
+    let jobs = jobs.max(1);
+    let path_for_execution = Path::new(path);
+
+    let collected = collect_selected_tests(&collection_options, owner, false, |event| output.progress(event))?;
+    let SelectedTestCollection {
+        command_context,
+        mut filtered_tests,
+        stable_id_root,
+        default_timeout,
+    } = collected;
+
     if filtered_tests.is_empty() {
-        eprintln!("No tests collected");
-        if fail_on_empty {
-            return Err(CliError::new("", ExitCode::FAILURE));
-        }
-        return Ok(ExitCode::SUCCESS); // "no tests collected" is not a failure
+        output.progress(TestProgress::NoTestsCollected);
+        return Ok(TestRunReport {
+            results: Vec::new(),
+            summary: TestSummary::default(),
+            shuffle_seed: None,
+            exit_code: if fail_on_empty {
+                ExitCode::FAILURE.0
+            } else {
+                ExitCode::SUCCESS.0
+            },
+        });
     }
 
-    if list_only {
-        for test in &filtered_tests {
-            println!("{}", stable_test_id(test, &stable_id_root));
-        }
-        return Ok(ExitCode::SUCCESS);
+    let mut file_ids = HashMap::new();
+    for test in &filtered_tests {
+        file_ids.entry(test.file_path.clone()).or_insert_with(|| {
+            let _identity = tracing::trace_span!(target: "incan::invocation", "incan_cli::test_file_identity", path = %test.file_path.display()).entered();
+            let canonical = test.file_path.canonicalize().unwrap_or_else(|_| test.file_path.clone());
+            canonical.strip_prefix(&stable_id_root).unwrap_or(&canonical).to_path_buf()
+        });
     }
 
-    let command_context = prepare_oven_test_command_context(Arc::clone(&session), &test_files[0], &test_files)?;
+    let command_context =
+        command_context.ok_or_else(|| CliError::failure("test execution lost its prepared command context"))?;
+    let stage = trace_test_stage("scheduling");
 
     let shuffle_seed = if shuffle {
         let value = seed.unwrap_or_else(default_shuffle_seed);
@@ -1419,19 +1766,13 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         None
     };
 
-    if report_format == TestOutputFormat::Console {
-        println!("{}", style(centered_eq_banner("test session starts"), "1", use_color));
-        println!("collected {} item(s)", filtered_tests.len());
-        if let Some(seed) = shuffle_seed {
-            println!("shuffle seed: {seed}");
-        }
-        if jobs > 1 {
-            println!("jobs: {jobs}");
-        }
-        println!();
-    }
+    output.progress(TestProgress::SessionStarted {
+        collected: filtered_tests.len(),
+        shuffle_seed,
+        jobs,
+    });
 
-    let mut results: Vec<(TestInfo, TestResult)> = Vec::new();
+    let mut results = Vec::new();
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -1439,32 +1780,21 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let mut xpassed = 0;
 
     let planning_start = Instant::now();
-    let units = build_execution_units(&filtered_tests, path, default_timeout, stop_on_fail, jobs);
-    if report_format == TestOutputFormat::Console && verbose {
-        println!(
-            "planned {} generated harness unit(s) in {:.2}s",
-            units.len(),
-            planning_start.elapsed().as_secs_f64()
-        );
+    let units = build_execution_units(&filtered_tests, path_for_execution, default_timeout, stop_on_fail, jobs);
+    let units = share_native_execution_units(units, jobs, isolate || shuffle || stop_on_fail);
+    if verbose {
+        output.progress(TestProgress::UnitsPlanned {
+            units: units.len(),
+            elapsed: planning_start.elapsed(),
+        });
     }
-    if report_format == TestOutputFormat::Console && !stop_on_fail {
+    if !stop_on_fail {
         for unit in &units {
-            let files = unit
-                .file_paths
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!(
-                "{}",
-                style(
-                    format!("running {} ({} item(s))", files, unit.tests.len()),
-                    "2",
-                    use_color
-                )
-            );
+            output.progress(TestProgress::UnitStarting {
+                files: unit.file_paths.iter().cloned().collect(),
+                tests: unit.tests.len(),
+            });
         }
-        let _ = std::io::stdout().flush();
     }
 
     let mut raw_batch_results = run_scheduled_execution_units(
@@ -1478,19 +1808,21 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         stop_on_fail,
         no_capture,
         verbose,
-        report_format == TestOutputFormat::Console,
+        output.clone(),
     );
-    if report_format == TestOutputFormat::Console && verbose {
-        println!(
-            "generated harness execution phase completed in {:.2}s",
-            start_time.elapsed().as_secs_f64()
-        );
+    if verbose {
+        output.progress(TestProgress::ExecutionCompleted {
+            elapsed: start_time.elapsed(),
+        });
     }
+    drop(stage);
+    let _reporting = trace_test_stage("reporting");
+    let case_key = |test: &TestInfo| (test.file_path.clone(), test_display_name(test).to_string());
     raw_batch_results.sort_by_key(|(index, _)| *index);
-    let mut raw_results_by_id: HashMap<String, TestResult> = HashMap::new();
+    let mut raw_results_by_id: HashMap<(PathBuf, String), TestResult> = HashMap::new();
     for (_, batch_results) in raw_batch_results {
         for (test, result) in batch_results {
-            raw_results_by_id.insert(stable_test_id(&test, &stable_id_root), result);
+            raw_results_by_id.insert(case_key(&test), result);
         }
     }
 
@@ -1500,13 +1832,13 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         {
             TestResult::Skipped(reason.clone())
         } else {
-            let id = stable_test_id(&test, &stable_id_root);
+            let id = case_key(&test);
             match raw_results_by_id.remove(&id) {
                 Some(result) => result,
                 None if stop_on_fail => continue,
                 None => TestResult::Failed(
                     Duration::from_secs(0),
-                    format!("internal error: no test result was produced for `{id}`"),
+                    format!("internal error: no test result was produced for `{id:?}`"),
                 ),
             }
         };
@@ -1546,50 +1878,114 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             raw_result
         };
 
-        if report_format == TestOutputFormat::Console {
-            print_test_result(&test, &result, verbose, use_color);
-        } else {
-            emit_json_result(&test, &result, &stable_id_root, workspace_context.as_ref());
-        }
-        results.push((test, result));
+        let file_id = file_ids
+            .get(&test.file_path)
+            .ok_or_else(|| CliError::failure("selected test lost its file identity"))?;
+        let id = format!("{}::{}", file_id.to_string_lossy(), test_display_name(&test));
+        results.push(TestCaseResult { id, test, result });
     }
 
+    Ok(TestRunReport {
+        summary: TestSummary {
+            total: results.len(),
+            passed,
+            failed,
+            skipped,
+            xfailed,
+            xpassed,
+            duration: start_time.elapsed(),
+        },
+        results,
+        shuffle_seed,
+        exit_code: if failed > 0 || xpassed > 0 {
+            ExitCode::FAILURE.0
+        } else {
+            ExitCode::SUCCESS.0
+        },
+    })
+}
+
+/// Format completed owner facts in the invoking CLI without reopening source paths or rerunning result policy.
+/// Report-file errors belong to the client; a valid execution result is never turned into a cached test success.
+pub(crate) fn render_test_report(
+    report: TestRunReport,
+    config: &TestRunConfig<'_>,
+    output: &TestOutputSink,
+) -> CliResult<ExitCode> {
+    let _rendering = trace_test_stage("client_reporting");
+    let TestRunReport {
+        results,
+        summary,
+        shuffle_seed,
+        exit_code,
+    } = report;
+    if results.is_empty() {
+        return if exit_code == 0 {
+            Ok(ExitCode::SUCCESS)
+        } else {
+            Err(CliError::with_code("", exit_code))
+        };
+    }
+    let TestSummary {
+        passed,
+        failed,
+        skipped,
+        xfailed,
+        xpassed,
+        duration: total_time,
+        ..
+    } = summary;
+    let report_format = config.report_format;
+    let use_color = config.use_color;
+    let workspace_context = config.workspace_context.as_ref();
+    for case in &results {
+        if report_format == TestOutputFormat::Console {
+            print_test_result(&case.test, &case.result, config.verbose, use_color, output);
+        } else {
+            emit_json_result(&case.test, &case.result, &case.id, workspace_context, output);
+        }
+    }
     let failures: Vec<_> = results
         .iter()
-        .filter(|(_, r)| matches!(r, TestResult::Failed(_, _) | TestResult::XPassed(_)))
+        .filter(|case| matches!(case.result, TestResult::Failed(_, _) | TestResult::XPassed(_)))
         .collect();
 
     if report_format == TestOutputFormat::Console && !failures.is_empty() {
-        println!();
-        println!("{}", style(centered_eq_banner("FAILURES"), RED, use_color));
-        for (test, result) in failures {
+        output.line("");
+        output.line(format_args!(
+            "{}",
+            style(centered_eq_banner("FAILURES"), RED, use_color)
+        ));
+        for TestCaseResult { test, result, .. } in failures {
             let display_name = test_display_name(test);
-            println!();
-            println!("{}", style(centered_banner(display_name, '_'), "1", use_color));
+            output.line("");
+            output.line(format_args!(
+                "{}",
+                style(centered_banner(display_name, '_'), "1", use_color)
+            ));
             if let TestResult::Failed(_, msg) = result {
-                println!();
-                println!("    {}", msg);
+                output.line("");
+                output.line(format_args!("    {}", msg));
             } else if let TestResult::XPassed(_) = result {
-                println!();
-                println!(
+                output.line("");
+                output.line(format_args!(
                     "    {}",
                     style("Test passed but was expected to fail (xfail)", YELLOW, use_color)
-                );
+                ));
             }
-            println!();
-            println!("    {}::{}", test.file_path.display(), display_name);
+            output.line("");
+            output.line(format_args!("    {}::{}", test.file_path.display(), display_name));
         }
     }
 
-    let total_time = start_time.elapsed();
-    if let Some(path) = junit_path.as_ref() {
+    if let Some(path) = config.junit_path.as_ref() {
         write_junit_report(path, &results, total_time)?;
     }
     if report_format == TestOutputFormat::Console {
-        if let Some(count) = durations {
-            print_durations(&results, count, use_color, &stable_id_root);
+        if let Some(count) = config.durations {
+            print_durations(&results, count, use_color, output);
         }
-        println!();
+        output.line("");
     }
     let mut parts = Vec::new();
     if passed > 0 {
@@ -1611,10 +2007,10 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     if report_format == TestOutputFormat::Console {
         let summary_label = format!("{} in {:.2}s", parts.join(", "), total_time.as_secs_f64());
         let summary_color = if failed > 0 || xpassed > 0 { RED } else { GREEN };
-        println!(
+        output.line(format_args!(
             "{}",
             style(centered_eq_banner(&summary_label), summary_color, use_color)
-        );
+        ));
     } else {
         let mut record = serde_json::json!({
             "schema_version": "incan.test.v1",
@@ -1629,7 +2025,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
                 "shuffle_seed": shuffle_seed,
             }
         });
-        if let (Some(object), Some(workspace)) = (record.as_object_mut(), workspace_context.as_ref()) {
+        if let (Some(object), Some(workspace)) = (record.as_object_mut(), workspace_context) {
             object.insert(
                 "workspace".to_string(),
                 serde_json::json!({
@@ -1642,12 +2038,12 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
                 }),
             );
         }
-        println!("{record}");
+        output.line(format_args!("{record}"));
     }
 
-    if failed > 0 || xpassed > 0 {
-        // Tests failed - return error with empty message (summary already printed).
-        Err(CliError::new("", ExitCode::FAILURE))
+    if exit_code != 0 {
+        // The owner has already applied failure policy; the CLI only presents its result.
+        Err(CliError::with_code("", exit_code))
     } else {
         Ok(ExitCode::SUCCESS)
     }
@@ -1655,6 +2051,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    mod scheduling;
+
     use super::*;
     use std::path::PathBuf;
 
@@ -1671,6 +2069,137 @@ mod tests {
         }
     }
 
+    /// Rust units never enter the generated Incan harness or share its fixture lifetime.
+    #[test]
+    fn mixed_languages_use_distinct_execution_units() {
+        let incan = make_test("test_incan", Vec::new());
+        let mut rust = make_test("tests::native", Vec::new());
+        rust.file_path = PathBuf::from("tests/native.rs");
+        let mut tests = [incan, rust];
+        for _ in 0..2 {
+            let units = build_execution_units(&tests, Path::new("."), None, false, 1);
+            assert_eq!(units.len(), 2);
+            assert!(units.iter().all(|unit| unit.tests.len() == 1));
+            tests.reverse();
+        }
+    }
+
+    /// Selection language survives owner transport rather than reverting to the wrapper default.
+    #[test]
+    fn test_language_selection_survives_owner_transport() -> Result<(), Box<dyn std::error::Error>> {
+        for languages in [TestLanguages::Incan, TestLanguages::Rust, TestLanguages::All] {
+            let mut config = list_test_config("/test-project");
+            config.languages = languages;
+            let wire = serde_json::to_vec(&TestExecutionRequest::from_config(&config))?;
+            let request: TestExecutionRequest = serde_json::from_slice(&wire)?;
+            assert_eq!(request.as_config().languages, languages);
+        }
+        Ok(())
+    }
+
+    /// Typed completion preserves resolved IDs and every status without requiring source files at render time.
+    #[test]
+    fn typed_completion_renders_original_identity_and_all_statuses() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let source = directory.path().join("test_original.incn");
+        std::fs::write(&source, "def test_original(): pass\n")?;
+        let duration = Duration::from_millis(7);
+        let statuses = [
+            TestResult::Passed(duration),
+            TestResult::Failed(duration, "failure <details>".to_string()),
+            TestResult::Skipped("skip & reason".to_string()),
+            TestResult::XFailed(duration, "expected".to_string()),
+            TestResult::XPassed(duration),
+        ];
+        let results = statuses
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| {
+                let mut test = make_test(&format!("test_{index}"), vec![TestMarker::Mark("selected".to_string())]);
+                test.file_path = source.clone();
+                TestCaseResult {
+                    id: format!("retained/test_original.incn::test_{index}"),
+                    test,
+                    result,
+                }
+            })
+            .collect();
+        let report = TestRunReport {
+            results,
+            summary: TestSummary {
+                total: 5,
+                passed: 1,
+                failed: 1,
+                skipped: 1,
+                xfailed: 1,
+                xpassed: 1,
+                duration,
+            },
+            shuffle_seed: Some(27),
+            exit_code: ExitCode::FAILURE.0,
+        };
+        let wire = serde_json::to_vec(&report)?;
+        let restored: TestRunReport = serde_json::from_slice(&wire)?;
+        std::fs::remove_file(&source)?;
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = std::sync::Arc::clone(&received);
+        let output = TestOutputSink::new(move |event| {
+            if let output::TestOutput::Stdout(text) = event
+                && let Ok(mut received) = capture.lock()
+            {
+                received.push(text);
+            }
+        });
+        let mut config = list_test_config("/unavailable-source-root");
+        config.list_only = false;
+        config.report_format = TestOutputFormat::Json;
+        config.junit_path = Some(directory.path().join("report.xml"));
+        assert!(render_test_report(restored, &config, &output).is_err());
+        let text = received.lock().map_err(|_| "poisoned output capture")?.concat();
+        let records: Vec<serde_json::Value> = text.lines().map(serde_json::from_str).collect::<Result<_, _>>()?;
+        assert_eq!(records.len(), 6);
+        for (index, status) in ["passed", "failed", "skipped", "xfailed", "xpassed"].iter().enumerate() {
+            assert_eq!(
+                records[index]["test_id"],
+                format!("retained/test_original.incn::test_{index}")
+            );
+            assert_eq!(records[index]["status"], *status);
+        }
+        assert_eq!(records[5]["summary"]["shuffle_seed"], 27);
+        assert_eq!(records[5]["summary"]["xpassed"], 1);
+        let junit = std::fs::read_to_string(directory.path().join("report.xml"))?;
+        assert!(junit.contains("failures=\"2\" skipped=\"2\""));
+        assert!(junit.contains("failure &lt;details&gt;"));
+        assert!(junit.contains("skip &amp; reason"));
+        Ok(())
+    }
+
+    /// A successful execution cannot hide a client-side report destination failure.
+    #[test]
+    fn typed_completion_reports_client_junit_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let occupied = directory.path().join("occupied");
+        std::fs::write(&occupied, "not a directory")?;
+        let report = TestRunReport {
+            results: vec![TestCaseResult {
+                id: "original::test_one".to_string(),
+                test: make_test("test_one", Vec::new()),
+                result: TestResult::Passed(Duration::ZERO),
+            }],
+            summary: TestSummary {
+                total: 1,
+                passed: 1,
+                ..TestSummary::default()
+            },
+            shuffle_seed: None,
+            exit_code: ExitCode::SUCCESS.0,
+        };
+        let mut config = list_test_config("/unavailable-source-root");
+        config.junit_path = Some(occupied.join("report.xml"));
+        assert!(render_test_report(report, &config, &TestOutputSink::new(|_| {})).is_err());
+        Ok(())
+    }
+
     fn make_case(display_id: &str, rust_args: &str) -> ParametrizeCase {
         ParametrizeCase {
             display_id: display_id.to_string(),
@@ -1682,6 +2211,7 @@ mod tests {
 
     fn list_test_config(path: &str) -> TestRunConfig<'_> {
         TestRunConfig {
+            languages: TestLanguages::Incan,
             path,
             verbose: false,
             stop_on_fail: false,
@@ -1699,6 +2229,7 @@ mod tests {
             marker_expr: None,
             strict_markers: false,
             jobs: 1,
+            isolate: false,
             test_features: Vec::new(),
             package_features: incan_provider::FeatureSelection::default(),
             sdk_profile: None,
@@ -1775,14 +2306,15 @@ mod tests {
             "strict validation must collect through the command session without discovering another",
         );
 
-        let _execution_context = prepare_oven_test_command_context(Arc::clone(&session), representative, &test_files)?;
+        let _execution_context =
+            prepare_oven_test_command_context(Arc::clone(&session), representative, &test_files, None)?;
         TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
         Ok(())
     }
 
     #[test]
-    fn list_only_uses_one_parser_session_without_preparing_execution_authority()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn list_only_retains_parser_session_without_preparing_execution_authority() -> Result<(), Box<dyn std::error::Error>>
+    {
         let project = tempfile::tempdir()?;
         let src = project.path().join("src");
         let tests = project.path().join("tests");
@@ -1798,12 +2330,26 @@ mod tests {
             "def test_list() -> None:\n    assert True\n",
         )?;
 
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| count.set(0));
         let path = project.path().to_str().ok_or("test project path is not UTF-8")?;
-        let exit = run_tests(list_test_config(path))?;
+        let options = TestCollectionOptions::from_config(&list_test_config(path));
+        let root = std::fs::canonicalize(project.path())?;
+        let entry = root.join("tests/test_list.incn");
+        let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+        let session = owner.test_collection_session(&root, &entry, &options.package_features, None)?;
+        let report = list_tests_with_owner(&options, &mut owner, |_| {})?;
+        assert_eq!(report.ids, ["tests/test_list.incn::test_list"]);
 
-        assert_eq!(exit, ExitCode::SUCCESS);
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
+        std::fs::write(
+            &entry,
+            "def test_list() -> None:\n    assert True\ndef test_added() -> None:\n    assert True\n",
+        )?;
+        let report = list_tests_with_owner(&options, &mut owner, |_| {})?;
+        assert_eq!(report.ids.len(), 2);
+        let repeated = owner.test_collection_session(&root, &entry, &options.package_features, None)?;
+        assert!(
+            Arc::ptr_eq(&session, &repeated),
+            "collection must retain its parser-only session"
+        );
         assert!(
             !project.path().join("target").exists(),
             "listing tests must not prepare generated execution artifacts"
@@ -1829,16 +2375,34 @@ mod tests {
             )?;
         }
 
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| count.set(0));
         let path = common.path().to_str().ok_or("common test path is not UTF-8")?;
-        let Err(error) = run_tests(list_test_config(path)) else {
+        let options = TestCollectionOptions::from_config(&list_test_config(path));
+        let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+        let Err(error) = list_tests_with_owner(&options, &mut owner, |_| {}) else {
             return Err("a common directory silently selected one sibling project".into());
         };
 
         assert!(error.message.contains("test path spans multiple Incan projects"));
         assert!(error.message.contains("alpha"));
         assert!(error.message.contains("beta"));
-        TEST_COMMAND_SESSION_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 0));
+        Ok(())
+    }
+
+    /// Execution refuses relative source/report paths before selecting any session or writing output.
+    #[test]
+    fn execution_request_requires_absolute_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = list_test_config("tests");
+        assert!(TestExecutionRequest::from_config(&config).validate_paths().is_err());
+        let directory = tempfile::tempdir()?;
+        let absolute = directory.path().to_str().ok_or("test path is not UTF-8")?;
+        config.path = absolute;
+        config.junit_path = Some(PathBuf::from("reports/tests.xml"));
+        assert!(TestExecutionRequest::from_config(&config).validate_paths().is_err());
+        config.junit_path = Some(directory.path().join("reports/tests.xml"));
+        let request = TestExecutionRequest::from_config(&config);
+        let decoded: TestExecutionRequest = serde_json::from_value(serde_json::to_value(request)?)?;
+        decoded.validate_paths()?;
+        assert_eq!(decoded.as_config().junit_path, config.junit_path);
         Ok(())
     }
 
@@ -2045,6 +2609,7 @@ mod tests {
             serial: false,
         }];
         let blocked = ExecutionUnit {
+            shared_threads: None,
             index: 1,
             file_paths: BTreeSet::from([PathBuf::from("test_other.incn")]),
             tests: vec![make_test("test_db", vec![TestMarker::Resource("db".to_string())])],
@@ -2054,6 +2619,7 @@ mod tests {
             serial: false,
         };
         let allowed = ExecutionUnit {
+            shared_threads: None,
             index: 2,
             file_paths: BTreeSet::from([PathBuf::from("test_cache.incn")]),
             tests: vec![make_test("test_cache", vec![TestMarker::Resource("cache".to_string())])],
@@ -2076,6 +2642,7 @@ mod tests {
     #[test]
     fn scheduler_runs_serial_units_alone() {
         let serial = ExecutionUnit {
+            shared_threads: None,
             index: 1,
             file_paths: BTreeSet::from([PathBuf::from("test_serial.incn")]),
             tests: vec![make_test("test_serial", vec![TestMarker::Serial])],
@@ -2107,6 +2674,7 @@ mod tests {
             serial: true,
         }];
         let ordinary = ExecutionUnit {
+            shared_threads: None,
             index: 2,
             file_paths: BTreeSet::from([PathBuf::from("test_regular.incn")]),
             tests: vec![make_test("test_regular", vec![])],
@@ -2130,6 +2698,7 @@ mod tests {
             serial: false,
         }];
         let candidate = ExecutionUnit {
+            shared_threads: None,
             index: 1,
             file_paths: BTreeSet::from([PathBuf::from("test_same_file.incn")]),
             tests: vec![make_test("test_cache", vec![TestMarker::Resource("cache".to_string())])],
@@ -2141,7 +2710,7 @@ mod tests {
 
         assert!(
             !active_units_allow(&active, &candidate),
-            "same source file units share a generated Cargo crate and must not overlap"
+            "same Incan source units share a generated harness and must not overlap"
         );
     }
 }
