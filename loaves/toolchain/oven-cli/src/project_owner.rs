@@ -332,16 +332,17 @@ pub(crate) fn execute_tests(config: &crate::test_runner::TestRunConfig<'_>) -> C
                 .map_err(|error| CliError::failure(error.to_string()))?,
             |message| print!("{message}"),
         )?;
-        let exit: i32 = serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))?;
-        Ok(crate::ExitCode(exit))
+        let report = serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))?;
+        crate::test_runner::render_test_report(report, config, &crate::test_runner::output::TestOutputSink::default())
     }
     #[cfg(not(unix))]
     {
-        crate::test_runner::execute_tests_with_owner(
+        let report = crate::test_runner::execute_tests_with_owner(
             &request,
             &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
             crate::test_runner::output::TestOutputSink::default(),
-        )
+        )?;
+        crate::test_runner::render_test_report(report, config, &crate::test_runner::output::TestOutputSink::default())
     }
 }
 
