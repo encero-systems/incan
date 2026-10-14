@@ -54,15 +54,6 @@ pub(super) fn project_root(path: &Path) -> CliResult<Option<PathBuf>> {
         .transpose()
 }
 
-/// Use one authored Rust layout for discovery, macro classification and the package's own library dependency.
-fn rust_source_directory(manifest: &ProjectManifest) -> PathBuf {
-    let root = manifest.project_root();
-    manifest
-        .rust_source
-        .as_ref()
-        .map_or_else(|| root.join("src"), |source| root.join(&source.root).join("src"))
-}
-
 /// Discover authored crate roots, never treating nested Rust modules as independent crates.
 /// The selected path narrows the package's conventional roots and declared binary roles.
 pub(super) fn discover_roots(path: &Path) -> CliResult<Vec<PathBuf>> {
@@ -71,8 +62,8 @@ pub(super) fn discover_roots(path: &Path) -> CliResult<Vec<PathBuf>> {
     };
     let manifest_path = root.join("loaf.toml");
     let manifest = ProjectManifest::load(&manifest_path).map_err(|e| CliError::failure(e.to_string()))?;
-    let source = rust_source_directory(&manifest);
-    let mut candidates = vec![source.join("lib.rs"), source.join("main.rs")];
+    let source = manifest.rust_source_directory();
+    let mut candidates = vec![manifest.rust_library_path(), source.join("main.rs")];
     candidates.extend(manifest.rust_bins.iter().map(|role| root.join(&role.path)));
     let tests = root.join("tests");
     if tests.is_dir() {
@@ -137,7 +128,7 @@ fn proc_macro_test_root(manifest: &ProjectManifest, source: &Path) -> Result<boo
     {
         return Ok(false);
     }
-    let library = rust_source_directory(manifest).join("lib.rs");
+    let library = manifest.rust_library_path();
     if !library.is_file() {
         return Ok(false);
     }
@@ -158,7 +149,7 @@ fn test_dependencies(
         return Ok(dependencies);
     }
     let root = manifest.project_root();
-    let library = rust_source_directory(manifest).join("lib.rs");
+    let library = manifest.rust_library_path();
     if library.is_file() && library.canonicalize()? != source.canonicalize()? {
         let name = manifest
             .rust_facet
@@ -507,6 +498,55 @@ mixed = { loaf = "mixed", path = "mixed", optional = true, default-features = fa
                 path: root.join("mixed")
             }
         );
+        Ok(())
+    }
+
+    /// Discovery, macro classification and self-library linkage share the admitted custom library path.
+    #[test]
+    fn authored_library_root_controls_discovery_and_linkage() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("rust/src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        let declaration = "[project]\nname='custom'\n[rust]\ntype='proc-macro'\npath='rust/src/user_doc.rs'\n[rust.source]\nroot='rust'\n";
+        std::fs::write(root.join("loaf.toml"), declaration)?;
+        for file in ["rust/src/user_doc.rs", "rust/src/lib.rs", "tests/check.rs"] {
+            std::fs::write(root.join(file), "")?;
+        }
+        assert_eq!(
+            super::discover_roots(root)?,
+            vec![
+                root.join("rust/src/user_doc.rs").canonicalize()?,
+                root.join("tests/check.rs").canonicalize()?
+            ]
+        );
+        let manifest = oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))?;
+        assert!(super::proc_macro_test_root(
+            &manifest,
+            &root.join("rust/src/user_doc.rs")
+        )?);
+        assert!(!super::proc_macro_test_root(&manifest, &root.join("tests/check.rs"))?);
+        let (_, features) = super::resolve_test_manifest(&manifest, &Default::default())?;
+        assert!(super::test_dependencies(&manifest, &features, &root.join("rust/src/user_doc.rs"), false)?.is_empty());
+        assert_eq!(
+            super::test_dependencies(&manifest, &features, &root.join("tests/check.rs"), false)?.len(),
+            1
+        );
+        for invalid in [
+            "../outside.rs",
+            "/tmp/outside.rs",
+            "rust/src/../outside.rs",
+            "src/wrong.rs",
+            "rust/src/not-rust.txt",
+        ] {
+            assert!(
+                oven_model::manifest::ProjectManifest::from_str(
+                    &declaration.replace("rust/src/user_doc.rs", invalid),
+                    &root.join("loaf.toml")
+                )
+                .is_err()
+            );
+        }
         Ok(())
     }
 

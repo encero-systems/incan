@@ -476,7 +476,26 @@ fn local_facet_sources_with_observer(
         .and_then(|value| value.get("root"))
         .and_then(toml::Value::as_str)
         .unwrap_or("");
-    let mut relative = Path::new(source_root).join("src");
+    let source_directory: std::path::PathBuf = Path::new(source_root)
+        .join("src")
+        .components()
+        .filter(|component| *component != std::path::Component::CurDir)
+        .collect();
+    let library = facet
+        .get("path")
+        .map(|value| value.as_str().ok_or("local Rust library path is not text"))
+        .transpose()?
+        .map_or_else(|| source_directory.join("lib.rs"), std::path::PathBuf::from);
+    if !library
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
+        || library.extension().is_none_or(|extension| extension != "rs")
+        || !library.starts_with(&source_directory)
+    {
+        return Err("local Rust library path must stay inside its source directory".into());
+    }
+    let library_tail = library.strip_prefix(&source_directory)?.to_path_buf();
+    let mut relative = source_directory;
     if relative
         .components()
         .any(|part| !matches!(part, std::path::Component::Normal(_) | std::path::Component::CurDir))
@@ -508,7 +527,7 @@ fn local_facet_sources_with_observer(
         "source".to_string(),
         toml::Value::Table(toml::map::Map::from_iter([(
             "root".to_string(),
-            toml::Value::String(relative.join("lib.rs").to_string_lossy().into_owned()),
+            toml::Value::String(relative.join(library_tail).to_string_lossy().into_owned()),
         )])),
     );
     Ok(LocalFacetSources {
@@ -853,6 +872,52 @@ mod tests {
         assert!(!active.contains_key("unused"));
         let (_, inactive) = local_feature_selection(&manifest, &[])?;
         assert!(!inactive.contains_key("optional"));
+        Ok(())
+    }
+
+    /// The existing snapshot preserves a custom library entry and its sibling module geometry.
+    #[test]
+    fn authored_library_root_survives_native_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        std::fs::create_dir_all(project.path().join("src"))?;
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname='custom'\nversion='1.0.0'\n[rust]\npath='src/mod.rs'\n",
+        )?;
+        std::fs::write(project.path().join("src/mod.rs"), "mod value; pub use value::answer;")?;
+        std::fs::write(project.path().join("src/value.rs"), "pub fn answer() -> u8 { 42 }")?;
+        let sources = super::local_facet_sources(project.path())?;
+        assert_eq!(sources.manifest["rust"]["source"]["root"].as_str(), Some("src/mod.rs"));
+        assert!(
+            sources
+                .files
+                .iter()
+                .any(|(_, relative)| relative == std::path::Path::new("src/value.rs"))
+        );
+        for entry in ["path='src/mod.rs'\n", ""] {
+            std::fs::write(
+                project.path().join("loaf.toml"),
+                format!("[project]\nname='custom'\nversion='1.0.0'\n[rust]\n{entry}[rust.source]\nroot='.'\n"),
+            )?;
+            let dotted = super::local_facet_sources(project.path())?;
+            let expected = if entry.is_empty() { "src/lib.rs" } else { "src/mod.rs" };
+            assert_eq!(dotted.manifest["rust"]["source"]["root"].as_str(), Some(expected));
+        }
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname='custom'\nversion='1.0.0'\n[rust]\npath='src/mod.rs'\n",
+        )?;
+        let first = super::local_sdk_facet_source_digest(project.path(), project.path())?;
+        std::fs::write(project.path().join("src/value.rs"), "pub fn answer() -> u8 { 43 }")?;
+        assert_ne!(
+            first,
+            super::local_sdk_facet_source_digest(project.path(), project.path())?
+        );
+        std::fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname='custom'\n[rust]\npath='src/../outside.rs'\n",
+        )?;
+        assert!(super::local_facet_sources(project.path()).is_err());
         Ok(())
     }
 
