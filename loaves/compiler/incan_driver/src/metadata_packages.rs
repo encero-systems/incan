@@ -120,7 +120,23 @@ pub fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadata
 
 /// Analyze a registry inspection entry path once and collect compiler-owned metadata for all local modules.
 pub fn collect_registry_metadata_package(path: &Path) -> CliResult<CheckedRegistryMetadataPackage> {
+    collect_registry_metadata_with_dependencies(path).map(|(package, _)| package)
+}
+
+/// Collect local registry facts and the same dependency manifests used by their checked session.
+///
+/// Metadata renderers must consume this snapshot instead of reopening mutable dependency paths after validation.
+/// The returned index is metadata only; it does not replace execution leases or authorize native compilation.
+pub fn collect_registry_metadata_with_dependencies(
+    path: &Path,
+) -> CliResult<(CheckedRegistryMetadataPackage, LibraryManifestIndex)> {
     let entry_path = resolve_metadata_entry_path(path)?;
+    #[cfg(feature = "cli")]
+    let session = match crate::build::library_project::discover_ordinary_metadata_session(&entry_path)? {
+        Some(session) => session,
+        None => CompilationSession::discover_for_collection(&entry_path)?,
+    };
+    #[cfg(not(feature = "cli"))]
     let session = CompilationSession::discover_for_collection(&entry_path)?;
     let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
@@ -179,11 +195,18 @@ pub fn collect_registry_metadata_package(path: &Path) -> CliResult<CheckedRegist
     materialize_api_alias_projections(&mut api_metadata_modules);
     materialize_registry_reexport_projections(&mut metadata_modules, &api_metadata_modules);
     metadata_modules.sort_by(|left, right| left.module_path.cmp(&right.module_path));
-    Ok(CheckedRegistryMetadataPackage {
-        schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,
-        package: manifest.as_ref().and_then(checked_registry_package_identity),
-        modules: metadata_modules,
-    })
+    #[cfg(feature = "cli")]
+    if let Some(dependencies) = session.admitted_library_dependencies() {
+        dependencies.verify()?;
+    }
+    Ok((
+        CheckedRegistryMetadataPackage {
+            schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,
+            package: manifest.as_ref().and_then(checked_registry_package_identity),
+            modules: metadata_modules,
+        },
+        session.library_manifest_index,
+    ))
 }
 
 /// Extract checked API package identity from the project manifest when the manifest declares a non-empty name.

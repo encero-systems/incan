@@ -18,15 +18,15 @@ use incan_frontend::contract_metadata::{
 use incan_frontend::feature_metadata::{PublicFeatureDescriptor, public_feature_descriptors};
 use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use incan_frontend::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
-use incan_frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use incan_frontend::library_manifest_index::{LibraryArtifactKind, LibraryManifestIndexEntry};
 use incan_frontend::registry_metadata::{
     CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryDefinition, CheckedRegistryEntry,
     CheckedRegistryMetadataPackage, CheckedRegistryPackageIdentity,
 };
-use oven_model::manifest::ProjectManifest;
 
 use incan_driver::metadata_packages::{
-    collect_api_metadata_package, collect_registry_metadata_package, resolve_metadata_entry_path,
+    collect_api_metadata_package, collect_registry_metadata_package, collect_registry_metadata_with_dependencies,
+    resolve_metadata_entry_path,
 };
 use incan_driver::project::{discover_effective_project_manifest, resolve_project_root};
 
@@ -123,13 +123,7 @@ pub fn inspect_registry(
             .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?,
     );
     let entry_path = resolve_metadata_entry_path(&project)?;
-    let package = collect_registry_metadata_package(&entry_path)?;
-    let project_root = resolve_project_root(&entry_path);
-    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
+    let (package, library_manifest_index) = collect_registry_metadata_with_dependencies(&entry_path)?;
 
     let mut all_candidates = registry_candidates_from_package(&package, true);
     let mut unavailable_dependencies = Vec::new();
@@ -138,6 +132,11 @@ pub fn inspect_registry(
             continue;
         };
         match entry {
+            LibraryManifestIndexEntry::Loaded { metadata, .. }
+                if metadata.kind == LibraryArtifactKind::StandardVocab =>
+            {
+                continue;
+            }
             LibraryManifestIndexEntry::Loaded { manifest, .. } => {
                 let Some(registry) = manifest.contract_metadata.registry.as_ref() else {
                     unavailable_dependencies.push(format!(
@@ -1488,6 +1487,12 @@ mod tests {
     /// The selected test package supplies the checkout; remapped dependency paths are not source authority.
     #[test]
     fn std_feature_inventory_is_checked_and_generates_reference() -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::tools::tests::std_feature_inventory_is_checked_and_generates_reference",
+        )? {
+            return Ok(());
+        }
+
         let source = incan_test_support::repo_root().join("loaves/stdlib/core/src/features.incn");
         let package = collect_registry_metadata_package(&source)?;
         let entries = stdlib_feature_inventory(&package)?;
@@ -1540,6 +1545,12 @@ mod tests {
     #[test]
     fn collect_registry_metadata_preserves_checked_entries_and_dependency_visibility()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::tools::tests::collect_registry_metadata_preserves_checked_entries_and_dependency_visibility",
+        )? {
+            return Ok(());
+        }
+
         let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("src");
         fs::create_dir_all(&src)?;
@@ -1632,6 +1643,12 @@ def private_function() -> None:
     #[test]
     fn collect_registry_metadata_projects_public_facade_paths_without_duplicate_entries()
     -> Result<(), Box<dyn std::error::Error>> {
+        if incan_test_support::in_compiler_source_layout(
+            "commands::tools::tests::collect_registry_metadata_projects_public_facade_paths_without_duplicate_entries",
+        )? {
+            return Ok(());
+        }
+
         let tmp = tempfile::tempdir()?;
         let src = tmp.path().join("src");
         fs::create_dir_all(&src)?;
