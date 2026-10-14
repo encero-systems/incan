@@ -16378,6 +16378,24 @@ fn numeric_newtype_iterator_sum_output_matches_legacy() -> Result<(), Box<dyn st
     )
 }
 
+/// Published SDK task calls retain the same closed native channels as source-selected standard declarations.
+#[test]
+fn closed_sdk_task_calls_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "closed-sdk-task-calls",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn"),
+    )
+}
+
+/// Published SDK race calls retain the same checked callback outputs as source-selected standard declarations.
+#[test]
+fn closed_sdk_race_calls_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "closed-sdk-race-calls",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_race.incn"),
+    )
+}
+
 /// Payload-inferred generic newtypes keep their instance methods and static construction parity.
 #[test]
 fn closed_generic_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
