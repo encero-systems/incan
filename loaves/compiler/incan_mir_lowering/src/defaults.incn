@@ -141,9 +141,18 @@ def written_operands(
     span: SourceSpan,
     owned: bool,
 ) -> Result[list[Operand], str]:
-    """Place each written argument in the slot its binding names, leaving every omitted slot a unit placeholder."""
+    """Place already evaluated arguments by their retained slots, enforcing factory declaration order and leaving omitted slots as unit placeholders."""
     match binding:
-        ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+        ArgumentBinding.ResolvedFactory(arguments=bindings, defaulted_slots=_defaults) =>
+            for index in range(1, len(bindings)):
+                if int(bindings[index].slot) <= int(bindings[index - 1].slot):
+                    return Err("unsupported Body IR factory binding outside declaration order")
+        _ => pass
+    match binding:
+        (
+            ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults)
+            | ArgumentBinding.ResolvedFactory(arguments=bindings, defaulted_slots=defaults)
+        ) =>
             if len(bindings) != len(elements) or len(bindings) + len(defaults) != len(types):
                 return Err("unsupported Body IR incomplete ArgumentBinding")
             mut operands: list[Operand] = []
@@ -164,9 +173,12 @@ def written_operands(
 
 
 def omitted_slots(binding: &ArgumentBinding, count: int) -> Result[list[int], str]:
-    """The slots a resolved call leaves to their defaults, each in range and none also written."""
+    """Retain defaults from either checked evaluation policy, each slot in range and none also written."""
     match binding:
-        ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+        (
+            ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults)
+            | ArgumentBinding.ResolvedFactory(arguments=bindings, defaulted_slots=defaults)
+        ) =>
             mut occupied: list[int] = []
             for bound in bindings:
                 occupied.append(int(bound.slot))

@@ -1273,6 +1273,7 @@ fn callable_object_signature(signature: &[Scalar]) -> bool {
                         | Scalar::SetMutRef(_)
                         | Scalar::DictMutRef(_, _)
                         | Scalar::StringMutRef
+                        | Scalar::Model(_)
                         | Scalar::ModelMutRef(_)
                         | Scalar::EnumMutRef(_)
                         | Scalar::Enum(_)
