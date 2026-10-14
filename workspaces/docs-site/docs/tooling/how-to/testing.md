@@ -61,7 +61,7 @@ oven tests --jobs 4
 oven tests --rust-only -k parse
 ```
 
-Use `--jobs N` to set the total test worker budget; the default is the CPU parallelism available to the process. Compatible Rust cases from one crate share a test process with up to N test threads. That root reserves the budget until it finishes. Use `--isolate` for separate Rust test processes. `--shuffle`, `--exitfirst`, time limits and serial markers retain individual Rust execution boundaries. Incan cases retain their worker-batch fixture scopes; the scheduler never combines the two languages into one harness. Serial and resource constraints still limit concurrency.
+Use `--jobs N` to set the total test worker budget; the default is four workers. Compatible Rust cases from one crate share a test process with up to N test threads. That root reserves the budget until it finishes. Use `--isolate` for separate Rust test processes. `--shuffle`, `--exitfirst`, time limits and serial markers retain individual Rust execution boundaries. Incan cases retain their worker-batch fixture scopes; the scheduler never combines the two languages into one harness. Serial and resource constraints still limit concurrency.
 
 Rust listing may prepare a native test harness. Ignored Rust tests stay skipped, and selected tests execute afresh on every run. See the [command reference](../reference/cli_reference.md#oven-tests) for root selection and preparation constraints.
 

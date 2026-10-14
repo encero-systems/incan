@@ -898,11 +898,6 @@ pub struct LockArgs {
     pub cargo_all_features: bool,
 }
 
-/// Use the process-available CPU budget; explicit `--jobs` remains authoritative.
-fn default_test_jobs() -> usize {
-    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
-}
-
 /// Shared project test options used by both entry points.
 #[derive(clap::Args, Debug)]
 pub struct TestArgs {
@@ -934,7 +929,7 @@ pub struct TestArgs {
     #[arg(long = "strict-markers")]
     pub strict_markers: bool,
     /// Total test worker budget, shared by native test threads and isolated execution units
-    #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = default_test_jobs())]
+    #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = 4)]
     pub jobs: usize,
     /// Run Rust test cases in separate processes; Incan fixture groups preserve their existing scope
     #[arg(long)]
