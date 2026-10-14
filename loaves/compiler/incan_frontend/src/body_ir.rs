@@ -921,10 +921,11 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
             .all(|variant| variant.node.fields.is_empty() && variant.node.value.is_none())
 }
 
-/// Admit plain value-enum layouts, and normal enum layouts with undecorated methods and trait adoptions but without
-/// generic substitution in methods. An enum with type parameters is admitted only without user methods or trait
-/// adoptions; its ordered binders and payload placeholders close through checked layout instantiation. Variant aliases
-/// keep the selected canonical variant identity rather than adding a second payload slot.
+/// Admit checked value-enum layouts with supported ordinary/static bodies, and normal enum layouts with undecorated
+/// methods and trait adoptions but without generic substitution in methods. An enum with type parameters is admitted
+/// only without user methods or trait adoptions; its ordered binders and payload placeholders close through checked
+/// layout instantiation. Variant aliases keep the selected canonical variant identity rather than adding a second
+/// payload slot.
 ///
 /// A normal enum's methods are ordinary bodies over its retained layout, and the trait slots its adopted local traits
 /// fill are retained in the module implementation registry, as for a model. A value enum also retains its separate
@@ -978,10 +979,9 @@ fn is_bare_derive(decorator: &ast::Decorator) -> bool {
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
 ///
-/// The checked native enum layout and its derives accompany this scalar registry. This predicate excludes aliases
-/// and other behavior-bearing forms even when they are source-valid:
-/// the direct executor may validate only a canonical literal member and the compiler-provided `.value()` extraction,
-/// not trait dispatch, custom methods, alias canonicalization, generic substitution, or payload construction.
+/// The checked native enum layout and its derives accompany this scalar registry. Immutable ordinary and static
+/// methods contribute independent checked bodies and do not change the variants or raw values. Trait dispatch,
+/// aliases, generic substitution, payloads, and other method shapes remain excluded rather than inferred from a layout.
 pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
     enum_decl
         .decorators
@@ -991,13 +991,33 @@ pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
         && enum_decl.value_type.is_some()
         && enum_decl.traits.is_empty()
         && enum_decl.variant_aliases.is_empty()
-        && enum_decl.methods.is_empty()
+        && enum_decl
+            .methods
+            .iter()
+            .all(|method| has_direct_value_enum_method_shape(&method.node))
         && enum_decl.variants.iter().all(|variant| {
             variant.node.fields.is_empty()
                 && matches!(
                     variant.node.value.as_ref().map(|value| &value.node),
                     Some(ast::ValueEnumLiteral::Int(_) | ast::ValueEnumLiteral::Str(_))
                 )
+        })
+}
+
+/// Admit only concrete immutable or static enum bodies whose receiver contract already crosses the ordinary method
+/// boundary.
+///
+/// Class receivers, mutable receivers, async bodies, and method binders need separate proof; their presence must not
+/// silently broaden the scalar registry's source admission. Decorators are checked by the shared builtin registry.
+fn has_direct_value_enum_method_shape(method: &ast::MethodDecl) -> bool {
+    method.body.is_some()
+        && method.type_params.is_empty()
+        && !method.is_async()
+        && method.receiver != Some(ast::Receiver::Mutable)
+        && has_direct_replacement_method_decorators(method)
+        && !method.decorators.iter().any(|decorator| {
+            incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
+                == Some(incan_lang::lang::decorators::DecoratorId::ClassMethod)
         })
 }
 
