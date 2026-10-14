@@ -11,7 +11,7 @@ use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -868,9 +868,9 @@ struct StagedOvenArtifactPublication {
     written_files: BTreeMap<String, MaterializedFileDigest>,
 }
 
-/// Held shared advisory lease that protects one selected Oven artifact from pruning.
+/// Shared physical advisory lock protecting one selected artifact until its last consumer releases the handle.
 pub struct OvenStoreLease {
-    file: File,
+    _file: Arc<File>,
 }
 
 impl OvenStore {
@@ -1463,21 +1463,9 @@ impl OvenStore {
         self.reclaim_stale_staging()?;
         let path = self.entry_root(identity);
         verify_entry(&path)?;
-        let lease_path = path.join(ACTIVE_LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&lease_path)
-            .map_err(|source| OvenStoreError::Io {
-                path: lease_path.clone(),
-                source,
-            })?;
-        file.lock_shared().map_err(|source| OvenStoreError::Io {
-            path: lease_path,
-            source,
-        })?;
+        let lease = acquire_execution_lease(&path, true)?;
         touch_entry(&path)?;
-        Ok((measure_entry(&path)?, OvenStoreLease { file }))
+        Ok((measure_entry(&path)?, lease))
     }
 
     /// Select one immutable payload with a held lease so an executor never races pruning after integrity verification.
@@ -1532,26 +1520,9 @@ impl OvenStore {
                 message: "manifest payload descriptor disagrees with stored bytes".to_string(),
             });
         }
-        let lease_path = path.join(ACTIVE_LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&lease_path)
-            .map_err(|source| OvenStoreError::Io {
-                path: lease_path.clone(),
-                source,
-            })?;
-        file.lock_shared().map_err(|source| OvenStoreError::Io {
-            path: lease_path,
-            source,
-        })?;
+        let lease = acquire_execution_lease(&path, true)?;
         touch_entry(&path)?;
-        Ok((
-            manifest,
-            path.join(MATERIALIZED_DIRECTORY),
-            payload,
-            OvenStoreLease { file },
-        ))
+        Ok((manifest, path.join(MATERIALIZED_DIRECTORY), payload, lease))
     }
 
     /// Select every immutable execution input for one batch and retain all their active leases together.
@@ -2710,10 +2681,29 @@ fn cleanup_batch_staging(staged: &[StagedOvenArtifactPublication]) {
     }
 }
 
-impl Drop for OvenStoreLease {
-    /// Release the advisory lease before a future capacity operation can prune the selected entry.
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
+/// Live physical lease handles; weak references never extend a consumer lifetime.
+type ExecutionLeaseHandles = Mutex<HashMap<(u64, u64), Weak<File>>>;
+
+/// Share only live physical lock handles; weak entries retain neither artifacts nor admission decisions.
+/// The final consumer closes the shared file, releasing its advisory lock. Dropping an earlier consumer must not
+/// explicitly unlock a descriptor still owned by another selected payload.
+fn execution_lease_handles() -> &'static ExecutionLeaseHandles {
+    static HANDLES: OnceLock<ExecutionLeaseHandles> = OnceLock::new();
+    HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Identify the physical lock object, independently of timestamps or bookkeeping bytes.
+/// A held file prevents inode reuse; platforms without a stable object identity retain independent handles.
+fn execution_lease_identity(metadata: &fs::Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
     }
 }
 
@@ -2730,6 +2720,16 @@ fn acquire_execution_lease(root: &Path, writable: bool) -> Result<OvenStoreLease
             message: "store entry lease must be a regular non-symlink file".to_string(),
         });
     }
+    let identity = execution_lease_identity(&metadata);
+    if let Some(identity) = identity {
+        let handles = execution_lease_handles().lock().map_err(|_| OvenStoreError::Io {
+            path: lease_path.clone(),
+            source: io::Error::other("Store execution lease registry is poisoned"),
+        })?;
+        if let Some(file) = handles.get(&identity).and_then(Weak::upgrade) {
+            return Ok(OvenStoreLease { _file: file });
+        }
+    }
     let file = OpenOptions::new()
         .read(true)
         .write(writable)
@@ -2739,10 +2739,35 @@ fn acquire_execution_lease(root: &Path, writable: bool) -> Result<OvenStoreLease
             source,
         })?;
     file.lock_shared().map_err(|source| OvenStoreError::Io {
-        path: lease_path,
+        path: lease_path.clone(),
         source,
     })?;
-    Ok(OvenStoreLease { file })
+    for observed in [file.metadata(), fs::symlink_metadata(&lease_path)] {
+        let observed = observed.map_err(|source| OvenStoreError::Io {
+            path: lease_path.clone(),
+            source,
+        })?;
+        if !observed.is_file() || (identity.is_some() && execution_lease_identity(&observed) != identity) {
+            return Err(OvenStoreError::Integrity {
+                identity: root.display().to_string(),
+                message: "store entry lease was replaced during acquisition".to_string(),
+            });
+        }
+    }
+    let file = Arc::new(file);
+    if let Some(identity) = identity {
+        let mut handles = execution_lease_handles().lock().map_err(|_| OvenStoreError::Io {
+            path: lease_path,
+            source: io::Error::other("Store execution lease registry is poisoned"),
+        })?;
+        // Another consumer may have acquired this file while the registry was unlocked for filesystem I/O.
+        if let Some(file) = handles.get(&identity).and_then(Weak::upgrade) {
+            return Ok(OvenStoreLease { _file: file });
+        }
+        handles.retain(|_, handle| handle.strong_count() != 0);
+        handles.insert(identity, Arc::downgrade(&file));
+    }
+    Ok(OvenStoreLease { _file: file })
 }
 
 /// Acquire matching payloads while the caller holds this store's manager lock.
@@ -7489,6 +7514,127 @@ pub(crate) mod tests {
             Err(OvenStoreError::InvalidInput { field: "receipt", .. })
         ));
         assert!(store.inspect()?.entries.is_empty());
+        Ok(())
+    }
+
+    /// Repeated consumers share one physical lease without releasing protection when an earlier consumer drops.
+    #[cfg(unix)]
+    #[test]
+    fn repeated_store_selections_share_the_physical_lease_until_the_last_consumer_drops()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let manifest = store.publish(&request(project.path(), "shared-lease", b"payload")?)?;
+        let root = store.entry_root(&manifest.identity);
+        let (_entry, first) = store.select(&manifest.identity)?;
+        let (_manifest, _root, _payload, second) = store.select_payload_for_execution(&manifest.identity)?;
+        let read_only = super::acquire_execution_lease(&root, false)?;
+        assert_eq!(
+            first._file.as_raw_fd(),
+            second._file.as_raw_fd(),
+            "independent selections duplicated a lease descriptor"
+        );
+        assert_eq!(
+            first._file.as_raw_fd(),
+            read_only._file.as_raw_fd(),
+            "read-only admission duplicated the held lease"
+        );
+        drop(first);
+        assert!(super::try_lock_entry(&root)?.is_none());
+        drop(second);
+        assert!(super::try_lock_entry(&root)?.is_none());
+        drop(read_only);
+        assert!(super::try_lock_entry(&root)?.is_some());
+        Ok(())
+    }
+
+    /// Concurrent admissions converge on one descriptor while every returned guard independently protects the entry.
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_execution_consumers_share_one_live_lease() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+        use std::sync::Barrier;
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        fs::write(root.join(super::ACTIVE_LOCK_FILE), b"")?;
+        let barrier = Barrier::new(16);
+        let mut leases = std::thread::scope(|scope| -> Result<Vec<_>, Box<dyn std::error::Error>> {
+            let workers = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        super::acquire_execution_lease(root, false)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut leases = Vec::new();
+            for worker in workers {
+                leases.push(
+                    worker
+                        .join()
+                        .map_err(|_| std::io::Error::other("lease worker panicked"))??,
+                );
+            }
+            Ok(leases)
+        })?;
+        let descriptors = leases
+            .iter()
+            .map(|lease| lease._file.as_raw_fd())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(descriptors.len(), 1);
+        let last = leases.pop().ok_or("missing final lease")?;
+        drop(leases);
+        assert!(super::try_lock_entry(root)?.is_none());
+        drop(last);
+        assert!(super::try_lock_entry(root)?.is_some());
+        Ok(())
+    }
+
+    /// Timestamp or bookkeeping changes cannot duplicate the lock protecting an unchanged physical inode.
+    #[cfg(unix)]
+    #[test]
+    fn lock_metadata_changes_preserve_the_same_physical_lease() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let path = root.join(super::ACTIVE_LOCK_FILE);
+        fs::write(&path, b"")?;
+        let first = super::acquire_execution_lease(root, false)?;
+        fs::write(&path, b"bookkeeping")?;
+        let second = super::acquire_execution_lease(root, false)?;
+        assert_eq!(first._file.as_raw_fd(), second._file.as_raw_fd());
+        drop(first);
+        assert!(super::try_lock_entry(root)?.is_none());
+        drop(second);
+        assert!(super::try_lock_entry(root)?.is_some());
+        Ok(())
+    }
+
+    /// Replacing a lock file cannot make a held lease for its former inode protect or authorize the new inode.
+    #[cfg(unix)]
+    #[test]
+    fn replaced_execution_lock_gets_a_distinct_lease() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let path = root.join(super::ACTIVE_LOCK_FILE);
+        fs::write(&path, b"")?;
+        let first = super::acquire_execution_lease(root, false)?;
+        fs::rename(&path, root.join("previous-lock"))?;
+        fs::write(&path, b"")?;
+        let second = super::acquire_execution_lease(root, false)?;
+        assert_ne!(first._file.as_raw_fd(), second._file.as_raw_fd());
+        drop(first);
+        assert!(super::try_lock_entry(root)?.is_none());
+        drop(second);
+        assert!(super::try_lock_entry(root)?.is_some());
         Ok(())
     }
 
