@@ -581,13 +581,7 @@ impl ExecutableBuildOwner {
         let report = report_draft.finish(timings_ms);
         drop(report_trace);
         if let Some((source_authority, preparation_identity)) = completed_authority {
-            publish_ordinary_project_output(
-                &prepared,
-                &bake.output,
-                &source_authority,
-                &preparation_identity,
-                &report,
-            )?;
+            publish_ordinary_project_output(&prepared, &bake, &source_authority, &preparation_identity, &report)?;
         }
         let _serialization =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::serialize_build_report").entered();

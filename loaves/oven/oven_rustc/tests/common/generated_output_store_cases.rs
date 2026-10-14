@@ -49,6 +49,7 @@ pub(super) fn direct_binary_rebuild_replaces_readonly_output_and_preserves_faile
         prefer_dynamic: false,
     };
     let original = executor::bake_trusted_direct_rustc_run(&request)?;
+    assert!(original.stored_output_path().is_none());
     let original_bytes = fs::read(&executable)?;
     let immutable = output.path().join("immutable-owner");
     fs::hard_link(&executable, &immutable)?;
@@ -343,6 +344,21 @@ pub(super) fn generated_binary_store_reuses_executable_bytes_across_outputs() ->
     let warm = executor::bake_trusted_direct_rustc_run_in_store(&second, &store)?;
     assert!(warm.reused);
     assert_eq!(cold.output_digest, warm.output_digest);
+    let stored = cold
+        .stored_output_path()
+        .ok_or("native Store output lost its leased coordinate")?;
+    let warm_stored = warm
+        .stored_output_path()
+        .ok_or("reused native output lost its leased coordinate")?;
+    assert_eq!(fs::canonicalize(warm_stored)?, fs::canonicalize(stored)?);
+    assert!(fs::metadata(stored)?.permissions().readonly());
+    let stored_bytes = fs::read(stored)?;
+    assert_eq!(stored_bytes, fs::read(&second_output)?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_ne!(fs::metadata(stored)?.ino(), fs::metadata(&second_output)?.ino());
+    }
     assert!(!warm.cargo_process_started);
     let executed = Command::new(&second_output).output()?;
     assert!(executed.status.success());
@@ -357,6 +373,7 @@ pub(super) fn generated_binary_store_reuses_executable_bytes_across_outputs() ->
     assert_eq!(fs::metadata(&sidecar)?.modified()?, sidecar_modified);
 
     fs::write(&second_output, "tampered caller executable")?;
+    assert_eq!(fs::read(stored)?, stored_bytes);
     let repaired = executor::bake_trusted_direct_rustc_run_in_store(&second, &store)?;
     assert!(repaired.reused);
     assert_eq!(Command::new(&second_output).output()?.stdout, b"first environment\n");
@@ -424,6 +441,11 @@ pub(super) fn generated_binary_store_reuses_executable_bytes_across_outputs() ->
     assert_eq!(Command::new(&second_output).output()?.stdout, b"changed source\n");
     let retained = OvenStore::new(store_root.path(), OvenStoreLimits::new(1, 1, 1));
     retained.prune()?;
+    assert_eq!(
+        fs::read(stored)?,
+        stored_bytes,
+        "original coordinate remains leased across later generations"
+    );
     assert!(
         executor::bake_trusted_direct_rustc_run_in_store(&changed_source, &store)?.reused,
         "leased executable must survive collection"

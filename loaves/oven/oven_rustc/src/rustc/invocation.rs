@@ -713,6 +713,7 @@ pub(super) fn bake_direct_rustc(
             cargo_process_started: false,
             reused: true,
             lease: None,
+            stored_output: None,
         });
     }
 
@@ -764,6 +765,7 @@ pub(super) fn bake_direct_rustc(
         cargo_process_started: false,
         reused: false,
         lease: None,
+        stored_output: None,
     })
 }
 
