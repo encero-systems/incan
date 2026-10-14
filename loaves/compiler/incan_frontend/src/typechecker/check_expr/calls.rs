@@ -397,6 +397,10 @@ impl TypeChecker {
                     && let Some(identity) = self.symbols.builtin_function_identity(builtin)
                 {
                     self.type_info.record_resolved_identity(callee.span, identity);
+                } else if incan_lang::lang::surface::constructors::from_str(name).is_some() {
+                    // Constructor checking has already excluded source shadowing; retain that selected builtin binding
+                    // for Body IR.
+                    self.record_direct_callee_identity(name, callee.span);
                 }
                 return result;
             }

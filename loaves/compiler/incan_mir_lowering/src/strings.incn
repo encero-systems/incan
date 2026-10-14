@@ -27,11 +27,25 @@ pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
 
 pub def text_helper_arity(name: str) -> int:
     """Retain the positional runtime signatures for text-only helpers."""
-    if name in ["length_text", "upper_text", "lower_text", "strip_text"]:
+    if name in ["length_text", "upper_text", "lower_text", "strip_text", "clone_text"]:
         return 1
     if name == "replace_text":
         return 3
     return 2
+
+
+pub def text_method(member: str, receiver: PlanType) -> Option[tuple[str, PlanType]]:
+    """Select canonical string methods without admitting a same-named user declaration."""
+    if receiver not in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
+        return None
+    for owner in ["str", "FrozenStr"]:
+        if member == f"{owner}.to_string":
+            return Some(("clone_text", PlanType.String))
+        if member == f"{owner}.startswith":
+            return Some(("starts_text", PlanType.Bool))
+        if member == f"{owner}.endswith":
+            return Some(("ends_text", PlanType.Bool))
+    return None
 
 
 pub def emit_text_helper(

@@ -68,13 +68,40 @@ pub fn materialize_completed_executable_output(
     output: &OvenStoredProjectOutput,
     backend_receipt: &BackendExecutionReceipt,
 ) -> CliResult<()> {
+    materialize_completed_executable_output_with_completion(project_root, output, backend_receipt, || Ok(()))
+}
+
+/// Replay one executable and its backend receipt, restoring the prior caller files if completion returns an error.
+///
+/// A verified warm projection and receipt are left untouched. Callers retain the selected output lease through
+/// completion; this boundary provides ordinary-error rollback, not concurrent-reader or crash atomicity.
+pub fn materialize_completed_executable_output_with_completion<T>(
+    project_root: &Path,
+    output: &OvenStoredProjectOutput,
+    backend_receipt: &BackendExecutionReceipt,
+    complete: impl FnOnce() -> CliResult<T>,
+) -> CliResult<T> {
     if completed_output_default_backend_receipt(output).as_ref() != Some(backend_receipt) {
         return Err(CliError::failure(
             "completed Oven executable output does not carry the backend receipt selected for reuse",
         ));
     }
-    materialize_project_output(project_root, output)?;
-    write_backend_receipt(backend_receipt, &default_backend_receipt_path(project_root))
+    let receipt_path = default_backend_receipt_path(project_root);
+    let mut expected =
+        serde_json::to_vec_pretty(backend_receipt).map_err(|error| CliError::failure(error.to_string()))?;
+    expected.push(b'\n');
+    let current = project_output_projection_is_current(project_root, output)?;
+    if current && fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected) {
+        return complete();
+    }
+    let (artifacts, mut metadata) = executable_projection_publication_paths(project_root, std::iter::once(output))?;
+    metadata.push(receipt_path.clone());
+    let publication = crate::build::output_publication::OutputPublication::begin(project_root, artifacts, metadata)?;
+    publication.finish((|| {
+        materialize_project_output(project_root, output)?;
+        write_backend_receipt(backend_receipt, &receipt_path)?;
+        complete()
+    })())
 }
 
 /// Restore and validate one bake-time executable report without reconstructing frontend-owned facts.
@@ -147,7 +174,7 @@ pub fn completed_executable_output_report(
         .and_then(serde_json::Value::as_array_mut)
         .ok_or_else(|| CliError::failure("completed Oven executable build report has no notes array"))?;
     notes.push(serde_json::Value::String(
-        "Reused a completed Oven project-output Loaf; detailed source, dependency, semantic, and interop facts were verified and sealed at explicit bake time.".to_string(),
+        "Reused a completed Oven project-output Loaf; detailed source, dependency, semantic, and interop facts were verified and sealed when the successful build published it.".to_string(),
     ));
     Ok(report)
 }
@@ -261,7 +288,11 @@ pub fn caller_project_output_path(project_root: &Path, relative_path: &str) -> C
     Ok(project_root.join(validated_project_output_relative_path(relative_path, "caller output")?))
 }
 
-/// Return the small caller-owned projection marker path for one completed output profile.
+/// Keep a profile's replaceable projection marker outside published provider content.
+///
+/// A marker records a compiler-specific output identity, not library input bytes. Writing it beside a native library
+/// changes the physical provider digest and invalidates consumers merely because a warm probe repaired bookkeeping.
+/// The existing `.incan` preparation namespace excludes that state from source and provider authority.
 fn project_output_projection_marker_path(project_root: &Path, output: &OvenStoredProjectOutput) -> CliResult<PathBuf> {
     let native = output
         .payload
@@ -269,17 +300,48 @@ fn project_output_projection_marker_path(project_root: &Path, output: &OvenStore
         .iter()
         .find(|file| file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH)
         .ok_or_else(|| CliError::failure("completed Oven project-output Loaf has no native artifact"))?;
-    let native_path = caller_project_output_path(project_root, &native.caller_relative_path)?;
-    let parent = native_path.parent().ok_or_else(|| {
+    let _ = caller_project_output_path(project_root, &native.caller_relative_path)?;
+    let key = serde_json::to_vec(&(
+        &output.payload.target_identity,
+        &output.profile,
+        &native.caller_relative_path,
+    ))
+    .map_err(|error| {
         CliError::failure(format!(
-            "completed Oven project output has no native artifact directory: {}",
-            native_path.display()
+            "failed to encode project-output projection coordinate: {error}"
         ))
     })?;
-    Ok(parent.join(format!(
-        ".oven-project-output-{}.json",
-        digest_bytes(output.payload.target_identity.as_bytes()).trim_start_matches("sha256:")
-    )))
+    Ok(project_root
+        .join(".incan/oven/project-output-projections")
+        .join(format!("{}.json", digest_bytes(&key).trim_start_matches("sha256:"))))
+}
+
+/// Enumerate the exact executable caller files and projection markers replaced by replay, excluding shared stores.
+pub(super) fn executable_projection_publication_paths<'a>(
+    project_root: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
+) -> CliResult<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut artifacts = Vec::new();
+    let mut metadata = Vec::new();
+    for output in outputs {
+        for file in &output.payload.files {
+            artifacts.push(caller_project_output_path(project_root, &file.caller_relative_path)?);
+        }
+        metadata.push(project_output_projection_marker_path(project_root, output)?);
+    }
+    Ok((artifacts, metadata))
+}
+
+/// Capture the markers a library replay can replace alongside its artifact and receipt pointers.
+pub(super) fn library_projection_publication_receipts<'a>(
+    project_root: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
+) -> CliResult<Vec<PathBuf>> {
+    let mut receipts = library_publication_receipts(project_root)?;
+    for output in outputs {
+        receipts.push(project_output_projection_marker_path(project_root, output)?);
+    }
+    Ok(receipts)
 }
 
 /// Return the stable small projection descriptor expected beside one caller-owned native output.
@@ -427,7 +489,7 @@ fn write_project_output_projection(project_root: &Path, output: &OvenStoredProje
     })?;
     let bytes = serde_json::to_vec_pretty(&project_output_projection(output))
         .map_err(|error| CliError::failure(format!("failed to encode Oven project-output projection: {error}")))?;
-    let staged = parent.join(format!(".oven-project-output-{}.tmp", std::process::id()));
+    let staged = marker_path.with_extension(format!("{}.tmp", std::process::id()));
     oven_store::write_receipt_staged(&bytes, &staged, &marker_path, parent).map_err(|error| {
         CliError::failure(format!(
             "failed to publish Oven project-output projection {}: {error}",
@@ -827,7 +889,7 @@ pub fn materialize_completed_library_outputs<T>(
         library_publication::LibraryPublication::begin(
             project_root,
             &project_root.join("target/lib"),
-            library_publication_receipts(project_root)?,
+            library_projection_publication_receipts(project_root, outputs)?,
         )?
         .retaining_package_cache()
     };
@@ -877,6 +939,58 @@ mod tests {
     };
     use oven_store::store::{OvenArtifactKind, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
+
+    /// Selecting another compiler publication of identical library bytes must not change provider content.
+    #[test]
+    fn projection_markers_do_not_change_provider_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(
+            project.path().join("src/lib.incn"),
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let (receipt, mut payload, mut files) = crate::build::test_support::fixture_project_output_publication_for(
+            project.path(),
+            "debug",
+            "projection",
+            OvenBakeProjectTarget::Library,
+            OvenProjectInspectionAuthorityRef {
+                identity: "sha256:fixture-project-authority".into(),
+                receipt_identity: "sha256:fixture-authority-receipt".into(),
+                build_unit_identity: "sha256:fixture-authority-build-unit".into(),
+            },
+        )?;
+        for file in &mut files {
+            if file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH {
+                file.caller_relative_path = "target/lib/oven/debug/libfixture.rlib".into();
+            }
+        }
+        for file in &mut payload.files {
+            if file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH {
+                file.caller_relative_path = "target/lib/oven/debug/libfixture.rlib".into();
+            }
+        }
+        let first = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        materialize_project_output(project.path(), &first)?;
+        let artifact = project.path().join("target/lib");
+        let expected = incan_frontend::library_manifest::digest_provider_artifact(&artifact)?;
+        payload.compiler_identity_digest = Some(digest_bytes(b"another compiler"));
+        let second = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert_ne!(first.identity, second.identity);
+        materialize_project_output(project.path(), &second)?;
+        assert!(project_output_projection_is_current(project.path(), &second)?);
+        assert_eq!(
+            expected,
+            incan_frontend::library_manifest::digest_provider_artifact(&artifact)?
+        );
+        Ok(())
+    }
 
     #[test]
     fn completed_executable_report_replays_sealed_dependencies_and_rebases_project_paths()
@@ -1091,7 +1205,10 @@ mod tests {
             target_identity: OvenBakeProjectTarget::Library.as_str().to_string(),
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
+            dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
+            compiler_identity_digest: None,
+            preparation_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/lib.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),
@@ -1102,6 +1219,7 @@ mod tests {
                 receipt_identity: receipt.identity.clone(),
                 build_unit_identity: receipt.build_unit_identity.clone(),
             }),
+            inspection_authority_snapshot: None,
             files: vec![
                 OvenProjectOutputFile {
                     caller_relative_path: "target/lib/src/lib.rs".to_string(),
@@ -1190,6 +1308,7 @@ mod tests {
         fs::write(&generated_source, "previous generated Rust")?;
         fs::write(&native_output, "previous native artifact")?;
         let marker = project_output_projection_marker_path(project.path(), &selected)?;
+        fs::write(&marker, "previous projection marker")?;
         let previous_marker = fs::read(&marker)?;
         let backend_receipt = selected.payload.backend_receipt.clone();
         let failed = materialize_completed_library_outputs(
@@ -1204,6 +1323,17 @@ mod tests {
         assert_eq!(fs::read(&marker)?, previous_marker);
         assert_eq!(fs::read_to_string(&receipt_path)?, "previous backend receipt");
         assert_eq!(fs::read_to_string(&cache_object)?, "immutable package cache");
+
+        fs::remove_file(&marker)?;
+        let failed = materialize_completed_library_outputs(
+            project.path(),
+            std::slice::from_ref(&selected),
+            &backend_receipt,
+            || -> CliResult<()> { Err(CliError::failure("first projection publication failed")) },
+        );
+        assert!(failed.is_err());
+        assert!(!marker.exists(), "rollback must remove a newly created external marker");
+        fs::write(&marker, &previous_marker)?;
 
         let original_digest = selected.payload.files[1].digest.clone();
         selected.payload.files[1].digest = format!("sha256:{}", "0".repeat(64));

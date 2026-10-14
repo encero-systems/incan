@@ -4,8 +4,16 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_async"
+type = "lib"
+edition = "2024"
+
 [rust.source]
 root = "rust"
 
 [sdk]
 profile = "minimal"
+
+[dependencies]
+tokio = { loaf = "crates-io/tokio", version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"], default-features = true }

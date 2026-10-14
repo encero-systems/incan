@@ -179,6 +179,22 @@ fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
     }
 }
 
+/// Build the canonical target of a member selected from a compiler-owned typed surface registry.
+///
+/// Builtin members have no source declaration span. The owner-qualified declaration key preserves their owner
+/// across checked-IR boundaries; callers must select the owner and member semantically, never from source spelling
+/// alone.
+pub(crate) fn canonical_builtin_member_identity(owner: &str, member: &str) -> CanonicalSymbolId {
+    CanonicalSymbolId {
+        namespace: SymbolNamespace::Member,
+        origin: SymbolOrigin::Builtin,
+        declaration_name: format!("{owner}.{member}"),
+        kind: SemanticSourceTargetKind::Method,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    }
+}
+
 /// Canonical semantic name for anonymous union types (RFC 029).
 pub const UNION_TYPE_NAME: &str = incan_lang::lang::types::UNION_TYPE_NAME;
 

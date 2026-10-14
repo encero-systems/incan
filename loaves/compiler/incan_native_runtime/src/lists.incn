@@ -8,8 +8,19 @@ from rust::incan_std_core::collections import (
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
+    list_slice as runtime_slice,
 )
 from std.derives.comparison import Eq, Ord
+
+
+pub def equal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
+    """Compare elements through legacy's borrowed PartialEq without introducing Clone effects."""
+    return left == right
+
+
+pub def unequal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
+    """Retain the legacy borrowed collection inequality operation."""
+    return left != right
 
 
 pub def empty_list[T]() -> list[T]:
@@ -101,3 +112,28 @@ pub def sorted_float(values: &list[float]) -> list[float]:
     """Use legacy partial-order sorting, including its NaN ordering policy."""
     owned = RuntimeClone.clone(values)
     return sorted(owned)
+
+
+pub def slice_list[T with Clone](
+    values: &list[T],
+    has_start: bool,
+    start: int,
+    has_end: bool,
+    end: int,
+    has_step: bool,
+    step: int,
+) -> list[T]:
+    """Copy a slice using the legacy runtime's bounds, steps, and errors, retaining omitted endpoints."""
+    return runtime_slice(
+        values,
+        optional_index(has_start, start),
+        optional_index(has_end, end),
+        optional_index(has_step, step),
+    )
+
+
+def optional_index(present: bool, value: int) -> Option[int]:
+    """Decode a presence flag without treating an omitted index as zero."""
+    if present:
+        return Some(value)
+    return None

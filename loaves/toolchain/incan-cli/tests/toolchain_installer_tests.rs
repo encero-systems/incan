@@ -1463,10 +1463,14 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && makefile.contains("rustc_bin=\"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
         "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
     );
+    // A one-root diagnostic runs through the compiler-development entry, which hands the managed root to the Oven in
+    // its environment; the Oven selects the scratch directory below it.
     assert!(
         makefile.contains("INCAN_TEST_TMP_ROOT ?= /tmp")
             && makefile.contains("suite_tmp=\"$$(mktemp -d \"$(INCAN_TEST_TMP_ROOT)/incan-oven-suite.XXXXXX\")\"")
-            && makefile.contains("root_tmp=\"$$(mktemp -d \"$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX\")\""),
+            && makefile.contains("INCAN_TEST_TMP_ROOT=\"$(abspath $(INCAN_TEST_TMP_ROOT))\"")
+            && makefile.contains("COMPILER_DEVELOPMENT = $(TEST_ENV) sh")
+            && makefile.contains("@$(COMPILER_DEVELOPMENT) test \"$(TEST_ROOT)\""),
         "Oven suite and one-root diagnostics must use the managed scratch root, defaulting to short Unix paths"
     );
     let partition_target = makefile
@@ -1543,10 +1547,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     let provider_cache_action =
         fs::read_to_string(repo_root().join(".github/actions/restore-sdk-provider-store/action.yml"))?;
     assert!(
-        provider_cache_action.contains("oven sdk-provider-store-identity")
+        provider_cache_action.contains("oven sdk-provider-store-identity --inputs")
             && provider_cache_action.contains("rustc --version --verbose")
             && provider_cache_action.contains("incan-sdk-provider-v3"),
-        "the SDK provider cache must use the compiler-owned source identity and retain a selected-rustc suffix"
+        "the SDK provider cache must key on the compiler-owned preparation-input identity, which exists before preparation, and retain a selected-rustc suffix"
     );
     assert!(
         !provider_cache_action.contains("shasum -a 256 target/debug/incan"),

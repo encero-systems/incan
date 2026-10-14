@@ -117,7 +117,9 @@ pub fn typecheck_modules_with_import_graph_artifacts(
         }
 
         // A provider producer checks its complete source package before publishing the public checked facade.
-        let check_result = if provider_plan.bootstrap_sdk_namespace_roots().next().is_some() {
+        let check_result = if provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
+            || provider_plan.standard_source_publication().is_some()
+        {
             checker.check_with_imports_allow_private(&module.ast, &deps_for_module)
         } else {
             checker.check_with_imports(&module.ast, &deps_for_module)

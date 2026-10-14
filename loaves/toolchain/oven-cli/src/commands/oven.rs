@@ -6,12 +6,15 @@
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
 mod case_partition;
+pub mod compile_closure;
+pub mod convert_cargo;
 mod equivalence;
 mod gate;
 mod harvest;
 mod inventory;
 mod loaf_bake;
 mod loaf_bake_evidence;
+pub(crate) mod native_compiler_tests;
 mod options;
 mod partition_reconciliation;
 mod sdk_handoff;
@@ -2709,11 +2712,14 @@ fn select_compiler_test_suite(
     rustc: &Path,
 ) -> CliResult<OvenStoreExecutionPayload> {
     let selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::CompilerTestSuite
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::CompilerTestSuite
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(oven_error)?;
     let mut current_schema = Vec::new();
     for candidate in selected {

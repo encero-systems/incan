@@ -1,0 +1,49 @@
+"""Legacy zip snapshots and materialized builtin enumeration of lists and text."""
+
+from std.derives.collection import Iterator, ListIterator, ZipIterator
+from std.derives.copying import Clone
+from rust::std::clone import Clone as RuntimeClone
+
+
+@derive(Clone)
+pub model ZipLists[T with Clone, U with Clone]:
+    """Retain independently clonable source cursors with the legacy zip polling order."""
+
+    pub source: ZipIterator[T, ListIterator[T], U, ListIterator[U]]
+
+
+pub def zip_lists[T with Clone, U with Clone](left: list[T], right: list[U]) -> ZipLists[T, U]:
+    """Take checked owned snapshots without polling either input."""
+    return ZipLists(source=ZipIterator(left=ListIterator(items=left, index=0), right=ListIterator(items=right, index=0)))
+
+
+pub def clone_zip[T with Clone, U with Clone](values: &ZipLists[T, U]) -> ZipLists[T, U]:
+    """Clone both snapshots and their current cursors for a value-preserving iterator read."""
+    return RuntimeClone.clone(values)
+
+
+pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut output: list[tuple[T, U]]) -> bool:
+    """Poll left then right, retaining legacy exhaustion behavior and owned tuple items."""
+    match values.source.__next__():
+        Some(item) =>
+            output.append(item)
+            return true
+        None => return false
+
+
+pub def enumerate_list[T with Clone](values: &list[T]) -> list[tuple[int, T]]:
+    """Retain the checked builtin's materialized pairs without consuming the source list."""
+    mut pairs: list[tuple[int, T]] = []
+    for index in range(len(values)):
+        pairs.append((index, values[index]))
+    return pairs
+
+
+pub def enumerate_text(values: &str) -> list[tuple[int, str]]:
+    """Pair Unicode scalar strings with their zero-based positions, matching legacy text enumeration."""
+    mut pairs: list[tuple[int, str]] = []
+    mut index = 0
+    for value in values:
+        pairs.append((index, value))
+        index += 1
+    return pairs

@@ -1,0 +1,28 @@
+"""Identifier-safe encoding of checked module names and concrete native type arguments."""
+
+from rust::incan_semantics_core import IncanType as RustType
+
+
+pub def symbol_component(value: str) -> str:
+    """Encode one length-delimited UTF-8 component without admitting punctuation into a native identifier."""
+    encoded = value.encode()
+    mut component = f"_{len(encoded)}"
+    for byte in encoded:
+        component += f"_{byte}"
+    return component
+
+
+pub def type_component(ty: &RustType) -> str:
+    """Encode an admitted type structurally with length-delimited components to avoid symbol collisions."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            mut encoded = symbol_component(str(base)) + f"_args_{len(arguments)}"
+            for argument in arguments:
+                encoded += type_component(argument)
+            return encoded
+        RustType.Tuple(elements) =>
+            mut encoded = f"_tuple_{len(elements)}"
+            for element in elements:
+                encoded += type_component(element)
+            return encoded
+        _ => return symbol_component(str(ty))

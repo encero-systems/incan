@@ -1,0 +1,8 @@
+[project]
+name = "fixture_library"
+version = "0.1.0"
+
+[rust]
+name = "fixture_library"
+type = "lib"
+edition = "2024"

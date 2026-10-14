@@ -241,6 +241,7 @@ fn method_info_from_decl(
         .iter()
         .map(|p| {
             let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
+            checker.record_mutable_rust_parameter_projection(&p.node);
             let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
             CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                 .with_mut(is_mut)

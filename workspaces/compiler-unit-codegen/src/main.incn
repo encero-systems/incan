@@ -1,0 +1,35 @@
+"""Materialize the Incan-owned compiler profile projection for the native SDK adapter."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from unit_codegen import bind_unit_codegen
+
+
+def project(seed_path: str, policy_path: str, profile: str, output_path: str) -> Result[None, str]:
+    """Keep the resolved input intact and write one separately named, checked codegen projection."""
+    seed = Path(seed_path).read_text("utf-8", "strict").map_err((error) => error.message())?
+    policy = Path(policy_path).read_text("utf-8", "strict").map_err((error) => error.message())?
+    output = bind_unit_codegen(seed, policy, profile)?
+    destination = Path(output_path)
+    if destination.try_exists().map_err((error) => error.message())?:
+        retained = destination.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if retained == output:
+            return Ok(None)
+        return Err("compiler codegen projection refuses to overwrite an existing different input or output")
+    return destination.write_text(output, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def main() -> None:
+    """Accept explicit internal exchange files and refuse invalid declarations before publishing a projection."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 5:
+        println("usage: unit_codegen_main RESOLVED_INPUT DECLARATIONS PROFILE OUTPUT")
+        exit(2)
+    match project(arguments[1], arguments[2], arguments[3], arguments[4]):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)

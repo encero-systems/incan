@@ -1,0 +1,8 @@
+"""Text observation of the legacy frozen string carrier."""
+
+from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozen
+
+
+pub def format_frozen(value: RuntimeFrozen) -> str:
+    """Materialize owned text through the frozen carrier's canonical Display implementation."""
+    return str(value)

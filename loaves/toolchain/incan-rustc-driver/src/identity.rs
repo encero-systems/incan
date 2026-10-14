@@ -1,6 +1,5 @@
 //! Fail closed on a detached compiler or shared library before invoking embedded rustc.
 
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,6 +25,10 @@ pub enum IdentityError {
 pub struct DriverIdentity {
     /// Canonical sysroot whose compiler and loaded driver library match the build evidence.
     pub sysroot: PathBuf,
+    /// Complete compiler identity checked against the embedded build evidence.
+    pub toolchain: String,
+    /// Host target reported by that exact pinned compiler.
+    pub target: String,
 }
 
 /// Dynamic loader metadata for the library owning the embedded rustc entry point (Unix ABI).
@@ -122,11 +125,19 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
             "the process loaded a different rustc_driver shared library".into(),
         ));
     }
-    let digest = format!("{:x}", Sha256::digest(fs::read(&library)?));
-    if digest != built_digest {
+    let digest = incan_driver::build::native_runtime_inputs::digest_native_compiler_input(&library)?;
+    if digest.strip_prefix("sha256:") != Some(built_digest) {
         return Err(IdentityError::Mismatch(
             "rustc_driver shared-library bytes differ from the build identity".into(),
         ));
     }
-    Ok(DriverIdentity { sysroot: root })
+    let target = compiler
+        .lines()
+        .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+        .ok_or_else(|| IdentityError::Mismatch("pinned compiler identity has no host target".into()))?;
+    Ok(DriverIdentity {
+        sysroot: root,
+        toolchain: compiler.into_owned(),
+        target,
+    })
 }

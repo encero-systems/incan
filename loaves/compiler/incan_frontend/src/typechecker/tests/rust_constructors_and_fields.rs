@@ -6,18 +6,22 @@ use super::*;
 use incan_lang::interop::RustTypeMetadataCompleteness;
 
 #[cfg(feature = "rust_inspect")]
+/// Build a direct Loaf inspection fixture without relying on Cargo workspace discovery.
 fn write_rust_inspect_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("demo").join("src"))?;
     fs::write(
-        root.join("Cargo.toml"),
-        r#"[package]
+        root.join("loaf.toml"),
+        r#"[project]
 name = "ra_frontend_probe"
 version = "0.1.0"
+[rust]
+name = "ra_frontend_probe"
+type = "lib"
 edition = "2021"
 
 [dependencies]
-demo = { path = "demo" }
+demo = { loaf = "demo", path = "demo" }
 "#,
     )?;
     fs::write(
@@ -25,10 +29,13 @@ demo = { path = "demo" }
         "pub fn touch() { let _ = demo::Builder::new(); }\n",
     )?;
     fs::write(
-        root.join("demo").join("Cargo.toml"),
-        r#"[package]
+        root.join("demo").join("loaf.toml"),
+        r#"[project]
 name = "demo"
 version = "0.1.0"
+[rust]
+name = "demo"
+type = "lib"
 edition = "2021"
 "#,
     )?;
@@ -63,6 +70,9 @@ pub fn empty_holder() -> Holder {
 }
 "#,
     )?;
+    for project in [root.to_path_buf(), root.join("demo")] {
+        fs::write(project.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "")?;
+    }
     Ok(())
 }
 
@@ -901,11 +911,9 @@ def f(payload: DemoPayload) -> Container:
 /// A dependency that re-exports the `alloc` crate lets generated code spell `::carrier::alloc::boxed::Box<T>`.
 ///
 /// That path is absolute. Joining it onto the owning module recorded a field type no consumer could name
-/// (`demo::proto::nested::carrier::alloc::boxed::Box`), which is the `Box` mismatch of incan#1229 and the reason
-/// rust-inspect prewarm had to stay disabled. This harness runs the source-level extractor, so it proves the property
-/// that matters — an absolute path is never joined onto the owning module — but not the HIR-only steps (following
-/// `carrier::alloc` to the `alloc` crate, stripping the `Box` carrier from a variant payload). Those are exercised by
-/// baking a real project against the semantic extractor.
+/// (`demo::proto::nested::carrier::alloc::boxed::Box`), the `Box` mismatch of incan#1229. Direct Loaf inspection now
+/// exercises semantic extraction: it follows the local re-export to `alloc`, retains the ancestral payload identity,
+/// and records the stripped `Box` carrier separately. The standard string payload also retains its sysroot owner.
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> Result<(), Box<dyn std::error::Error>> {
@@ -915,26 +923,29 @@ fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> 
         fs::create_dir_all(root.join(dir))?;
     }
     fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"ra_reexport_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\ndemo = { path = \"demo\" }\n",
+        root.join("loaf.toml"),
+        "[project]\nname = \"ra_reexport_probe\"\nversion = \"0.1.0\"\n[rust]\nname = \"ra_reexport_probe\"\ntype = \"lib\"\nedition = \"2021\"\n[dependencies]\ndemo = { loaf = \"demo\", path = \"demo\" }\n",
     )?;
     fs::write(
         root.join("src/lib.rs"),
         "pub fn touch() { let _ = demo::proto::Inner; }\n",
     )?;
     fs::write(
-        root.join("demo/Cargo.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\ncarrier = { path = \"../carrier\" }\n",
+        root.join("demo/loaf.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n[rust]\nname = \"demo\"\ntype = \"lib\"\nedition = \"2021\"\n[dependencies]\ncarrier = { loaf = \"carrier\", path = \"../carrier\" }\n",
     )?;
     fs::write(
         root.join("demo/src/lib.rs"),
         "extern crate alloc;\npub mod proto {\n    pub struct Inner;\n    pub mod nested {\n        pub enum Wrap {\n            Boxed(::carrier::alloc::boxed::Box<super::Inner>),\n            Direct(::alloc::boxed::Box<super::Inner>),\n            Text(::std::string::String),\n        }\n    }\n}\n",
     )?;
     fs::write(
-        root.join("carrier/Cargo.toml"),
-        "[package]\nname = \"carrier\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        root.join("carrier/loaf.toml"),
+        "[project]\nname = \"carrier\"\nversion = \"0.1.0\"\n[rust]\nname = \"carrier\"\ntype = \"lib\"\nedition = \"2021\"\n",
     )?;
     fs::write(root.join("carrier/src/lib.rs"), "pub extern crate alloc;\n")?;
+    for project in [root.to_path_buf(), root.join("demo"), root.join("carrier")] {
+        fs::write(project.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "")?;
+    }
     prewarm_metadata(root, &["demo::proto::nested::Wrap"])?;
     let inspector = Inspector::new(InspectorConfig::new(root.to_path_buf()));
     let result = inspector.get("demo::proto::nested::Wrap")?;
@@ -986,7 +997,7 @@ fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> 
         vec![incan_lang::interop::RustPayloadCarrier::Boxed]
     );
     assert_eq!(carriers("Boxed")?, vec![incan_lang::interop::RustPayloadCarrier::Boxed]);
-    assert_eq!(text, vec!["String".to_string()]);
+    assert_eq!(text, vec!["alloc::string::String".to_string()]);
     assert_eq!(carriers("Text")?, vec![incan_lang::interop::RustPayloadCarrier::Direct]);
     Ok(())
 }
@@ -1012,21 +1023,24 @@ def f() -> None:
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("demo/src"))?;
     fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"ra_option_box_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\ndemo = { path = \"demo\" }\n",
+        root.join("loaf.toml"),
+        "[project]\nname = \"ra_option_box_probe\"\nversion = \"0.1.0\"\n[rust]\nname = \"ra_option_box_probe\"\ntype = \"lib\"\nedition = \"2021\"\n[dependencies]\ndemo = { loaf = \"demo\", path = \"demo\" }\n",
     )?;
     fs::write(
         root.join("src/lib.rs"),
         "pub fn touch() { let _ = demo::Item::new(); }\n",
     )?;
     fs::write(
-        root.join("demo/Cargo.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        root.join("demo/loaf.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n[rust]\nname = \"demo\"\ntype = \"lib\"\nedition = \"2021\"\n",
     )?;
     fs::write(
         root.join("demo/src/lib.rs"),
         "extern crate alloc;\npub struct Item;\nimpl Item {\n    pub fn new() -> Self {\n        Item\n    }\n}\npub struct Holder {\n    pub inner: ::core::option::Option<::alloc::boxed::Box<Item>>,\n}\n",
     )?;
+    for project in [root.to_path_buf(), root.join("demo")] {
+        fs::write(project.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "")?;
+    }
     let mut checker = TypeChecker::new();
     checker.set_rust_inspect_manifest_dir(root.to_path_buf());
     prewarm_metadata(

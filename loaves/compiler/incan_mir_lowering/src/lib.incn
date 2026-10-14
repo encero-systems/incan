@@ -1,6 +1,7 @@
 """Public facade for the checked Body-IR-to-native-plan lowering Loaf."""
 
 from assertions import lower_assertion
+from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 pub from lowering import BodyIrModule, BodyStatementKind
 from lowering import (
@@ -9,6 +10,7 @@ from lowering import (
     is_continue as checked_is_continue,
     lower_module as lower_checked_module,
     lower_program as lower_checked_program,
+    program_refusals as checked_program_refusals,
 )
 pub from pub::incan_mir_plan import (
     BasicBlock,
@@ -16,12 +18,16 @@ pub from pub::incan_mir_plan import (
     Callee,
     CalleeKind,
     ExternalFunction,
+    FieldProjection,
     Constant,
     Function,
     ListLeaf,
+    list_leaf_type,
     EnumDeclaration,
     EnumVariant,
     SizedNumeric,
+    TupleElement,
+    tuple_element_type,
     Local,
     ModelDeclaration,
     Operand,
@@ -72,3 +78,13 @@ pub def lower_program(
 ) -> Result[Plan, str]:
     """Delegate project lowering while preserving the canonical caller boundary and source provenance."""
     return lower_checked_program(modules, sources, files, entry)
+
+
+pub def program_refusals(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+) -> list[str]:
+    """Delegate the census's per-body refusal collection through the canonical caller boundary."""
+    return checked_program_refusals(modules, sources, files, entry)

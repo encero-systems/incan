@@ -1,0 +1,96 @@
+"""Prepare the authored runtime itself, retaining its receipt and native library under the returned root."""
+
+from rust::std::env import args
+from rust::std::process import Command, exit
+from std.fs import Path
+from std.json import JsonValue
+
+
+def prepare(arguments: list[str]) -> Result[None, str]:
+    """Materialize current Incan sources and publish exactly the runtime the native test kernel will consume."""
+    compiler = arguments[1]
+    root = Path(arguments[2]).resolve().map_err((error) => error.message())?
+    checkout = Path(arguments[3]).resolve().map_err((error) => error.message())?
+    home = arguments[4]
+    original = checkout.joinpath("loaves/compiler/incan_native_runtime")
+    runtime = root.joinpath("formatting-runtime")
+    runtime_text = runtime.0
+    runtime.mkdir(true, true).map_err((error) => error.message())?
+    synchronize_sources(original.joinpath("src"), runtime.joinpath("src"))?
+    manifest = original.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    declaration = manifest + "\n[rust-dependencies]\nlibm = \"0.2\"\n"
+    manifest_path = runtime.joinpath("loaf.toml")
+    mut manifest_changed = true
+    if manifest_path.exists():
+        retained = manifest_path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        manifest_changed = retained != declaration
+    if manifest_changed:
+        manifest_path.write_text(declaration, "utf-8", "strict", None).map_err((error) => error.message())?
+    mut command = Command.new(compiler)
+    command.arg("oven").arg("bake").arg("--project").arg(runtime_text).arg("--format").arg("json")
+    command.env("INCAN_HOME", home)
+    result = command.output().map_err((error) => str(error))?
+    root
+        .joinpath("formatting-runtime-preparation.stdout")
+        .write_bytes(result.stdout)
+        .map_err((error) => error.message())?
+    root
+        .joinpath("formatting-runtime-preparation.stderr")
+        .write_bytes(result.stderr)
+        .map_err((error) => error.message())?
+    if not result.status.success():
+        return Err("runtime preparation failed; its project root retains the command diagnostics")
+    if not runtime.joinpath(".incan/oven/library-debug-receipt.json").exists():
+        return Err("runtime preparation produced no owning library receipt")
+    if not runtime.joinpath("target/lib/oven/debug/libincan_native_runtime.rlib").exists():
+        return Err("runtime preparation produced no owning native library")
+    report = JsonValue.object(
+        {"schema": JsonValue.string("incan.compiler-fixture-preparation/1"), "runtime_root": JsonValue.string(runtime.0)},
+    )
+    println(report.to_json().map_err((error) => error.message())?)
+    return Ok(None)
+
+
+def synchronize_sources(source: Path, destination: Path) -> Result[None, str]:
+    """Keep the exact authored source set while leaving unchanged prepared files untouched."""
+    if source.is_symlink():
+        return Err("runtime preparation source must not be a symlink")
+    if destination.is_symlink():
+        return Err("runtime preparation destination must not be a symlink")
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    for retained in destination.iterdir().map_err((error) => error.message())?:
+        if not source.joinpath(retained.name()).exists():
+            if retained.is_dir() and not retained.is_symlink():
+                retained.remove_tree().map_err((error) => error.message())?
+            else:
+                retained.unlink().map_err((error) => error.message())?
+    for original in source.iterdir().map_err((error) => error.message())?:
+        target = destination.joinpath(original.name())
+        if original.is_symlink() or target.is_symlink():
+            return Err("runtime preparation cannot follow a source or destination symlink")
+        if original.is_dir():
+            synchronize_sources(original, target)?
+        else:
+            bytes = original.read_bytes().map_err((error) => error.message())?
+            mut changed = true
+            if target.exists():
+                retained = target.read_bytes().map_err((error) => error.message())?
+                changed = bytes != retained
+            if changed:
+                original.copy(target, false, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def main() -> None:
+    """Accept the exact compiler, fixture root, checkout and persistent home from the native test transport."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 5:
+        println("usage: compiler_fixture_preparation COMPILER FIXTURE_ROOT CHECKOUT HOME")
+        exit(2)
+    match prepare(arguments):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)

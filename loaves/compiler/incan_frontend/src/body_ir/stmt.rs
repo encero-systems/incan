@@ -6,15 +6,38 @@ use super::*;
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower every statement in `stmts` into `out`, within `scope`. Statements are lowered in source order and each
     /// one is given the statement suffix that follows it (`&stmts[index + 1..]`), so last-use countdowns seeded by
-    /// [`Self::declare_new_local`] only count reads that can still occur after the declaration.
+    /// [`Self::declare_new_local`] only count reads that can still occur after the declaration. Nested blocks cannot
+    /// change an enclosing static binding's handle selection: that needs a runtime handle fact, so it refuses
+    /// explicitly rather than retaining whichever branch happened to lower last.
     pub(super) fn lower_block_into(
         &mut self,
         stmts: &[ast::Spanned<ast::Statement>],
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) {
+        // ---- Context: storage bindings in the enclosing scope ----
+        let nested = self.scopes.iter().any(|info| info.id == scope && info.parent.is_some());
+        let enclosing_aliases = self.static_aliases.clone();
+        let enclosing_handles = self.static_binding_locals.clone();
+
+        // ---- Context: source-order statements ----
         for (index, stmt) in stmts.iter().enumerate() {
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
+        }
+
+        // ---- Context: a handle selected by runtime control flow ----
+        if nested {
+            if enclosing_handles
+                .iter()
+                .any(|local| self.static_aliases.get(local) != enclosing_aliases.get(local))
+            {
+                self.push_unsupported_stmt(
+                    "control-flow-dependent static binding handle".to_string(),
+                    self.scope_span(scope),
+                    out,
+                );
+            }
+            self.static_aliases = enclosing_aliases;
         }
     }
 
@@ -61,7 +84,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                let value = value.as_ref().map(|v| self.lower_expr_to_operand(v, scope, out));
+                let value = value.as_ref().map(|v| {
+                    let operand = self.lower_expr_to_operand(v, scope, out);
+                    self.owned_parameter_operand(v, operand)
+                });
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
                     span,
@@ -147,14 +173,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
         let assignment_span = ast::Span::new(span.start, span.end);
-        let ty = self
+        let mut ty = self
             .type_info
             .assignment_binding_type(assignment_span)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+        // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
+        // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
+        if let bir::Operand::Place(read) = &value
+            && let Some(local) = read.place.local_id()
+            && let IncanType::Generic { base, .. } = &self.locals[local.index()].ty
+            && base == "Awaitable"
+        {
+            ty = self.locals[local.index()].ty.clone();
+        }
         let binding_span = hir_span(assignment.name_span);
         let target_identity = self
             .type_info
@@ -199,6 +234,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 remaining,
             )),
         };
+        if assignment.ty.is_some()
+            && !self.type_info.binds_capturing_callable(assignment_span)
+            && let Some(local) = place.local_id()
+            && matches!(self.locals[local.index()].ty, IncanType::Function { .. })
+            && !self.function_pointer_locals.contains(&local)
+        {
+            self.function_pointer_locals.push(local);
+        }
+        if self.type_info.binds_capturing_callable(assignment_span)
+            && let Some(local) = place.local_id()
+            && !self.closure_holding_locals.contains(&local)
+        {
+            self.closure_holding_locals.push(local);
+        }
         if !place.permits_write() {
             let target = place
                 .global()
@@ -206,6 +255,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
+        self.record_static_alias_assignment(assignment, &place, &value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: place.clone(),
@@ -227,6 +277,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// (`loaves/kernel/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`) -- `fa.compound_op` is purely a
     /// formatter hint for round-tripping `+=` spelling and carries no separate lowering semantics here, so this
     /// only needs to build the write-side place and lower `value` normally.
+    /// Field alias writes remain named refusals because legacy still emits their alias spelling as a Rust field.
     pub(super) fn lower_field_assignment(
         &mut self,
         field_assignment: &ast::FieldAssignmentStmt,
@@ -235,10 +286,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let mut place = self.lower_expr_to_place(&field_assignment.object, scope, out);
-        place.projection.push(bir::PlaceElem::field(
-            field_assignment.field.clone(),
-            self.type_info.resolved_identity(field_assignment.target_span).cloned(),
-        ));
+        let projection = self.lower_checked_field_projection(
+            &field_assignment.object,
+            &field_assignment.field,
+            field_assignment.target_span,
+        );
+        // Legacy writes still emit the source alias as a Rust field (#1337 lane repro). Do not admit a write
+        // that legacy cannot compile merely because the checker already selected its canonical storage.
+        if matches!(&projection, bir::PlaceElem::Field { name, .. } if name != &field_assignment.field) {
+            self.push_unsupported_stmt(
+                format!("model field alias assignment `{}`", field_assignment.field),
+                span,
+                out,
+            );
+            return;
+        }
+        place.projection.push(projection);
         if !place.permits_write() {
             let target = place.global().map_or_else(
                 || "field assignment target".to_string(),
@@ -324,7 +387,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let lhs_ty = self
             .type_info
             .resolved_write_type(compound_assignment.name_span, &compound_assignment.name)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let place = if let Some(identity) = target_identity {
             self.identity_bindings
@@ -384,8 +447,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             return;
         }
-        let (fact, last_use) = self.ownership_fact_for_place(&lhs_place, &lhs_ty);
-        let lhs_operand = bir::Operand::place(lhs_place.clone(), fact, last_use);
+        let read_place = self.static_alias_read_place(&lhs_place);
+        let (fact, last_use) = self.ownership_fact_for_place(&read_place, &lhs_ty);
+        let lhs_operand = bir::Operand::place(read_place, fact, last_use);
         let rhs_operand = self.lower_expr_to_operand(&compound_assignment.value, scope, out);
         let result = self.lower_binary_from_operands(
             op,
@@ -398,6 +462,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
             out,
         );
+        if let Some(local) = lhs_place.local_id() {
+            self.static_aliases.remove(&local);
+        }
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: lhs_place,
@@ -616,9 +683,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first), matching
-    /// the direction the existing Rust-emission backend already chose for this same desugar
-    /// (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s `ChainedAssignment` arm).
+    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first) when the value
+    /// is shared by every target. A value the checker recorded as written per target is instead evaluated once per
+    /// target, at that target's type (see [`Self::lower_chained_per_target`]).
     pub(super) fn lower_chained_assignment(
         &mut self,
         chained_assignment: &ast::ChainedAssignmentStmt,
@@ -633,6 +700,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span,
                 out,
             );
+            return;
+        }
+        if self
+            .type_info
+            .chained_value_is_written_per_target(chained_assignment.value.span)
+        {
+            self.lower_chained_per_target(chained_assignment, remaining, scope, span, out);
             return;
         }
         let Some((last_name, last_span)) = chained_assignment
@@ -711,6 +785,151 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Lower a chained assignment whose value the checker recorded as written per target: each target, left to right,
+    /// gets its own evaluation of the value at that target's type, as a single `target = value` writes it, matching
+    /// the legacy backend's `lower_chained_literal` (`loaves/compiler/incan_ir/src/lower/assignment_targets.rs`).
+    ///
+    /// The checker records this only for a value built from literals and builtin empty constructors over bound
+    /// targets of different types (`n = f = 1` over an `int` and a `float`), so evaluating it once per target observes
+    /// nothing more than evaluating it once. The checker checked the value once per target but keeps one type per
+    /// source span, so each evaluation first installs its target's types for the value's nodes (see
+    /// [`Self::chained_value_types`]). A name the chain declares takes the value checked without a destination, where
+    /// an integer literal is an `int`.
+    fn lower_chained_per_target(
+        &mut self,
+        chained_assignment: &ast::ChainedAssignmentStmt,
+        remaining: &[ast::Spanned<ast::Statement>],
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        let value = &chained_assignment.value;
+        for (name, target_span) in chained_assignment.targets.iter().zip(&chained_assignment.target_spans) {
+            let bound = match self.chained_bound_type(name, chained_assignment.binding, *target_span) {
+                Ok(bound) => bound,
+                Err(reason) => {
+                    self.push_unsupported_stmt(reason, span, out);
+                    return;
+                }
+            };
+            let mut overrides = HashMap::new();
+            match &bound {
+                Some(target_ty) => self.chained_value_types(value, target_ty, &mut overrides),
+                None => {
+                    chained_integer_literal_types(value, &IncanType::Primitive(IncanPrimitiveType::Int), &mut overrides)
+                }
+            }
+            self.type_overrides = overrides;
+            let value_ty = self.resolve_ty(value.span);
+            let operand = self.lower_expr_to_operand(value, scope, out);
+            self.type_overrides.clear();
+            let place = match self.bind_multi_target_name(
+                name,
+                value_ty,
+                chained_assignment.binding,
+                scope,
+                *target_span,
+                remaining,
+            ) {
+                Ok(place) => place,
+                Err(reason) => {
+                    self.push_unsupported_stmt(reason, span, out);
+                    return;
+                }
+            };
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::Use(operand),
+                },
+                span,
+            });
+        }
+    }
+
+    /// Return the type a chained-assignment target already has, or `None` for a name the chain declares, the way
+    /// [`Self::bind_multi_target_name`] resolves the same target. Module storage is refused: its place carries no
+    /// declared type here to retype the value for.
+    fn chained_bound_type(
+        &self,
+        name: &str,
+        binding: ast::BindingKind,
+        target_span: ast::Span,
+    ) -> Result<Option<IncanType>, String> {
+        if matches!(binding, ast::BindingKind::Let | ast::BindingKind::Mutable) {
+            return Ok(None);
+        }
+        let local = match self.type_info.resolved_write_identity(target_span, name) {
+            Some(identity) => match self.identity_bindings.get(identity) {
+                Some(&local) => local,
+                None if matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Static | SemanticSourceTargetKind::Const
+                ) =>
+                {
+                    return Err(format!(
+                        "chained assignment written per target to module storage `{}`",
+                        identity.render_compact()
+                    ));
+                }
+                None => return Ok(None),
+            },
+            None => match self.bindings.get(name) {
+                Some(&local) => local,
+                None => return Ok(None),
+            },
+        };
+        Ok(self.locals.get(local.index()).map(|declaration| declaration.ty.clone()))
+    }
+
+    /// Record the type one evaluation of a chained value gives each of its nodes for one bound target, as the legacy
+    /// backend's `retype_literal` and `retype_chained_integer_literals` retype them.
+    ///
+    /// A node of the target's own container kind, or of unknown type, takes the target's type, and its elements take
+    /// the element types; an integer literal, negated or not, takes a numeric target's type. Any other scalar keeps the
+    /// type the checker recorded, so the conversion a single assignment applies (`5` into an `Option[int]`) still
+    /// applies.
+    fn chained_value_types(
+        &self,
+        value: &ast::Spanned<ast::Expr>,
+        target: &IncanType,
+        overrides: &mut HashMap<(usize, usize), IncanType>,
+    ) {
+        let recorded = self.resolve_ty(value.span);
+        if recorded == IncanType::Unknown || same_container_kind(&recorded, target) {
+            overrides.insert((value.span.start, value.span.end), target.clone());
+        }
+        match (&value.node, target) {
+            (ast::Expr::Paren(inner), _) => self.chained_value_types(inner, target, overrides),
+            (ast::Expr::List(entries), IncanType::Generic { base, args }) if base == "List" && args.len() == 1 => {
+                for entry in entries {
+                    if let ast::ListEntry::Element(item) = entry {
+                        self.chained_value_types(item, &args[0], overrides);
+                    }
+                }
+            }
+            (ast::Expr::Set(items), IncanType::Generic { base, args }) if base == "Set" && args.len() == 1 => {
+                for item in items {
+                    self.chained_value_types(item, &args[0], overrides);
+                }
+            }
+            (ast::Expr::Tuple(items), IncanType::Tuple(types)) if items.len() == types.len() => {
+                for (item, ty) in items.iter().zip(types) {
+                    self.chained_value_types(item, ty, overrides);
+                }
+            }
+            (ast::Expr::Dict(entries), IncanType::Generic { base, args }) if base == "Dict" && args.len() == 2 => {
+                for entry in entries {
+                    if let ast::DictEntry::Pair(key, item) = entry {
+                        self.chained_value_types(key, &args[0], overrides);
+                        self.chained_value_types(item, &args[1], overrides);
+                    }
+                }
+            }
+            _ => chained_integer_literal_types(value, target, overrides),
+        }
+    }
+
     /// Lower a `break` / `break value` statement. A value routes into the innermost enclosing loop's result place
     /// when that loop is a value-producing `loop:` expression (see [`Self::lower_loop_expr`]) -- otherwise it stays
     /// on the `Break` statement itself, matching [`bir::StatementKind::Break`]'s documented default. The innermost
@@ -776,5 +995,46 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper("generator".to_string()));
         self.record_runtime_requirement(AbiV0RuntimeRequirement::HostedStd);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+    }
+}
+
+/// Record a numeric target's type for an integer literal, negated or parenthesized or not, as the legacy backend's
+/// `retype_chained_integer_literals` rewrites one evaluation of a chained value: `n = f = 1` writes `1` to the `int`
+/// and `1.0` to the `float`. Any other node, and any non-numeric target, keeps the checker's recorded type.
+fn chained_integer_literal_types(
+    value: &ast::Spanned<ast::Expr>,
+    target: &IncanType,
+    overrides: &mut HashMap<(usize, usize), IncanType>,
+) {
+    if !matches!(
+        target,
+        IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(_))
+    ) {
+        return;
+    }
+    match &value.node {
+        ast::Expr::Paren(inner) => chained_integer_literal_types(inner, target, overrides),
+        ast::Expr::Literal(ast::Literal::Int(_)) => {
+            overrides.insert((value.span.start, value.span.end), target.clone());
+        }
+        ast::Expr::Unary(ast::UnaryOp::Neg, operand)
+            if matches!(operand.node, ast::Expr::Literal(ast::Literal::Int(_))) =>
+        {
+            overrides.insert((value.span.start, value.span.end), target.clone());
+            overrides.insert((operand.span.start, operand.span.end), target.clone());
+        }
+        _ => {}
+    }
+}
+
+/// Return whether two types are the same kind of container: both `Option`, `List`, `Set` or `Dict`, or tuples of one
+/// length, the only nodes a chained value's per-target evaluation retypes wholesale.
+fn same_container_kind(left: &IncanType, right: &IncanType) -> bool {
+    match (left, right) {
+        (IncanType::Generic { base: left, .. }, IncanType::Generic { base: right, .. }) => {
+            left == right && matches!(left.as_str(), "Option" | "List" | "Set" | "Dict")
+        }
+        (IncanType::Tuple(left), IncanType::Tuple(right)) => left.len() == right.len(),
+        _ => false,
     }
 }

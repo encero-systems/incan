@@ -8,6 +8,26 @@ from rust::std::collections import HashMap as RuntimeDict
 from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get
 
 
+pub def equal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
+    """Compare hashed membership through legacy's shared equality receivers."""
+    return left == right
+
+
+pub def unequal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
+    """Compare unequal hashed sets without consuming either source."""
+    return left != right
+
+
+pub def equal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Dict[K, V]) -> bool:
+    """Compare matching keys and values through the legacy HashMap PartialEq operation."""
+    return left == right
+
+
+pub def unequal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Dict[K, V]) -> bool:
+    """Retain HashMap inequality on shared operands without cloning keys or values."""
+    return left != right
+
+
 pub def empty_set[T with (Eq, Hash)]() -> Set[T]:
     """Create the same hash collection as the legacy Set constructor."""
     return Set()
@@ -64,6 +84,14 @@ pub def get_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], 
     """Index a dictionary with the legacy missing-key diagnostic."""
     reference: &K = key
     return RuntimeClone.clone(dict_get(values, reference))
+
+
+pub def optional_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> Option[V]:
+    """Copy a present value or report its absence, as the legacy one-argument lookup does."""
+    reference: &K = key
+    if dict_contains_key(values, reference):
+        return Some(RuntimeClone.clone(dict_get(values, reference)))
+    return None
 
 
 pub def keys_dict[K with Clone, V](values: &Dict[K, V]) -> list[K]:

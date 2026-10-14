@@ -1,0 +1,54 @@
+# behavior: checked borrowed enum fields clone only the selected carrier, retaining repeated reads and initialized parents across replacement
+# expect-stdout:
+#   kind retained
+#   kind retained
+#   missing
+#   kind retained
+#   kind retained
+#   NESTED
+#   REPLACEMENT
+#   REPLACEMENT
+#   kind deep
+
+@derive(Clone)
+type Kind = newtype str
+type Choice = Kind | str
+
+model Holder:
+    value: Option[Choice]
+
+model Envelope:
+    holder: Holder
+
+def take(value: Option[Choice]) -> Option[Choice]:
+    return value
+
+def payload(value: Option[Choice]) -> Choice:
+    if value is not None:
+        return value
+    return "missing"
+
+def describe(value: Option[Choice]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        if isinstance(value, Kind):
+            return f"kind {value.0}"
+    return "missing"
+
+def main() -> None:
+    mut holder = Holder(value=Some(Kind("retained")))
+    first = take(holder.value)
+    second = take(holder.value)
+    println(describe(holder.value))
+    println(describe(holder.value))
+    holder.value = None
+    println(describe(holder.value))
+    println(describe(first))
+    println(describe(second))
+    mut nested = Envelope(holder=Holder(value=Some("nested")))
+    println(describe(nested.holder.value))
+    nested.holder.value = Some("replacement")
+    println(describe(nested.holder.value))
+    println(describe(nested.holder.value))
+    println(describe(Some(payload(Some(Kind("deep"))))))

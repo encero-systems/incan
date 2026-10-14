@@ -5,6 +5,152 @@
 
 use super::*;
 
+/// Annotation spellings and inferred tuple literals have one recursively shared semantic type identity.
+#[test]
+fn tuple_annotations_share_canonical_semantic_shape() {
+    use crate::symbols::ResolvedType;
+
+    let elements = vec![ResolvedType::Int, ResolvedType::Str];
+    let inferred = semantic_type_from_resolved(&ResolvedType::Tuple(elements.clone()));
+    assert!(matches!(inferred, IncanType::Tuple(_)));
+    for spelling in ["tuple", "Tuple"] {
+        let annotated = ResolvedType::Generic(spelling.to_string(), elements.clone());
+        assert_eq!(semantic_type_from_resolved(&annotated), inferred);
+        for carrier in ["Result", "List"] {
+            let mut annotated_args = vec![annotated.clone()];
+            let mut inferred_args = vec![ResolvedType::Tuple(elements.clone())];
+            if carrier == "Result" {
+                annotated_args.push(ResolvedType::Str);
+                inferred_args.push(ResolvedType::Str);
+            }
+            let annotation = ResolvedType::Generic(carrier.to_string(), annotated_args);
+            let literal = ResolvedType::Generic(carrier.to_string(), inferred_args);
+            assert_eq!(
+                semantic_type_from_resolved(&annotation),
+                semantic_type_from_resolved(&literal)
+            );
+        }
+    }
+    let nominal = semantic_type_from_resolved(&ResolvedType::Generic("Box".to_string(), elements));
+    assert!(matches!(nominal, IncanType::Generic { base, .. } if base == "Box"));
+}
+
+/// A checked Result constructor and its annotated return use the same tuple payload carrier.
+#[test]
+fn tuple_result_construction_retains_one_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    for spelling in ["tuple", "Tuple"] {
+        let source = format!("def pair() -> Result[{spelling}[int, int], str]:\n    return Ok((20, 22))\n");
+        let module = build(&source, &["tuple_result_identity"])?;
+        let body = body_named(&module, "pair")?;
+        let IncanType::Generic { base, args } = &body.return_type else {
+            return Err(format!("expected checked Result return, got {:?}", body.return_type).into());
+        };
+        assert_eq!(base, "Result");
+        assert!(matches!(args.first(), Some(IncanType::Tuple(_))));
+        for local in &body.locals {
+            if matches!(&local.ty, IncanType::Generic { base, .. } if base == "Result") {
+                assert_eq!(local.ty, body.return_type);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checked integer helpers retain concrete receiver and result types in Body IR.
+#[test]
+fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    high: u8 = 250\n    value = high.checked_add(10u8)\n    println(high.wrapping_add(10u8))\n    wide: i16 = 300\n    resized = wide.try_resize[u8]()\n",
+        &["integer_helpers"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local: {local:?}\n{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Constructor temporaries use the open sides settled by their binding and in-place match contexts.
+#[test]
+fn settled_constructor_spans_retain_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    value = Ok(7)\n    match value:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n",
+        &["settled_constructors"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Nested intrinsic constructors retain the contextual payload types that their checked call parameters require.
+#[test]
+fn nested_carrier_arguments_retain_checked_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def describe(value: Result[Option[int], str]) -> str:\n    match value:\n        Ok(Some(0)) => return \"zero\"\n        Ok(Some(n)) => return f\"{n}\"\n        Ok(None) => return \"empty\"\n        Err(message) => return message\n\ndef main() -> None:\n    println(describe(Ok(Some(7))))\n    println(describe(Ok(None)))\n    println(describe(Err(\"boom\")))\n";
+    let module = build(source, &["nested_carriers"])?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local in {}: {local:?}",
+                body.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Empty nested literals carry the peer-proven storage types at every Body IR local.
+#[test]
+fn nested_empty_list_locals_retain_checked_element_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    rows = [[], [\"x\"]]\n    deep = [[[]], [[\"y\"]]]\n",
+        &["nested_empty_lists"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(!body.locals.is_empty());
+    for local in &body.locals {
+        assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+    }
+    Ok(())
+}
+
+/// Operand and recursive place lowering retain checked tuple indices rather than temporary unary results.
+#[test]
+fn checked_negative_tuple_indices_remain_constant_projections() -> Result<(), Box<dyn std::error::Error>> {
+    for index in ["-1", "(-1)"] {
+        let source = format!("def answer() -> int:\n    pair = ((1, 2), (3, 4))\n    return pair[{index}][-2]\n");
+        let module = build(&source, &["tuple_indices"])?;
+        let body = body_named(&module, "answer")?;
+        let projection = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Return {
+                    value: Some(bir::Operand::Place(value)),
+                } => Some(&value.place.projection),
+                _ => None,
+            })
+            .ok_or("tuple return projection missing")?;
+        assert_eq!(
+            projection,
+            &[
+                bir::PlaceElem::Index(Box::new(bir::Operand::Constant(bir::Constant::Int(-1)))),
+                bir::PlaceElem::Index(Box::new(bir::Operand::Constant(bir::Constant::Int(-2)))),
+            ]
+        );
+    }
+    Ok(())
+}
+
 /// Both operand and recursively lowered place fields retain checked tuple structure without nominal identities.
 #[test]
 fn nested_source_tuple_fields_retain_checked_structural_projection() -> Result<(), Box<dyn std::error::Error>> {
@@ -141,6 +287,115 @@ fn exact_integer_arithmetic_keeps_the_checked_body_ir_width() -> Result<(), Box<
         rendered.contains("local 2 <tmp> : i8") && rendered.contains("local 3 <tmp> : i8"),
         "i8 arithmetic must retain its checked i8 results in Body IR: {rendered}"
     );
+    Ok(())
+}
+
+/// Mixed arithmetic with a float result reads each operand at the checked result carrier: `int / int`, `int` with
+/// `float`, and `f32` with `int` or `float` all retain their promotion in Body IR instead of leaving it to a backend.
+#[test]
+fn mixed_float_arithmetic_retains_the_checked_operand_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameters, expression) in [
+        ("left: int, right: float", "left + right"),
+        ("left: float, right: int", "left - right"),
+        ("left: int, right: int", "left / right"),
+        ("left: f32, right: float", "left * right"),
+        ("left: f32, right: int", "left // right"),
+        ("left: int, right: float", "left % right"),
+    ] {
+        let source = format!("def f({parameters}) -> float:\n  return {expression}\n");
+        let module = build(&source, &["m", "mixed_float"])?;
+        let body = body_named(&module, "f")?;
+        let (result, operands) = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                } => Some((place, [left, right])),
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{expression}` must lower as a primitive binary op"))?;
+        let local_type = |place: &bir::Place| match &place.root {
+            bir::PlaceRoot::Local(local) => body
+                .locals
+                .iter()
+                .find(|declaration| declaration.id == *local)
+                .map(|declaration| declaration.ty.to_string())
+                .unwrap_or_default(),
+            bir::PlaceRoot::Global(_) => String::new(),
+        };
+        assert_eq!(
+            local_type(result),
+            "float",
+            "`{expression}` must keep its checked float result"
+        );
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err(format!("`{expression}` must read its promoted operands from locals").into());
+            };
+            assert_eq!(
+                local_type(&read.place),
+                "float",
+                "`{expression}` must promote each operand to the checked float carrier: {}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A mixed numeric comparison reads both operands at legacy's common carrier: two integer carriers at the narrowest
+/// integer type holding both, and any pair involving a float as `float`. Same-carrier comparisons keep their operands.
+#[test]
+fn mixed_numeric_comparison_reads_both_operands_at_the_common_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameters, expression, carrier) in [
+        ("left: f32, right: f64", "left < right", "float"),
+        ("left: f32, right: int", "left == right", "float"),
+        ("left: int, right: float", "left >= right", "float"),
+        ("left: i8, right: i16", "left < right", "i16"),
+        ("left: i8, right: u8", "left != right", "i16"),
+        ("left: int, right: u64", "left > right", "i128"),
+        ("left: i32, right: int", "left <= right", "int"),
+        ("left: f32, right: f32", "left < right", "f32"),
+    ] {
+        let source = format!("def f({parameters}) -> bool:\n  return {expression}\n");
+        let module = build(&source, &["m", "mixed_compare"])?;
+        let body = body_named(&module, "f")?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{expression}` must lower as a primitive comparison"))?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err(format!("`{expression}` must read its operands from locals").into());
+            };
+            let bir::PlaceRoot::Local(local) = &read.place.root else {
+                return Err(format!("`{expression}` must read function-frame locals").into());
+            };
+            let ty = body
+                .locals
+                .iter()
+                .find(|declaration| declaration.id == *local)
+                .map(|declaration| declaration.ty.to_string())
+                .unwrap_or_default();
+            assert_eq!(
+                ty,
+                carrier,
+                "`{expression}` over ({parameters}) must compare at {carrier}: {}",
+                body.render_snapshot()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -417,6 +672,51 @@ fn list_equality_stays_a_primitive_because_that_is_what_the_other_backend_emits(
         rendered.contains(" == "),
         "list equality must stay a primitive comparison rather than becoming a helper call: {rendered}"
     );
+    Ok(())
+}
+
+/// Equality borrows collection operands while a later final use still transfers the original binding.
+#[test]
+fn collection_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def lists(xs: list[int], ys: list[int]) -> bool:\n    return xs == ys\n\ndef sets(xs: Set[int], ys: Set[int]) -> bool:\n    return xs != ys\n\ndef maps(xs: dict[int, int], ys: dict[int, int]) -> bool:\n    return xs == ys\n\ndef retained() -> list[int]:\n    values = [1]\n    same = values == [1]\n    return values\n",
+        &["collection_reads"],
+    )?;
+    for name in ["lists", "sets", "maps", "retained"] {
+        let body = body_named(&module, name)?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or("collection comparison missing")?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err("collection comparison must retain a place".into());
+            };
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(!read.last_use);
+        }
+    }
+    let retained = body_named(&module, "retained")?;
+    let returned = retained
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("retained collection return missing")?;
+    assert_eq!(returned.fact, bir::OwnershipFact::Move);
     Ok(())
 }
 
@@ -952,8 +1252,48 @@ fn text_constants_retain_checked_values_without_shadowing_local_places() -> Resu
     )?;
     let constant = body_named(&module, "constant")?.render_snapshot();
     assert!(constant.contains("hello world"), "{constant}");
+    let declaration = module.constant_declarations.first().ok_or("checked constant missing")?;
+    assert_eq!(declaration.canonical.declaration_name, "TEXT");
+    assert_eq!(declaration.value, bir::Constant::Str("hello world".into()));
     let local = body_named(&module, "local")?.render_snapshot();
     assert!(!local.contains("hello world"), "{local}");
     assert!(local.contains("_0"), "{local}");
+    Ok(())
+}
+
+/// Frozen constants and checked literals keep their storage identity while ordinary text parameters stay places.
+#[test]
+fn frozen_text_operands_retain_the_checked_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const NAME: str = \"policy\"\nconst FROZEN: FrozenStr = \"frozen\"\n\ndef static_text() -> FrozenStr | str | int:\n    return NAME\n\ndef frozen_text() -> FrozenStr | str | int:\n    return FROZEN\n\ndef literal() -> FrozenStr:\n    return \"literal\"\n\ndef owned(value: str) -> FrozenStr | str | int:\n    return value\n",
+        &["m", "frozen_storage"],
+    )?;
+    for (name, expected) in [
+        ("static_text", "policy"),
+        ("frozen_text", "frozen"),
+        ("literal", "literal"),
+    ] {
+        let body = body_named(&module, name)?;
+        assert!(
+            body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Return { value: Some(bir::Operand::Constant(bir::Constant::FrozenStr(text))) }
+                    if text == expected
+            )),
+            "{}",
+            body.render_snapshot()
+        );
+    }
+    let owned = body_named(&module, "owned")?;
+    assert!(
+        owned.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(_))
+            }
+        )),
+        "{}",
+        owned.render_snapshot()
+    );
     Ok(())
 }

@@ -1,0 +1,32 @@
+"""Project a local compiler Loaf's selected graph without Cargo metadata or build execution."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from loaf_local_graph import LocalDemand, select
+from loaf_pin_check import read_cfg
+from rust_activation import DependencyDomain, TargetConfiguration
+
+
+def run(arguments: list[str]) -> Result[None, str]:
+    """Accept a local Loaf, retained host cfg, and explicit features with root defaults disabled."""
+    root = Path(arguments[1]).resolve().map_err((e) => e.message())?
+    configuration = TargetConfiguration(triple="aarch64-apple-darwin", cfg=Some(read_cfg(arguments[2])?))
+    result = select(LocalDemand(project=root.0, domain=DependencyDomain.Target, features=arguments[3:], defaults=false), configuration)?
+    println(result.to_json().map_err((e) => e.message())?)
+    return Ok(None)
+
+
+pub def main() -> None:
+    """Read positional input only; the output is an explicit graph request rather than an admitted lock."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) < 3:
+        println("usage: loaf_local_main PROJECT CFG_FILE [FEATURE ...]")
+        exit(2)
+    match run(arguments):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)

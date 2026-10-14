@@ -1,6 +1,6 @@
 """Class receiver frames and canonical source method admission."""
 
-from rust::incan_semantics_core import SemanticSourceTargetKind, canonical_module_identity
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, canonical_module_identity
 from rust::incan_semantics_core::body_ir import (
     Body,
     LocalOrigin,
@@ -10,14 +10,25 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
     ArgumentElement as RustArgumentElement,
 )
-from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan
+from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
 from unions import native_source_type, collect_unions
+from symbols import symbol_component, type_component
 
 
-pub def frame_type(module: &BodyIrModule, local: &RustLocal) -> Result[PlanType, str]:
+pub def frame_type(
+    module: &BodyIrModule,
+    local: &RustLocal,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
     """Turn only checker-retained receiver origins into borrowed native frame slots."""
-    ty = native_source_type(module.nominal_declarations, module.enum_declarations, collect_unions(module), local.ty)?
+    ty = native_source_type(
+        module.nominal_declarations,
+        module.enum_declarations,
+        collect_unions(module),
+        local.ty,
+        intrinsics,
+    )?
     match receiver_mode(local.origin):
         Some(mutable) =>
             match ty:
@@ -43,7 +54,11 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
         None => pass
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
-            Some(_mutable) => return f"__incan_body_{body.span.start}_{body.locals[0].ty}"
+            Some(_mutable) =>
+                mut symbol = f"__incan_body_{body.span.start}{type_component(body.locals[0].ty)}"
+                if len(body.type_parameters) != 0:
+                    symbol += symbol_component(str(body.name))
+                return symbol
             None => pass
     return f"__incan_body_{body.span.start}"
 
@@ -58,6 +73,40 @@ pub def body_module_identity(body: &Body) -> Result[str, str]:
         None => return Err("invalid Body IR body without canonical identity")
 
 
+pub def body_type_bindings(
+    module: &BodyIrModule,
+    body: &Body,
+    arguments: list[RustType],
+) -> Result[tuple[list[str], list[RustType]], str]:
+    """Retain the scheduled method's checked class bindings alongside its own ordered call arguments."""
+    names = body.type_parameters.clone()
+    if len(names) != len(arguments):
+        return Err(f"unsupported Body IR active type argument arity on {body.name}")
+    if len(body.locals) == 0:
+        return Ok((names, arguments))
+    match receiver_mode(body.locals[0].origin):
+        None => return Ok((names, arguments))
+        Some(_mutable) => pass
+    match body.locals[0].ty:
+        RustType.Generic(base=base, args=owner_arguments) =>
+            for declaration in module.nominal_declarations:
+                if declaration.canonical.declaration_name != str(base):
+                    continue
+                if len(declaration.type_parameters) != len(owner_arguments):
+                    return Err(f"unsupported Body IR active class type argument arity on {base}")
+                for name in declaration.type_parameters:
+                    if str(name) in names:
+                        return Err(f"unsupported Body IR shadowed class and method type parameter {name}")
+                mut bindings: list[RustType] = []
+                for argument in owner_arguments:
+                    bindings.append(argument.clone())
+                for argument in arguments:
+                    bindings.append(argument.clone())
+                return Ok((declaration.type_parameters.clone() + names, bindings))
+        _ => pass
+    return Ok((names, arguments))
+
+
 def module_function_symbol(owner: str, body: &Body) -> str:
     """Encode the full owner and declaration span using identifier-safe bytes without punctuation collisions."""
     mut symbol = "__incan_module"
@@ -69,16 +118,9 @@ def module_function_symbol(owner: str, body: &Body) -> str:
             Some(_mutable) =>
                 symbol += f"_receiver{symbol_component(str(body.locals[0].ty))}"
             None => pass
+    if len(body.type_parameters) != 0:
+        symbol += symbol_component(str(body.name))
     return f"{symbol}_{body.span.start}_{body.span.end}"
-
-
-def symbol_component(value: str) -> str:
-    """Encode one length-delimited UTF-8 component without admitting punctuation into a native identifier."""
-    encoded = value.encode()
-    mut component = f"_{len(encoded)}"
-    for byte in encoded:
-        component += f"_{byte}"
-    return component
 
 
 pub def method_receiver(
@@ -88,10 +130,12 @@ pub def method_receiver(
     index: int,
     argument: &RustArgumentElement,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Require a single receiver argument before lowering its checked borrow in the active local frame."""
     match argument.as_one():
-        Some(value) => return receiver_borrow(module, locals, local_offset, index, value, span)
+        Some(value) => return receiver_borrow(module, locals, local_offset, index, value, span, unions, intrinsics)
         None => return Err("unsupported Body IR Method spread receiver")
 
 
@@ -102,17 +146,19 @@ def receiver_borrow(
     index: int,
     value: &RustOperand,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
     body = module.bodies[index]
-    receiver_type = frame_type(module, body.locals[0])?
+    receiver_type = frame_type(module, body.locals[0], intrinsics)?
     match value:
         RustOperand.Place(read) =>
             match read.fact:
                 OwnershipFact.Borrow => pass
                 OwnershipFact.MutBorrow => pass
                 _ => return Err("unsupported Body IR Method receiver ownership")
-            mut receiver = model_place(module.nominal_declarations, locals, read.place, span)?
+            mut receiver = model_place(module.nominal_declarations, locals, read.place, span, module.enum_declarations, unions, intrinsics)?
             receiver.local += local_offset
             match receiver_type:
                 PlanType.ModelRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))

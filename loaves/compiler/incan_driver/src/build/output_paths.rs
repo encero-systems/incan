@@ -96,15 +96,13 @@ pub fn validated_project_output_relative_path(relative_path: &str, role: &str) -
     Ok(relative.to_path_buf())
 }
 
-/// Add one regular file physically below the project root to the completed-Loaf publication set.
+/// Resolve one regular output file and its path relative to its physical artifact root.
 ///
 /// Resolve ancestor aliases on both sides before checking containment, while refusing a symlink at the file itself.
-fn append_project_output_bake_file(
+pub(super) fn canonical_output_file_relative_to_root(
     project_root: &Path,
     source_path: &Path,
-    output_relative_path: String,
-    files: &mut Vec<OvenProjectOutputBakeFile>,
-) -> CliResult<()> {
+) -> CliResult<(PathBuf, String)> {
     let metadata = fs::symlink_metadata(source_path).map_err(|error| {
         CliError::failure(format!(
             "cannot retain generated Oven project output {}: {error}",
@@ -140,10 +138,21 @@ fn append_project_output_bake_file(
         })?
         .to_string_lossy()
         .replace('\\', "/");
+    let _ = validated_project_output_relative_path(&caller_relative_path, "caller output")?;
+    Ok((canonical_source, caller_relative_path))
+}
+
+/// Add one regular file physically below the project root to the completed-Loaf publication set.
+fn append_project_output_bake_file(
+    project_root: &Path,
+    source_path: &Path,
+    output_relative_path: String,
+    files: &mut Vec<OvenProjectOutputBakeFile>,
+) -> CliResult<()> {
+    let (canonical_source, caller_relative_path) = canonical_output_file_relative_to_root(project_root, source_path)?;
     let output_relative_path = validated_project_output_relative_path(&output_relative_path, "stored output")?
         .to_string_lossy()
         .replace('\\', "/");
-    let _ = validated_project_output_relative_path(&caller_relative_path, "caller output")?;
     files.push(OvenProjectOutputBakeFile {
         source_path: canonical_source,
         caller_relative_path,
