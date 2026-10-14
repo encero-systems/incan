@@ -11,6 +11,10 @@
 pub mod cli;
 pub mod commands;
 pub mod invocation_trace;
+pub mod project_owner;
+pub mod test_command;
+pub mod test_runner;
+pub mod workspace_scope;
 
 pub use cli::{
     LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
@@ -23,6 +27,21 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 /// Run one `oven` command family member.
 pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
+        OvenCommand::Tests {
+            arguments,
+            incan_only,
+            rust_only,
+        } => {
+            use std::io::IsTerminal;
+            let languages = if incan_only {
+                test_runner::TestLanguages::Incan
+            } else if rust_only {
+                test_runner::TestLanguages::Rust
+            } else {
+                test_runner::TestLanguages::All
+            };
+            test_command::run(arguments, std::io::stdout().is_terminal(), languages)
+        }
         OvenCommand::ConvertCargo { workspace, project } => commands::oven::convert_cargo::run(&workspace, &project),
         OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
         OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),

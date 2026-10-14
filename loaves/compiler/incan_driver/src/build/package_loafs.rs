@@ -836,7 +836,7 @@ mod tests {
 
         let owners = store.select_payloads_for_execution(std::slice::from_ref(&entries[0].identity))?;
         let root = owners[0]
-            .artifact_root
+            .artifact_root()
             .parent()
             .ok_or("selected owner has no entry root")?;
         let manifest_path = root.join("loaf.json");
@@ -911,9 +911,9 @@ mod tests {
             assert_eq!(owners.len(), 1);
             let owner = owners.remove(0);
             owner.verify_admitted_payload()?;
-            assert_eq!(owner.manifest.receipt_identity, entry.receipt.identity);
-            assert_eq!(owner.manifest.kind, entry.kind);
-            assert_eq!(owner.manifest.intent, entry.receipt.intent);
+            assert_eq!(owner.manifest().receipt_identity, entry.receipt.identity);
+            assert_eq!(owner.manifest().kind, entry.kind);
+            assert_eq!(owner.manifest().intent, entry.receipt.intent);
         }
         let oversized = package_store.publish(&OvenArtifactPublishRequest {
             receipt: release_receipt,
@@ -1057,9 +1057,22 @@ mod tests {
         let entry_root = entry.path;
         drop(lease);
         fs::write(entry_root.join("last-used"), b"1\n")?;
+        let observed = |root: &Path| -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+            let mut paths = Vec::new();
+            incan_frontend::library_manifest::visit_provider_artifact_inputs(root, &mut |path| {
+                paths.push(path.to_path_buf())
+            })?;
+            Ok(paths)
+        };
+        let before_paths = observed(&checked.artifact_root)?;
         let published_digest = digest_provider_artifact(&checked.artifact_root)?;
         import_checked_packaged_library_loaf(&consumer_store, &checked)?;
-        assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
+        assert_eq!(
+            digest_provider_artifact(&checked.artifact_root)?,
+            published_digest,
+            "before: {before_paths:?}; after: {:?}",
+            observed(&checked.artifact_root)?
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

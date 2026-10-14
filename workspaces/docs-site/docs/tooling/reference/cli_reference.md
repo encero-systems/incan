@@ -566,7 +566,7 @@ incan fmt --diff path/to/file.incn
 incan test [OPTIONS] [PATH]
 ```
 
-Collects and runs the tests under `PATH` (default `.`).
+Collects and runs Incan tests under `PATH` (default `.`), delegating to the same runner as `oven tests --incan-only`. Use [`oven tests`](#oven-tests) to combine Incan and Rust tests.
 
 On Unix, test commands automatically connect to the same compatible project owner as builds. It retains canonical project and dependency-session preparation while reading current test and conftest sources for each request. Build and test share native dependency admission under the same reconciled lock, compiler and provider identity; changed selected native inputs discard that admission before it can be reused. Each execution runs fresh test processes and fixtures; passing results are never cached. Console output, JSON Lines records and diagnostics return to the requesting CLI, including output from parallel workers. `--list` uses parser-only preparation and does not prepare or execute test artifacts. Other platforms invoke the same runner within the command process.
 
@@ -604,6 +604,33 @@ incan test --format json --junit reports/junit.xml tests/
 incan test --shuffle --seed 12345 tests/
 incan test --frozen
 incan test tests/ --no-default-features --features json --sdk-profile minimal
+```
+
+## `oven tests`
+
+```text
+oven tests [--incan-only | --rust-only] [OPTIONS] [PATH]
+incan oven tests [--incan-only | --rust-only] [OPTIONS] [PATH]
+```
+
+Runs both Incan and Rust tests by default. The language flags are mutually exclusive; `incan test` always selects Incan only. All three spellings use the same option conversion, project owner, selection, scheduler, reporting and failure status. The [test options](#incan-test) apply to either language, while Incan decorators and fixtures apply only to Incan sources.
+
+| Surface | Contract |
+| --- | --- |
+| `--incan-only` | Collect only Incan tests. `--list` uses parser-only preparation. |
+| `--rust-only` | Collect only Rust tests from the selected package. |
+| Rust roots | Conventional `src/lib.rs`, `src/main.rs`, declared `[[rust.bin]]` paths and direct `tests/*.rs` roots. A mixed Loaf's `[rust.source].root` owns its `src/` directory. Nested modules belong to their crate root. |
+| Rust collection | Prepare the receipt-bound native harness and query its libtest inventory. `--list` may compile a Rust harness, but runs no test bodies. |
+| Rust selection | Stable IDs contain the source path and exact libtest name. `-k` selects those IDs; excluded cases never execute. `#[ignore]` cases remain skipped. |
+| Rust preparation | Uses authored `loaf.toml` dependencies and prebuilt Loaves. A sibling `.loaf.toml` can supply an integration root's declaration. Roots requiring unsupported build-script facts or dependency feature forwarding are refused. |
+| Scheduling | Selected Rust cases execute separately. Compatible Incan cases retain shared harnesses for their existing fixture lifetimes. `--jobs`, failure handling and reports are common. |
+| Result | A failed selected test or preparation error fails the command. Passing outcomes are never cached. JSON retains `incan.test.v1`; JUnit combines selected cases from both languages. |
+
+```bash
+oven tests
+oven tests tests/ --rust-only -k native_case
+oven tests --incan-only --list
+oven tests --format json --junit reports/all-tests.xml
 ```
 
 ## `incan new`

@@ -15,10 +15,11 @@ use incan_driver::session::CompilationSession;
 mod execution;
 pub(crate) mod output;
 mod reporter;
+mod rust;
 
 pub use incan_driver::testing::discovery::{discover_test_files, discover_tests_and_fixtures};
 pub use incan_driver::testing::types::{
-    DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,
+    DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestLanguages, TestMarker,
     TestOutputFormat, TestResult, TestRunConfig, TestSummary, WorkspaceTestContext,
 };
 pub use reporter::{ConsoleReporter, TestReporter};
@@ -948,6 +949,13 @@ fn run_execution_unit(
     emit_progress: bool,
     output: TestOutputSink,
 ) -> Vec<(TestInfo, TestResult)> {
+    if unit
+        .tests
+        .first()
+        .is_some_and(|test| test.file_path.extension().is_some_and(|extension| extension == "rs"))
+    {
+        return rust::execute(&unit.tests, command_context, unit.timeout, no_capture, &output);
+    }
     run_file_tests_batch(
         &unit.tests,
         &unit.conftest_files_by_file,
@@ -994,6 +1002,11 @@ fn unit_can_include(
     allow_cross_file_batches: bool,
 ) -> bool {
     !unit.serial
+        && test.file_path.extension().is_none_or(|extension| extension != "rs")
+        && unit
+            .file_paths
+            .iter()
+            .all(|path| path.extension().is_none_or(|extension| extension != "rs"))
         && !test_is_serial(test)
         && (allow_cross_file_batches || unit.file_paths.contains(&test.file_path))
         && unit.timeout == effective_timeout(test, default_timeout)
@@ -1285,6 +1298,7 @@ fn run_scheduled_execution_units(
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TestCollectionOptions {
+    languages: TestLanguages,
     /// Explicit client-resolved collection path.
     pub(crate) path: String,
     verbose: bool,
@@ -1303,6 +1317,7 @@ impl TestCollectionOptions {
     /// Own the collection subset of the existing request configuration without changing selection semantics.
     pub(crate) fn from_config(config: &TestRunConfig<'_>) -> Self {
         Self {
+            languages: config.languages,
             path: config.path.to_string(),
             verbose: config.verbose,
             include_slow: config.include_slow,
@@ -1368,6 +1383,7 @@ impl TestExecutionRequest {
     /// Recreate the existing borrowed runner configuration only for this request's execution lifetime.
     fn as_config(&self) -> TestRunConfig<'_> {
         TestRunConfig {
+            languages: self.collection.languages,
             path: &self.collection.path,
             verbose: self.collection.verbose,
             include_slow: self.collection.include_slow,
@@ -1414,8 +1430,7 @@ impl TestExecutionRequest {
 
 /// Fresh collection and selection, retaining only the session's original compiler authority inside its owner.
 struct SelectedTestCollection {
-    session: Arc<CompilationSession>,
-    test_files: Vec<PathBuf>,
+    command_context: Option<Arc<OvenTestCommandContext>>,
     filtered_tests: Vec<TestInfo>,
     stable_id_root: PathBuf,
     default_timeout: Option<Duration>,
@@ -1424,10 +1439,12 @@ struct SelectedTestCollection {
 /// Run the single discovery/collection/selection implementation with a canonical or retained session supplier.
 fn collect_selected_tests(
     options: &TestCollectionOptions,
-    prepare_session: impl FnOnce(&Path, &Path) -> CliResult<Arc<CompilationSession>>,
+    owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    list_only: bool,
     mut emit: impl FnMut(String),
 ) -> CliResult<SelectedTestCollection> {
     let TestCollectionOptions {
+        languages,
         path,
         verbose,
         include_slow,
@@ -1445,19 +1462,49 @@ fn collect_selected_tests(
     enforce_test_path_toolchain_constraint(path)?;
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
-    if candidates.is_empty() {
+    let rust_roots = if *languages != TestLanguages::Incan {
+        rust::discover_roots(path)?
+    } else {
+        Vec::new()
+    };
+    if (candidates.is_empty() || *languages == TestLanguages::Rust) && rust_roots.is_empty() {
         return Err(CliError::failure(format!(
             "No test files found in '{}'\nTest files should be named test_*.incn or *_test.incn",
             path.display()
         )));
     }
-    let authority_root = candidates.command_authority_root().map_err(CliError::failure)?;
-    let representative_test = candidates
-        .representative_path(&authority_root)
-        .ok_or_else(|| CliError::failure("test candidate inventory lost its representative source"))?;
+    let authority_root = if candidates.is_empty() || *languages == TestLanguages::Rust {
+        rust::project_root(path)?.ok_or_else(|| CliError::failure("Rust tests require an authored project"))?
+    } else {
+        candidates.command_authority_root().map_err(CliError::failure)?
+    };
+    let representative_test = if *languages == TestLanguages::Rust {
+        rust_roots.first().cloned()
+    } else {
+        candidates
+            .representative_path(&authority_root)
+            .map(Path::to_path_buf)
+            .or_else(|| rust_roots.first().cloned())
+    };
+    let representative_test =
+        representative_test.ok_or_else(|| CliError::failure("test inventory lost its representative source"))?;
     drop(stage);
     let stage = trace_test_stage("session");
-    let session = prepare_session(&authority_root, representative_test)?;
+    let session = if list_only && *languages == TestLanguages::Incan {
+        owner.test_collection_session(
+            &authority_root,
+            &representative_test,
+            package_features,
+            sdk_profile.as_deref(),
+        )?
+    } else {
+        owner.test_execution_session(
+            &authority_root,
+            &representative_test,
+            package_features,
+            sdk_profile.as_deref(),
+        )?
+    };
     if let Some(manifest) = session.manifest.as_ref() {
         let session_root =
             std::fs::canonicalize(manifest.project_root()).unwrap_or_else(|_| manifest.project_root().to_path_buf());
@@ -1471,8 +1518,12 @@ fn collect_selected_tests(
     }
     drop(stage);
     let stage = trace_test_stage("candidate_selection");
-    let test_files = discover_test_files_with_session(&candidates, &authority_root, session.as_ref());
-    if test_files.is_empty() {
+    let test_files = if *languages == TestLanguages::Rust {
+        Vec::new()
+    } else {
+        discover_test_files_with_session(&candidates, &authority_root, session.as_ref())
+    };
+    if test_files.is_empty() && rust_roots.is_empty() {
         return Err(CliError::failure(format!(
             "No test files found in '{}'\nTest files should be named test_*.incn or *_test.incn",
             path.display()
@@ -1482,7 +1533,7 @@ fn collect_selected_tests(
     let stage = trace_test_stage("lock_policy");
     validate_oven_test_lock_policy(
         session.as_ref(),
-        &test_files[0],
+        &representative_test,
         cargo_policy,
         package_features,
         sdk_profile.as_deref(),
@@ -1494,7 +1545,25 @@ fn collect_selected_tests(
     let mut conftest_cache = ConftestDiscoveryCache::default();
     let inventory = collect_test_inventory(&test_files, path, &eval_context, session.as_ref(), &mut conftest_cache)
         .map_err(CliError::failure)?;
-    let all_tests = inventory.tests;
+    let mut all_tests = inventory.tests;
+    let command_context = if !list_only || !rust_roots.is_empty() {
+        let _admission = trace_test_stage("dependency_admission");
+        let native_context = owner.native_dependency_context(&session)?;
+        let mut planned = test_files.clone();
+        planned.extend(rust_roots.iter().cloned());
+        let mut context =
+            prepare_oven_test_command_context(Arc::clone(&session), &representative_test, &planned, native_context)?;
+        let context_mut = Arc::get_mut(&mut context)
+            .ok_or_else(|| CliError::failure("test command context escaped before collection"))?;
+        for root in rust_roots {
+            let prepared = rust::prepare(&root, context_mut, package_features)?;
+            all_tests.extend(prepared.tests.iter().cloned());
+            context_mut.rust_roots.insert(root, prepared);
+        }
+        Some(context)
+    } else {
+        None
+    };
     let all_fixtures = inventory.fixtures;
     let known_markers = inventory.known_markers;
 
@@ -1553,8 +1622,7 @@ fn collect_selected_tests(
     );
 
     Ok(SelectedTestCollection {
-        session,
-        test_files,
+        command_context,
         filtered_tests,
         stable_id_root,
         default_timeout,
@@ -1576,13 +1644,7 @@ pub(crate) fn list_tests_with_owner(
     emit: impl FnMut(String),
 ) -> CliResult<TestListReport> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::test", input = %options.path, list_only = true, jobs = 1).entered();
-    let collected = collect_selected_tests(
-        options,
-        |root, entry| {
-            owner.test_collection_session(root, entry, &options.package_features, options.sdk_profile.as_deref())
-        },
-        emit,
-    )?;
+    let collected = collect_selected_tests(options, owner, true, emit)?;
     Ok(TestListReport {
         ids: collected
             .filtered_tests
@@ -1613,6 +1675,7 @@ pub(crate) fn execute_tests_with_owner(
     let config = request.as_config();
     let collection_options = TestCollectionOptions::from_config(&config);
     let TestRunConfig {
+        languages: _,
         path,
         verbose,
         stop_on_fail,
@@ -1631,8 +1694,8 @@ pub(crate) fn execute_tests_with_owner(
         strict_markers: _,
         jobs,
         test_features: _,
-        package_features,
-        sdk_profile,
+        package_features: _,
+        sdk_profile: _,
         timeout: _,
         no_capture,
         cargo_policy,
@@ -1649,14 +1712,9 @@ pub(crate) fn execute_tests_with_owner(
     let jobs = jobs.max(1);
     let path_for_execution = Path::new(path);
 
-    let collected = collect_selected_tests(
-        &collection_options,
-        |root, entry| owner.test_execution_session(root, entry, &package_features, sdk_profile.as_deref()),
-        |message| output.stdout(message),
-    )?;
+    let collected = collect_selected_tests(&collection_options, owner, false, |message| output.stdout(message))?;
     let SelectedTestCollection {
-        session,
-        test_files,
+        command_context,
         mut filtered_tests,
         stable_id_root,
         default_timeout,
@@ -1670,11 +1728,8 @@ pub(crate) fn execute_tests_with_owner(
         return Ok(ExitCode::SUCCESS); // "no tests collected" is not a failure
     }
 
-    let stage = trace_test_stage("dependency_admission");
-    let native_context = owner.native_dependency_context(&session)?;
     let command_context =
-        prepare_oven_test_command_context(Arc::clone(&session), &test_files[0], &test_files, native_context)?;
-    drop(stage);
+        command_context.ok_or_else(|| CliError::failure("test execution lost its prepared command context"))?;
     let stage = trace_test_stage("scheduling");
 
     let shuffle_seed = if shuffle {
@@ -1948,6 +2003,34 @@ mod tests {
         }
     }
 
+    /// Rust units never enter the generated Incan harness or share its fixture lifetime.
+    #[test]
+    fn mixed_languages_use_distinct_execution_units() {
+        let incan = make_test("test_incan", Vec::new());
+        let mut rust = make_test("tests::native", Vec::new());
+        rust.file_path = PathBuf::from("tests/native.rs");
+        let mut tests = [incan, rust];
+        for _ in 0..2 {
+            let units = build_execution_units(&tests, Path::new("."), None, false, 1);
+            assert_eq!(units.len(), 2);
+            assert!(units.iter().all(|unit| unit.tests.len() == 1));
+            tests.reverse();
+        }
+    }
+
+    /// Selection language survives owner transport rather than reverting to the wrapper default.
+    #[test]
+    fn test_language_selection_survives_owner_transport() -> Result<(), Box<dyn std::error::Error>> {
+        for languages in [TestLanguages::Incan, TestLanguages::Rust, TestLanguages::All] {
+            let mut config = list_test_config("/test-project");
+            config.languages = languages;
+            let wire = serde_json::to_vec(&TestExecutionRequest::from_config(&config))?;
+            let request: TestExecutionRequest = serde_json::from_slice(&wire)?;
+            assert_eq!(request.as_config().languages, languages);
+        }
+        Ok(())
+    }
+
     fn make_case(display_id: &str, rust_args: &str) -> ParametrizeCase {
         ParametrizeCase {
             display_id: display_id.to_string(),
@@ -1959,6 +2042,7 @@ mod tests {
 
     fn list_test_config(path: &str) -> TestRunConfig<'_> {
         TestRunConfig {
+            languages: TestLanguages::Incan,
             path,
             verbose: false,
             stop_on_fail: false,

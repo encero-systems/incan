@@ -708,7 +708,7 @@ mod tests {
         );
         // Match the production plan's held-owner coordinate, including canonicalized temporary-directory ancestors.
         let admitted_store = context.selection.owners[0]
-            .artifact_root
+            .artifact_root()
             .parent()
             .and_then(Path::parent)
             .and_then(Path::parent)
@@ -789,7 +789,7 @@ mod tests {
             .owners
             .first()
             .ok_or("native fixture has no admitted owner")?
-            .manifest
+            .manifest()
             .intent;
         let receipt = receipt_generated_project(
             &OvenGeneratedProjectRequest::new(
@@ -882,11 +882,11 @@ mod tests {
                 .ok_or("shared consumer plan was not selected")?;
         assert_eq!(
             selected.artifact_plan.externs[0].1,
-            selection.owners[0].artifact_root.join("liblocal.rlib")
+            selection.owners[0].artifact_root().join("liblocal.rlib")
         );
         assert_eq!(
             selected.artifact_plan.dependency_search_paths,
-            vec![selection.owners[0].artifact_root.clone()]
+            vec![selection.owners[0].artifact_root().to_path_buf()]
         );
         Ok(())
     }

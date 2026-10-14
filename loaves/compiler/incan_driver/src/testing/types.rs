@@ -148,8 +148,22 @@ pub struct DiscoveryResult {
     pub known_markers: Vec<String>,
 }
 
+/// Source languages admitted to the common test inventory and scheduler.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TestLanguages {
+    /// Collect Incan tests and preserve their fixture scopes.
+    #[default]
+    Incan,
+    /// Collect native libtest cases from authored Rust crate roots.
+    Rust,
+    /// Combine both adapters in the same selection and reporting lifecycle.
+    All,
+}
+
 /// Configuration for a test run, grouping the many options that `run_tests` needs.
 pub struct TestRunConfig<'a> {
+    /// Source adapters selected by the command; Incan's wrapper always selects only Incan.
+    pub languages: TestLanguages,
     pub path: &'a str,
     pub verbose: bool,
     pub stop_on_fail: bool,

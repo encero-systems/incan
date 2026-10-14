@@ -43,7 +43,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the default main-thread stack, which a long operator chain can exhaust outright.
     incan_frontend::compiler_stack::run_on_compiler_stack(|| {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_cli::run", input = ?std::env::args_os().skip(1).collect::<Vec<_>>()).entered();
-        run();
+        match oven_cli::project_owner::run_internal() {
+            Ok(true) => {}
+            Ok(false) => run(),
+            Err(error) => {
+                eprintln!("{error}");
+                process::exit(error.exit_code.0);
+            }
+        }
     });
     Ok(())
 }
