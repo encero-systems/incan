@@ -6064,6 +6064,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/enum_payload_publication.rs": {
+      "disposition": "keep",
+      "notes": "Imported enum payload context retains exact canonical origin and required public layout; frontend-only contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/for_patterns.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6323,6 +6331,14 @@
     "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_ordinal_dispatch.rs": {
       "disposition": "keep",
       "notes": "Checked SDK scalar Self receivers and associated trait signatures; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/static_publication.rs": {
+      "disposition": "keep",
+      "notes": "Public storage publication retains canonical initialization and requires the reader's exact storage context; frontend-only contracts.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
