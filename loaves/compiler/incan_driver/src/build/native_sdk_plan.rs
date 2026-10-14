@@ -326,7 +326,7 @@ pub(crate) fn select_native_sdk_plan_with_ordinary(
         .map(|(index, (unit, owner))| {
             Ok(oven_rustc::plan::shared::OvenSharedNativeRoot {
                 store: owner
-                    .artifact_root
+                    .artifact_root()
                     .parent()
                     .and_then(Path::parent)
                     .and_then(Path::parent)
@@ -402,8 +402,8 @@ fn native_unit_manifest(
     };
     let files = Vec::new();
     for (index, (unit, owner)) in selection.units.iter().zip(&selection.owners).enumerate() {
-        if owner.manifest.intent.target != receipt.intent.target
-            || owner.manifest.intent.toolchain != receipt.intent.toolchain
+        if owner.manifest().intent.target != receipt.intent.target
+            || owner.manifest().intent.toolchain != receipt.intent.toolchain
         {
             return Err(CliError::failure(format!(
                 "native SDK unit `{}` has a different compiler or target",

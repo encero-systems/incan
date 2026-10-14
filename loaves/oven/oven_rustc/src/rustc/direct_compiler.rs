@@ -472,7 +472,7 @@ impl OvenOwnedDirectRustcCompiler {
 
     /// Toolchain identity the closure was admitted under, as the receipt records it.
     pub fn toolchain(&self) -> &str {
-        &self.owner.manifest.intent.toolchain
+        &self.owner.manifest().intent.toolchain
     }
 }
 

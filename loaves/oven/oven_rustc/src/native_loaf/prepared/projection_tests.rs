@@ -235,14 +235,14 @@ pub(super) fn run_consumer(root: &Path, rustc: &Path, closure: &NativeLoafClosur
             "parent={}",
             parent
                 .native_owner
-                .artifact_root
+                .artifact_root()
                 .join(&parent.record().native.relative_path)
                 .display()
         ));
     for unit in closure.graph().units().values() {
         command
             .arg("-L")
-            .arg(format!("dependency={}", unit.native_owner.artifact_root.display()));
+            .arg(format!("dependency={}", unit.native_owner.artifact_root().display()));
     }
     let compilation = command.output()?;
     if !compilation.status.success() {

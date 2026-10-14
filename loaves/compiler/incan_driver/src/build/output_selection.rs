@@ -283,7 +283,7 @@ pub fn has_stale_baked_project_output(
         )
         .map_err(|error| CliError::failure(format!("failed to inspect Oven project-output Loafs: {error}")))?;
     for candidate in candidates {
-        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&candidate.payload) else {
+        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(candidate.payload()) else {
             continue;
         };
         if payload.schema_version == OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
@@ -496,10 +496,10 @@ pub(super) fn project_outputs_with_source_authority(
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loaf: {error}")))?;
     let mut matches = Vec::new();
     for selected in selected {
-        if !manifest_matches(&selected.manifest) || !payload_matches(&selected.manifest, &selected.payload) {
+        if !manifest_matches(selected.manifest()) || !payload_matches(selected.manifest(), selected.payload()) {
             continue;
         }
-        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&selected.payload) else {
+        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(selected.payload()) else {
             // Selection already checked these immutable payload bytes before acquiring the execution lease.
             continue;
         };
@@ -645,9 +645,9 @@ fn select_debug_project_outputs(
             .iter()
             .enumerate()
             .filter(|(_, expected)| {
-                candidate.manifest.receipt_identity == expected.receipt.identity
-                    && candidate.manifest.build_unit_identity == expected.receipt.build_unit_identity
-                    && candidate.manifest.intent == expected.receipt.intent
+                candidate.manifest().receipt_identity == expected.receipt.identity
+                    && candidate.manifest().build_unit_identity == expected.receipt.build_unit_identity
+                    && candidate.manifest().intent == expected.receipt.intent
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
@@ -669,17 +669,17 @@ fn select_debug_project_outputs(
         if candidates.is_empty() {
             return Ok(None);
         }
-        candidates.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+        candidates.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
         let mut exact = Vec::with_capacity(candidates.len());
         let mut rejected = Vec::new();
         for candidate in candidates {
-            let payload = match serde_json::from_slice::<OvenProjectOutputPayload>(&candidate.payload) {
+            let payload = match serde_json::from_slice::<OvenProjectOutputPayload>(candidate.payload()) {
                 Ok(payload) => payload,
                 Err(error) => {
                     rejected.push(CliError::failure(format!(
                         "exact debug {} project-output Loaf `{}` has an invalid payload: {error}",
                         expected.target.as_str(),
-                        candidate.manifest.identity
+                        candidate.manifest().identity
                     )));
                     continue;
                 }
@@ -698,7 +698,7 @@ fn select_debug_project_outputs(
                 rejected.push(CliError::failure(format!(
                     "exact debug {} project-output Loaf `{}` disagrees with its source-current lineage; rerun `incan oven bake --project .`",
                     expected.target.as_str(),
-                    candidate.manifest.identity
+                    candidate.manifest().identity
                 )));
                 continue;
             }

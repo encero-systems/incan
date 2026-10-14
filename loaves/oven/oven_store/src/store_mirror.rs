@@ -88,13 +88,15 @@ where
         if candidates.is_empty() {
             continue;
         }
-        candidates.sort_by_key(|candidate| family_import_rank(candidate.manifest.kind));
+        candidates.sort_by_key(|candidate| family_import_rank(candidate.manifest().kind));
         let mut imported = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             candidate.verify_admitted_record()?;
-            let Some(receipt) =
-                import_receipt_for(&candidate.manifest, candidate.original_native_receipt(), caller_receipt)
-            else {
+            let Some(receipt) = import_receipt_for(
+                candidate.manifest(),
+                candidate.original_native_receipt(),
+                caller_receipt,
+            ) else {
                 // Nothing to publish this entry under: no witness, and no caller receipt it was published for. It is
                 // left to the local bake. Not an error: a mirror may hold such entries beside importable ones.
                 continue;
@@ -157,7 +159,7 @@ where
                 |_, _| true,
             )?
             .into_iter()
-            .filter(|candidate| matches(&candidate.manifest, &candidate.payload))
+            .filter(|candidate| matches(candidate.manifest(), candidate.payload()))
             .collect::<Vec<_>>();
         if candidates.is_empty() {
             continue;
@@ -168,13 +170,13 @@ where
         // several identities. Each of them would be read and re-digested in full only to resolve to the local entry
         // the first one created, so the duplicates are dropped here, keeping the smallest identity for a stable
         // choice.
-        candidates.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+        candidates.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
         let mut distinct = Vec::<OvenStoreExecutionPayload>::with_capacity(candidates.len());
         for candidate in candidates {
             let duplicate = distinct.iter().any(|kept| {
-                kept.manifest.payload == candidate.manifest.payload
-                    && kept.manifest.materialized_files == candidate.manifest.materialized_files
-                    && kept.manifest.materialized_directories == candidate.manifest.materialized_directories
+                kept.manifest().payload == candidate.manifest().payload
+                    && kept.manifest().materialized_files == candidate.manifest().materialized_files
+                    && kept.manifest().materialized_directories == candidate.manifest().materialized_directories
             });
             if !duplicate {
                 distinct.push(candidate);
@@ -338,7 +340,7 @@ mod tests {
             "content identity survives the copy"
         );
         assert_eq!(selected.len(), 1, "and it now selects locally");
-        assert_eq!(selected[0].payload, b"closure payload");
+        assert_eq!(selected[0].payload(), b"closure payload");
         assert!(
             local
                 .entry_root_for_tests(&published.identity)
@@ -495,7 +497,7 @@ mod tests {
         let selected =
             local.select_payloads_matching_for_execution(|m| m.identity == admitted.identity, |_, _| true)?;
         assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].payload, br#"{"key":"k1"}"#);
+        assert_eq!(selected[0].payload(), br#"{"key":"k1"}"#);
 
         // A mismatched intent is never a candidate, whatever the payload says.
         let mut other_intent = receipt.clone();

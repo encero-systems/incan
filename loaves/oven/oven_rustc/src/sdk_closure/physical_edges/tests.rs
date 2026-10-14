@@ -76,7 +76,7 @@ fn node(
     let physical_edges = capture(&owner, &receipt, selected)?;
     Ok(SdkCompiledUnit {
         binding,
-        output: owner.artifact_root.join("libsame.rlib"),
+        output: owner.artifact_root().join("libsame.rlib"),
         owner,
         inspection: serde_json::Value::Null,
         physical_edges,

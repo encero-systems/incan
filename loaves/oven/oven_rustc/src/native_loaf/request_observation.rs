@@ -293,8 +293,8 @@ impl NativeLoafRequestObservation {
                     identity,
                     (
                         unit.record(),
-                        &unit.record_owner.artifact_root,
-                        &unit.native_owner.artifact_root,
+                        unit.record_owner.artifact_root(),
+                        unit.native_owner.artifact_root(),
                     ),
                 )
             })
