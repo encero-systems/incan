@@ -463,7 +463,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         Ok(DirectCallDeclaration {
             is_async: signature.is_some_and(|(is_async, _)| is_async),
-            slots: signature.map(|(_, parameters)| parameters.iter().map(DeclaredSlot::from_checked_param).collect()),
+            slots: signature.map(|(_, parameters)| {
+                self.type_info
+                    .body_ir_call_site_callable_params(call_span)
+                    .unwrap_or(parameters)
+                    .iter()
+                    .map(DeclaredSlot::from_checked_param)
+                    .collect()
+            }),
             direct_call_id: None,
             builtin,
             canonical,
@@ -502,6 +509,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             builtin: None,
             canonical: Some(factory.clone()),
         })
+    }
+
+    /// Retain an applied factory owner from the checked construction result, independently of method type arguments.
+    ///
+    /// A selected static factory returning its own generic nominal carries that owner's arguments on the associated
+    /// call. A wrapper result, ordinary function, absent factory selection or mismatched nominal cannot supply them.
+    /// This consumes existing checked facts only; the legacy inference tables remain unchanged.
+    fn checked_nominal_factory_owner(&self, callee_span: ast::Span, call_span: ast::Span) -> Option<IncanType> {
+        self.checked_nominal_factory_declaration(callee_span, call_span)?;
+        let owner = self.type_info.resolved_identity(callee_span)?;
+        let result = self.resolve_ty(call_span);
+        match &result {
+            IncanType::Generic { base, .. } if base == &owner.declaration_name => Some(result),
+            _ => None,
+        }
     }
 
     /// Retain checked explicit or inferred call-site type arguments, refusing unresolved explicit arguments.
@@ -972,7 +994,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
-            .call_site_callable_params(span)
+            .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
             .or_else(|| {
                 self.enum_payload_types(&target.variant_canonical, &self.resolve_ty(span))
@@ -1141,7 +1163,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// not bind settles nothing; binding the arguments for the call itself still reports those.
     pub(super) fn settle_open_call_arguments(&mut self, span: ast::Span, args: &[ast::CallArg]) {
         let type_info = self.type_info;
-        let Some(params) = type_info.call_site_callable_params(span) else {
+        let Some(params) = type_info.body_ir_call_site_callable_params(span) else {
             return;
         };
         let slots: Vec<DeclaredSlot> = params.iter().map(DeclaredSlot::from_checked_param).collect();
@@ -1338,7 +1360,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
             let declared: Option<Vec<DeclaredSlot>> = self
                 .type_info
-                .call_site_callable_params(span)
+                .body_ir_call_site_callable_params(span)
                 .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
             let (mut operands, binding) =
                 match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
@@ -1356,6 +1378,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     name: method,
                     intrinsic_carrier: None,
                     reflection: None,
+                    sdk_trait: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -1492,7 +1515,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                receiver_type: None,
+                receiver_type: self.checked_nominal_factory_owner(callee.span, span),
                 name,
                 direct_call_id: declaration.direct_call_id,
                 canonical: declaration.canonical,
@@ -1602,7 +1625,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let declared = self
             .type_info
-            .call_site_callable_params(span)
+            .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
         let display_name = canonical.declaration_name.clone();
         let legacy_enumerate_argument = legacy_enumerate_argument(Some(builtin), args);
@@ -1816,7 +1839,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
-            .call_site_callable_params(span)
+            .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
         let (operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declared, args, scope, out) {
@@ -1954,6 +1977,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.static_receiver_type(recv, span).is_some() {
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
+        if let Some(sum) = self.lower_newtype_sum(recv, name, type_args, args, span, scope, out) {
+            return sum;
+        }
         let retained_binding = self.retained_receiver_method_binding(recv, name, span);
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
@@ -1995,7 +2021,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
         let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
 
-        let receiver_operand = self.lower_method_receiver(recv, span, scope, out);
+        let intrinsic_carrier = self.checked_intrinsic_carrier(recv, name);
+        let receiver_operand = self.lower_method_receiver(recv, name, intrinsic_carrier.as_deref(), span, scope, out);
 
         let (mut arg_operands, binding) =
             match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
@@ -2040,16 +2067,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
-                intrinsic_carrier: match self.resolve_ty(recv.span) {
-                    IncanType::Generic { base, .. }
-                        if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
-                            || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
-                    {
-                        Some(base)
-                    }
-                    _ => None,
-                },
+                intrinsic_carrier,
                 reflection: self.checked_reflection_operation(span),
+                sdk_trait: self.type_info.resolved_identity(span).and_then(|identity| {
+                    super::library_calls::trait_dispatch(
+                        identity,
+                        self.type_info.resolved_method_call(span).map(|call| &call.dispatch),
+                    )
+                }),
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one
                 // the program's implementation records and the SDK's published bodies carry.
                 canonical: native_member
@@ -2088,16 +2113,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Read a method receiver before its arguments, retaining existing enum construction and collection borrowing. A
-    /// checked static decorator factory uses the checker's selected mut-self fact; every other source receiver keeps
-    /// the existing borrow policy, matching the legacy ownership planner.
+    /// Retain the existing checked standard-carrier method profile once for both receiver evaluation and dispatch.
+    /// User-defined methods and other carriers keep their canonical source method path.
+    fn checked_intrinsic_carrier(&self, receiver: &ast::Spanned<ast::Expr>, name: &str) -> Option<String> {
+        match self.resolve_ty(receiver.span) {
+            IncanType::Generic { base, .. }
+                if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
+                    || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
+            {
+                Some(base)
+            }
+            _ => None,
+        }
+    }
+
+    /// Read consuming frame carriers before their defaults and retain ordinary receivers as borrowed places. Global
+    /// carriers stay delayed: legacy evaluates a static wrapper's arguments before locking and cloning storage. A
+    /// checked static decorator factory keeps the checker's selected mut-self fact.
     fn lower_method_receiver(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
+        name: &str,
+        intrinsic_carrier: Option<&str>,
         call_span: ast::Span,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        if intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or") {
+            return self.lower_consumed_carrier_receiver(receiver, scope, out);
+        }
         if let ast::Expr::Field(base, member) = &receiver.node
             && self
                 .local_value_enum_variant_target(base, member, receiver.span)
@@ -2123,6 +2167,39 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             bir::OwnershipFact::Borrow
         };
         bir::Operand::place(place, fact, false)
+    }
+
+    /// Materialize a consuming local, field or mutable-parameter carrier under its checked ownership facts, so later
+    /// argument effects cannot change its read. A field cannot move out of its owner, so the retained value is a clone,
+    /// as legacy's consumed-receiver policy requires. An enclosing local read inside a loop stays owned for the next
+    /// iteration even at its final textual occurrence. Global reads retain their static access boundary instead.
+    fn lower_consumed_carrier_receiver(
+        &mut self,
+        receiver: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let ty = self.resolve_ty(receiver.span);
+        let mut value = self.lower_expr_to_operand(receiver, scope, out);
+        if let bir::Operand::Place(read) = &mut value {
+            if read.place.global().is_some() {
+                read.fact = bir::OwnershipFact::Borrow;
+                return value;
+            }
+            if read.fact == bir::OwnershipFact::Borrow {
+                read.fact = bir::OwnershipFact::Clone;
+            }
+            if read.fact == bir::OwnershipFact::Move
+                && !self.loop_break_targets.is_empty()
+                && let Some(local) = read.place.local_id()
+                && self.locals[local.index()].scope != scope
+            {
+                read.fact = bir::OwnershipFact::Clone;
+                read.last_use = false;
+                self.moved_out.remove(&local);
+            }
+        }
+        self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(receiver.span), out)
     }
 
     /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.
@@ -2400,7 +2477,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info
             .body_ir_newtypes
             .callable_params(span, self.type_info)
-            .or_else(|| self.type_info.call_site_callable_params(span))
+            .or_else(|| self.type_info.body_ir_call_site_callable_params(span))
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
     }
 

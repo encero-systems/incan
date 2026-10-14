@@ -4,6 +4,19 @@
 
 use super::*;
 
+/// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
+#[test]
+fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n",
+        &["classmethods"],
+    )?;
+    let body = body_named(&module, "make")?;
+    assert_eq!(body.type_parameters, ["T"]);
+    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Box"));
+    Ok(())
+}
+
 /// Generated reflection retains its checked typed/string mode and excludes type-private slots, not all private slots.
 #[test]
 fn reflection_retains_checked_mode_and_field_policy() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,6 +71,135 @@ fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::e
             module.trait_implementations
         );
     }
+    Ok(())
+}
+
+/// A repeated consuming read clones the incoming carrier and leaves its enclosing scope responsible for its drop.
+#[test]
+fn consuming_carrier_in_a_loop_keeps_the_incoming_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  value: Option[str] = Some(\"kept\")\n  for index in range(2):\n    println(value.unwrap_or(\"fallback\"))\n",
+        &["app", "repeated_carrier"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let local = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("value"))
+        .ok_or("missing carrier local")?;
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing repeated body")?;
+    let read = loop_body
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } if read.place.local_id() == Some(local.id) => Some(read),
+            _ => None,
+        })
+        .ok_or("missing carrier snapshot")?;
+    assert_eq!(read.fact, bir::OwnershipFact::Clone, "{}", body.render_snapshot());
+    assert!(!read.last_use, "a repeated read is not the final dynamic use");
+    assert!(
+        body.block.stmts.iter().any(|statement| matches!(
+            statement.kind, bir::StatementKind::Drop { local: dropped } if dropped == local.id
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A consuming carrier field is materialized before a default can mutate its owner in place.
+#[test]
+fn carrier_receiver_snapshot_precedes_default_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Holder:\n  value: Option[str]\n\ndef reset(mut holder: Holder) -> str:\n  holder.value = Some(\"new\")\n  return \"fallback\"\n\ndef choose(mut holder: Holder) -> str:\n  return holder.value.unwrap_or(reset(holder))\n",
+        &["app", "carrier_order"],
+    )?;
+    let body = body_named(&module, "choose")?;
+    let snapshot = body
+        .block
+        .stmts
+        .iter()
+        .enumerate()
+        .find_map(|(index, statement)| {
+            let bir::StatementKind::Assign { place, rvalue } = &statement.kind else {
+                return None;
+            };
+            let bir::Rvalue::Use(bir::Operand::Place(read)) = rvalue else {
+                return None;
+            };
+            (read.fact == bir::OwnershipFact::Clone).then_some((index, place))
+        })
+        .ok_or_else(|| format!("missing carrier snapshot: {}", body.render_snapshot()))?;
+    let default = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| {
+            matches!(
+                &statement.kind,
+                bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. }
+                    if target.name == "reset"
+            )
+        })
+        .ok_or("missing default call")?;
+    assert!(snapshot.0 < default, "{}", body.render_snapshot());
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "unwrap_or" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => Some(&read.place),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing consuming receiver")?;
+    assert_eq!(receiver, snapshot.1);
+    Ok(())
+}
+
+/// Static defaults are evaluated before reading lock-guarded storage, so Body IR preserves the global receiver.
+#[test]
+fn static_carrier_receiver_remains_after_default_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static VALUE: Option[str] = Some(\"old\")\n\ndef reset() -> str:\n  VALUE = Some(\"new\")\n  return \"fallback\"\n\ndef main() -> str:\n  return VALUE.unwrap_or(reset())\n",
+        &["app", "static_carrier_order"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "unwrap_or" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => read.place.global(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing delayed global receiver")?;
+    assert_eq!(receiver.identity.declaration_name, "VALUE");
     Ok(())
 }
 

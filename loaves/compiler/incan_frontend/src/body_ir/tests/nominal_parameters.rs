@@ -45,8 +45,25 @@ fn executable_call_facts_preserve_legacy_context() -> Result<(), Box<dyn std::er
         .check_program(&program)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let facts = checker.type_info();
-    assert_eq!(facts.calls.body_ir_call_type_arguments.len(), 4);
-    for (span, arguments) in &facts.calls.body_ir_call_type_arguments {
+    let contextual_calls = facts
+        .calls
+        .body_ir_call_type_arguments
+        .iter()
+        .filter(|(span, _)| {
+            facts
+                .calls
+                .call_site_monomorph_type_args
+                .get(span)
+                .is_some_and(|legacy| legacy.iter().any(|ty| matches!(ty, ResolvedType::TypeVar(_))))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        contextual_calls.len(),
+        4,
+        "{:?}",
+        facts.calls.body_ir_call_type_arguments
+    );
+    for (span, arguments) in contextual_calls {
         assert!(
             arguments
                 .iter()

@@ -199,6 +199,7 @@ from option_tests import is_option_carrier, is_union_carrier, option_isinstance,
 from derived_defaults import is_derived_default, lower_derived_default
 from models import field_path, field_projection
 from newtype_hooks import lower_newtype_hook_result
+from newtype_sums import lower_newtype_sum_add, lower_newtype_sum_extract
 from validation_errors import lower_validation_error, display_validation_error
 from models import model_type, model_place, constructor_index, field_slot
 from reflection import lower_reflection
@@ -359,6 +360,7 @@ from defaults import (
     model_default_arguments,
 )
 from type_parameters import Instance, instantiate, substitute
+from generic_callables import owned_callable_slots
 from computed_statics import (
     enters_module_initialization,
     initialize_module_statics,
@@ -1085,6 +1087,13 @@ def is_text_or_nominal(ty: PlanType) -> bool:
         _ => return false
 
 
+def is_owned_callable(ty: PlanType) -> bool:
+    """Identify an environment owner, which transfers and drops separately from copied callable references."""
+    match ty:
+        PlanType.Closure(_signature) => return true
+        _ => return false
+
+
 def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int]) -> Result[None, str]:
     """
     Refuse a branch that leaves different owners live than it started with.
@@ -1582,7 +1591,9 @@ def lower_local_assignment(
         RustRvalue.Generator(source=source, captured_operands=captures, body=generator) =>
             return lower_generator_expression(module, builder, target, source, captures, generator, span)
         RustRvalue.Use(operand) =>
-            if callable_copy_type(place_type(builder.locals, target)):
+            if callable_copy_type(place_type(builder.locals, target)) or is_owned_callable(
+                place_type(builder.locals, target),
+            ):
                 callable = stored_callable(builder, operand, span)?
                 match operand_type(builder, callable)?:
                     PlanType.Closure(signature) =>
@@ -1778,7 +1789,13 @@ def assign_callable(
     if target.projection != Projection.Whole:
         return Err("unsupported Body IR projected callable assignment")
     source = operand_type(builder, value)?
-    ty, operation = function_assignment(place_type(builder.locals, target), source, value, pointer_storage)?
+    ty, operation = function_assignment(
+        place_type(builder.locals, target),
+        source,
+        value,
+        pointer_storage,
+        f"binding in {builder.name}",
+    )?
     builder.locals[target.local].ty = ty
     record_partial(builder, target.local, [])
     builder.emit(plan_assign(target, operation, span))
@@ -2614,6 +2631,17 @@ def lower_call(
         _ => return Err("expected Body IR Call")
 
 
+def value_enum_receiver_place(
+    mut builder: Builder,
+    argument: &RustArgumentElement,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Keep the checked receiver's dereference and field projections before reading its native enum discriminant."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) => return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR nonplace value enum receiver")
+
+
 def lower_value_enum_method(
     mut builder: Builder,
     owner: int,
@@ -2624,7 +2652,7 @@ def lower_value_enum_method(
     """Select the retained raw value by native tag, preserving repeated reads and text ownership."""
     if len(arguments) != 1:
         return Err("unsupported Body IR value enum getter arguments")
-    source = argument_place(builder, arguments, 0, span)?
+    source = value_enum_receiver_place(builder, arguments[0], span)?
     result_type = value_enum_raw_type(builder, owner)
     output = call_destination(builder, destination, result_type, span)?
     if place_type(builder.locals, output) != result_type or output.local in builder.owned:
@@ -2961,8 +2989,8 @@ def instantiated_method_body(
     mut body = module.bodies[index].clone()
     if len(body.type_parameters) != 0:
         closed = checked_type_arguments(builder, target.type_args)?
-        builder.instances.append(Instance(body=body.clone(), arguments=closed))
-        body = instantiate(body, closed)?
+        builder.instances.append(Instance(body=body.clone(), arguments=closed, owned_callable_slots=[]))
+        body = instantiate(body, closed, [])?
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
@@ -3077,7 +3105,7 @@ def lower_library_method(
     An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
     The receiver closes owner placeholders, and the recorded native arguments select the exact compiled trait item.
     """
-    if len(target.type_args) != 0:
+    if len(target.type_args) != 0 and target.sdk_trait == None:
         return Err("unsupported Body IR type arguments on a stdlib method")
     if len(delegation.parameters) == 0 or len(arguments) == 0:
         return Err("unsupported Body IR stdlib method without a receiver")
@@ -3086,7 +3114,7 @@ def lower_library_method(
     for name in delegation.type_parameters:
         names.append(str(name))
     reference = library_receiver(module, builder, receiver_type, arguments[0], span)?
-    closed = library_receiver_arguments(module, builder, reference, names)?
+    closed = library_method_arguments(module, builder, delegation, target, reference, names)?
     mut parameters = [place_type(builder.locals, reference)]
     mut ordinary_types: list[PlanType] = []
     for index in range(1, len(delegation.parameters)):
@@ -3096,9 +3124,7 @@ def lower_library_method(
             native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
         )
     parameters.extend(ordinary_types)
-    returned: RustType = substitute(delegation.return_type, names, closed)?
-    _ = require_native_union_signature(returned, builder.intrinsics)?
-    result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
+    result = library_method_result(builder, delegation, target, destination, names, closed, span)?
     ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
@@ -3134,6 +3160,49 @@ def lower_library_method(
                 )
             external_call(builder, path, parameters, result, operands, output, span)
             return Ok(None)
+
+
+def library_method_arguments(
+    module: &BodyIrModule,
+    builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &MethodTarget,
+    reference: Place,
+    names: list[str],
+) -> Result[list[RustType], str]:
+    """Close a checked SDK trait slot in native Self, trait, and method argument order; inherent calls retain owner binders."""
+    match target.sdk_trait:
+        None => return library_receiver_arguments(module, builder, reference, names)
+        Some(selected) =>
+            if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
+                return Err("unsupported Body IR SDK trait item differs from its delegation")
+            mut closed = library_receiver_arguments(module, builder, reference, ["Self"])?
+            for argument in checked_type_arguments(builder, selected.type_arguments)?:
+                closed.append(argument.clone())
+            for argument in checked_type_arguments(builder, target.type_args)?:
+                closed.append(argument.clone())
+            if len(closed) != len(names):
+                return Err("unsupported Body IR SDK trait method type argument arity")
+            return Ok(closed)
+
+
+def library_method_result(
+    builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &MethodTarget,
+    destination: &Option[RustPlace],
+    names: list[str],
+    closed: list[RustType],
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Use the frontend-retained concrete SDK factory result, with native metadata still checking the exact return carrier."""
+    if target.sdk_trait != None:
+        match destination:
+            Some(place) => return Ok(place_type(builder.locals, scalar_place(builder, place, span)?))
+            None => pass
+    returned: RustType = substitute(delegation.return_type, names, closed)?
+    _ = require_native_union_signature(returned, builder.intrinsics)?
+    return native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)
 
 
 def library_receiver_arguments(
@@ -3323,8 +3392,10 @@ def lower_type_parameter_call(
     """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
     _ = validate_static_receiver(module, target)?
     closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
-    concrete_body = instantiate(body, closed)?
-    builder.instances.append(Instance(body=body.clone(), arguments=closed))
+    typed_body = instantiate(body, closed, [])?
+    owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding)?
+    concrete_body = instantiate(body, closed, owned)?
+    builder.instances.append(Instance(body=body.clone(), arguments=closed, owned_callable_slots=owned))
     return lower_local_call(module, builder, target, concrete_body, arguments, destination, span)
 
 
@@ -3681,7 +3752,11 @@ def lower_delegated_call(
         match target.receiver_type:
             Some(RustType.Generic(base=_base, args=arguments)) =>
                 if len(target.type_args) != 0:
-                    return Err("unsupported Body IR SDK owner and method type arguments")
+                    # The nominal producer also retains the full closed owner on the associated call. Both
+                    # checked views must agree and fill every declared binder before either is used.
+                    retained = checked_type_arguments(builder, target.type_args)?
+                    if len(arguments) != len(names) or retained != arguments:
+                        return Err("unsupported Body IR SDK owner and method type arguments")
                 closed = arguments.clone()
             _ =>
                 closed = checked_type_arguments(builder, target.type_args)?
@@ -4001,7 +4076,7 @@ def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: 
     match ty:
         PlanType.FunctionPointer(_signature) =>
             source = operand_type(builder, value)?
-            _type, operation = function_assignment(ty, source, value, true)?
+            _type, operation = function_assignment(ty, source, value, true, f"call argument in {builder.name}")?
             match operation:
                 RvalueKind.ReifyFunction(_value) =>
                     result = temporary(builder, ty, span)
@@ -4112,6 +4187,8 @@ def lower_runtime_helper(
         RustHelper.NewtypeHookExtract => return lower_newtype_hook_result(builder, arguments, destination, false, span)
         RustHelper.NewtypeFieldHookExtract =>
             return lower_newtype_hook_result(builder, arguments, destination, true, span)
+        RustHelper.NewtypeSumAdd => return lower_newtype_sum_add(builder, arguments, destination, span)
+        RustHelper.NewtypeSumExtract => return lower_newtype_sum_extract(builder, arguments, destination, span)
         RustHelper.ValidationErrorNew => return lower_validation_error(builder, arguments, destination, false, span)
         RustHelper.ValidationErrorWithCode => return lower_validation_error(builder, arguments, destination, true, span)
         RustHelper.NewtypeConstraintValidate =>
@@ -5767,7 +5844,7 @@ def lower_instances(
         cursor += 1
         if instance_is_retained(instance, completed):
             continue
-        body = instantiate(instance.body, instance.arguments)?
+        body = instantiate(instance.body, instance.arguments, instance.owned_callable_slots)?
         owner = body_module_identity(body)?
         mut source_index = -1
         for index in range(len(owners)):
@@ -5796,7 +5873,7 @@ def lower_instances(
 def instance_is_retained(instance: Instance, completed: list[Instance]) -> bool:
     """Deduplicate by checked declaration identity and arguments; an emitted spelling is never execution authority."""
     for retained in completed:
-        if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals:
+        if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals and retained.owned_callable_slots == instance.owned_callable_slots:
             return true
     return false
 
@@ -5964,9 +6041,9 @@ def lower_function(
                 builder.owned.append(handle.local)
             None => return Err("unsupported Body IR generator return type")
     for index in range(len(parameters)):
-        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or owned_collection(
+        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or is_owned_callable(
             parameters[index].ty,
-        ) or is_future(parameters[index].ty):
+        ) or is_future(parameters[index].ty) or owned_collection(parameters[index].ty):
             builder.owned.append(index + 1)
     # Legacy initializes the module's computed statics on entry to each of its functions (RFC 052), in `main` before
     # it installs the panic hook.
@@ -6097,10 +6174,14 @@ def frame_locals(
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:
-            match list_shape(ty):
-                Some((leaf, depth)) =>
+            # A checked move preserves an admitted generator or zip carrier's existing ownership. Only an owned
+            # list needs the consuming list cursor representation; borrowed or unsupported carriers cannot supply it.
+            match ty:
+                PlanType.List(leaf, depth) =>
                     ty = PlanType.ListIntoIter(leaf, depth)
-                None => return Err("unsupported Body IR consuming iteration outside an owned list")
+                PlanType.Generator(_leaf, _depth) => pass
+                PlanType.ZipIterator(_left, _right) => pass
+                _ => return Err("unsupported Body IR consuming iteration outside an owned list")
         elif index in iterators:
             match ty:
                 PlanType.FrozenCollection(_name, _elements) =>
@@ -9411,7 +9492,13 @@ def boundary_plan_operand(
         None => pass
     match target:
         PlanType.FunctionPointer(_signature) =>
-            ty, operation = function_assignment(target, operand_type(builder, value)?, value, true)?
+            ty, operation = function_assignment(
+                target,
+                operand_type(builder, value)?,
+                value,
+                true,
+                f"value boundary in {builder.name}",
+            )?
             pointer = temporary(builder, ty, span)
             builder.emit(plan_assign(pointer, operation, span))
             return Ok(read_place(pointer, false, span))
@@ -10227,7 +10314,7 @@ def carrier_receiver(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """
-    The place a carrier method reads: the receiver itself, or a copy of a list element.
+    The place a carrier method reads: the exact scalar referent, a static snapshot, or a copy of a list element.
 
     An element is read out of its list as any element read is, as legacy's checked `list_get` reads it; the copy drops
     when its scope ends.
@@ -10240,6 +10327,8 @@ def carrier_receiver(
                 RustOperand.Place(read) =>
                     if indexes_a_list(read.place):
                         return element_copy(builder, read.place, span)
+                    if read.place.global().is_none():
+                        return scalar_place(builder, read.place, span)
                 _ => pass
         None => pass
     return argument_place(builder, arguments, 0, span)

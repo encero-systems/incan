@@ -230,7 +230,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Normalize only the canonical SDK testing helper into the same deferred assertion as the language form.
-    /// Explicit positional function and literal-message arguments need no SDK default binding or deferred effects.
+    /// An omitted message uses its retained declaration constant; supplied messages remain literal-only here.
     pub(super) fn lower_testing_raises_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -248,16 +248,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         };
         let expected_error = expected_runtime_error(&error_type.node)?;
-        let [ast::CallArg::Positional(block), ast::CallArg::Positional(message)] = args else {
+        let [ast::CallArg::Positional(block), messages @ ..] = args else {
             return None;
         };
-        let ast::Expr::Literal(ast::Literal::String(text)) = &message.node else {
-            return Some(self.unsupported_operand(
-                "computed raises Assert message".to_owned(),
-                scope,
-                hir_span(span),
-                out,
-            ));
+        let text = match messages {
+            [ast::CallArg::Positional(message)] => {
+                let ast::Expr::Literal(ast::Literal::String(text)) = &message.node else {
+                    return Some(self.unsupported_operand(
+                        "computed raises Assert message".to_owned(),
+                        scope,
+                        hir_span(span),
+                        out,
+                    ));
+                };
+                text.clone()
+            }
+            [] => {
+                let Some(text) = self.testing_raises_default_message(identity) else {
+                    return Some(self.unsupported_operand(
+                        "testing raises helper without a retained default message".to_owned(),
+                        scope,
+                        hir_span(span),
+                        out,
+                    ));
+                };
+                text
+            }
+            _ => return None,
         };
         let call = self.lower_expr_to_operand(block, scope, out);
         let span = hir_span(span);
@@ -269,12 +286,31 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out.push(bir::Statement {
             kind: bir::StatementKind::Assert {
                 kind: bir::AssertionKind::Raises { call, expected_error },
-                message: Some(bir::Operand::Constant(bir::Constant::Str(text.clone()))),
+                message: Some(bir::Operand::Constant(bir::Constant::Str(text))),
                 may_panic: true,
             },
             span,
         });
         Some(bir::Operand::Constant(bir::Constant::Unit))
+    }
+
+    /// Read the selected helper's inert source default; deferred statements and non-string results grant no message.
+    fn testing_raises_default_message(&self, identity: &CanonicalSymbolId) -> Option<String> {
+        let published = super::library_nominals::sdk_identity(identity)?;
+        let default = super::library_calls::collect(self.type_info)
+            .into_iter()
+            .find(|call| call.canonical == published)
+            .and_then(|call| call.parameter_defaults.get(1).cloned())?;
+        let bir::CallableParamDefault::Source(default) = default else {
+            return None;
+        };
+        if !default.stmts.is_empty() {
+            return None;
+        }
+        match default.result {
+            bir::Operand::Constant(bir::Constant::Str(text)) => Some(text),
+            _ => None,
+        }
     }
 }
 

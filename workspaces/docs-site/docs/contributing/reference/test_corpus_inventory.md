@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4228 | 276 | 431 |
+| keep | 4283 | 282 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **9199** | **732** | **1494** |
+| **Total** | **9254** | **738** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (1035 tests in 96 files: keep 659, re-point 19, retire 104, unaffected 253)
+### `loaves/compiler/incan_driver` (1061 tests in 96 files: keep 685, re-point 19, retire 104, unaffected 253)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -215,8 +215,8 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
-| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 427 | 16101 | 16101 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 426, checker 5 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
-| `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 8 | 736 | 736 | keep | - | - | - | #1337 | run 3 | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 452 | 16584 | 16584 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 451, checker 6 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 9 | 779 | 779 | keep | - | - | - | #1337 | run 4 | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs` | 3 | 115 | 115 | keep | - | - | - | #1337 | run 3 | Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs` | 1 | 47 | 47 | keep | - | - | - | #1337 | run 1 | Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/ordinary_rust_dependencies.rs` | 3 | 255 | 255 | keep | - | - | - | #1698 | run 3 | Normal Rust caller links declaration-selected ordinary native dependencies absent from SDK coverage; runtime, selected work, completed-output reuse, native source edits, missing configured input refusal and rollback retain the original output. |
@@ -1833,20 +1833,20 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2506 tests in 151 files: keep 2493, unaffected 13)
+### `loaves/compiler/incan_frontend` (2535 tests in 157 files: keep 2522, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_frontend/src/api_metadata.rs` | 17 | 3778 | 944 | keep | - | - | - | #1561 | checker 17, parser 17 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 2121 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/body_ir/library_calls/tests.rs` | 7 | 280 | 280 | keep | - | - | - | #1337 | checker 1 | Body IR-only stdlib crate-call defaults retain literal and declaration-owned const values and refuse computed defaults. |
+| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 2136 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/body_ir/library_calls/tests.rs` | 8 | 308 | 308 | keep | - | - | - | #1337 | checker 1 | Body IR-only stdlib crate-call defaults retain literal and declaration-owned const values and refuse computed defaults. |
 | `loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs` | 1 | 143 | 28 | keep | - | - | - | #1337 | checker 1 | Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 42 | 1242 | 1242 | keep | - | - | - | #1561 | replacement 1, checker 15, parser 14 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 105 | 2998 | 2998 | keep | - | - | required | #1561 | replacement 5, checker 6, parser 6 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 106 | 3024 | 3024 | keep | - | - | required | #1561 | replacement 5, checker 6, parser 6 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs` | 4 | 95 | 95 | keep | - | - | - | #1337 | - | Checked channel value arguments close send-error payload types without changing legacy inference. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/class_inheritance.rs` | 4 | 164 | 164 | keep | - | - | - | #1337 | - | Checked parent-first layout, canonical override selection and malformed inheritance admission; frontend-only Body IR contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closed_callback_types.rs` | 6 | 83 | 83 | keep | - | - | - | #1337 | - | Checked callback return contracts and original fixture local types retained for direct-route execution without modifying legacy inference. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs` | 41 | 1268 | 1268 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs` | 42 | 1330 | 1330 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs` | 38 | 1263 | 1263 | keep | - | - | - | #1561 | replacement 4 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/decorated_bindings.rs` | 18 | 522 | 522 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Original callable identity and initialized decorator replacement contracts; frontend-only Body IR coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/derived_display.rs` | 2 | 79 | 79 | keep | - | - | - | #1337 | checker 1, parser 1 | Exact checked enum Display selections remain separate from automatic Debug and Clone. |
@@ -1858,15 +1858,18 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/iteration_protocol.rs` | 5 | 235 | 235 | keep | - | - | - | #1337 | checker 1, parser 1 | Canonical iteration hook targets, checked polling and temporary-call fact preservation; frontend contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs` | 15 | 426 | 426 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Body IR-only SDK type identity and nested declaration retention on the direct route. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs` | 4 | 200 | 200 | keep | - | - | - | #1337 | - | Checked method-partial declaration frames, value-receiver snapshots, presets and named default admission; frontend-only Body IR contracts. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 64 | 1970 | 1970 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 68 | 2112 | 2112 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/native_carriers.rs` | 6 | 196 | 196 | keep | - | - | - | #1337 | checker 2, parser 2 | Checked native stdlib ABI ownership and source-shadow controls retained in Body IR without legacy changes. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_constraints.rs` | 5 | 127 | 127 | keep | - | - | - | #1337 | - | Checked constrained-primitive predicates and explicit/implicit construction sequencing retained in Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_fields.rs` | 3 | 76 | 76 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Sole-field checked validation extraction, missing canonical layout and multi-field refusal boundaries in Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_hooks.rs` | 9 | 259 | 259 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Canonical source hook calls, own-owner raw construction, and ordered fail-fast coercion chains retained in Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_json.rs` | 1 | 31 | 31 | keep | - | - | - | #1337 | - | Checked serde capabilities on raw newtype layouts retained solely for the direct Body IR boundary. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_sum.rs` | 4 | 155 | 155 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Canonical numeric-newtype payload projection and terminal reconstruction in checked Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs` | 7 | 249 | 249 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs` | 10 | 324 | 324 | keep | - | - | - | #1337 | checker 1, parser 1 | Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/nominal_factories.rs` | 4 | 147 | 147 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Checked static factory owner arguments and Self result carriers without legacy inference changes. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs` | 10 | 341 | 341 | keep | - | - | - | #1337 | checker 1, parser 1 | Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/opaque_returns.rs` | 9 | 248 | 248 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Body IR retains proven concrete carriers of local opaque trait returns without changing legacy checker facts. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/open_nominal_types.rs` | 9 | 136 | 136 | keep | - | - | - | #1337 | - | Closed checked nominal payloads, destinations, trait adoptions and canonical testing arguments retained as additive Body IR facts without rewriting legacy inference. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs` | 61 | 1429 | 1429 | keep | - | - | - | #1561 | - | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/patterns_and_assertions.rs` | 34 | 1076 | 1076 | keep | - | - | - | #1561 | replacement 10, checker 2, parser 2 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/properties.rs` | 4 | 131 | 131 | keep | - | - | - | #1337 | - | Checked computed getter bodies, canonical calls and immutable receiver frames retained for direct-route execution; original control relocated from methods_and_defaults.rs and frontend identity contracts preserved. |
@@ -1876,10 +1879,12 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/result_callbacks.rs` | 5 | 90 | 90 | keep | - | - | - | #1337 | - | Contextual Result callback parameter and settled constructor channels retained in Body IR; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/return_pass_order.rs` | 1 | 23 | 23 | keep | - | - | - | #1337 | - | Checked model identity and source trait annotations survive ordered Body IR carrier refinement. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs` | 1 | 39 | 39 | keep | - | - | - | #1337 | - | Checked callable expression values and evaluation order retained in Body IR; frontend-only contract coverage. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs` | 1 | 35 | 35 | keep | - | - | - | #1337 | checker 1, parser 1 | Checked SDK iteration hook identities retain native declarations independently of written call facts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs` | 5 | 179 | 179 | keep | - | - | - | #1337 | - | Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/task_handles.rs` | 2 | 69 | 69 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Registered opaque task storage and native argument identity; unrelated Rust paths remain unprojected. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs` | 5 | 138 | 138 | keep | - | - | - | #1337 | - | Builtin codec slots and registry defaults retained in Body IR; source-owned members keep their own contract. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/trait_placeholders.rs` | 2 | 49 | 49 | keep | - | - | - | #1337 | - | Documented trait placeholders retain interface-only context, while real default bodies and unit no-ops remain executable. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/value_enum_methods.rs` | 3 | 90 | 90 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Checked value-enum layouts beside supported methods and public executable context; frontend-only contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/web_path.rs` | 2 | 45 | 45 | keep | - | - | - | #1337 | checker 2, parser 2 | Authenticated canonical native web Path tuple storage and independent filesystem Path ownership retained in Body IR; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/compiler_stack.rs` | 3 | 113 | 41 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/contract_metadata.rs` | 5 | 517 | 89 | keep | - | - | - | #1561 | parser 2, formatter 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
@@ -1908,6 +1913,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/surface_semantics.rs` | 3 | 138 | 48 | keep | - | - | - | #1561 | parser 2 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/symbols.rs` | 18 | 3237 | 482 | keep | - | - | - | #1561 | checker 12 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/testing_markers.rs` | 7 | 882 | 164 | keep | - | - | - | #1561 | checker 1, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/body_ir_factories/tests.rs` | 1 | 86 | 86 | keep | - | - | - | #1337 | checker 1, parser 1 | Body IR-only static factory facts retain authenticated published owner bound provenance without changing legacy tables. |
 | `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs` | 44 | 2565 | 1457 | keep | - | - | - | #1561 | text 2, checker 44, parser 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs` | 1 | 5066 | 32 | keep | - | - | - | #1561 | checker 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/identity_surface_tests.rs` | 9 | 325 | 325 | keep | - | - | - | #1561 | checker 9, parser 9 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
@@ -2612,7 +2618,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_semantics_core/src/authority.rs` | 9 | 344 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
-| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 5348 | 1111 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 5370 | 1111 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/closure_digest.rs` | 12 | 430 | 226 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/dependencies.rs` | 4 | 317 | 155 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/emitted_symbol.rs` | 7 | 559 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |

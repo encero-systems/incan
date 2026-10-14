@@ -18,6 +18,149 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Complete SDK graph construction and queries preserve the unchanged original's live legacy output.
+#[test]
+fn original_sdk_graph_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("original-sdk-graph")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_graph.incn"),
+    )
+}
+
+/// Checked serde derive propagation preserves byte parity for a model's list of enum payloads.
+#[test]
+fn serde_list_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_source_modules_case(
+        "serde-list-payload",
+        "from std.serde.json import Serialize\n\n@derive(Serialize)\nmodel Payload:\n    tags: list[Tag]\n\nenum Tag:\n    A\n    B\n\ndef main() -> None:\n    println(Payload(tags=[Tag.A]).to_json())\n",
+        &[],
+        b"{\"tags\":[\"A\"]}\n",
+    )
+}
+
+/// The forced reader error reaches callable storage after SDK chunks admission and preserves legacy error bytes.
+#[test]
+fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let original = include_str!(
+        "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+    );
+    assert_eq!(original.matches("reader.chunks(16)").count(), 1);
+    let source = original.replace("reader.chunks(16)", "reader.chunks(0)");
+    check_project_modules_refusal_case(
+        "sdk_reader_error_mapper_chunks_default",
+        &source,
+        &[],
+        b"read failed: chunk_size must be greater than zero\n",
+        "unsupported Body IR noncallable assignment to function value",
+    )
+}
+
+/// The complete original reader reaches callable storage and preserves all legacy chunk and completion bytes.
+#[test]
+fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "original_sdk_reader_chunks_default",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+        &[],
+        b"16\n4\ndone\n",
+        "unsupported Body IR noncallable assignment to function value",
+    )
+}
+
+/// The original SDK reader loop uses the stdlib trait's checked initializer and poll declarations.
+#[test]
+fn sdk_reader_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-reader-iteration")?,
+        &fixture.sysroot,
+        &closure,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/lowering_declarations/stdlib_trait_default_names_its_own_module_type.incn"
+        ),
+    )
+}
+
+/// The original take adapter retains its live legacy oracle while the native source-trait implementation is absent.
+#[test]
+fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_sdk_adapter_fixture(
+        "sdk-fallible-take",
+        include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"),
+        b"3\n1 2 3\n0\n0\n",
+        "unsupported native instantiation of `incan_stdlib_core::derives::TakeFallibleIterator`",
+    )?;
+    check_sdk_adapter_fixture(
+        "sdk-native-take-opaque-return",
+        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcdefg\").chunks(2)\n    match source.take(2).collect():\n        Ok(items) => println(len(items))\n        Err(error) => println(error.detail)\n",
+        b"2\n",
+        "opaque SDK trait return ABI differs from its concrete carrier",
+    )?;
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-native-take")?,
+        &fixture.sysroot,
+        &closure,
+        "from std.io import BytesIO\n\ndef main() -> None:\n    source = BytesIO(b\"abcdefg\").chunks(2)\n    copy = source.__iter__()\n    println(copy.chunk_size)\n",
+    )
+}
+
+/// Both original collection adapters advance to missing native trait implementations with their legacy output pinned.
+#[test]
+fn sdk_collection_adapters_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_sdk_adapter_fixture(
+        "sdk-collection-adapters",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
+        ),
+        b"3\n2 4 6\n",
+        "unsupported native instantiation of `incan_stdlib_core::derives::MapFallibleIterator`",
+    )?;
+    check_sdk_adapter_fixture(
+        "sdk-collection-adapters-imported-clone",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
+        ),
+        b"2 4 6\n1 2\ntrue\n",
+        "unsupported native instantiation of `incan_stdlib_core::derives::MapFallibleIterator`",
+    )
+}
+
+/// The original reader adapter reaches callable-value assignment while its live legacy output stays pinned.
+#[test]
+fn sdk_fallible_error_adapter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_sdk_adapter_fixture(
+        "sdk-fallible-error-adapter",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+        b"16\n4\ndone\n",
+        "unsupported Body IR noncallable assignment to function value",
+    )
+}
+
+/// Pin a removed adapter refusal's next stage and compare the unedited fixture with its live legacy oracle.
+fn check_sdk_adapter_fixture(
+    name: &str,
+    source: &str,
+    expected_stdout: &[u8],
+    reason: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(name, source, &[], expected_stdout, reason)
+}
+
 /// Copied opaque results retain their concrete owner before a later hidden trait input dispatches its default.
 #[test]
 fn ordered_trait_return_passes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,7 +190,7 @@ def main() -> None:
     )
 }
 
-/// The original SDK iterator reaches the remaining nonlocal collect method while its unchanged legacy oracle executes.
+/// The original SDK iterator reaches native collect bound admission while its unchanged legacy oracle executes.
 #[test]
 fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -70,7 +213,8 @@ fn sdk_fallible_iterator_output_matches_legacy() -> Result<(), Box<dyn std::erro
     .output()?;
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR nonlocal or trait-object Method collect"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("unsupported native instantiation of `incan_stdlib_core::derives::FallibleIterator::collect`"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -117,6 +261,19 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
         ),
+    )
+}
+
+/// An applied SDK factory supplies its owner arguments and preserves the initial graph storage bytes.
+#[test]
+fn applied_sdk_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("applied-sdk-factory")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.graph import DiGraph\n\ndef main() -> None:\n    graph: DiGraph[str] = DiGraph[str]()\n    println(graph.next_node_id)\n",
     )
 }
 
@@ -8375,6 +8532,49 @@ def main() -> None:
     )
 }
 
+/// Value-enum static and receiver bodies share the checked layout and preserve raw scalar values exactly as legacy.
+#[test]
+fn value_enum_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("value-enum-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#""""Exercise checked value-enum layouts beside supported method bodies."""
+
+from std.compression import Codec as PublishedCodec
+
+
+enum LocalCodec(str):
+    """Keep string values and both ordinary and static methods on one checked enum."""
+
+    Gzip = "gzip"
+    Zlib = "zlib"
+
+    @staticmethod
+    def selected() -> LocalCodec:
+        """Select a member through the enum's own static body."""
+        return LocalCodec.Zlib
+
+    def label(self) -> str:
+        """Read the generated scalar value through a retained receiver body."""
+        return self.value()
+
+
+def main() -> None:
+    """Preserve literal, static-body, receiver-body and repeated enum reads."""
+    codec = LocalCodec.Gzip
+    println(codec.value())
+    println(LocalCodec.selected().value())
+    println(codec.label())
+    println(codec.value())
+    println(PublishedCodec.Zstd.value())
+    println(PublishedCodec.Gzip.value())
+"#,
+    )
+}
+
 /// Inferred parameter Clone copies scalar instances and clones text without replacing source-method dispatch.
 #[test]
 fn inferred_parameter_clone_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -12060,6 +12260,59 @@ fn stdlib_channel_errors_reach_sender_boundary() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// Annotated static factories have live legacy parity. The originals retain their recorded output because legacy's
+/// standalone SDK build emits private string lookup helpers the published OrdinalMap does not expose.
+#[test]
+fn stdlib_ordinal_map_factories_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+
+    // ---- Live factory parity without legacy's private lookup helpers ----
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("ordinal-factories")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.collections import OrdinalMap, OrdinalMapError
+
+def run() -> Result[None, OrdinalMapError]:
+    columns: OrdinalMap[str] = OrdinalMap.from_keys(["id", "status"])?
+    explicit: OrdinalMap[str] = OrdinalMap.from_pairs([("id", 10), ("status", 20)])?
+    decoded: OrdinalMap[str] = OrdinalMap.from_bytes(columns.to_bytes())?
+    println(columns.key_count())
+    println(explicit.max_ordinal())
+    println(decoded.key_count())
+    println(len(decoded.to_bytes()) == len(columns.to_bytes()))
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(_) => println("failed")
+"#,
+    )?;
+
+    // ---- Original serialization and lookup behavior ----
+    for (name, source, expected) in [
+        (
+            "ordinal-bytes",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/ordinal_map_bytes_round_trip.incn"
+            ),
+            &b"true\n1\n0\ntrue\n"[..],
+        ),
+        (
+            "ordinal-lookup",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/ordinal_map_str_lookup.incn"
+            ),
+            &b"1\n0 1\n21\nmissing\n"[..],
+        ),
+    ] {
+        check_native_case(name, source, expected)?;
+    }
+    Ok(())
+}
+
 /// Require a named refusal at the same standalone boundary used by builtin parity tests.
 fn check_builtin_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -15671,35 +15924,100 @@ fn math_constants_and_functions_output_match_legacy() -> Result<(), Box<dyn std:
     )
 }
 
-/// Computed-static admission leaves the original unwrap-or fixture at its separate intrinsic carrier boundary.
+/// Local, field, generic, mutable and static carrier reads preserve the unedited original's legacy output.
 #[test]
-fn static_unwrap_or_original_keeps_intrinsic_carrier_refusal() -> Result<(), Box<dyn std::error::Error>> {
+fn static_unwrap_or_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let root = fixture.scratch("static-unwrap-or-original")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("static-unwrap-or-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/unwrap_or_keeps_its_receiver_and_default.incn"
         ),
-    )?;
-    let binary = root.join("refused");
-    let output = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &binary,
-        &fixture.sysroot,
-        &corpus::runtime_closure(&fixture.formatting)?,
     )
-    .output()?;
-    assert!(!output.status.success());
-    let diagnostic = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        diagnostic.contains("unsupported Body IR intrinsic carrier receiver"),
-        "{diagnostic}"
-    );
-    assert!(!binary.exists());
-    Ok(())
+}
+
+/// The final textual reads of incoming carriers still clone on each pass through a repeated loop.
+#[test]
+fn consuming_carriers_in_loops_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("consuming-carriers-in-loops")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n  option: Option[str] = Some(\"kept\")\n  result: Result[str, str] = Err(\"missing\")\n  for index in range(2):\n    println(option.unwrap_or(\"fallback\"))\n    println(result.unwrap_or(\"fallback\"))\n",
+    )
+}
+
+/// A callable held by a generic parameter transfers through its local alias with the frozen legacy output.
+#[test]
+fn generic_capturing_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-capturing-callable-alias")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.traits.callable import Callable1\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef plain(text: str) -> str:\n  return text\n\ndef main() -> None:\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n  println(use(plain, \"y\"))\n",
+    )
+}
+
+/// Consumed frame receivers are read before eager defaults, while static defaults precede guarded storage reads.
+#[test]
+fn carrier_receiver_default_order_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("carrier-receiver-default-order")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static SHARED: Option[str] = Some("static-old")
+
+model Holder:
+    value: Option[str]
+
+def default_value(mut events: list[str]) -> str:
+    events.append("default")
+    return "fallback"
+
+def reset_holder(mut holder: Holder) -> str:
+    holder.value = Some("field-new")
+    return "fallback"
+
+def reset_static() -> str:
+    SHARED = Some("static-new")
+    return "fallback"
+
+def choose_option(mut value: Option[str], mut events: list[str]) -> str:
+    first = value.unwrap_or(default_value(events))
+    return f"{first}/{value.unwrap()}"
+
+def choose_result(mut value: Result[str, str], mut events: list[str]) -> str:
+    first = value.unwrap_or(default_value(events))
+    return f"{first}/{value.unwrap()}"
+
+def main() -> None:
+    mut option: Option[str] = Some("option-old")
+    mut result: Result[str, str] = Ok("result-old")
+    mut events: list[str] = []
+    println(choose_option(option, events))
+    println(option.unwrap())
+    println(choose_result(result, events))
+    println(result.unwrap())
+    mut local: Option[str] = Some("local-old")
+    println(local.unwrap_or(default_value(events)))
+    println(local.unwrap())
+    mut holder = Holder(value=Some("field-old"))
+    println(holder.value.unwrap_or(reset_holder(holder)))
+    println(holder.value.unwrap())
+    println(SHARED.unwrap_or(reset_static()))
+    println(SHARED.unwrap())
+    println(len(events))
+"#,
+    )
 }
 
 /// A factory method on an imported static initializes a callable replacement with legacy byte parity.
@@ -15755,35 +16073,33 @@ fn integer_constant_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
-/// The original's constant reads reach the separate, still unretained error type argument in assert_raises.
+/// The complete overflow-checking original preserves live legacy values and both raised errors.
 #[test]
 fn constant_abs_sum_original_keeps_error_type_argument_refusal() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let root = fixture.scratch("constant-abs-sum-original")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constant-abs-sum-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/abs_and_sum_are_overflow_checked.incn"
         ),
-    )?;
-    let output = root.join("refused");
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &output,
-        &fixture.sysroot,
-        &corpus::runtime_closure(&fixture.formatting)?,
     )
-    .output()?;
-    assert!(!refused.status.success());
-    let diagnostic = String::from_utf8_lossy(&refused.stderr);
-    assert!(
-        diagnostic.contains("unsupported Body IR unbound type parameter ValueError"),
-        "{diagnostic}"
-    );
-    assert!(!output.exists());
-    Ok(())
+}
+
+/// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
+/// Preset flags are attached when the environment is constructed; initial frame storage must not freeze another mask.
+#[test]
+fn method_partial_default_masks_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("method-partial-default-masks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.traits.callable import Callable1\n\nmodel Labeler:\n  value: str\n  def label(self, left: str, right: str) -> str:\n    return left + self.value + right\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef plain(text: str) -> str:\n  return text\n\ndef main() -> None:\n  labeler = Labeler(value=\"center\")\n  held = partial labeler.label(right=\"!\")\n  println(held(\"a\"))\n  println(held(\"b\", right=\"?\"))\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n  println(use(plain, \"y\"))\n",
+    )
 }
 
 /// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
@@ -16096,5 +16412,172 @@ fn function_value_model_field_output_matches_legacy() -> Result<(), Box<dyn std:
         &fixture.sysroot,
         &fixture.formatting,
         "model Op:\n    step: (int) -> int\n\ndef double(value: int) -> int:\n    return value * 2\n\ndef main() -> None:\n    op = Op(step=double)\n    step = op.step\n    println(step(4))\n",
+    )
+}
+
+/// Primitive adapters and raw/checked numeric newtype terminal sums match the original legacy fixture.
+#[test]
+fn numeric_newtype_iterator_sum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-newtype-iterator-sum")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/iterator_adapters.incn"
+        ),
+    )
+}
+
+/// Published SDK task calls retain the same closed native channels as source-selected standard declarations.
+#[test]
+fn closed_sdk_task_calls_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "closed-sdk-task-calls",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn"),
+    )
+}
+
+/// Published SDK race calls retain the same checked callback outputs as source-selected standard declarations.
+#[test]
+fn closed_sdk_race_calls_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "closed-sdk-race-calls",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_race.incn"),
+    )
+}
+
+/// Closed newtype locals and their fields preserve the complete original's live legacy output.
+#[test]
+fn closed_generic_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "closed-generic-newtype",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
+        &[],
+        b"Box\n42 42\ntext\n",
+    )
+}
+
+/// Closed default-call locals retain the distinct nominal-layout refusal and unchanged legacy output.
+#[test]
+fn closed_generic_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "closed-generic-defaults",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_default_takes_declared_field_defaults.incn"
+        ),
+        &[],
+        b"dark\n14\n0\ndark\n1\n3\n5\n",
+        "unsupported Body IR nominal type Holder",
+    )
+}
+
+/// Empty raw sums and checked sums preserve item polling and exactly one final construction hook.
+#[test]
+fn numeric_newtype_sum_effects_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-newtype-sum-effects")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Money = newtype int
+
+type Constrained = newtype int[gt=0]
+
+type Nonnegative = newtype int:
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        println(value)
+        if value < 0:
+            return Err(ValidationError("negative sum"))
+        return Ok(Nonnegative(value))
+
+def observe(value: int) -> Nonnegative:
+    println(f"item {value}")
+    return Nonnegative(value)
+
+def main() -> None:
+    empty: list[Money] = []
+    println(empty.iter().sum().0)
+    overflow = [Money(9223372036854775807), Money(1)]
+    println(overflow.iter().sum().0)
+    constrained_empty: list[Constrained] = []
+    println(constrained_empty.iter().sum().0)
+    values = [1, 2]
+    total = values.iter().map(observe).sum()
+    println(total.0)
+    checked_empty: list[Nonnegative] = []
+    println(checked_empty.iter().sum().0)
+"#,
+    )
+}
+
+/// The empty checked terminal rejects once through the frozen sum panic contract after one final hook.
+#[test]
+fn numeric_newtype_sum_failure_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_validation_failure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-newtype-sum-failure")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Positive = newtype int:
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        println("hook")
+        if value <= 0:
+            return Err(ValidationError("positive required"))
+        return Ok(Positive(value))
+
+def main() -> None:
+    seed = Positive(1)
+    println(seed.0)
+    values: list[Positive] = []
+    println(values.iter().sum().0)
+"#,
+        "validated newtype construction failed: Positive::from_underlying\n",
+    )
+}
+
+/// Closed adopter results retain their trait-method targets and preserve the complete live legacy output.
+#[test]
+fn closed_generic_trait_return_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "closed-generic-trait-return",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_bounds_return_type.incn"
+        ),
+        &[],
+        b"5\n5\n",
+    )
+}
+
+/// A model's subtrait adoption fixes the imported supertrait method's generic result.
+#[test]
+fn closed_imported_subtrait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "closed-imported-subtrait",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/subtrait_bound_calls_unimported_supertrait_method/main.incn"
+        ),
+        &[(
+            "readers.incn",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/subtrait_bound_calls_unimported_supertrait_method/readers.incn"
+            ),
+        )],
+        b"42\n",
+    )
+}
+
+/// Closed testing helper targets retain the separate Option[Unit] layout refusal and unchanged legacy output.
+#[test]
+fn closed_testing_helper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "closed-testing-helpers",
+        include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn"),
+        &[],
+        b"plain and messaged assert_eq passed\ncomparison operand passed\nassert_ne passed\nconstructor comparisons passed\nsome 5\nnone passed\nok 42\nerr boom\nraised from call expression\nraised from function reference\nassert_eq failure is an AssertionError\nempty message failure is an AssertionError\n",
+        "unsupported Body IR type Option[Unit]",
     )
 }

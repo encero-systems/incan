@@ -38,12 +38,21 @@ struct MethodSignature {
 
 /// Collect a crate-call record for every stdlib function and model or class method one module resolves, including
 /// declared type parameters. Nongeneric newtype methods keep their existing admission.
+/// Checked iteration hooks contribute their own identities after written call-site facts have been restored.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
     let identities = type_info
         .references
         .resolved_identities
         .values()
         .chain(type_info.traits.provider_slot_identities.values())
+        .chain(
+            type_info
+                .protocols
+                .body_ir_iterations
+                .values()
+                .flat_map(|hooks| [&hooks.iter, &hooks.next])
+                .filter_map(|hook| hook.canonical.as_ref()),
+        )
         .filter(|identity| {
             super::library_nominals::sdk_identity(identity).is_some()
                 && matches!(
@@ -343,17 +352,14 @@ fn method_signature(
     trait_method_signature(identity, path, cache)
 }
 
-/// Name a nongeneric SDK trait method by the trait that owns its checked identity, retaining Self as the trait
-/// item's single type parameter. Metadata validates the concrete receiver's implementation at the native call.
+/// Name an SDK trait method by its exact declaring identity, retaining Self, trait, and method binders in native order.
+/// Metadata validates the concrete receiver's implementation at the native call.
 fn trait_method_signature(
     identity: &CanonicalSymbolId,
     path: &[String],
     cache: &mut StdlibAstCache,
 ) -> Option<MethodSignature> {
     for (owner, declaration) in cache.list_traits(path) {
-        if !declaration.type_params.is_empty() {
-            continue;
-        }
         let Some(method) = declaration.methods.get(&identity.declaration_name) else {
             continue;
         };
@@ -364,13 +370,17 @@ fn trait_method_signature(
             continue;
         }
         declared.origin = identity.origin.clone();
-        if declared != *identity || method.is_async || !method.type_params.is_empty() {
+        if declared != *identity || method.is_async {
             continue;
         }
         let mut owner_identity = cache.lookup_identity(path, &owner)?;
         owner_identity.origin = identity.origin.clone();
         cache.callable_source_identity(&owner_identity)?;
         let self_type = IncanType::TypeVar("Self".to_owned());
+        let names = std::iter::once("Self".to_owned())
+            .chain(declaration.type_params.iter().cloned())
+            .chain(method.type_params.iter().cloned())
+            .collect::<Vec<_>>();
         let receiver = match method.receiver.as_ref()? {
             ast::Receiver::Immutable => IncanType::Ref(Box::new(self_type.clone())),
             ast::Receiver::Mutable => IncanType::RefMut(Box::new(self_type.clone())),
@@ -379,13 +389,51 @@ fn trait_method_signature(
             owner,
             receiver: Some(receiver),
             parameters: method.params.clone(),
-            return_type: self_as(&semantic_type_from_resolved(&method.return_type), &self_type),
-            type_parameters: vec!["Self".to_owned()],
+            return_type: super::parameter_types::retain_parameter_type(
+                self_as(&semantic_type_from_resolved(&method.return_type), &self_type),
+                &names,
+            ),
+            type_parameters: names,
             native_item: Vec::new(),
             native_type_arguments: Vec::new(),
         });
     }
     None
+}
+
+/// Authenticate a checked trait dispatch against the SDK's declaring slot and retain its ordered trait arguments.
+/// This is a Body IR-only projection: neither legacy resolution tables nor receiver types are changed.
+pub(super) fn trait_dispatch(
+    identity: &CanonicalSymbolId,
+    dispatch: Option<&crate::typechecker::ResolvedMethodDispatch>,
+) -> Option<bir::StdlibTraitCall> {
+    let crate::typechecker::ResolvedMethodDispatch::Trait { type_args, .. } = dispatch?;
+    let published = super::library_nominals::sdk_identity(identity)?;
+    let SymbolOrigin::Package { library, module_path } = &published.origin else {
+        return None;
+    };
+    let path = std::iter::once(stdlib::STDLIB_ROOT.to_owned())
+        .chain(module_path.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut cache = StdlibAstCache::new();
+    let signature = trait_method_signature(&published, &path, &mut cache)?;
+    let declaration = cache.lookup_trait(&path, &signature.owner)?;
+    if declaration.type_params.len() != type_args.len() {
+        return None;
+    }
+    let mut trait_identity = cache.lookup_identity(&path, &signature.owner)?;
+    trait_identity.origin = published.origin.clone();
+    cache.callable_source_identity(&trait_identity)?;
+    let native_item = std::iter::once(library.as_str())
+        .chain(module_path.iter().map(String::as_str))
+        .chain([signature.owner.as_str(), published.declaration_name.as_str()])
+        .collect::<Vec<_>>()
+        .join("::");
+    Some(bir::StdlibTraitCall {
+        trait_identity,
+        native_item,
+        type_arguments: type_args.iter().map(semantic_type_from_resolved).collect(),
+    })
 }
 
 /// Resolve an explicit SDK implementation's native trait declaration and preserve its checked Self/trait arguments.

@@ -35,9 +35,12 @@ mod newtype_constraints;
 mod newtype_fields;
 mod newtype_hooks;
 mod newtype_json;
+mod newtype_sum;
 mod newtypes;
+mod nominal_factories;
 mod nominal_parameters;
 mod opaque_returns;
+mod open_nominal_types;
 mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod properties;
@@ -47,10 +50,12 @@ mod raises_assertions;
 mod result_callbacks;
 mod return_pass_order;
 mod returned_callables;
+mod sdk_iterator_dispatch;
 mod static_storage;
 mod task_handles;
 mod text_codecs;
 mod trait_placeholders;
+mod value_enum_methods;
 mod web_path;
 
 use helpers::{

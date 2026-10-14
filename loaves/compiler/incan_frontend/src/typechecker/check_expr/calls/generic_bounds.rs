@@ -246,7 +246,7 @@ impl TypeChecker {
         }
 
         if explicit_type_args.is_empty() && self.errors.len() == errors_before_call {
-            self.retain_body_ir_call_arguments(info, args, &type_bindings, call_span);
+            self.retain_body_ir_call_arguments(info, args, &type_bindings, call_span, callee_identity.as_ref());
         }
         substitute_resolved_type(&info.return_type, &type_bindings)
     }
@@ -1078,6 +1078,14 @@ impl TypeChecker {
         if self.errors.len() == errors_before_call {
             self.record_call_site_monomorph_if_complete(call_site_span, &method_info.type_params, &type_bindings);
             self.retain_body_ir_newtype_method_result(&method_info, receiver_ty, args, &type_bindings, call_site_span);
+            self.retain_body_ir_factory_owner(
+                &method_info,
+                receiver_ty,
+                args,
+                &type_bindings,
+                expected_return_ty,
+                call_site_span,
+            );
             if explicit_type_args.is_empty() {
                 self.retain_constructor_call_instantiation(
                     call_site_span,

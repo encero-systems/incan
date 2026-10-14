@@ -104,6 +104,7 @@ impl BodyBuilder<'_, '_> {
         }
         Some(self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
+                sdk_trait: None,
                 name: identity.declaration_name.rsplit('.').next()?.to_owned(),
                 intrinsic_carrier: None,
                 reflection: None,

@@ -83,6 +83,11 @@ pub struct TypeCheckInfo {
     pub body_ir_runtime_types: BTreeMap<String, CanonicalSymbolId>,
     /// Atomic accepted-body refinements consumed only by Body IR; no checker or legacy consumer reads this group.
     pub(crate) body_ir_newtypes: super::native_newtype_facts::NativeNewtypeFacts,
+    /// Accepted zero-argument iterator sum item types within the direct profile, keyed by the exact checked call span.
+    ///
+    /// Source newtype trait adoptions and source `sum` members need explicit dispatch and stay outside this snapshot.
+    /// Only Body IR reads it; checking decisions and legacy-consumed facts are unchanged.
+    pub(crate) body_ir_iterator_sum_items: BTreeMap<(usize, usize), ResolvedType>,
 }
 
 /// Checked source-path facts for active import-derived bindings.
@@ -1576,6 +1581,12 @@ pub struct CallArtifacts {
     /// Concrete constructor carriers and ordinary checked arguments share this ordered fact. Legacy never reads this
     /// additive table: its own contextual types and monomorph decisions remain untouched.
     pub body_ir_call_type_arguments: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// Closed call-site parameters under the same checked instantiation, preserving declaration roles and defaults.
+    /// Only Body IR reads this contract; legacy parameter snapshots retain their original inferred holes.
+    pub body_ir_call_parameter_types: HashMap<(usize, usize), Vec<CallableParam>>,
+    /// Checked static factory constraints that conflict with their destination. Only Body IR reads this denial;
+    /// later supplemental value propagation cannot authorize a closed result at the same call span.
+    pub body_ir_factory_result_conflicts: HashSet<(usize, usize)>,
     /// Executable constructor carriers recovered from original declared fields and checked values after contextual
     /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
     pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,
@@ -1922,6 +1933,8 @@ pub struct BodyIrIterationHooksInfo {
 pub struct BodyIrProtocolCallInfo {
     /// Exact source or active SDK declaration; absent remains a named refusal.
     pub canonical: Option<CanonicalSymbolId>,
+    /// Exact checked trait instantiation for this Body IR-only hook snapshot; the written call's facts stay intact.
+    pub dispatch: Option<ResolvedMethodDispatch>,
     /// Checked ordinary parameters, excluding the receiver, including their default-presence contract.
     pub params: Option<Vec<CallableParam>>,
     /// Checked method-scoped instantiation arguments, independent of the written iterable's generic call.
@@ -2872,6 +2885,15 @@ impl TypeCheckInfo {
             .call_site_callable_params
             .get(&(span.start, span.end))
             .map(Vec::as_slice)
+    }
+
+    /// Return closed checked call parameters for Body IR, preserving the legacy signature when no complete fact exists.
+    pub fn body_ir_call_site_callable_params(&self, span: Span) -> Option<&[CallableParam]> {
+        self.calls
+            .body_ir_call_parameter_types
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+            .or_else(|| self.call_site_callable_params(span))
     }
 
     /// Return the resolved winner-binding type for the `race for` arm whose awaitable is at `span` (#1164).

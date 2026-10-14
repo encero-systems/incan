@@ -1,4 +1,4 @@
-//! Preserve checked Result value contracts without changing legacy inference or lexical symbol types.
+//! Preserve checked executable value contracts without changing legacy inference or lexical symbol types.
 
 use crate::ast::{AssignmentStmt, CallArg, Expr, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType, canonical_builtin_member_identity};
@@ -13,6 +13,18 @@ impl TypeChecker {
             .expressions
             .body_ir_expr_types
             .get(&(span.start, span.end))
+            .or_else(|| {
+                self.type_info
+                    .calls
+                    .body_ir_constructor_types
+                    .get(&(span.start, span.end))
+            })
+            .or_else(|| {
+                self.type_info
+                    .calls
+                    .body_ir_call_result_types
+                    .get(&(span.start, span.end))
+            })
             .or_else(|| self.type_info.expr_type(span))
     }
 
@@ -35,7 +47,7 @@ impl TypeChecker {
         );
     }
 
-    /// Preserve an initializer's executable Result channels under its canonical lexical binding identity.
+    /// Preserve an initializer's executable carrier under its canonical lexical binding identity.
     pub(in crate::typechecker) fn retain_body_ir_assignment_value(&mut self, assignment: &AssignmentStmt) {
         let Some(actual) = self.body_ir_checked_value_type(assignment.value.span).cloned() else {
             return;
@@ -53,13 +65,35 @@ impl TypeChecker {
             .insert(identity, actual);
     }
 
-    /// Propagate only exact lexical reads and canonical intrinsic Result contracts. Source methods with equal
-    /// spellings, projections without a checked contract, and incompatible channel constraints publish no fact.
+    /// Propagate exact lexical reads, checked nominal members and canonical intrinsic Result contracts. Incompatible
+    /// constraints and members without a checked declaration publish no fact.
     pub(in crate::typechecker::check_expr) fn retain_body_ir_result_value(
         &mut self,
         expression: &Spanned<Expr>,
         recorded: &ResolvedType,
     ) {
+        if self
+            .type_info
+            .calls
+            .body_ir_factory_result_conflicts
+            .contains(&(expression.span.start, expression.span.end))
+        {
+            return;
+        }
+        if matches!(expression.node, Expr::Call(_, _, _) | Expr::MethodCall(_, _, _, _))
+            && let Some(actual) = self
+                .type_info
+                .calls
+                .body_ir_call_result_types
+                .get(&(expression.span.start, expression.span.end))
+                .cloned()
+        {
+            self.type_info
+                .expressions
+                .body_ir_expr_types
+                .insert((expression.span.start, expression.span.end), actual);
+            return;
+        }
         let actual = match &expression.node {
             Expr::Ident(_) => self
                 .type_info
@@ -68,6 +102,13 @@ impl TypeChecker {
                 .cloned(),
             Expr::Paren(inner) => self.body_ir_checked_value_type(inner.span).cloned(),
             Expr::MethodCall(receiver, method, _, arguments) => {
+                if let Some(actual) = self.body_ir_nominal_method_type(receiver, method, arguments, expression.span) {
+                    self.type_info
+                        .expressions
+                        .body_ir_expr_types
+                        .insert((expression.span.start, expression.span.end), actual);
+                    return;
+                }
                 let Some(method_id) = result_methods::from_str(method) else {
                     return;
                 };
@@ -78,6 +119,20 @@ impl TypeChecker {
                 }
                 self.body_ir_result_method_type(receiver, method_id, arguments)
             }
+            Expr::Call(_, _, _) | Expr::Constructor(_, _) => self
+                .type_info
+                .calls
+                .body_ir_call_result_types
+                .get(&(expression.span.start, expression.span.end))
+                .or_else(|| {
+                    self.type_info
+                        .calls
+                        .body_ir_constructor_types
+                        .get(&(expression.span.start, expression.span.end))
+                })
+                .cloned(),
+            Expr::Field(receiver, field) => self.body_ir_newtype_field_type(receiver, field),
+            Expr::Index(receiver, index) => self.body_ir_tuple_element_type(receiver, index),
             _ => None,
         };
         let Some(actual) = actual else {
@@ -86,16 +141,99 @@ impl TypeChecker {
         if !self.types_compatible(recorded, &actual) {
             return;
         }
-        let mut closed = recorded.clone();
-        if matches!(closed, ResolvedType::Unknown) {
-            closed = actual;
-        } else {
-            fill_open_result_parts(&mut closed, &actual, false);
-        }
+        let closed = self.body_ir_close_value_parts(recorded, &actual);
         self.type_info
             .expressions
             .body_ir_expr_types
             .insert((expression.span.start, expression.span.end), closed);
+    }
+
+    /// Fill compatible holes from a checked value contract while preserving concrete leaves and caller-owned binders.
+    pub(in crate::typechecker::check_expr) fn body_ir_close_value_parts(
+        &self,
+        recorded: &ResolvedType,
+        actual: &ResolvedType,
+    ) -> ResolvedType {
+        match (recorded, actual) {
+            (ResolvedType::Unknown | ResolvedType::CallSiteInfer, _) => actual.clone(),
+            (ResolvedType::TypeVar(_), _) if self.active_type_param_name(recorded).is_none() => actual.clone(),
+            (ResolvedType::Generic(name, parts), ResolvedType::Generic(other, values))
+                if name == other && parts.len() == values.len() =>
+            {
+                ResolvedType::Generic(
+                    name.clone(),
+                    parts
+                        .iter()
+                        .zip(values)
+                        .map(|(part, value)| self.body_ir_close_value_parts(part, value))
+                        .collect(),
+                )
+            }
+            (ResolvedType::Tuple(parts), ResolvedType::Tuple(values)) if parts.len() == values.len() => {
+                ResolvedType::Tuple(
+                    parts
+                        .iter()
+                        .zip(values)
+                        .map(|(part, value)| self.body_ir_close_value_parts(part, value))
+                        .collect(),
+                )
+            }
+            (ResolvedType::Function(params, result), ResolvedType::Function(values, output))
+                if params.len() == values.len() =>
+            {
+                let params = params
+                    .iter()
+                    .zip(values)
+                    .map(|(param, value)| CallableParam {
+                        ty: self.body_ir_close_value_parts(&param.ty, &value.ty),
+                        ..param.clone()
+                    })
+                    .collect();
+                ResolvedType::Function(params, Box::new(self.body_ir_close_value_parts(result, output)))
+            }
+            _ => recorded.clone(),
+        }
+    }
+
+    /// Retain a checked nominal result's annotated specialization when legacy leaves its constructor arguments open.
+    pub(in crate::typechecker::check_expr) fn retain_body_ir_value_destination(
+        &mut self,
+        expression: &Spanned<Expr>,
+        recorded: &ResolvedType,
+        expected: Option<&ResolvedType>,
+    ) {
+        if self
+            .type_info
+            .calls
+            .body_ir_factory_result_conflicts
+            .contains(&(expression.span.start, expression.span.end))
+        {
+            return;
+        }
+        let Some(expected) = expected.filter(|ty| Self::is_settled_type_argument(ty)) else {
+            return;
+        };
+        let (ResolvedType::Generic(owner, _), ResolvedType::Generic(destination, _)) = (recorded, expected) else {
+            return;
+        };
+        if owner != destination
+            || self.type_info.resolved_identity(expression.span).is_none()
+            || !self.types_compatible(recorded, expected)
+        {
+            return;
+        }
+        if self
+            .body_ir_checked_value_type(expression.span)
+            .is_some_and(|actual| !self.types_compatible(actual, expected))
+        {
+            self.refuse_body_ir_factory_result(expression.span);
+            return;
+        }
+        let actual = self.body_ir_close_value_parts(recorded, expected);
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .insert((expression.span.start, expression.span.end), actual);
     }
 
     /// The registry-selected member fixes which checked callback output replaces which Result channel.

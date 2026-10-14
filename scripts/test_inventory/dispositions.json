@@ -6160,9 +6160,25 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_sum.rs": {
+      "disposition": "keep",
+      "notes": "Canonical numeric-newtype payload projection and terminal reconstruction in checked Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs": {
       "disposition": "keep",
       "notes": "Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_factories.rs": {
+      "disposition": "keep",
+      "notes": "Checked static factory owner arguments and Self result carriers without legacy inference changes.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -6179,6 +6195,14 @@
     "loaves/compiler/incan_frontend/src/body_ir/tests/opaque_returns.rs": {
       "disposition": "keep",
       "notes": "Body IR retains proven concrete carriers of local opaque trait returns without changing legacy checker facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/open_nominal_types.rs": {
+      "disposition": "keep",
+      "notes": "Closed checked nominal payloads, destinations, trait adoptions and canonical testing arguments retained as additive Body IR facts without rewriting legacy inference.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -6256,6 +6280,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK iteration hook identities retain native declarations independently of written call facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
       "disposition": "keep",
       "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
@@ -6283,6 +6315,14 @@
     "loaves/compiler/incan_frontend/src/body_ir/tests/trait_placeholders.rs": {
       "disposition": "keep",
       "notes": "Documented trait placeholders retain interface-only context, while real default bodies and unit no-ops remain executable.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/value_enum_methods.rs": {
+      "disposition": "keep",
+      "notes": "Checked value-enum layouts beside supported methods and public executable context; frontend-only contracts.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -6508,6 +6548,14 @@
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/body_ir_factories/tests.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only static factory facts retain authenticated published owner bound provenance without changing legacy tables.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

@@ -1157,7 +1157,6 @@ fn source_signature_type(ty: &Scalar) -> bool {
                     | Scalar::List(_, _)
                     | Scalar::Model(_)
                     | Scalar::Enum(_)
-                    | Scalar::Model(_)
             ) || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
                 || (matches!(element, Scalar::FunctionPointer(_)) && source_signature_type(element))
         });

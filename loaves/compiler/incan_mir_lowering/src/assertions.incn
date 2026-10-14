@@ -78,7 +78,13 @@ def lower_raises_assertion(
             if signature != [PlanType.Unit]:
                 return Err("unsupported Body IR raises Assert callable outside zero-argument unit functions")
         _ => return Err("unsupported Body IR raises Assert without a deferred function")
-    ty, operation = function_assignment(pointer_type, source_type, operand, true)?
+    ty, operation = function_assignment(
+        pointer_type,
+        source_type,
+        operand,
+        true,
+        f"raises Assert callable in {builder.name}",
+    )?
     pointer = temporary(builder, ty, span)
     builder.emit(plan_assign(pointer, operation, span))
     error_name = owned_literal(builder, str(runtime_error_name(expected)), span)

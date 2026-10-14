@@ -11,6 +11,31 @@ use incan_lang::lang::conventions::TYPE_CONSTRUCTOR_HOOK;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 impl TypeChecker {
+    /// Retain a checked newtype payload's nominal arguments, permitting only parameters owned by the active frame.
+    /// Concrete calls become closed carriers; a declaration's own parameter remains explicit for later specialization.
+    fn retain_body_ir_newtype_payload(
+        &mut self,
+        name: &str,
+        parameters: &[String],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        if parameters.is_empty()
+            || parameters.iter().any(|parameter| {
+                bindings
+                    .get(parameter)
+                    .is_none_or(|ty| !Self::is_settled_type_argument(ty) && self.active_type_param_name(ty).is_none())
+            })
+        {
+            return;
+        }
+        let carrier = self.constructor_result_type_with_bindings(name, bindings);
+        self.type_info
+            .calls
+            .body_ir_constructor_types
+            .insert((span.start, span.end), carrier);
+    }
+
     /// Retain an executable constructor binding without changing contextual types or legacy call facts.
     ///
     /// The constructor's original fields identify its own binders, whereas contextual checking can replace them
@@ -676,6 +701,7 @@ impl TypeChecker {
                         self.errors.push(errors::newtype_constructor_shape(name, span));
                         return self.constructor_result_type(name);
                     };
+                    let errors_before_payload = self.errors.len();
                     let value_ty = self.check_expr_with_expected(value, Some(&newtype.underlying));
                     if !self.types_compatible(&value_ty, &newtype.underlying) {
                         self.errors.push(errors::type_mismatch(
@@ -693,6 +719,9 @@ impl TypeChecker {
                         TypeArgumentOrigin::Inferred,
                         span,
                     );
+                    if self.errors.len() == errors_before_payload {
+                        self.retain_body_ir_newtype_payload(name, &newtype.type_params, &type_bindings, span);
+                    }
                     self.type_info.record_constructor_field_binding(
                         span,
                         ConstructorFieldBinding {

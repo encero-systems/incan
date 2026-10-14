@@ -101,7 +101,7 @@ pub enum PlanType:
     FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
     FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
-    Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
+    Generator retains the legacy lazy runtime wrapper, with depth zero for an immediate scalar or retained nominal leaf.
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.

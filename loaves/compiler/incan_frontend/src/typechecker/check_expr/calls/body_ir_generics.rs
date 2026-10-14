@@ -3,10 +3,13 @@
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
-use crate::ast::{CallArg, Expr, Span, Spanned};
+use crate::ast::{CallArg, Expr, Literal, Span, Spanned};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, TypeBoundInfo, TypeInfo};
 use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::lang::surface::constructors::ConstructorId;
+use incan_lang::lang::testing::{self, TestingAssertHelperId};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 impl TypeChecker {
     /// Retain a generic source newtype method's native output before legacy erases an open receiver binder.
@@ -77,6 +80,7 @@ impl TypeChecker {
         args: &[CallArg],
         legacy_bindings: &HashMap<String, ResolvedType>,
         span: Span,
+        identity: Option<&CanonicalSymbolId>,
     ) {
         let names = crate::body_ir_parameter_names::parameter_names(info.type_params.iter().map(|name| {
             let bounds = info.type_param_bound_details.get(name);
@@ -111,12 +115,16 @@ impl TypeChecker {
             let Some(parameter) = parameter else {
                 return;
             };
+            let testing_argument = self.body_ir_testing_argument_type(identity, expression);
+            let testing_channel = testing_argument.is_some();
             let key = (expression.span.start, expression.span.end);
             let Some(actual) = self
                 .type_info
-                .calls
-                .body_ir_constructor_types
+                .expressions
+                .body_ir_expr_types
                 .get(&key)
+                .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&key))
+                .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&key))
                 .or_else(|| self.type_info.calls.inferred_constructor_types.get(&key))
                 .or_else(|| self.type_info.calls.inferred_call_result_types.get(&key))
                 .or_else(|| self.type_info.expr_type(expression.span))
@@ -124,8 +132,15 @@ impl TypeChecker {
                 return;
             };
             let expected = normalized(&parameter.ty, &names, &self.type_info);
-            let actual = self.body_ir_argument_type(expression, actual);
+            let actual = testing_argument.unwrap_or_else(|| self.body_ir_argument_type(expression, actual));
+            if testing_channel {
+                self.type_info
+                    .expressions
+                    .body_ir_expr_types
+                    .insert(key, actual.clone());
+            }
             let actual = normalized(&actual, &[], &self.type_info);
+            let actual = self.body_ir_adopted_trait_type(&expected, &actual).unwrap_or(actual);
             if let ResolvedType::TypeVar(name) = &expected {
                 let first_actual = native_binders.insert(name.clone());
                 if first_actual
@@ -149,6 +164,14 @@ impl TypeChecker {
                 .body_ir_call_type_arguments
                 .insert((span.start, span.end), arguments);
             let result = substitute_resolved_type(&normalized(&info.return_type, &names, &self.type_info), &bindings);
+            self.retain_body_ir_call_parameters(info, &names, &bindings, span);
+            tracing::debug!(target: "incan::invocation", identity = ?identity, declared = ?info.return_type, names = ?names, bindings = ?bindings, result = ?result, "direct-route checked call result");
+            if concrete(&result) {
+                self.type_info
+                    .calls
+                    .body_ir_call_result_types
+                    .insert((span.start, span.end), result.clone());
+            }
             let runtime_bridge = info
                 .type_param_bound_details
                 .values()
@@ -162,6 +185,140 @@ impl TypeChecker {
                     .insert((span.start, span.end), result);
             }
         }
+    }
+
+    /// Record the already checked instance's parameter storage, so argument binding cannot reopen its closed leaves.
+    fn retain_body_ir_call_parameters(
+        &mut self,
+        info: &FunctionInfo,
+        names: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        let parameters = info
+            .params
+            .iter()
+            .map(|parameter| crate::symbols::CallableParam {
+                ty: substitute_resolved_type(&normalized(&parameter.ty, names, &self.type_info), bindings),
+                ..parameter.clone()
+            })
+            .collect::<Vec<_>>();
+        if parameters.iter().all(|parameter| concrete(&parameter.ty)) {
+            self.type_info
+                .calls
+                .body_ir_call_parameter_types
+                .insert((span.start, span.end), parameters);
+        }
+    }
+
+    /// Retain only canonical testing helpers' syntactically absent channels as Unit, matching legacy emission.
+    /// Ordinary calls, source-owned equal spellings and constructors with supplied channels keep their checked facts.
+    fn body_ir_testing_argument_type(
+        &mut self,
+        identity: Option<&CanonicalSymbolId>,
+        expression: &Spanned<Expr>,
+    ) -> Option<ResolvedType> {
+        let identity = identity?;
+        let source = self.stdlib_cache.callable_source_identity(identity)?;
+        let SymbolOrigin::Module(mut path) = source.origin else {
+            return None;
+        };
+        path.push(identity.declaration_name.clone());
+        let helper = testing::assert_helper_id_from_std_path(&path)?;
+        if helper == TestingAssertHelperId::AssertIsNone && matches!(expression.node, Expr::Literal(Literal::None)) {
+            return Some(ResolvedType::Generic("Option".into(), vec![ResolvedType::Unit]));
+        }
+        let constructor = self.literal_carrier_constructor(expression)?;
+        let (expected, present) = match helper {
+            TestingAssertHelperId::AssertIsOk => (ConstructorId::Ok, true),
+            TestingAssertHelperId::AssertIsErr => (ConstructorId::Err, false),
+            _ => return None,
+        };
+        if constructor != expected {
+            return None;
+        }
+        let args = match &expression.node {
+            Expr::Call(_, _, args) | Expr::Constructor(_, args) => args,
+            _ => return None,
+        };
+        let [CallArg::Positional(payload)] = args.as_slice() else {
+            return None;
+        };
+        let payload = self.body_ir_checked_value_type(payload.span)?;
+        if !Self::is_settled_type_argument(payload) {
+            return None;
+        }
+        let channels = if present {
+            vec![payload.clone(), ResolvedType::Unit]
+        } else {
+            vec![ResolvedType::Unit, payload.clone()]
+        };
+        Some(ResolvedType::Generic("Result".into(), channels))
+    }
+
+    /// Read an adopter's checked trait arguments, including explicit inherited arguments, before structural binding.
+    /// This supplements ordinary inference privately; it neither selects an adopter nor changes legacy trait facts.
+    fn body_ir_adopted_trait_type(&self, expected: &ResolvedType, actual: &ResolvedType) -> Option<ResolvedType> {
+        let ResolvedType::Generic(required, _) = expected else {
+            return None;
+        };
+        self.lookup_semantic_trait_info(required)?;
+        let (owner, arguments) = match actual {
+            ResolvedType::Named(owner) => (owner, &[][..]),
+            ResolvedType::Generic(owner, arguments) => (owner, arguments.as_slice()),
+            _ => return None,
+        };
+        let (parameters, adoptions) = match self.lookup_semantic_type_info(owner)? {
+            TypeInfo::Model(info) => (&info.type_params, &info.trait_adoptions),
+            TypeInfo::Class(info) => (&info.type_params, &info.trait_adoptions),
+            TypeInfo::Enum(info) => (&info.type_params, &info.trait_adoptions),
+            TypeInfo::Newtype(info) => (&info.type_params, &info.trait_adoptions),
+            _ => return None,
+        };
+        let owner_bindings = crate::resolved_type_subst::type_param_subst_map(parameters, arguments);
+        let mut selected = None;
+        for adoption in adoptions {
+            let info = self.lookup_trait_adoption_info(adoption)?;
+            let direct = if adoption.type_args.is_empty() {
+                arguments
+                    .iter()
+                    .take(info.type_params.len())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                adoption
+                    .type_args
+                    .iter()
+                    .map(|ty| substitute_resolved_type(ty, &owner_bindings))
+                    .collect()
+            };
+            if direct.len() != info.type_params.len() || !direct.iter().all(concrete) {
+                continue;
+            }
+            let mut candidates = vec![(adoption.name.clone(), direct.clone())];
+            let bindings = crate::resolved_type_subst::type_param_subst_map(&info.type_params, &direct);
+            candidates.extend(
+                self.semantic_supertrait_closure(&adoption.name)
+                    .into_iter()
+                    .map(|(name, args)| {
+                        (
+                            name,
+                            args.iter().map(|ty| substitute_resolved_type(ty, &bindings)).collect(),
+                        )
+                    }),
+            );
+            for (name, args) in candidates {
+                if !self.trait_name_matches(&name, required) {
+                    continue;
+                }
+                let carrier = ResolvedType::Generic(required.clone(), args);
+                if selected.as_ref().is_some_and(|previous| previous != &carrier) {
+                    return None;
+                }
+                selected = Some(carrier);
+            }
+        }
+        selected
     }
 
     /// Retain a checked async call as a future argument while leaving legacy's eventual-output expression type alone.
@@ -272,7 +429,11 @@ impl TypeChecker {
 }
 
 /// Normalize checked tuple aliases and only the callee's declared named binders for structural unification.
-fn normalized(ty: &ResolvedType, binders: &[String], facts: &crate::typechecker::TypeCheckInfo) -> ResolvedType {
+pub(super) fn normalized(
+    ty: &ResolvedType,
+    binders: &[String],
+    facts: &crate::typechecker::TypeCheckInfo,
+) -> ResolvedType {
     match ty {
         ResolvedType::Named(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
         ResolvedType::RustPath(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
@@ -298,6 +459,17 @@ fn normalized(ty: &ResolvedType, binders: &[String], facts: &crate::typechecker:
         ),
         ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(normalized(inner, binders, facts))),
         ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::Function(parameters, result) => ResolvedType::Function(
+            parameters
+                .iter()
+                .map(|parameter| crate::symbols::CallableParam {
+                    ty: normalized(&parameter.ty, binders, facts),
+                    ..parameter.clone()
+                })
+                .collect(),
+            Box::new(normalized(result, binders, facts)),
+        ),
         ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(normalized(inner, binders, facts))),
         ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(normalized(inner, binders, facts))),
         ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
@@ -309,7 +481,7 @@ fn normalized(ty: &ResolvedType, binders: &[String], facts: &crate::typechecker:
 }
 
 /// A native fallback requires every structural leaf to be fixed; unresolved or caller-open types stay on the old path.
-fn concrete(ty: &ResolvedType) -> bool {
+pub(super) fn concrete(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::Unknown | ResolvedType::CallSiteInfer | ResolvedType::TypeVar(_) => false,
         ResolvedType::Generic(_, elements) | ResolvedType::Tuple(elements) => elements.iter().all(concrete),

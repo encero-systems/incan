@@ -52,15 +52,27 @@ pub(super) fn layouts(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
 }
 
 /// Retain whole temporary results of exact SDK defaults as concrete carriers or templates over declared caller binders.
+///
+/// Each body keeps ordinary SDK identities and authenticated default constructors whose whole nominal carrier is
+/// already present in its checked locals. An opaque trait parameter cannot acquire a producer from a default's layout.
 pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo) {
     let mut cache = StdlibAstCache::new();
-    let sdk_types = super::library_nominals::type_identities(facts, &mut cache);
+    let ordinary_types = super::library_nominals::type_identities(facts, &mut cache);
+    let sdk_types = super::library_type_identities(facts);
     for body in &mut module.bodies {
         for identity in &sdk_types {
             if matches!(
                 identity.kind,
                 SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
             ) {
+                if !ordinary_types.contains(identity)
+                    && !body
+                        .locals
+                        .iter()
+                        .any(|local| whole_nominal_name(&local.ty) == Some(identity.declaration_name.as_str()))
+                {
+                    continue;
+                }
                 body.named_type_identities
                     .entry(identity.declaration_name.clone())
                     .or_insert_with(|| identity.clone());
@@ -77,6 +89,16 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo) {
             &binders,
             &mut carriers,
         );
+    }
+}
+
+/// Read the root name of a checked named or applied type; identity authentication and whole-place checks remain with
+/// callers.
+fn whole_nominal_name(ty: &IncanType) -> Option<&str> {
+    match ty {
+        IncanType::Named(name) => Some(name),
+        IncanType::Generic { base, .. } => Some(base),
+        _ => None,
     }
 }
 
@@ -261,11 +283,7 @@ fn receiver_type(
     }
     let local = usize::try_from(read.place.local_id()?.0).ok()?;
     let ty = locals.get(local)?.ty.clone();
-    let name = match &ty {
-        IncanType::Named(name) => name,
-        IncanType::Generic { base, .. } => base,
-        _ => return None,
-    };
+    let name = whole_nominal_name(&ty)?;
     let owner = identities.get(name)?;
     matches!(
         owner.kind,

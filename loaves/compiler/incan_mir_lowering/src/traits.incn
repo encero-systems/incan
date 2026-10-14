@@ -254,7 +254,10 @@ pub def owner_method_index(
     owner: PlanType,
     intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
-    """Select one checked implementation for a known receiver; several trait instantiations need an explicit call-site selection."""
+    """
+    Select one checked implementation for a known receiver; several trait instantiations need an explicit call-site selection.
+    A missing executable body stays refused by its selected method name; the name never selects an implementation.
+    """
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass

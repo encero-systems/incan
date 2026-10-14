@@ -1,0 +1,90 @@
+"""Keep source generic value slots distinct from explicit function-pointer slots when closing a callable frame."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustBinding,
+    ArgumentElement as RustArgument,
+    Body as RustBody,
+    Operand as RustOperand,
+)
+from frame import Builder
+from pub::incan_mir_plan import PlanType
+from layout_types import native_source_type
+
+
+pub def owned_callable_slots(
+    builder: Builder,
+    original: &RustBody,
+    closed: &RustBody,
+    arguments: &list[RustArgument],
+    binding: &RustBinding,
+) -> Result[list[int], str]:
+    """Select storage from retained generic parameters and already evaluated local closure facts, never infer types."""
+    match binding:
+        RustBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
+            if len(bindings) != len(arguments):
+                return Err("invalid Body IR generic callable slot binding")
+            mut owned: list[int] = []
+            for slot in range(len(original.params)):
+                if not is_generic_value(original.params[slot].ty):
+                    continue
+                for index in range(len(bindings)):
+                    if int(bindings[index].slot) != slot:
+                        continue
+                    ty = argument_storage(builder, arguments[index])?
+                    match ty:
+                        Some(PlanType.Closure(signature)) =>
+                            if original.params[slot].mutable:
+                                return Err("unsupported Body IR mutable generic callable storage")
+                            expected = native_source_type(
+                                builder.nominals,
+                                builder.enums,
+                                builder.unions,
+                                closed.params[slot].ty,
+                                builder.intrinsics,
+                            )?
+                            if expected != PlanType.FunctionPointer(signature):
+                                return Err("unsupported Body IR generic callable signature mismatch")
+                            owned.append(slot)
+                        Some(PlanType.ClosureRef(_signature)) =>
+                            return Err("unsupported Body IR borrowed generic callable storage")
+                        _ => pass
+            validate_uniform_storage(original, owned)?
+            return Ok(owned)
+        _ => return Err("unsupported Body IR generic callable without resolved slot binding")
+
+
+def argument_storage(builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+    """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            match read.place.local_id():
+                Some(local) =>
+                    index = int(local.index()) + builder.local_offset + 1
+                    return Ok(Some(builder.locals[index].ty))
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+def validate_uniform_storage(original: &RustBody, owned: list[int]) -> Result[None, str]:
+    """Refuse one generic type variable used at incompatible callable ABIs or an unevaluated default."""
+    for owner in owned:
+        for slot in range(len(original.params)):
+            if original.params[slot].ty != original.params[owner].ty:
+                continue
+            if slot not in owned:
+                return Err("unsupported Body IR mixed generic callable storage or default")
+    return Ok(None)
+
+
+def is_generic_value(ty: &RustType) -> bool:
+    """Recognize the retained declaration category before checked substitution erases its source role."""
+    match ty:
+        RustType.TypeVar(_name) => return true
+        _ => return false

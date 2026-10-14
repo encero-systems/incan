@@ -36,7 +36,7 @@ pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
 
 
 pub def list_iterator_locals(block: &RustBlock) -> list[int]:
-    """Read explicit builtin IterNext statements to select their native cursor storage."""
+    """Select all builtin cursor storage; the checked initializer separately chooses borrowed or consuming storage."""
     mut result: list[int] = []
     for statement in block.stmts:
         result.extend(statement_iterator_locals(statement.kind))

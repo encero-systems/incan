@@ -1081,5 +1081,14 @@ pub(super) fn check_validation_failure(
         actual.stdout, expected.stdout,
         "supplied-field effects must be byte-identical"
     );
+    assert_eq!(
+        actual.status.code(),
+        expected.status.code(),
+        "failure exit codes must match"
+    );
+    assert_eq!(
+        actual.stderr, expected.stderr,
+        "failure diagnostics must be byte-identical"
+    );
     Ok(())
 }
