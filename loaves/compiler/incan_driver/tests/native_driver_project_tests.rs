@@ -50,6 +50,23 @@ fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error:
     )
 }
 
+/// The original SDK reader loop uses the stdlib trait's checked initializer and poll declarations.
+#[test]
+fn sdk_reader_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-reader-iteration")?,
+        &fixture.sysroot,
+        &closure,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/lowering_declarations/stdlib_trait_default_names_its_own_module_type.incn"
+        ),
+    )
+}
+
 /// The original take adapter retains its live legacy oracle while the native source-trait implementation is absent.
 #[test]
 fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
