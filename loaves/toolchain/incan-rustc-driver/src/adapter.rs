@@ -297,7 +297,8 @@ impl rustc_driver::Callbacks for Callbacks {
             if let Err(error) = callees::verify_bounds(tcx, def, args) {
                 refuse(tcx, error);
             }
-            // Associated outputs such as IntoIterator::IntoIter and Iterator::Item require the concrete Self impl.
+            // After native bounds hold, normalize associated outputs and opaque trait returns under the concrete Self
+            // implementation; the result must still equal the plan's retained carrier.
             let signature = tcx.normalize_erasing_regions(
                 rustc_middle::ty::TypingEnv::fully_monomorphized(),
                 tcx.fn_sig(def)
