@@ -397,6 +397,7 @@ fn prepare_local_unit(
     features: &[String],
     domain: &str,
 ) -> Result<PreparedUnit, Error> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_local_source", input = %project.display(), domain).entered();
     let sources = local_facet_sources(project)?;
     write_local_facet_snapshot(&sources, snapshot)?;
     let manifest = sources.manifest;

@@ -253,7 +253,10 @@ pub(crate) fn prepare_closure_in_store(
     std::fs::create_dir_all(output)?;
     let toolchain = rustc_identity(rustc)?;
     let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
-    let (units, index_reads) = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
+    let (units, index_reads) = {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_registry_sources", units = seed.units.len(), profile).entered();
+        prepare_units(seed.units, scratch.path(), request, &toolchain)?
+    };
     let context = CompileContext {
         rustc,
         target,
@@ -760,6 +763,7 @@ fn compile_unit(
     searches: Vec<PathBuf>,
     physical_bindings: &[crate::native_loaf::NativeLoafPhysicalBinding],
 ) -> Result<(PathBuf, bool, OvenStoreExecutionPayload, oven_store::OvenReceipt), Error> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_native_unit", loaf = %unit.binding.loaf, version = %unit.binding.version, domain = %unit.binding.domain, profile = context.profile).entered();
     let _source_lease = unit
         ._source_lease
         .as_ref()
@@ -835,8 +839,10 @@ fn compile_unit(
     };
     let domain = format!("sdk-source-unit-{}", unit.binding.domain);
     if let Some(owner) = select_native_unit(store, &receipt, &domain)? {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_unit", loaf = %unit.binding.loaf, domain = %unit.binding.domain);
         return Ok((owner.artifact_root().join(&relative), true, owner, receipt));
     }
+    tracing::trace!(target: "incan::invocation", decision = "compile_native_unit", loaf = %unit.binding.loaf, domain = %unit.binding.domain);
     // Successful raw outputs have no lifetime beyond durable publication. Concurrent producers get independent
     // staging directories; the canonical Store remains the single retained byte cache.
     let directory = tempfile::Builder::new().prefix("native-unit-").tempdir_in(output)?;
@@ -1012,6 +1018,7 @@ fn publish_unit(
     output: PathBuf,
     relative: &str,
 ) -> Result<OvenStoreExecutionPayload, Error> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::publish_native_unit", loaf = %unit.binding.loaf, version = %unit.binding.version, domain = %unit.binding.domain).entered();
     let mut files = source_materializations(&unit.root, &unit.root)?;
     files.push(OvenArtifactMaterializedFile {
         source_path: output,
