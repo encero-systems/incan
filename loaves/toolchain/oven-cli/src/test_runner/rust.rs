@@ -105,6 +105,21 @@ pub(super) fn prepare(
         .map_err(|e| CliError::failure(format!("Rust test {}: {e}", source.display())))
 }
 
+/// Resolve public features against the authored dependency contract before applying test-only requirements.
+/// An environment may make an optional dependency mandatory; that must not invalidate the original `dep:` edge.
+/// Both selections still use the canonical feature graph and environment resolver, without mutating the source.
+fn resolve_test_manifest(
+    manifest: &ProjectManifest,
+    features: &FeatureSelection,
+) -> Result<(ProjectManifest, incan_provider::ResolvedPackageFeatures), Box<dyn std::error::Error>> {
+    let selected = incan_provider::PackageFeatureGraph::from_manifest(manifest)?.resolve(features)?;
+    let environment = oven_model::project_lifecycle::env::EnvConfigSet::from_manifest(manifest).resolve_env("test")?;
+    Ok((
+        manifest.with_environment_dependencies(&environment.dependencies)?,
+        selected,
+    ))
+}
+
 /// Preserve exact compilation inputs and leases while mapping real libtest metadata into common test records.
 fn prepare_inner(
     source: &Path,
@@ -123,9 +138,7 @@ fn prepare_inner(
         .as_ref()
         .or(context.session.manifest.as_ref())
         .ok_or("Rust tests require loaf.toml")?;
-    let environment_selection =
-        oven_model::project_lifecycle::env::EnvConfigSet::from_manifest(manifest).resolve_env("test")?;
-    let effective_manifest = manifest.with_environment_dependencies(&environment_selection.dependencies)?;
+    let (effective_manifest, selected_features) = resolve_test_manifest(manifest, features)?;
     let manifest = &effective_manifest;
     if manifest
         .rust_facet
@@ -134,7 +147,6 @@ fn prepare_inner(
     {
         return Err("Rust test roots with build scripts require declared build facts in their native plan".into());
     }
-    let selected_features = incan_provider::PackageFeatureGraph::from_manifest(manifest)?.resolve(features)?;
     let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
     let mut resolved = incan_provider::dependency_resolver::resolve_dependencies(
         Some(manifest),
@@ -341,6 +353,47 @@ pub(super) fn execute(
 #[cfg(test)]
 mod tests {
     use super::discover_roots;
+
+    /// A test-only requirement cannot turn a valid authored optional-feature edge into a feature error.
+    #[test]
+    fn test_overlay_preserves_authored_optional_feature_contract() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = oven_model::manifest::ProjectManifest::from_str(
+            r#"
+[project]
+name = "feature-overlay"
+[project.features]
+helpers = ["dep:leaf", "leaf/extra"]
+[dependencies]
+leaf = { loaf = "crates-io/leaf", version = "1", optional = true }
+[envs.test.dependencies]
+leaf = { optional = false }
+"#,
+            std::path::Path::new("/fixture/loaf.toml"),
+        )?;
+        let selection = incan_provider::FeatureSelection {
+            requested: std::collections::BTreeSet::from(["helpers".into()]),
+            ..Default::default()
+        };
+        let (effective, features) = super::resolve_test_manifest(&manifest, &selection)?;
+        assert!(features.active_features.contains("helpers"));
+        assert!(features.active_optional_dependencies.contains("leaf"));
+        assert!(
+            features
+                .dependency_features
+                .get("leaf")
+                .is_some_and(|items| items.contains("extra"))
+        );
+        assert!(manifest.loaf_dependencies["leaf"][0].spec.optional);
+        assert!(!effective.loaf_dependencies["leaf"][0].spec.optional);
+        let (_, default_features) = super::resolve_test_manifest(&manifest, &Default::default())?;
+        assert!(!default_features.active_features.contains("helpers"));
+        let unknown = incan_provider::FeatureSelection {
+            requested: std::collections::BTreeSet::from(["unknown".into()]),
+            ..Default::default()
+        };
+        assert!(super::resolve_test_manifest(&manifest, &unknown).is_err());
+        Ok(())
+    }
 
     /// Nested Rust modules are compiled by their authored crate root, never collected as sibling crates.
     #[test]
