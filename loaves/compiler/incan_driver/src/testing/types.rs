@@ -180,7 +180,10 @@ pub struct TestRunConfig<'a> {
     pub run_xfail: bool,
     pub marker_expr: Option<&'a str>,
     pub strict_markers: bool,
+    /// Global native thread / execution-unit budget.
     pub jobs: usize,
+    /// Preserve individual Rust test processes rather than sharing one native root.
+    pub isolate: bool,
     pub test_features: Vec<String>,
     pub package_features: FeatureSelection,
     pub sdk_profile: Option<String>,

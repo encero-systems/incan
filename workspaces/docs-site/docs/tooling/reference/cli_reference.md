@@ -578,7 +578,8 @@ On Unix, test commands automatically connect to the same compatible project owne
 | `-x`, `--exitfirst` | Stop after the first failure. |
 | `--slow` | Include tests marked `@slow`. |
 | `--strict-markers` | Refuse unknown marker names at collection, unless registered in `TEST_MARKERS`. |
-| `-j <N>`, `--jobs <N>` | Run up to `N` test batches at once (default `1`); each batch runs its tests on one thread. |
+| `-j <N>`, `--jobs <N>` | Total test worker budget; defaults to CPU parallelism available to the process. Incan batches each use one worker. A compatible shared Rust root reserves the budget and uses up to `N` libtest threads. |
+| `--isolate` | Execute Rust cases in separate processes. Incan fixture groups retain their existing scope. |
 | `--feature <NAME>` | Enable the collection-time `std.testing.feature("NAME")` probe for `skipif` and `xfailif`. |
 | `--timeout <DURATION>` | Time limit for each test batch, such as `250ms`, `5s` or `2m`. A test's `@timeout(...)` overrides it. A batch that exceeds its limit is stopped and fails. |
 | `--nocapture` | Print test output for passing tests too. |
@@ -627,7 +628,7 @@ Runs both Incan and Rust tests by default. The language flags are mutually exclu
 | Conditional dependencies | Evaluate each authored target condition against the selected Rust toolchain's target configuration before projecting native dependencies. False alternatives are excluded; compatible active alternatives combine their feature demands. Missing target evidence, incompatible active alternatives, malformed conditions or an unavailable compiler-bound policy engine fail preparation. The existing owner reuses unchanged decisions while observing compiler and engine files; tests still execute afresh. |
 | Own library | Binary and integration-test roots link the package's authored `src/lib.rs` with the selected package features. Library unit tests compile that source directly. A sibling `.loaf.toml` is a complete target declaration and must declare any library dependency it needs. |
 | Procedural macros | A library declared with `[rust].type = "proc-macro"` uses the selected Rust toolchain's macro support when preparing its unit-test harness. Its integration tests remain ordinary Rust test binaries. |
-| Scheduling | Selected Rust cases execute separately. Compatible Incan cases retain shared harnesses for their existing fixture lifetimes. `--jobs`, failure handling and reports are common. |
+| Scheduling | Compatible selected Rust cases from one root share a process, reserving the global `--jobs` budget while it runs. `--isolate`, `--shuffle`, `--exitfirst`, deadlines or serial markers retain separate Rust case processes. Resource constraints remain enforced. Compatible Incan cases retain existing fixture groups. Outcomes come from the supervised harness result channel, not nested stdout. |
 | Result | A failed selected test or preparation error fails the command. Passing outcomes are never cached. JSON retains `incan.test.v1`; JUnit combines selected cases from both languages. |
 
 ```bash

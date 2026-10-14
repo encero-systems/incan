@@ -97,10 +97,10 @@ fn retained_inventory_avoids_relisting_and_executes_fresh_outcomes() -> TestResu
     assert!(collection.ignored().names.is_empty());
     assert_eq!(fixture.listings()?, 2);
     let request = fixture.request("selected");
-    let first = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection))?;
+    let first = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), None)?;
     assert!(first.success, "{}", first.output);
     fs::write(fixture.root.join("fail"), "runtime data changed")?;
-    let second = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection))?;
+    let second = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), None)?;
     assert!(!second.success);
     assert_eq!(fixture.listings()?, 2);
     assert_eq!(fs::read(fixture.root.join("executions"))?, b"xx");
@@ -118,8 +118,13 @@ fn retained_inventory_avoids_relisting_and_executes_fresh_outcomes() -> TestResu
 fn retained_inventory_rejects_missing_case_before_execution() -> TestResult {
     let fixture = Fixture::new()?;
     let collection = fixture.collect()?;
-    let result =
-        run_native_tests_exact_for_request(&fixture.request("missing"), &fixture.root, false, Some(&collection));
+    let result = run_native_tests_exact_for_request(
+        &fixture.request("missing"),
+        &fixture.root,
+        false,
+        Some(&collection),
+        None,
+    );
     assert!(matches!(result, Err(OvenNativeTestError::MissingExactTest { .. })));
     assert_eq!(fixture.listings()?, 2);
     assert!(!fixture.root.join("executions").exists());
@@ -134,8 +139,13 @@ fn replaced_executable_reconciles_inventory_before_execution() -> TestResult {
     let replacement = fixture.root.join("replacement");
     write_harness(&replacement, "replacement")?;
     fs::rename(replacement, &fixture.executable)?;
-    let result =
-        run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&collection));
+    let result = run_native_tests_exact_for_request(
+        &fixture.request("selected"),
+        &fixture.root,
+        false,
+        Some(&collection),
+        None,
+    );
     assert!(matches!(result, Err(OvenNativeTestError::MissingExactTest { .. })));
     assert_eq!(fixture.listings()?, 3);
     assert!(!fixture.root.join("executions").exists());
@@ -149,12 +159,13 @@ fn changed_invocation_context_recollects_inventory() -> TestResult {
     let collection = fixture.collect()?;
     let mut request = fixture.request("selected");
     request.environment.insert("NEW_CONTEXT".into(), "value".into());
-    assert!(run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection))?.success);
+    assert!(run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), None)?.success);
     assert_eq!(fixture.listings()?, 3);
     let directory = fixture.root.join("other");
     fs::create_dir(&directory)?;
     assert!(
-        run_native_tests_exact_for_request(&fixture.request("selected"), &directory, false, Some(&collection))?.success
+        run_native_tests_exact_for_request(&fixture.request("selected"), &directory, false, Some(&collection), None)?
+            .success
     );
     assert_eq!(fixture.listings()?, 4);
     Ok(())
@@ -167,7 +178,7 @@ fn retained_inventory_preserves_expired_deadline() -> TestResult {
     let collection = fixture.collect()?;
     let mut request = fixture.request("selected");
     request.timeout = Some(Duration::ZERO);
-    assert!(run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection)).is_err());
+    assert!(run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), None).is_err());
     assert_eq!(fixture.listings()?, 2);
     assert!(!fixture.root.join("executions").exists());
     Ok(())
@@ -206,12 +217,14 @@ fn owner_reconciliation_retains_names_and_executes_fresh_results() -> TestResult
     assert!(std::sync::Arc::ptr_eq(&first, &second));
     assert_eq!(fixture.listings()?, 2);
     assert!(
-        run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&second))?.success
+        run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&second), None)?
+            .success
     );
     fs::write(fixture.root.join("fail"), "fresh data")?;
     let third = collect(Some(second))?;
     assert!(
-        !run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&third))?.success
+        !run_native_tests_exact_for_request(&fixture.request("selected"), &fixture.root, false, Some(&third), None)?
+            .success
     );
     assert_eq!(fixture.listings()?, 2);
     assert_eq!(fs::read(fixture.root.join("executions"))?, b"xx");
@@ -290,7 +303,7 @@ sh -c 'printf "%s\n" "$INCAN_INTERNAL_TEST_OWNER_SCOPE"' >> "$FIXTURE_ROOT/scope
     let collection = fixture.collect()?;
     let request = fixture.request("selected");
     for _ in 0..2 {
-        let report = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection))?;
+        let report = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), None)?;
         assert!(report.success, "{}", report.output);
     }
     let scopes = fs::read_to_string(fixture.root.join("scopes"))?;
@@ -325,5 +338,129 @@ sh -c 'printf "%s\n" "$INCAN_INTERNAL_TEST_OWNER_SCOPE"' >> "$FIXTURE_ROOT/scope
         2,
         "runtime lifetime does not invalidate retained inventory"
     );
+    Ok(())
+}
+
+/// Speak the existing private result protocol while accepting several exact names in a single child.
+fn shared_fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    fs::write(
+        &fixture.executable,
+        r#"#!/bin/sh
+if [ "$1" = "--list" ]; then
+  printf x >> "$FIXTURE_ROOT/listings"
+  if [ "$4" != "--ignored" ]; then printf '%s\n' 'alpha: test' 'beta: test' 'unselected: test'; fi
+  exit 0
+fi
+printf x >> "$FIXTURE_ROOT/executions"
+names=''
+log=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    alpha|beta|unselected) names="$names $1" ;;
+    --logfile) shift; log="$1" ;;
+    --test-threads=*) printf '%s\n' "$1" >> "$FIXTURE_ROOT/threads" ;;
+  esac
+  shift
+done
+code=0
+for name in $names; do
+  if [ "$name" = beta ] && [ -f "$FIXTURE_ROOT/partial" ]; then exit 1; fi
+  if [ "$name" = beta ] && [ -f "$FIXTURE_ROOT/hang" ]; then sleep 60; fi
+  if [ "$name" = beta ] && [ -f "$FIXTURE_ROOT/fail" ]; then
+    printf 'failed %s <0.001s>\n' "$name" >> "$log"; code=1
+  else
+    printf 'ok %s <0.001s>\n' "$name" >> "$log"
+  fi
+done
+exit "$code"
+"#,
+    )?;
+    Ok(fixture)
+}
+
+/// Shared exact selections use one child, preserve the budget and execute fresh runtime outcomes.
+#[test]
+fn shared_selection_retains_inventory_and_executes_fresh_outcomes() -> TestResult {
+    let fixture = shared_fixture()?;
+    let collection = fixture.collect()?;
+    let mut request = fixture.request("alpha");
+    request.exact_names.push("beta".into());
+    let first = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), Some(2))?;
+    assert!(first.success, "{}", first.output);
+    assert_eq!(first.case_counts.as_ref().ok_or("missing counts")?.passed, 2);
+    assert_eq!(first.case_timings.len(), 2);
+    assert_eq!(fs::read(fixture.root.join("executions"))?, b"x");
+    assert_eq!(fs::read_to_string(fixture.root.join("threads"))?, "--test-threads=2\n");
+    fs::write(fixture.root.join("fail"), "changed runtime data")?;
+    let second = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), Some(2))?;
+    assert!(!second.success);
+    let counts = second.case_counts.as_ref().ok_or("missing failure counts")?;
+    assert_eq!((counts.passed, counts.failed), (1, 1));
+    assert_eq!(fs::read(fixture.root.join("executions"))?, b"xx");
+    assert_eq!(fixture.listings()?, 2);
+    assert!(std::sync::Arc::ptr_eq(&first.inventory, &second.inventory));
+    Ok(())
+}
+
+/// Isolation remains an explicit execution policy over the same selected inventory and supervisor.
+#[test]
+fn shared_selection_can_preserve_per_case_isolation() -> TestResult {
+    let fixture = shared_fixture()?;
+    let collection = fixture.collect()?;
+    let mut request = fixture.request("alpha");
+    request.exact_names.push("beta".into());
+    let report = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), None)?;
+    assert!(report.success, "{}", report.output);
+    assert_eq!(fs::read(fixture.root.join("executions"))?, b"xx");
+    assert_eq!(fixture.listings()?, 2);
+    Ok(())
+}
+
+/// Invalid budgets or selections cannot broaden to every test or launch an unverified child.
+#[test]
+fn shared_selection_refuses_invalid_budget_and_names() -> TestResult {
+    let fixture = shared_fixture()?;
+    let collection = fixture.collect()?;
+    let request = fixture.request("alpha");
+    assert!(run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), Some(0)).is_err());
+    for names in [
+        Vec::new(),
+        vec!["missing".to_string()],
+        vec!["alpha".to_string(), "alpha".to_string()],
+    ] {
+        let request = OvenNativeTestRequest {
+            exact_names: names,
+            ..fixture.request("alpha")
+        };
+        assert!(
+            run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), Some(2)).is_err()
+        );
+    }
+    assert!(!fixture.root.join("executions").exists());
+    assert_eq!(fixture.listings()?, 2);
+    Ok(())
+}
+
+/// A shared child that exits before finishing cannot manufacture outcomes for unexecuted cases.
+#[test]
+fn shared_selection_refuses_partial_results_and_preserves_deadline() -> TestResult {
+    let fixture = shared_fixture()?;
+    let collection = fixture.collect()?;
+    let mut request = fixture.request("alpha");
+    request.exact_names.push("beta".into());
+    fs::write(fixture.root.join("partial"), "stop after alpha")?;
+    let partial = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), Some(2))?;
+    assert!(!partial.success);
+    assert!(partial.case_counts.is_none());
+    assert_eq!(partial.case_timings.len(), 1);
+    fs::remove_file(fixture.root.join("partial"))?;
+    fs::write(fixture.root.join("hang"), "wait after alpha")?;
+    request.timeout = Some(Duration::from_millis(100));
+    let timeout = run_native_tests_exact_for_request(&request, &fixture.root, false, Some(&collection), Some(2))?;
+    assert!(!timeout.success);
+    assert!(timeout.timed_out);
+    assert!(timeout.case_counts.is_none());
+    assert_eq!(fixture.listings()?, 2);
     Ok(())
 }

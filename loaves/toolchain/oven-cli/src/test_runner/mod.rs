@@ -912,6 +912,8 @@ struct ExecutionUnit {
     timeout: Option<Duration>,
     resources: BTreeSet<String>,
     serial: bool,
+    /// A shared Rust root reserves this entire global budget while it executes.
+    shared_threads: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -941,7 +943,14 @@ fn run_execution_unit(
         .first()
         .is_some_and(|test| test.file_path.extension().is_some_and(|extension| extension == "rs"))
     {
-        return rust::execute(&unit.tests, command_context, unit.timeout, no_capture, &output);
+        return rust::execute(
+            &unit.tests,
+            command_context,
+            unit.timeout,
+            no_capture,
+            &output,
+            unit.shared_threads,
+        );
     }
     run_file_tests_batch(
         &unit.tests,
@@ -1050,6 +1059,7 @@ fn build_execution_units(
                 continue;
             }
             let provisional = ExecutionUnit {
+                shared_threads: None,
                 index: units.len(),
                 file_paths: BTreeSet::from([file_path.clone()]),
                 tests: Vec::new(),
@@ -1073,6 +1083,7 @@ fn build_execution_units(
         }
 
         units.push(ExecutionUnit {
+            shared_threads: None,
             index: units.len(),
             file_paths,
             tests: batch,
@@ -1087,6 +1098,33 @@ fn build_execution_units(
     } else {
         units
     }
+}
+
+/// Group compatible Rust cases without changing Incan fixtures, per-case deadlines or explicit ordering.
+/// A shared root reserves the whole worker budget and runs exclusively in the existing scheduler. Other roots
+/// cannot multiply that budget. Deadline-bearing, resource-constrained or serial cases retain individual process
+/// execution.
+fn share_native_execution_units(units: Vec<ExecutionUnit>, jobs: usize, isolate: bool) -> Vec<ExecutionUnit> {
+    if isolate {
+        return units;
+    }
+    let mut groups: Vec<ExecutionUnit> = Vec::new();
+    for mut unit in units {
+        if unit_contains_rust(&unit) && !unit.serial && unit.timeout.is_none() && unit.resources.is_empty() {
+            if let Some(group) = groups.iter_mut().find(|group| {
+                group.shared_threads.is_some()
+                    && group.file_paths == unit.file_paths
+                    && group.resources == unit.resources
+            }) {
+                merge_execution_unit(group, unit);
+                continue;
+            }
+            unit.shared_threads = Some(jobs.max(1));
+            unit.serial = true;
+        }
+        groups.push(unit);
+    }
+    groups
 }
 
 /// Prepared Rust cases have no generated Incan harness or process-local Incan fixtures to coalesce.
@@ -1350,6 +1388,7 @@ pub(crate) struct TestExecutionRequest {
     seed: Option<u64>,
     run_xfail: bool,
     jobs: usize,
+    isolate: bool,
     no_capture: bool,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
@@ -1372,6 +1411,7 @@ impl TestExecutionRequest {
             seed: config.seed,
             run_xfail: config.run_xfail,
             jobs: config.jobs,
+            isolate: config.isolate,
             no_capture: config.no_capture,
             cargo_features: config.cargo_features.clone(),
             cargo_no_default_features: config.cargo_no_default_features,
@@ -1406,6 +1446,7 @@ impl TestExecutionRequest {
             seed: self.seed,
             run_xfail: self.run_xfail,
             jobs: self.jobs,
+            isolate: self.isolate,
             no_capture: self.no_capture,
             cargo_features: self.cargo_features.clone(),
             cargo_no_default_features: self.cargo_no_default_features,
@@ -1693,6 +1734,7 @@ pub(crate) fn execute_tests_with_owner(
         marker_expr: _,
         strict_markers: _,
         jobs,
+        isolate,
         test_features: _,
         package_features: _,
         sdk_profile: _,
@@ -1764,6 +1806,7 @@ pub(crate) fn execute_tests_with_owner(
 
     let planning_start = Instant::now();
     let units = build_execution_units(&filtered_tests, path_for_execution, default_timeout, stop_on_fail, jobs);
+    let units = share_native_execution_units(units, jobs, isolate || shuffle || stop_on_fail);
     if report_format == TestOutputFormat::Console && verbose {
         output.line(format_args!(
             "planned {} generated harness unit(s) in {:.2}s",
@@ -2062,6 +2105,7 @@ mod tests {
             marker_expr: None,
             strict_markers: false,
             jobs: 1,
+            isolate: false,
             test_features: Vec::new(),
             package_features: incan_provider::FeatureSelection::default(),
             sdk_profile: None,
@@ -2441,6 +2485,7 @@ mod tests {
             serial: false,
         }];
         let blocked = ExecutionUnit {
+            shared_threads: None,
             index: 1,
             file_paths: BTreeSet::from([PathBuf::from("test_other.incn")]),
             tests: vec![make_test("test_db", vec![TestMarker::Resource("db".to_string())])],
@@ -2450,6 +2495,7 @@ mod tests {
             serial: false,
         };
         let allowed = ExecutionUnit {
+            shared_threads: None,
             index: 2,
             file_paths: BTreeSet::from([PathBuf::from("test_cache.incn")]),
             tests: vec![make_test("test_cache", vec![TestMarker::Resource("cache".to_string())])],
@@ -2472,6 +2518,7 @@ mod tests {
     #[test]
     fn scheduler_runs_serial_units_alone() {
         let serial = ExecutionUnit {
+            shared_threads: None,
             index: 1,
             file_paths: BTreeSet::from([PathBuf::from("test_serial.incn")]),
             tests: vec![make_test("test_serial", vec![TestMarker::Serial])],
@@ -2503,6 +2550,7 @@ mod tests {
             serial: true,
         }];
         let ordinary = ExecutionUnit {
+            shared_threads: None,
             index: 2,
             file_paths: BTreeSet::from([PathBuf::from("test_regular.incn")]),
             tests: vec![make_test("test_regular", vec![])],
@@ -2526,6 +2574,7 @@ mod tests {
             serial: false,
         }];
         let candidate = ExecutionUnit {
+            shared_threads: None,
             index: 1,
             file_paths: BTreeSet::from([PathBuf::from("test_same_file.incn")]),
             tests: vec![make_test("test_cache", vec![TestMarker::Resource("cache".to_string())])],
