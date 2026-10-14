@@ -1373,18 +1373,23 @@ fn imported_trait_implementations(
 }
 
 /// Close a direct imported trait only from checked adoption arguments and its recorded declaration binders.
-/// Nongeneric inherited slots keep their empty frame; generic inherited slots lack a retained instantiation here.
+/// Inherited standard slots retain an empty frame only along the checked argument-free edges selected by
+/// [`standard_supertrait_keys`]; their provider-qualified keys need not have direct-adoption binder records.
+/// Generic inherited slots lack a retained instantiation here and remain excluded.
 fn imported_slot_arguments(
     type_info: &TypeCheckInfo,
     adoption: &ast::Spanned<ast::TraitBound>,
     trait_key: &str,
 ) -> Option<Vec<bir::TraitTypeArgument>> {
+    if trait_key != adoption.node.name {
+        return standard_supertrait_keys(type_info, &adoption.node.name)
+            .iter()
+            .any(|key| key == trait_key)
+            .then(Vec::new);
+    }
     let parameters = type_info.traits.type_params.get(trait_key)?;
     if parameters.is_empty() {
-        return (trait_key != adoption.node.name || adoption.node.type_args.is_empty()).then(Vec::new);
-    }
-    if trait_key != adoption.node.name {
-        return None;
+        return adoption.node.type_args.is_empty().then(Vec::new);
     }
     let key = (adoption.span.start, adoption.span.end);
     let arguments = type_info
