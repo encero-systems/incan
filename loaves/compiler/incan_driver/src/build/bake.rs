@@ -477,10 +477,11 @@ fn direct_rustc_composition_failure(error: &OvenRustcError) -> bool {
 ///
 /// Source authority is observed before preparation and checked again after execution. Changed inputs refuse
 /// publication instead of associating an old executable with a newer source tree. Ordinary outputs carry no
-/// whole-project inspection authority and therefore cannot satisfy explicit multi-target bake reuse.
+/// whole-project inspection authority and therefore cannot satisfy explicit multi-target bake reuse. Native
+/// Store outputs publish from their original leased immutable location; the caller destination remains isolated.
 pub fn publish_ordinary_project_output(
     prepared: &OvenPreparedProject,
-    native_output: &Path,
+    native_output: &oven_rustc::rustc::OvenDirectRustcBake,
     source_authority: &str,
     preparation_identity: &str,
     report: &crate::build_report::BuildReport,
@@ -493,14 +494,23 @@ pub fn publish_ordinary_project_output(
             "project inputs changed during build; completed output was not published",
         ));
     }
-    let files = project_output_bake_files(
+    let mut files = project_output_bake_files(
         &prepared.project_root,
         &prepared.generator,
-        native_output,
+        &native_output.output,
         None,
         None,
         &[],
     )?;
+    if let Some(source) = native_output.stored_output_path() {
+        let executable = files
+            .iter_mut()
+            .find(|file| file.output_relative_path == super::OVEN_PROJECT_OUTPUT_ARTIFACT_PATH)
+            .ok_or_else(|| CliError::failure("completed output has no native executable member"))?;
+        // Keep the caller destination, but publish the original immutable bytes under the original live lease.
+        // The existing Store validates and links this source; it must never link the writable caller (#2205).
+        executable.source_path = source.to_path_buf();
+    }
     let backend_receipt = report
         .backend
         .clone()

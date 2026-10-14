@@ -1019,6 +1019,7 @@ impl OvenBoundDirectRustcLibrary<'_> {
             cargo_process_started: false,
             reused: true,
             lease: None,
+            stored_output: None,
         }))
     }
 
@@ -1083,6 +1084,7 @@ impl OvenBoundDirectRustcLibrary<'_> {
                 cargo_process_started: false,
                 reused: false,
                 lease: None,
+                stored_output: None,
             },
             observation,
         })

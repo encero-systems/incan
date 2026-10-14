@@ -135,7 +135,8 @@ fn bake_native_in_store(
     })?;
     fs::rename(staged_sidecar, &sidecar).map_err(|source| OvenRustcError::Io { path: sidecar, source })?;
     bake.output = output;
-    let (_, _, _, lease) = store.select_payload_for_execution(&published.identity)?;
+    let (_, root, _, lease) = store.select_payload_for_execution(&published.identity)?;
+    bake.stored_output = Some(root.join(filename));
     bake.lease = Some(lease);
     Ok(bake)
 }
@@ -229,6 +230,7 @@ fn reuse_native(
             cargo_process_started: false,
             reused: true,
             lease: Some(lease),
+            stored_output: Some(source),
         }));
     }
     Ok(None)

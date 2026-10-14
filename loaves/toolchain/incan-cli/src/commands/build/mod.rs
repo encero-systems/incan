@@ -629,13 +629,7 @@ fn run_oven_prepared_project(
         let mut report = prepared.report.clone();
         report.artifacts.push(artifact_report("binary", &bake.output));
         let report = report.finish(prepared.prepare_timings.clone());
-        publish_ordinary_project_output(
-            &prepared,
-            &bake.output,
-            &source_authority,
-            &preparation_identity,
-            &report,
-        )?;
+        publish_ordinary_project_output(&prepared, &bake, &source_authority, &preparation_identity, &report)?;
     }
     let mut command = Command::new(&bake.output);
     command.current_dir(&prepared.project_root);
