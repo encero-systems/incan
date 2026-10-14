@@ -5635,6 +5635,7 @@ impl TypeChecker {
             ty: storage.ty.clone(),
         })
     }
+
     /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
     /// legacy call-site facts. Unbound declaration parameters remain placeholders until decorator validation.
     fn retain_body_ir_decorator_factory(&mut self, decorator: &Spanned<Decorator>, result: &ResolvedType) {

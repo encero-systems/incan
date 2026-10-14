@@ -18,6 +18,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Checked serde derive propagation preserves byte parity for a model's list of enum payloads.
+#[test]
+fn serde_list_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("serde-list-payload")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.serde.json import Serialize\n\n@derive(Serialize)\nmodel Payload:\n    tags: list[Tag]\n\nenum Tag:\n    A\n    B\n\ndef main() -> None:\n    println(Payload(tags=[Tag.A]).to_json())\n",
+    )
+}
+
 /// The forced reader error pins the missing SDK chunks default and preserves the legacy mapper's error bytes.
 #[test]
 fn sdk_reader_error_mapper_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

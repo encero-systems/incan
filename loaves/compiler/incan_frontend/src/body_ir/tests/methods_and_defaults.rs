@@ -4,6 +4,19 @@
 
 use super::*;
 
+/// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
+#[test]
+fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n",
+        &["classmethods"],
+    )?;
+    let body = body_named(&module, "make")?;
+    assert_eq!(body.type_parameters, ["T"]);
+    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Box"));
+    Ok(())
+}
+
 /// Generated reflection retains its checked typed/string mode and excludes type-private slots, not all private slots.
 #[test]
 fn reflection_retains_checked_mode_and_field_policy() -> Result<(), Box<dyn std::error::Error>> {
