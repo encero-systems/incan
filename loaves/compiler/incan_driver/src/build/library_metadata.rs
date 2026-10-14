@@ -199,7 +199,7 @@ impl SelectedLibraryMetadata {
         LibraryMetadataReference {
             schema_version: LIBRARY_METADATA_SCHEMA_VERSION,
             receipt: self.payload.receipt.clone(),
-            owner_identity: self.owner.manifest.identity.clone(),
+            owner_identity: self.owner.manifest().identity.clone(),
         }
     }
 
@@ -216,7 +216,10 @@ impl SelectedLibraryMetadata {
         if !traversal.capabilities.insert(std::ptr::from_ref(self)) {
             return Ok(());
         }
-        let coordinate = (self.owner.artifact_root.clone(), self.owner.manifest.identity.clone());
+        let coordinate = (
+            self.owner.artifact_root().to_path_buf(),
+            self.owner.manifest().identity.clone(),
+        );
         if traversal.physical_owners.insert(coordinate) {
             #[cfg(test)]
             {
@@ -225,7 +228,7 @@ impl SelectedLibraryMetadata {
             self.owner
                 .verify_admitted_payload()
                 .map_err(|error| CliError::failure(error.to_string()))?;
-            validate_output_contract(&self.owner.artifact_root, &self.payload)?;
+            validate_output_contract(self.owner.artifact_root(), &self.payload)?;
         }
         for dependency in &self._dependency_owners {
             dependency.verify_with_traversal(traversal)?;
@@ -268,21 +271,21 @@ impl SelectedLibraryMetadata {
         self.verify()?;
         let files = self
             .owner
-            .manifest
+            .manifest()
             .materialized_files
             .iter()
             .map(|file| OvenArtifactMaterializedFile {
-                source_path: self.owner.artifact_root.join(&file.relative_path),
+                source_path: self.owner.artifact_root().join(&file.relative_path),
                 relative_path: file.relative_path.clone(),
             })
             .collect();
         let directories = self
             .owner
-            .manifest
+            .manifest()
             .materialized_directories
             .iter()
             .map(|directory| oven_store::store::OvenArtifactMaterializedDirectory {
-                source_path: self.owner.artifact_root.join(&directory.relative_path),
+                source_path: self.owner.artifact_root().join(&directory.relative_path),
                 relative_path: directory.relative_path.clone(),
             })
             .collect();
@@ -290,9 +293,9 @@ impl SelectedLibraryMetadata {
             .publish_verified_import(
                 &OvenArtifactPublishRequest {
                     receipt: self.payload.receipt.clone(),
-                    domain: self.owner.manifest.domain.clone(),
-                    kind: self.owner.manifest.kind,
-                    payload: self.owner.payload.clone(),
+                    domain: self.owner.manifest().domain.clone(),
+                    kind: self.owner.manifest().kind,
+                    payload: self.owner.payload().to_vec(),
                     materialized_files: files,
                     materialized_directories: directories,
                 },
@@ -300,7 +303,7 @@ impl SelectedLibraryMetadata {
                 self.owner.admitted_materialized_directories(),
             )
             .map_err(|error| CliError::failure(error.to_string()))?;
-        if exported.identity != self.owner.manifest.identity
+        if exported.identity != self.owner.manifest().identity
             || exported.receipt_identity != self.payload.receipt.identity
             || exported.build_unit_identity != self.payload.receipt.build_unit_identity
             || exported.intent != self.payload.receipt.intent
@@ -371,7 +374,7 @@ impl SelectedLibraryMetadata {
             .iter()
             .map(|dependency| {
                 Ok((
-                    dependency.owner.manifest.identity.clone(),
+                    dependency.owner.manifest().identity.clone(),
                     dependency.payload.receipt.identity.clone(),
                     dependency.manifest.name.clone(),
                     dependency.manifest.version.clone(),
@@ -413,7 +416,7 @@ impl SelectedLibraryMetadata {
         self.owner
             .verify_admitted_payload()
             .map_err(|error| CliError::failure(error.to_string()))?;
-        validate_output_contract(&self.owner.artifact_root, &self.payload)?;
+        validate_output_contract(self.owner.artifact_root(), &self.payload)?;
         fs::create_dir_all(destination).map_err(|error| CliError::failure(error.to_string()))?;
         require_directory(destination)?;
         for file in self.payload.metadata_files.iter().chain(&self.payload.generated_files) {
@@ -430,7 +433,7 @@ impl SelectedLibraryMetadata {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(CliError::failure(error.to_string())),
             }
-            let bytes = fs::read(self.owner.artifact_root.join(&file.relative_path))
+            let bytes = fs::read(self.owner.artifact_root().join(&file.relative_path))
                 .map_err(|error| CliError::failure(error.to_string()))?;
             if digest_bytes(&bytes) != file.digest {
                 return Err(CliError::failure("checked library replay input changed while copying"));
@@ -543,19 +546,19 @@ fn admit_metadata_reference(
         return Err(CliError::failure("competing checked library reference owners"));
     }
     let owner = candidates.remove(0);
-    if owner.manifest.identity != reference.owner_identity
-        || owner.manifest.kind != OvenArtifactKind::Engine
-        || owner.manifest.domain != LIBRARY_METADATA_DOMAIN
-        || owner.manifest.receipt_identity != reference.receipt.identity
-        || owner.manifest.build_unit_identity != reference.receipt.build_unit_identity
-        || owner.manifest.intent != reference.receipt.intent
+    if owner.manifest().identity != reference.owner_identity
+        || owner.manifest().kind != OvenArtifactKind::Engine
+        || owner.manifest().domain != LIBRARY_METADATA_DOMAIN
+        || owner.manifest().receipt_identity != reference.receipt.identity
+        || owner.manifest().build_unit_identity != reference.receipt.build_unit_identity
+        || owner.manifest().intent != reference.receipt.intent
     {
         return Err(CliError::failure(
             "checked library reference disagrees with its original owner",
         ));
     }
     let payload: LibraryMetadataPayload =
-        serde_json::from_slice(&owner.payload).map_err(|error| CliError::failure(error.to_string()))?;
+        serde_json::from_slice(owner.payload()).map_err(|error| CliError::failure(error.to_string()))?;
     admit(owner, &payload.recipe, &reference.receipt).map(|selected| Some(Arc::new(selected)))
 }
 
@@ -685,7 +688,7 @@ fn admit(
     owner
         .verify_admitted_payload()
         .map_err(|error| CliError::failure(error.to_string()))?;
-    let payload: LibraryMetadataPayload = serde_json::from_slice(&owner.payload)
+    let payload: LibraryMetadataPayload = serde_json::from_slice(owner.payload())
         .map_err(|error| CliError::failure(format!("invalid checked library payload: {error}")))?;
     if payload.schema_version != LIBRARY_METADATA_SCHEMA_VERSION
         || payload.recipe != *recipe
@@ -706,10 +709,10 @@ fn admit(
         .map(|file| (file.relative_path.as_str(), file.digest.as_str()))
         .collect();
     if expected.len() != payload.metadata_files.len() + payload.generated_files.len()
-        || owner.manifest.materialized_files.len() != expected.len()
-        || !owner.manifest.materialized_directories.is_empty()
+        || owner.manifest().materialized_files.len() != expected.len()
+        || !owner.manifest().materialized_directories.is_empty()
         || owner
-            .manifest
+            .manifest()
             .materialized_files
             .iter()
             .any(|file| expected.get(file.relative_path.as_str()) != Some(&file.digest.as_str()))
@@ -718,7 +721,7 @@ fn admit(
             "checked library owner has a different complete file closure",
         ));
     }
-    let manifest = validate_output_contract(&owner.artifact_root, &payload)?;
+    let manifest = validate_output_contract(owner.artifact_root(), &payload)?;
     Ok(SelectedLibraryMetadata {
         owner: Arc::new(owner),
         payload,

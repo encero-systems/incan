@@ -2250,7 +2250,7 @@ pub(crate) fn prove_release_store_member_payload(
         message: "release store selection became empty".to_string(),
     })?;
     payload.verify_materialized_files()?;
-    if payload.manifest.kind != OvenArtifactKind::ProjectOutput {
+    if payload.manifest().kind != OvenArtifactKind::ProjectOutput {
         return Err(OvenLoafError::InvalidLoaf {
             path: canonical_store_root,
             message: "release store member must retain a ProjectOutput artifact".to_string(),
@@ -2267,7 +2267,7 @@ pub(crate) fn prove_release_store_member_payload(
             message: "release store member must retain exactly one executable materialized file".to_string(),
         });
     }
-    let executable = payload.artifact_root.join(&executables[0].relative_path);
+    let executable = payload.artifact_root().join(&executables[0].relative_path);
     let canonical_executable = fs::canonicalize(&executable).map_err(|source| OvenLoafError::Io {
         path: executable,
         source,
@@ -3495,7 +3495,7 @@ mod tests {
         assert!(executable.is_file());
         let lease = fs::File::open(
             payload
-                .artifact_root
+                .artifact_root()
                 .parent()
                 .ok_or("materialized root has no entry")?
                 .join(".active.lock"),
@@ -3776,7 +3776,7 @@ mod tests {
         )?;
         let held = acquire_committed_release_store_member(root.path(), "engine")?.ok_or("member not acquired")?;
         assert!(held.executable.is_file());
-        assert_eq!(held.payload.manifest.kind, OvenArtifactKind::ProjectOutput);
+        assert_eq!(held.payload.manifest().kind, OvenArtifactKind::ProjectOutput);
         let generation_lock = fs::File::open(root.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
         assert!(matches!(generation_lock.try_lock(), Err(fs::TryLockError::WouldBlock)));
         drop(held);
@@ -3813,7 +3813,7 @@ mod tests {
                 |candidate| candidate.identity == member.artifact_identity,
                 |_, _| true,
             )?;
-        let executable = selected[0].artifact_root.join("bin/engine-0");
+        let executable = selected[0].artifact_root().join("bin/engine-0");
         drop(selected);
         fs::remove_file(&executable)?;
         fs::write(&executable, b"tampered executable")?;

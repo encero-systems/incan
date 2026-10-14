@@ -320,7 +320,7 @@ pub(crate) fn select_compiler_suite_foundation_family(
     // ---- Group the current-schema partitions of this key by build, then by partition index ----
     let mut by_build = BTreeMap::<String, BTreeMap<u32, Vec<SelectedCompilerSuiteFoundationPartition>>>::new();
     for stored in candidates {
-        let Ok(payload) = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&stored.payload) else {
+        let Ok(payload) = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(stored.payload()) else {
             continue;
         };
         if payload.schema_version != OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION {
@@ -348,7 +348,7 @@ pub(crate) fn select_compiler_suite_foundation_family(
     for by_index in by_build.into_values() {
         let mut partitions = Vec::with_capacity(by_index.len());
         for (_, mut entries) in by_index {
-            entries.sort_by(|left, right| left.stored.manifest.identity.cmp(&right.stored.manifest.identity));
+            entries.sort_by(|left, right| left.stored.manifest().identity.cmp(&right.stored.manifest().identity));
             if let Some(chosen) = entries.into_iter().next() {
                 partitions.push(chosen);
             }
@@ -410,7 +410,7 @@ pub(crate) fn rehydrate_compiler_suite_foundation(
     for partition in &family.partitions {
         let materialized = partition
             .stored
-            .manifest
+            .manifest()
             .materialized_files
             .iter()
             .map(|file| (file.relative_path.as_str(), file.digest.as_str()))
@@ -422,7 +422,7 @@ pub(crate) fn rehydrate_compiler_suite_foundation(
                     partition.payload.label, artifact.relative_path
                 )));
             }
-            let source_path = partition.stored.artifact_root.join(&artifact.relative_path);
+            let source_path = partition.stored.artifact_root().join(&artifact.relative_path);
             if located
                 .insert(artifact.relative_path.clone(), (source_path, artifact.digest.clone()))
                 .is_some()
@@ -552,11 +552,11 @@ pub(crate) fn selected_partition_materialized_files(
 ) -> Vec<OvenArtifactMaterializedFile> {
     partition
         .stored
-        .manifest
+        .manifest()
         .materialized_files
         .iter()
         .map(|file| OvenArtifactMaterializedFile {
-            source_path: partition.stored.artifact_root.join(&file.relative_path),
+            source_path: partition.stored.artifact_root().join(&file.relative_path),
             relative_path: file.relative_path.clone(),
         })
         .collect()

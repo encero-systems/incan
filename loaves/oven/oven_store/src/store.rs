@@ -252,15 +252,13 @@ pub struct OvenStoreEntry {
 /// shard between test roots.
 pub struct OvenStoreExecutionPayload {
     /// Verified immutable manifest authorizing this execution input.
-    pub manifest: OvenArtifactManifest,
+    manifest: OvenArtifactManifest,
     /// Store-owned root containing the materialized immutable closure.
-    pub artifact_root: PathBuf,
+    artifact_root: PathBuf,
     /// Verified immutable payload bytes.
-    pub payload: Vec<u8>,
-    /// Canonical selected entry coordinate, retained independently of the public materialized root.
+    payload: Vec<u8>,
+    /// Canonical selected entry coordinate, retained independently of the borrowed materialized root.
     admitted_entry_root: PathBuf,
-    /// Original content identity; public record mutation cannot retarget the held lease.
-    admitted_identity: String,
     /// Publisher's own receipt, retained beside the entry and decoded once at admission.
     ///
     /// A reused output's manifest names the receipt that authorizes *this* selection; this is the receipt of the
@@ -274,6 +272,58 @@ pub struct OvenStoreExecutionPayload {
 }
 
 impl OvenStoreExecutionPayload {
+    /// Borrow the immutable manifest authenticated at admission; physical consumers must still revalidate original
+    /// files.
+    ///
+    /// ```compile_fail
+    /// fn mutate(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.manifest().intent.profile.clear();
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0616
+    /// fn retarget(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.manifest.intent.profile.clear();
+    /// }
+    /// ```
+    pub fn manifest(&self) -> &OvenArtifactManifest {
+        &self.manifest
+    }
+
+    /// Borrow the original materialized root without allowing a consumer to retarget this lease.
+    ///
+    /// ```compile_fail
+    /// fn mutate(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.artifact_root().push("retarget");
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0616
+    /// fn retarget(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.artifact_root.push("retarget");
+    /// }
+    /// ```
+    pub fn artifact_root(&self) -> &Path {
+        &self.artifact_root
+    }
+
+    /// Borrow the immutable bytes authenticated at admission, without exposing mutation or transferring the lease.
+    ///
+    /// ```compile_fail
+    /// fn mutate(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.payload().push(0);
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0616
+    /// fn retarget(owner: &mut oven_store::store::OvenStoreExecutionPayload) {
+    ///     owner.payload.push(0);
+    /// }
+    /// ```
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
     /// Enumerate the exact admitted record, witness and materialized inputs for an enclosing owner's observations.
     ///
     /// This neither discovers Store entries nor grants authority: the caller must retain this leased payload and use
@@ -352,7 +402,7 @@ impl OvenStoreExecutionPayload {
             })?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(OvenStoreError::Integrity {
-                    identity: self.admitted_identity.clone(),
+                    identity: self.manifest.identity.clone(),
                     message: "materialized member ancestor must be a plain directory".into(),
                 });
             }
@@ -379,55 +429,43 @@ impl OvenStoreExecutionPayload {
                 .materialized_observations
                 .lock()
                 .map_err(|_| OvenStoreError::Integrity {
-                    identity: self.admitted_identity.clone(),
+                    identity: self.manifest.identity.clone(),
                     message: "materialized file observation lock poisoned".into(),
                 })?;
             digest_retained_materialized_file(&path, &mut observations.files, Some(&metadata))?
         };
         if before != observed.stamp || (inputs.supports_retention() && !inputs.current()) {
             return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "materialized member changed during observation".into(),
             });
         }
         Ok((observed.length, observed.digest))
     }
 
-    /// Revalidate the original admitted record and payload bytes without walking the materialized closure.
+    /// Revalidate the original admitted record and current payload file without walking the materialized closure.
     ///
-    /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
-    /// checks those fields against the original selected coordinate and content identity before a new physical
-    /// consumer borrows them. It authenticates the current primary payload file through this owner's existing
-    /// replacement-sensitive observations, independently hashes the mutable retained bytes, then stats the artifact
-    /// root rather than hashing the closure underneath it. A consumer that
-    /// never reads the closure must use [`Self::verify_admitted_payload`], which adds that walk. One that is about
-    /// to read every file anyway — a store-to-store import building a destination manifest — proves the closure
-    /// with that read instead, by handing this manifest to the publication as its expectation.
+    /// The manifest, root and retained bytes are immutable after admission. This authenticates the original manifest
+    /// identity and reconciles the current primary payload through the owner's replacement-sensitive observations;
+    /// it does not rehash immutable held bytes. The lease prevents pruning, while these file checks detect out-of-band
+    /// edits. Consumers that do not independently verify the closure must use [`Self::verify_admitted_payload`].
     pub fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
+        let _verification = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_admitted_record", input = %self.manifest.identity).entered();
         let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
-        if manifest.identity != self.admitted_identity
-            || manifest != self.manifest
-            || self.artifact_root != self.admitted_entry_root.join(MATERIALIZED_DIRECTORY)
-        {
+        if manifest.identity != self.manifest.identity {
             return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
-                message: "execution payload no longer matches its original admitted record and root".to_string(),
-            });
-        }
-        if u64::try_from(self.payload.len()).ok() != Some(manifest.payload.logical_bytes)
-            || digest_bytes(&self.payload) != manifest.payload.digest
-        {
-            return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
-                message: "execution payload bytes disagree with the original admitted descriptor".to_string(),
+                identity: self.manifest.identity.clone(),
+                message: "execution payload no longer matches its original admitted record".to_string(),
             });
         }
         let observed = {
+            let _observation =
+                tracing::trace_span!(target: "incan::invocation", "oven_store::reconcile_primary_payload").entered();
             let mut observations = self
                 .materialized_observations
                 .lock()
                 .map_err(|_| OvenStoreError::Integrity {
-                    identity: self.admitted_identity.clone(),
+                    identity: self.manifest.identity.clone(),
                     message: "materialized file observation lock poisoned".to_string(),
                 })?;
             digest_retained_materialized_file(
@@ -438,25 +476,30 @@ impl OvenStoreExecutionPayload {
         };
         if observed.length != manifest.payload.logical_bytes || observed.digest != manifest.payload.digest {
             return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "manifest payload descriptor disagrees with stored bytes".to_string(),
             });
         }
         // The lease stops the entry being pruned; it does not stop the witness file being rewritten underneath a
         // held payload. Comparing the digest admission recorded is what makes the retained receipt evidence rather
         // than a cached read.
-        let witness_bytes = read_native_receipt_bytes(&self.admitted_entry_root, &manifest)?;
-        let current_digest = witness_bytes.as_deref().map(digest_bytes);
-        if current_digest.as_deref()
-            != self
-                .original_native_receipt
-                .as_ref()
-                .map(|witness| witness.bytes_digest.as_str())
         {
-            return Err(OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
-                message: "original native receipt witness changed after admission".to_string(),
-            });
+            let _validation =
+                tracing::trace_span!(target: "incan::invocation", "oven_store::verify_original_receipt_witness")
+                    .entered();
+            let witness_bytes = read_native_receipt_bytes(&self.admitted_entry_root, &manifest)?;
+            let current_digest = witness_bytes.as_deref().map(digest_bytes);
+            if current_digest.as_deref()
+                != self
+                    .original_native_receipt
+                    .as_ref()
+                    .map(|witness| witness.bytes_digest.as_str())
+            {
+                return Err(OvenStoreError::Integrity {
+                    identity: self.manifest.identity.clone(),
+                    message: "original native receipt witness changed after admission".to_string(),
+                });
+            }
         }
         verify_materialized_root(&self.admitted_entry_root, &manifest)
     }
@@ -495,7 +538,7 @@ impl OvenStoreExecutionPayload {
             .materialized_observations
             .lock()
             .map_err(|_| OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "materialized file observation lock poisoned".to_string(),
             })?;
         verify_materialized_files_with_observations(
@@ -522,16 +565,16 @@ impl OvenStoreExecutionPayload {
             .parent()
             .and_then(Path::parent)
             .ok_or_else(|| OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "native entry has no store root".to_string(),
             })?;
-        let proof_path = crate::closure_proof::OvenClosureProof::path(store_root, &self.admitted_identity);
+        let proof_path = crate::closure_proof::OvenClosureProof::path(store_root, &self.manifest.identity);
         let artifact_count =
             u64::try_from(self.manifest.materialized_files.len()).map_err(|_| OvenStoreError::Integrity {
-                identity: self.admitted_identity.clone(),
+                identity: self.manifest.identity.clone(),
                 message: "native member count is outside supported bounds".to_string(),
             })?;
-        if crate::closure_proof::OvenClosureProof::read_matching(&proof_path, &self.admitted_identity, artifact_count)
+        if crate::closure_proof::OvenClosureProof::read_matching(&proof_path, &self.manifest.identity, artifact_count)
             .is_some()
         {
             return Ok(());
@@ -539,7 +582,7 @@ impl OvenStoreExecutionPayload {
         self.verify_admitted_payload()?;
         crate::closure_proof::OvenClosureProof {
             schema_version: crate::closure_proof::OVEN_CLOSURE_PROOF_SCHEMA_VERSION,
-            closure_identity: self.admitted_identity.clone(),
+            closure_identity: self.manifest.identity.clone(),
             artifact_count,
         }
         .write(&proof_path)
@@ -571,7 +614,7 @@ impl OvenStoreExecutionPayload {
     ///
     /// Call before importing the source files. An already admitted destination can reuse its own leased content
     /// without rereading the source closure. The check is anchored to the originally admitted entry and also
-    /// revalidates the mutable public manifest, artifact root, and payload bytes before trusting that closure. This
+    /// revalidates the original manifest, artifact root, and current payload file before trusting that closure. This
     /// verification does not populate physical-accounting caches.
     pub fn verify_materialized_files(&self) -> Result<(), OvenStoreError> {
         self.verify_admitted_payload()
@@ -725,7 +768,6 @@ impl PublishedOvenStore {
             let original_native_receipt = admit_native_receipt(&path, &manifest)?;
             selected.push(OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
-                admitted_identity: identity.clone(),
                 original_native_receipt,
                 materialized_observations: Mutex::new(MaterializedObservations::default()),
                 manifest,
@@ -1532,7 +1574,6 @@ impl OvenStore {
             touch_entry(&path)?;
             selected.push(OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
-                admitted_identity: identity.clone(),
                 original_native_receipt,
                 materialized_observations: Mutex::new(MaterializedObservations::default()),
                 manifest,
@@ -2706,7 +2747,6 @@ where
             path.clone(),
             OvenStoreExecutionPayload {
                 admitted_entry_root: path.clone(),
-                admitted_identity: manifest.identity.clone(),
                 original_native_receipt,
                 materialized_observations: Mutex::new(MaterializedObservations::default()),
                 manifest,
@@ -5738,8 +5778,8 @@ pub(crate) mod tests {
             source_path: source,
         }];
         let manifest = store.publish(&publication)?;
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
-        let owner = selected.first_mut().ok_or("observed owner missing")?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.first().ok_or("observed owner missing")?;
         assert_eq!(
             owner
                 .materialized_observations
@@ -5850,10 +5890,8 @@ pub(crate) mod tests {
         scoped.observe_within(&owner.artifact_root, &temp.path().join("outside-root"));
         assert!(!scoped.supports_retention());
 
-        // Retained metadata never authenticates mutable public bytes or a changed original payload generation.
-        owner.payload[0] = b'P';
-        assert!(owner.verify_admitted_record().is_err());
-        owner.payload[0] = b'p';
+        // The public API borrows sealed bytes; changed original payload generations still require refusal.
+        assert_eq!(owner.payload(), b"payload");
         owner.verify_admitted_record()?;
         let modified = fs::metadata(&payload_path)?.modified()?;
         let held_payload = temp.path().join("held-payload");
@@ -5911,8 +5949,8 @@ pub(crate) mod tests {
             })
             .collect();
         let manifest = store.publish(&publication)?;
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
-        let owner = selected.get_mut(0).ok_or("selected fixture missing")?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.first().ok_or("selected fixture missing")?;
         owner.verify_admitted_payload()?;
         let declaration = owner.artifact_root.join("source/lib.rs");
         let original_digest = owner.digest_materialized_member("source/lib.rs")?;
@@ -5997,8 +6035,16 @@ pub(crate) mod tests {
         assert!(owner.verify_admitted_payload_except_directory("source").is_err());
         fs::remove_file(injected)?;
         owner.verify_admitted_payload_except_directory("source")?;
-        owner.payload.push(0);
+        let payload_path = owner.admitted_entry_root.join(super::PAYLOAD_FILE);
+        replace(&payload_path, b"PAYLOAD")?;
         assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        assert_eq!(
+            owner.payload(),
+            b"payload",
+            "disk edits cannot mutate sealed held bytes"
+        );
+        replace(&payload_path, b"payload")?;
+        owner.verify_admitted_payload_except_directory("source")?;
         Ok(())
     }
 
@@ -6373,61 +6419,48 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// Execution payload revalidation binds public fields to the admitted owner.
+    /// Borrowed authority remains bound to the original owner while changed disk payloads still refuse.
     #[test]
-    fn execution_payload_revalidation_binds_public_fields_to_the_admitted_owner()
+    fn execution_payload_borrows_admitted_authority_and_refuses_changed_disk_bytes()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
         let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
-        let first = store.publish(&request(project.path(), "first-owner", b"shared payload")?)?;
-        let second = store.publish(&request(project.path(), "second-owner", b"shared payload")?)?;
-        let second_artifact_root = store.entry_root(&second.identity).join(super::MATERIALIZED_DIRECTORY);
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        selected[0].verify_materialized_files()?;
-        let mut changed_root = selected.remove(0);
-        changed_root.artifact_root = second_artifact_root.clone();
-        assert!(matches!(
-            changed_root.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        let mut changed_manifest = selected.remove(0);
-        changed_manifest.manifest = second.clone();
-        assert!(matches!(
-            changed_manifest.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        let mut retargeted = selected.remove(0);
-        retargeted.manifest = second.clone();
-        retargeted.artifact_root = second_artifact_root;
-        assert!(matches!(
-            retargeted.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
-        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&first.identity))?;
-        assert_eq!(selected.len(), 1);
-        let mut changed_payload = selected.remove(0);
-        changed_payload.payload = b"forged payload".to_vec();
-        assert!(matches!(
-            changed_payload.verify_materialized_files(),
-            Err(OvenStoreError::Integrity { .. })
-        ));
-
+        let manifest = store.publish(&request(project.path(), "sealed-owner", b"shared payload")?)?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.first().ok_or("selected owner absent")?;
         let published = super::PublishedOvenStore::new(temp.path());
         let matched = published
-            .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity, |_, _| true)?;
-        assert_eq!(matched.len(), 1);
-        matched[0].verify_materialized_files()?;
+            .select_payloads_matching_for_execution(|candidate| candidate.identity == manifest.identity, |_, _| true)?;
+        let published_owner = matched.first().ok_or("published owner absent")?;
+        assert_eq!(owner.manifest(), &manifest);
+        assert_eq!(
+            owner.artifact_root(),
+            fs::canonicalize(store.entry_root(&manifest.identity).join(super::MATERIALIZED_DIRECTORY))?
+        );
+        assert_eq!(owner.payload(), b"shared payload");
+        owner.verify_materialized_files()?;
+        published_owner.verify_materialized_files()?;
+
+        let payload_path = store.entry_root(&manifest.identity).join(super::PAYLOAD_FILE);
+        replace_native_witness_fixture(&payload_path, b"forged payload")?;
+        assert!(matches!(
+            owner.verify_materialized_files(),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        assert!(matches!(
+            published_owner.verify_materialized_files(),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        assert_eq!(
+            owner.payload(),
+            b"shared payload",
+            "disk edits cannot mutate admitted bytes"
+        );
+        replace_native_witness_fixture(&payload_path, b"shared payload")?;
+        owner.verify_materialized_files()?;
+        published_owner.verify_materialized_files()?;
         Ok(())
     }
 
@@ -6857,7 +6890,7 @@ pub(crate) mod tests {
         let untouched = super::PublishedOvenStore::new(temp.path())
             .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity, |_, _| true)?;
         assert_eq!(untouched.len(), 1);
-        assert_eq!(untouched[0].admitted_identity, wanted.identity);
+        assert_eq!(untouched[0].manifest().identity, wanted.identity);
 
         // A selection that does want it is refused.
         let refused =

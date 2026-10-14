@@ -57,18 +57,18 @@ pub struct OvenStoredDirectRustcExecutionPlan {
 impl OvenStoredDirectRustcExecutionPlan {
     /// Retain an already selected payload and decode its direct plan once, preserving ordinary selection semantics.
     pub fn from_execution_payload(owner: OvenStoreExecutionPayload) -> Result<Self, OvenRustcError> {
-        if owner.manifest.kind != OvenArtifactKind::DirectRustcPlan {
+        if owner.manifest().kind != OvenArtifactKind::DirectRustcPlan {
             return Err(OvenRustcError::InvalidInput {
                 field: "stored direct plan",
                 message: "requires an original selected direct-plan payload".to_string(),
             });
         }
         let artifacts: OvenRustcArtifactManifest =
-            serde_json::from_slice(&owner.payload).map_err(|error| OvenRustcError::InvalidInput {
+            serde_json::from_slice(owner.payload()).map_err(|error| OvenRustcError::InvalidInput {
                 field: "stored direct plan payload",
                 message: error.to_string(),
             })?;
-        let artifact_plan = artifacts.materialize_trusted_store(&owner.artifact_root, &owner.manifest.intent)?;
+        let artifact_plan = artifacts.materialize_trusted_store(owner.artifact_root(), &owner.manifest().intent)?;
         Ok(Self {
             owner,
             artifacts,
@@ -78,7 +78,7 @@ impl OvenStoredDirectRustcExecutionPlan {
 
     /// Return the original immutable Store entry identity.
     pub fn identity(&self) -> &str {
-        &self.owner.manifest.identity
+        &self.owner.manifest().identity
     }
 
     /// Borrow the sole decoded manifest while its original owner remains retained.
@@ -88,7 +88,7 @@ impl OvenStoredDirectRustcExecutionPlan {
 
     /// Borrow the original materialized root; this is not a caller-supplied authority path.
     pub fn artifact_root(&self) -> &Path {
-        &self.owner.artifact_root
+        self.owner.artifact_root()
     }
 
     /// Borrow the existing inexpensive materialized plan used by ordinary stored-plan consumers.
@@ -102,7 +102,7 @@ impl OvenStoredDirectRustcExecutionPlan {
         Ok(OvenNativeInputView {
             owner: OvenNativeInputOwner::Store(&self.owner),
             artifacts: Cow::Borrowed(&self.artifacts),
-            artifact_root: self.owner.artifact_root.clone(),
+            artifact_root: self.owner.artifact_root().to_path_buf(),
             plan: Cow::Borrowed(&self.artifact_plan),
         })
     }
@@ -123,7 +123,7 @@ pub struct OvenNativeInputView<'owner> {
 impl<'owner> OvenNativeInputView<'owner> {
     /// Borrow an original store payload after its existing record and physical integrity checks succeed.
     pub fn from_store_payload(owner: &'owner OvenStoreExecutionPayload) -> Result<Self, OvenRustcError> {
-        if owner.manifest.kind != OvenArtifactKind::DirectRustcPlan {
+        if owner.manifest().kind != OvenArtifactKind::DirectRustcPlan {
             return Err(OvenRustcError::InvalidInput {
                 field: "native input owner",
                 message: "requires an original admitted direct-plan payload".to_string(),
@@ -131,12 +131,12 @@ impl<'owner> OvenNativeInputView<'owner> {
         }
         owner.verify_admitted_payload()?;
         let artifacts: OvenRustcArtifactManifest =
-            serde_json::from_slice(&owner.payload).map_err(|error| OvenRustcError::InvalidInput {
+            serde_json::from_slice(owner.payload()).map_err(|error| OvenRustcError::InvalidInput {
                 field: "native input owner payload",
                 message: error.to_string(),
             })?;
-        let artifact_root = canonical_directory(&owner.artifact_root, "native input owner root")?;
-        let plan = artifacts.materialize_trusted_store(&artifact_root, &owner.manifest.intent)?;
+        let artifact_root = canonical_directory(owner.artifact_root(), "native input owner root")?;
+        let plan = artifacts.materialize_trusted_store(&artifact_root, &owner.manifest().intent)?;
         Ok(Self {
             owner: OvenNativeInputOwner::Store(owner),
             artifacts: Cow::Owned(artifacts),
@@ -162,9 +162,9 @@ impl<'owner> OvenNativeInputView<'owner> {
     pub fn origin(&self) -> OvenNativeInputOrigin<'_> {
         match &self.owner {
             OvenNativeInputOwner::Store(owner) => OvenNativeInputOrigin::Store {
-                identity: &owner.manifest.identity,
-                receipt_identity: &owner.manifest.receipt_identity,
-                build_unit_identity: &owner.manifest.build_unit_identity,
+                identity: &owner.manifest().identity,
+                receipt_identity: &owner.manifest().receipt_identity,
+                build_unit_identity: &owner.manifest().build_unit_identity,
             },
             OvenNativeInputOwner::ToolchainLoaf(owner) => {
                 let candidate = owner.candidate();

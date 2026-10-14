@@ -84,7 +84,7 @@ pub fn export_selected_package_loaf(
             ));
         }
         let owner = selected.remove(0);
-        if owner.manifest != exported {
+        if owner.manifest() != &exported {
             return Err(CliError::failure(
                 "exported package Loaf destination owner changed before retention",
             ));
@@ -125,9 +125,9 @@ pub fn copy_receipted_oven_store_entry(
         .map_err(|error| CliError::failure(format!("failed to select provider Loaf for {operation}: {error}")))?
         .unwrap_or_default();
     selected.retain(|owner| {
-        owner.manifest.kind == entry_kind
-            && owner.manifest.build_unit_identity == receipt.build_unit_identity
-            && owner.manifest.intent == receipt.intent
+        owner.manifest().kind == entry_kind
+            && owner.manifest().build_unit_identity == receipt.build_unit_identity
+            && owner.manifest().intent == receipt.intent
     });
     if selected.is_empty() && entry_kind == OvenArtifactKind::DirectRustcPlan {
         // Direct plans are reusable by their verified build unit and intent. A semantically inert source edit can
@@ -171,12 +171,12 @@ fn existing_provider_loaf(
         .unwrap_or_default()
         .into_iter()
         .find(|owner| {
-            owner.manifest.kind == entry_kind
-                && owner.manifest.receipt_identity == receipt.identity
-                && owner.manifest.build_unit_identity == receipt.build_unit_identity
-                && owner.manifest.intent == receipt.intent
+            owner.manifest().kind == entry_kind
+                && owner.manifest().receipt_identity == receipt.identity
+                && owner.manifest().build_unit_identity == receipt.build_unit_identity
+                && owner.manifest().intent == receipt.intent
         })
-        .map(|owner| owner.manifest))
+        .map(|owner| owner.manifest().clone()))
 }
 
 /// Import a leased, verified source entry through the destination store's ordinary bounded publication.
@@ -579,10 +579,10 @@ pub(super) fn has_complete_packaged_library_loaf(
         return Ok(false);
     };
     Ok(entries.iter().zip(&selected).all(|(entry, owner)| {
-        owner.manifest.kind == entry.kind
-            && owner.manifest.receipt_identity == entry.receipt.identity
-            && owner.manifest.build_unit_identity == entry.receipt.build_unit_identity
-            && owner.manifest.intent == entry.receipt.intent
+        owner.manifest().kind == entry.kind
+            && owner.manifest().receipt_identity == entry.receipt.identity
+            && owner.manifest().build_unit_identity == entry.receipt.build_unit_identity
+            && owner.manifest().intent == entry.receipt.intent
     }))
 }
 
@@ -626,8 +626,8 @@ pub fn import_checked_packaged_library_loaf(
             })?;
         if selected.len() == package_profile.entries.len() {
             for payload in selected {
-                let identity = payload.manifest.identity.clone();
-                let kind = payload.manifest.kind;
+                let identity = payload.manifest().identity.clone();
+                let kind = payload.manifest().kind;
                 let entry = package_profile
                     .entries
                     .iter()

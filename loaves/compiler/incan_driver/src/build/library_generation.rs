@@ -71,7 +71,7 @@ impl SelectedLibraryGeneration {
         LibraryGenerationReference {
             schema_version: LIBRARY_GENERATION_SCHEMA_VERSION,
             receipt: self.payload.receipt.clone(),
-            owner_identity: self.owner.manifest.identity.clone(),
+            owner_identity: self.owner.manifest().identity.clone(),
         }
     }
 
@@ -85,7 +85,7 @@ impl SelectedLibraryGeneration {
                     receipt: self.payload.receipt.clone(),
                     domain: LIBRARY_GENERATION_DOMAIN.into(),
                     kind: OvenArtifactKind::Engine,
-                    payload: self.owner.payload.clone(),
+                    payload: self.owner.payload().to_vec(),
                     materialized_files: Vec::new(),
                     materialized_directories: Vec::new(),
                 },
@@ -93,7 +93,7 @@ impl SelectedLibraryGeneration {
                 self.owner.admitted_materialized_directories(),
             )
             .map_err(|error| invalid(error.to_string()))?;
-        if exported.identity != self.owner.manifest.identity
+        if exported.identity != self.owner.manifest().identity
             || exported.receipt_identity != self.payload.receipt.identity
             || exported.build_unit_identity != self.payload.receipt.build_unit_identity
             || exported.intent != self.payload.receipt.intent
@@ -253,8 +253,8 @@ fn admit_generation_reference(
     }
     let owner = owners.remove(0);
     let payload: LibraryGenerationPayload =
-        serde_json::from_slice(&owner.payload).map_err(|error| invalid(error.to_string()))?;
-    if owner.manifest.identity != reference.owner_identity || payload.receipt != reference.receipt {
+        serde_json::from_slice(owner.payload()).map_err(|error| invalid(error.to_string()))?;
+    if owner.manifest().identity != reference.owner_identity || payload.receipt != reference.receipt {
         return Err(invalid("ordinary package generation differs from selected reference"));
     }
     validate_owner(&owner, &payload)?;
@@ -284,13 +284,13 @@ fn validate_owner(owner: &OvenStoreExecutionPayload, payload: &LibraryGeneration
         .map_err(|error| invalid(error.to_string()))?;
     let receipt = generation_receipt(&payload.contract)?;
     if payload.receipt != receipt
-        || owner.manifest.kind != OvenArtifactKind::Engine
-        || owner.manifest.domain != LIBRARY_GENERATION_DOMAIN
-        || owner.manifest.receipt_identity != receipt.identity
-        || owner.manifest.build_unit_identity != receipt.build_unit_identity
-        || owner.manifest.intent != receipt.intent
-        || !owner.manifest.materialized_files.is_empty()
-        || !owner.manifest.materialized_directories.is_empty()
+        || owner.manifest().kind != OvenArtifactKind::Engine
+        || owner.manifest().domain != LIBRARY_GENERATION_DOMAIN
+        || owner.manifest().receipt_identity != receipt.identity
+        || owner.manifest().build_unit_identity != receipt.build_unit_identity
+        || owner.manifest().intent != receipt.intent
+        || !owner.manifest().materialized_files.is_empty()
+        || !owner.manifest().materialized_directories.is_empty()
     {
         return Err(invalid(
             "ordinary package generation receipt or original owner disagrees",

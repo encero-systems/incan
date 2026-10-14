@@ -209,7 +209,7 @@ fn select_rust_bake_output(
             .map_err(|error| CliError::failure(error.to_string()))?;
         if let Some(candidate) = located
             .and_then(|mut candidates| candidates.pop())
-            .filter(|candidate| matches(&candidate.manifest))
+            .filter(|candidate| matches(candidate.manifest()))
         {
             return Ok(Some(candidate));
         }
@@ -236,7 +236,7 @@ pub(super) fn try_reuse_rust_bake(
                 return Ok(None);
             };
             let payload: RustBakeOutput =
-                serde_json::from_slice(&candidate.payload).map_err(|error| CliError::failure(error.to_string()))?;
+                serde_json::from_slice(candidate.payload()).map_err(|error| CliError::failure(error.to_string()))?;
             if payload.schema != "rust-caller-output/1"
                 || payload.unit != *unit
                 || payload.plan.is_empty()
@@ -254,7 +254,7 @@ pub(super) fn try_reuse_rust_bake(
     let mut profiles = Vec::new();
     for (unit, profile, candidate, payload) in selected {
         let (output, receipt_path) = output_paths(root, &unit, profile)?;
-        let stored = candidate.artifact_root.join("binary");
+        let stored = candidate.artifact_root().join("binary");
         materialize_rust_caller_output(&stored, &output)?;
         let mut expected_receipt =
             serde_json::to_vec_pretty(&payload.receipt).map_err(|error| CliError::failure(error.to_string()))?;
@@ -262,7 +262,7 @@ pub(super) fn try_reuse_rust_bake(
         if !fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected_receipt) {
             write_receipt(&payload.receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
         }
-        remember_project_output(&receipt_path, &candidate.manifest.identity);
+        remember_project_output(&receipt_path, &candidate.manifest().identity);
         profiles.push(OvenProjectBakeProfileReport {
             project_target: format!("rust:{unit}"),
             profile: profile.into(),
