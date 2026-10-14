@@ -16378,6 +16378,34 @@ fn numeric_newtype_iterator_sum_output_matches_legacy() -> Result<(), Box<dyn st
     )
 }
 
+/// Payload-inferred generic newtypes keep their instance methods and static construction parity.
+#[test]
+fn closed_generic_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("closed-generic-newtype")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
+    )
+}
+
+/// Generated defaults retain the annotated generic model's concrete owner arguments.
+#[test]
+fn closed_generic_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("closed-generic-defaults")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_default_takes_declared_field_defaults.incn"
+        ),
+    )
+}
+
 /// Empty raw sums and checked sums preserve item polling and exactly one final construction hook.
 #[test]
 fn numeric_newtype_sum_effects_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -16441,5 +16469,20 @@ def main() -> None:
     println(values.iter().sum().0)
 "#,
         "validated newtype construction failed: Positive::from_underlying\n",
+    )
+}
+
+/// A generic call through an adopted trait retains its closed result contract.
+#[test]
+fn closed_generic_trait_return_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("closed-generic-trait-return")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_bounds_return_type.incn"
+        ),
     )
 }
