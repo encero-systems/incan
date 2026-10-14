@@ -249,7 +249,10 @@ fn digest_file_with_in(
         None => compute(&bytes)?,
     };
     if stamp(&file)? != before {
-        return Err(io::Error::other("build input changed while hashing"));
+        return Err(io::Error::other(format!(
+            "build input changed while hashing {} with {scheme}",
+            path.display()
+        )));
     }
     if let Some(path) = content_path {
         let record = AuthorityDigestRecord {
