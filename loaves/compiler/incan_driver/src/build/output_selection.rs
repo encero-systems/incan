@@ -513,6 +513,9 @@ pub(super) fn project_outputs_with_source_authority(
     }
     // Prefer the explicit bake's verified lineage before the derived lock fingerprint: a non-strict stale lock
     // must not make an older SDK output outrank the current bake. Missing local receipts still permit store reuse.
+    // Equivalent receipts can name distinct checked metadata generations. Prefer the exact published locator among
+    // already admitted candidates so replay cannot replace a new package handoff with an older generation.
+    let current_output = project_output_locator(&receipt_path);
     matches.sort_by_key(|output| {
         let current_lineage = current_receipt.as_ref().is_some_and(|receipt| {
             output.payload.receipt_identity == receipt.identity
@@ -522,6 +525,7 @@ pub(super) fn project_outputs_with_source_authority(
         (
             !current_lineage,
             output.payload.lock_dependencies_fingerprint != current_fingerprint,
+            current_output.as_deref() != Some(output.identity.as_str()),
             output.identity.clone(),
         )
     });
@@ -1288,6 +1292,58 @@ mod tests {
             .identity,
             output.identity
         );
+        Ok(())
+    }
+
+    /// Multi-profile selection must prefer the exact published output, even when equivalent lineage has older owners.
+    #[test]
+    fn project_output_candidates_prefer_verified_locator() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "cohort")?;
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let first = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        payload.plan_identity = "another checked preparation".into();
+        let second = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert_ne!(first.identity, second.identity);
+        let receipt_path =
+            project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?;
+        fs::create_dir_all(receipt_path.parent().ok_or("receipt has no parent")?)?;
+        let select = || {
+            matching_baked_project_outputs_with_source_authority(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+                &payload.source_authority_digest,
+                None,
+            )
+        };
+        // Both orders matter: the locator must win regardless of lexicographic identity ordering.
+        for expected in [&first.identity, &second.identity] {
+            remember_project_output(&receipt_path, expected);
+            let selected = select()?;
+            assert_eq!(selected.len(), 2);
+            assert_eq!(&selected.first().ok_or("missing candidates")?.identity, expected);
+        }
+        let mut stale = payload.clone();
+        stale.source_authority_digest = digest_bytes(b"different authored inputs");
+        let stale = publish_project_output_loaf(&store, &receipt, &stale, &files)?;
+        remember_project_output(&receipt_path, &stale.identity);
+        let selected = select()?;
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().all(|output| output.identity != stale.identity));
         Ok(())
     }
 
