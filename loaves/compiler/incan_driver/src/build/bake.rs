@@ -1920,6 +1920,7 @@ fn bake_oven_project_targets_with_admission(
     // closure, so its constituents stay leased until the authority is sealed; if the policy cannot hold them all,
     // admission fails loudly instead.
     let mut retained_preparations: Vec<RetainedLibraryPreparation<'_>> = Vec::new();
+    let mut retained_library_generations = Vec::new();
     // Destination owners are independent of prepared source Store leases and survive finalization/rollback too.
     let mut retained_package_loafs: Vec<ExportedPackageLoafs> = Vec::new();
     // The same holds for an executable target: its debug plan is published one profile before its release plan, and
@@ -2115,12 +2116,11 @@ fn bake_oven_project_targets_with_admission(
                     })?;
                     let library_sidecars =
                         library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
-                    publish_checked_library_package(
-                        prepared,
-                        source_authority_digest,
-                        package_profiles,
-                        *store.limits(),
-                    )?;
+                    if let Some(generation) =
+                        publish_checked_library_package(prepared, source_authority_digest, package_profiles, &store)?
+                    {
+                        retained_library_generations.push(generation);
+                    }
                     let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
                     let package_loaf_store_relative_path = package_store_root
                         .strip_prefix(&prepared.project_root)

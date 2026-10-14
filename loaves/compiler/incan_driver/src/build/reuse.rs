@@ -80,14 +80,15 @@ fn restore_reused_library_package(
         return Ok(trace_package_reuse_miss());
     }
     let package_store = OvenStore::new(packaged_library_loaf_store_root(&artifact_root), *store.limits());
-    if !restore_reused_library_metadata(
-        store,
-        &package_store,
-        manifest.checked_metadata.as_ref(),
-        &manifest.metadata_files,
-    )? {
-        return Ok(trace_package_reuse_miss());
-    }
+    // Retain both original checked owners while native profile exports may reclaim unleased Store entries.
+    let _checked_generation = if manifest.checked_metadata.is_some() || manifest.checked_generation.is_some() {
+        let Some(generation) = restore_reused_library_generation(store, &package_store, &manifest)? else {
+            return Ok(trace_package_reuse_miss());
+        };
+        Some(generation)
+    } else {
+        None
+    };
     for output in outputs {
         let Some(candidate) = manifest.profiles.get(&output.profile) else {
             return Ok(trace_package_reuse_miss());
@@ -223,6 +224,56 @@ fn restore_reused_library_metadata(
         }
     }
     Ok(true)
+}
+
+/// Restore a complete original metadata/generation pair, retaining destination leases through package publication.
+/// Whole-owner absence declines reuse so the normal producer can rebuild. Corrupt or substituted evidence refuses;
+/// restoration never remints a generation from the caller's current source.
+fn restore_reused_library_generation(
+    store: &OvenStore,
+    package_store: &OvenStore,
+    manifest: &OvenPackagedLibraryLoafManifest,
+) -> CliResult<Option<Arc<super::library_generation::SelectedLibraryGeneration>>> {
+    use super::library_generation::{
+        select_library_generation_reference, select_optional_library_generation_reference,
+    };
+    let (Some(metadata_reference), Some(generation_reference)) =
+        (&manifest.checked_metadata, &manifest.checked_generation)
+    else {
+        return Ok(None);
+    };
+    if !restore_reused_library_metadata(store, package_store, Some(metadata_reference), &manifest.metadata_files)? {
+        return Ok(None);
+    }
+    let metadata = super::library_metadata::select_library_metadata_reference(package_store, metadata_reference)?;
+    if let Some(generation) = select_optional_library_generation_reference(
+        package_store,
+        generation_reference,
+        Arc::clone(&metadata),
+        &manifest.source_authority_digest,
+        &manifest.metadata_files,
+    )? {
+        return Ok(Some(generation));
+    }
+    let Some(generation) = select_optional_library_generation_reference(
+        store,
+        generation_reference,
+        Arc::clone(&metadata),
+        &manifest.source_authority_digest,
+        &manifest.metadata_files,
+    )?
+    else {
+        return Ok(None);
+    };
+    generation.export_into(package_store)?;
+    select_library_generation_reference(
+        package_store,
+        generation_reference,
+        metadata,
+        &manifest.source_authority_digest,
+        &manifest.metadata_files,
+    )
+    .map(Some)
 }
 
 /// Return whether every compiler-shipped release Loaf a project inspection authority names is provided by the
@@ -1110,7 +1161,7 @@ mod tests {
 
 #[cfg(test)]
 mod checked_metadata_restoration_tests {
-    use super::restore_reused_library_metadata;
+    use super::{restore_reused_library_generation, restore_reused_library_metadata};
     use crate::build::library_metadata::{
         LibraryMetadataRecipe, SelectedLibraryMetadata, publish_library_metadata, select_library_metadata_reference,
     };
@@ -1131,6 +1182,11 @@ mod checked_metadata_restoration_tests {
             source.path().join("loaf.toml"),
             "[project]\nname='restored'\nversion='1.0.0'\n",
         )?;
+        fs::create_dir(source.path().join("src"))?;
+        fs::write(
+            source.path().join("src/lib.incn"),
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
         fs::create_dir(output.path().join("src"))?;
         fs::write(output.path().join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
         let manifest_path = output.path().join("restored.incnlib");
@@ -1138,7 +1194,10 @@ mod checked_metadata_restoration_tests {
         let recipe = LibraryMetadataRecipe {
             name: "restored".into(),
             version: "1.0.0".into(),
-            source_digest: digest_bytes(b"source"),
+            source_digest: crate::build::library_project::metadata_replay::observe_library_source_digest(
+                source.path(),
+                &[],
+            )?,
             producer_digest: digest_bytes(b"producer"),
             semantic_authority_digest: digest_bytes(b"semantic"),
             dependencies: BTreeMap::new(),
@@ -1193,6 +1252,61 @@ mod checked_metadata_restoration_tests {
             owner.checked_files()
         )?);
         restored.replay(tempfile::tempdir()?.path())?;
+        Ok(())
+    }
+
+    /// Package loss restores the original metadata and generation together; absent or damaged authority is not success.
+    #[test]
+    fn completed_library_restores_original_checked_generation() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::build::library_generation::publish_library_generation;
+        use crate::build::source_authority::digest_baked_project_source_authority;
+        use crate::build::{OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenPackagedLibraryLoafManifest};
+        let original = tempfile::tempdir()?;
+        let package = tempfile::tempdir()?;
+        let absent = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let store = OvenStore::new(original.path(), limits);
+        let package_store = OvenStore::new(package.path(), limits);
+        let absent_store = OvenStore::new(absent.path(), limits);
+        let (source, metadata) = publish_owner(&store)?;
+        let authority = digest_baked_project_source_authority(source.path())?;
+        let generation = publish_library_generation(&store, source.path(), &authority, &metadata)?;
+        let manifest = OvenPackagedLibraryLoafManifest {
+            schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+            source_authority_digest: authority,
+            compiler_version: incan_lang::version::INCAN_VERSION.into(),
+            metadata_files: metadata.checked_files().to_vec(),
+            checked_metadata: Some(metadata.reference()),
+            checked_generation: Some(generation.reference()),
+            profiles: BTreeMap::new(),
+        };
+        assert!(restore_reused_library_generation(&absent_store, &package_store, &manifest)?.is_none());
+        let restored = restore_reused_library_generation(&store, &package_store, &manifest)?
+            .ok_or("original generation was not restored")?;
+        assert_eq!(
+            restored.reference().owner_identity,
+            generation.reference().owner_identity
+        );
+        assert_eq!(restored.reference().receipt, generation.reference().receipt);
+        // A restored package must stand on its own, without the preparation Store.
+        let repeated = restore_reused_library_generation(&absent_store, &package_store, &manifest)?
+            .ok_or("restored package still required the primary Store")?;
+        repeated.verify()?;
+        let mut mismatched = manifest.clone();
+        mismatched.source_authority_digest = digest_bytes(b"different authored generation");
+        assert!(restore_reused_library_generation(&store, &package_store, &mismatched).is_err());
+        mismatched = manifest.clone();
+        mismatched.checked_generation = None;
+        assert!(restore_reused_library_generation(&store, &package_store, &mismatched)?.is_none());
+        // Missing files inside a present owner are corruption, not permission to rebuild or substitute it.
+        let entry = package_store
+            .root()
+            .join("entries")
+            .join(generation.reference().owner_identity.replace(':', "-"));
+        fs::rename(entry.join("artifact.json"), entry.join("artifact.json.saved"))?;
+        assert!(restore_reused_library_generation(&store, &package_store, &manifest).is_err());
+        fs::rename(entry.join("artifact.json.saved"), entry.join("artifact.json"))?;
+        assert!(restore_reused_library_generation(&store, &package_store, &manifest)?.is_some());
         Ok(())
     }
 
