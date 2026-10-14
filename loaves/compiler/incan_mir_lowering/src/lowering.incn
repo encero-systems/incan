@@ -2615,6 +2615,17 @@ def lower_call(
         _ => return Err("expected Body IR Call")
 
 
+def value_enum_receiver_place(
+    mut builder: Builder,
+    argument: &RustArgumentElement,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Keep the checked receiver's dereference and field projections before reading its native enum discriminant."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) => return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR nonplace value enum receiver")
+
+
 def lower_value_enum_method(
     mut builder: Builder,
     owner: int,
@@ -2625,7 +2636,7 @@ def lower_value_enum_method(
     """Select the retained raw value by native tag, preserving repeated reads and text ownership."""
     if len(arguments) != 1:
         return Err("unsupported Body IR value enum getter arguments")
-    source = argument_place(builder, arguments, 0, span)?
+    source = value_enum_receiver_place(builder, arguments[0], span)?
     result_type = value_enum_raw_type(builder, owner)
     output = call_destination(builder, destination, result_type, span)?
     if place_type(builder.locals, output) != result_type or output.local in builder.owned:
