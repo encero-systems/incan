@@ -109,15 +109,24 @@ fn bake_native_in_store(
         (OvenDirectRustcOutputKind::Binary, true) => bake_trusted_direct_rustc_test(&staged_request)?,
         _ => return Err(recipe_error("unsupported shared native output kind")),
     };
+    let staged_sidecar = caller_output_receipt_path(&bake.output)?;
+    let record: OvenDirectRustcOutputRecord =
+        serde_json::from_slice(&fs::read(&staged_sidecar).map_err(|source| OvenRustcError::Io {
+            path: staged_sidecar.clone(),
+            source,
+        })?)
+        .map_err(recipe_error)?;
+    if record.inputs != expected || record.output_digest != bake.output_digest {
+        return Err(recipe_error(
+            "compiled native output record differs from its selected recipe",
+        ));
+    }
     let published = store.publish(&OvenArtifactPublishRequest {
         receipt: request.receipt.clone(),
         domain: domain.to_string(),
         kind: OvenArtifactKind::Engine,
         payload: serde_json::to_vec(&StoredNativeOutput {
-            record: OvenDirectRustcOutputRecord {
-                inputs: expected,
-                output_digest: bake.output_digest.clone(),
-            },
+            record,
             environment: environment.clone(),
         })
         .map_err(recipe_error)?,
@@ -127,7 +136,6 @@ fn bake_native_in_store(
         }],
         materialized_directories: Vec::new(),
     })?;
-    let staged_sidecar = caller_output_receipt_path(&bake.output)?;
     let sidecar = caller_output_receipt_path(&output)?;
     fs::rename(&bake.output, &output).map_err(|source| OvenRustcError::Io {
         path: output.clone(),
@@ -167,6 +175,19 @@ fn reuse_native(
             continue;
         }
         let record = stored.record;
+        let isolated = request
+            .receipt
+            .sources
+            .build_unit_inputs
+            .contains_key("sdk-source-archive");
+        if expected.test_harness
+            && !record
+                .consumed_inputs
+                .as_ref()
+                .is_some_and(|inputs| inputs.current(request.source, environment, isolated))
+        {
+            continue;
+        }
         let (_, root, _, lease) = candidate.into_parts();
         let source = root.join(filename);
         if digest_regular_file(&source, "stored native output")? != record.output_digest {
@@ -188,7 +209,8 @@ fn reuse_native(
                 && !metadata.file_type().is_symlink()
                 && !metadata.permissions().readonly()
                 && executable_projection(&metadata, expected.output_kind == "binary")
-        }) && caller_output_reusable_digest(&output, expected).as_deref()
+        }) && caller_output_reusable_digest(&output, expected, request.source, environment, isolated)
+            .as_deref()
             == Some(record.output_digest.as_str());
         if !current {
             let mut source_file = fs::File::open(&source).map_err(|error| OvenRustcError::Io {
@@ -215,13 +237,7 @@ fn reuse_native(
                 path: output.clone(),
                 source: error.error,
             })?;
-            write_caller_output_record(
-                &output,
-                &OvenDirectRustcOutputRecord {
-                    inputs: expected.clone(),
-                    output_digest: record.output_digest.clone(),
-                },
-            )?;
+            write_caller_output_record(&output, &record)?;
         }
         return Ok(Some(OvenDirectRustcBake {
             source_digest: expected.source_digest.clone(),
