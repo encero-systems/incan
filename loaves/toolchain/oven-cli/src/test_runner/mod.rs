@@ -19,8 +19,9 @@ mod rust;
 
 pub use incan_driver::testing::discovery::{discover_test_files, discover_tests_and_fixtures};
 pub use incan_driver::testing::types::{
-    DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestLanguages, TestMarker,
-    TestOutputFormat, TestResult, TestRunConfig, TestSummary, WorkspaceTestContext,
+    DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestCaseResult, TestInfo,
+    TestLanguages, TestMarker, TestOutputFormat, TestResult, TestRunConfig, TestRunReport, TestSummary,
+    WorkspaceTestContext,
 };
 pub use reporter::{ConsoleReporter, TestReporter};
 
@@ -334,13 +335,13 @@ fn marker_names(test: &TestInfo) -> BTreeSet<String> {
 fn emit_json_result(
     test: &TestInfo,
     result: &TestResult,
-    root: &Path,
+    id: &str,
     workspace_context: Option<&WorkspaceTestContext>,
     output: &TestOutputSink,
 ) {
     let mut record = serde_json::json!({
         "schema_version": "incan.test.v1",
-        "test_id": stable_test_id(test, root),
+        "test_id": id,
         "file": test.file_path.to_string_lossy(),
         "name": test_display_name(test),
         "status": result_status(result),
@@ -389,18 +390,14 @@ fn xml_escape(raw: &str) -> String {
 }
 
 /// Write a JUnit XML report for the completed run.
-fn write_junit_report(
-    path: &Path,
-    results: &[(TestInfo, TestResult)],
-    total_time: std::time::Duration,
-) -> CliResult<()> {
+fn write_junit_report(path: &Path, results: &[TestCaseResult], total_time: std::time::Duration) -> CliResult<()> {
     let failures = results
         .iter()
-        .filter(|(_, result)| matches!(result, TestResult::Failed(_, _) | TestResult::XPassed(_)))
+        .filter(|case| matches!(case.result, TestResult::Failed(_, _) | TestResult::XPassed(_)))
         .count();
     let skipped = results
         .iter()
-        .filter(|(_, result)| matches!(result, TestResult::Skipped(_) | TestResult::XFailed(_, _)))
+        .filter(|case| matches!(case.result, TestResult::Skipped(_) | TestResult::XFailed(_, _)))
         .count();
     let mut body = String::new();
     body.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -411,7 +408,7 @@ fn write_junit_report(
         skipped,
         total_time.as_secs_f64()
     ));
-    for (test, result) in results {
+    for TestCaseResult { test, result, .. } in results {
         body.push_str(&format!(
             "  <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
             xml_escape(&test.file_path.to_string_lossy()),
@@ -444,30 +441,20 @@ fn write_junit_report(
 }
 
 /// Print the slowest collected test cases.
-fn print_durations(
-    results: &[(TestInfo, TestResult)],
-    count: usize,
-    use_color: bool,
-    root: &Path,
-    output: &TestOutputSink,
-) {
+fn print_durations(results: &[TestCaseResult], count: usize, use_color: bool, output: &TestOutputSink) {
     if count == 0 || results.is_empty() {
         return;
     }
     let mut ordered: Vec<_> = results.iter().collect();
-    ordered.sort_by_key(|(_, result)| std::cmp::Reverse(result_duration_ms(result)));
+    ordered.sort_by_key(|case| std::cmp::Reverse(result_duration_ms(&case.result)));
 
     output.line("");
     output.line(format_args!(
         "{}",
         style(centered_eq_banner("slowest durations"), "1", use_color)
     ));
-    for (test, result) in ordered.into_iter().take(count) {
-        output.line(format_args!(
-            "{:>6}ms {}",
-            result_duration_ms(result),
-            stable_test_id(test, root)
-        ));
+    for case in ordered.into_iter().take(count) {
+        output.line(format_args!("{:>6}ms {}", result_duration_ms(&case.result), case.id));
     }
 }
 
@@ -1711,7 +1698,7 @@ pub(crate) fn execute_tests_with_owner(
     request: &TestExecutionRequest,
     owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
     output: TestOutputSink,
-) -> CliResult<ExitCode> {
+) -> CliResult<TestRunReport> {
     request.validate_paths()?;
     let config = request.as_config();
     let collection_options = TestCollectionOptions::from_config(&config);
@@ -1726,8 +1713,8 @@ pub(crate) fn execute_tests_with_owner(
         fail_on_empty,
         list_only: _,
         report_format,
-        junit_path,
-        durations,
+        junit_path: _,
+        durations: _,
         shuffle,
         seed,
         run_xfail,
@@ -1744,7 +1731,7 @@ pub(crate) fn execute_tests_with_owner(
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
-        workspace_context,
+        workspace_context: _,
     } = config;
 
     let _invocation =
@@ -1764,10 +1751,25 @@ pub(crate) fn execute_tests_with_owner(
 
     if filtered_tests.is_empty() {
         output.error_line("No tests collected");
-        if fail_on_empty {
-            return Err(CliError::new("", ExitCode::FAILURE));
-        }
-        return Ok(ExitCode::SUCCESS); // "no tests collected" is not a failure
+        return Ok(TestRunReport {
+            results: Vec::new(),
+            summary: TestSummary::default(),
+            shuffle_seed: None,
+            exit_code: if fail_on_empty {
+                ExitCode::FAILURE.0
+            } else {
+                ExitCode::SUCCESS.0
+            },
+        });
+    }
+
+    let mut file_ids = HashMap::new();
+    for test in &filtered_tests {
+        file_ids.entry(test.file_path.clone()).or_insert_with(|| {
+            let _identity = tracing::trace_span!(target: "incan::invocation", "incan_cli::test_file_identity", path = %test.file_path.display()).entered();
+            let canonical = test.file_path.canonicalize().unwrap_or_else(|_| test.file_path.clone());
+            canonical.strip_prefix(&stable_id_root).unwrap_or(&canonical).to_path_buf()
+        });
     }
 
     let command_context =
@@ -1797,7 +1799,7 @@ pub(crate) fn execute_tests_with_owner(
         output.line("");
     }
 
-    let mut results: Vec<(TestInfo, TestResult)> = Vec::new();
+    let mut results = Vec::new();
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
@@ -1855,11 +1857,12 @@ pub(crate) fn execute_tests_with_owner(
     }
     drop(stage);
     let _reporting = trace_test_stage("reporting");
+    let case_key = |test: &TestInfo| (test.file_path.clone(), test_display_name(test).to_string());
     raw_batch_results.sort_by_key(|(index, _)| *index);
-    let mut raw_results_by_id: HashMap<String, TestResult> = HashMap::new();
+    let mut raw_results_by_id: HashMap<(PathBuf, String), TestResult> = HashMap::new();
     for (_, batch_results) in raw_batch_results {
         for (test, result) in batch_results {
-            raw_results_by_id.insert(stable_test_id(&test, &stable_id_root), result);
+            raw_results_by_id.insert(case_key(&test), result);
         }
     }
 
@@ -1869,13 +1872,13 @@ pub(crate) fn execute_tests_with_owner(
         {
             TestResult::Skipped(reason.clone())
         } else {
-            let id = stable_test_id(&test, &stable_id_root);
+            let id = case_key(&test);
             match raw_results_by_id.remove(&id) {
                 Some(result) => result,
                 None if stop_on_fail => continue,
                 None => TestResult::Failed(
                     Duration::from_secs(0),
-                    format!("internal error: no test result was produced for `{id}`"),
+                    format!("internal error: no test result was produced for `{id:?}`"),
                 ),
             }
         };
@@ -1915,17 +1918,76 @@ pub(crate) fn execute_tests_with_owner(
             raw_result
         };
 
-        if report_format == TestOutputFormat::Console {
-            print_test_result(&test, &result, verbose, use_color, &output);
-        } else {
-            emit_json_result(&test, &result, &stable_id_root, workspace_context.as_ref(), &output);
-        }
-        results.push((test, result));
+        let file_id = file_ids
+            .get(&test.file_path)
+            .ok_or_else(|| CliError::failure("selected test lost its file identity"))?;
+        let id = format!("{}::{}", file_id.to_string_lossy(), test_display_name(&test));
+        results.push(TestCaseResult { id, test, result });
     }
 
+    Ok(TestRunReport {
+        summary: TestSummary {
+            total: results.len(),
+            passed,
+            failed,
+            skipped,
+            xfailed,
+            xpassed,
+            duration: start_time.elapsed(),
+        },
+        results,
+        shuffle_seed,
+        exit_code: if failed > 0 || xpassed > 0 {
+            ExitCode::FAILURE.0
+        } else {
+            ExitCode::SUCCESS.0
+        },
+    })
+}
+
+/// Format completed owner facts in the invoking CLI without reopening source paths or rerunning result policy.
+/// Report-file errors belong to the client; a valid execution result is never turned into a cached test success.
+pub(crate) fn render_test_report(
+    report: TestRunReport,
+    config: &TestRunConfig<'_>,
+    output: &TestOutputSink,
+) -> CliResult<ExitCode> {
+    let _rendering = trace_test_stage("client_reporting");
+    let TestRunReport {
+        results,
+        summary,
+        shuffle_seed,
+        exit_code,
+    } = report;
+    if results.is_empty() {
+        return if exit_code == 0 {
+            Ok(ExitCode::SUCCESS)
+        } else {
+            Err(CliError::with_code("", exit_code))
+        };
+    }
+    let TestSummary {
+        passed,
+        failed,
+        skipped,
+        xfailed,
+        xpassed,
+        duration: total_time,
+        ..
+    } = summary;
+    let report_format = config.report_format;
+    let use_color = config.use_color;
+    let workspace_context = config.workspace_context.as_ref();
+    for case in &results {
+        if report_format == TestOutputFormat::Console {
+            print_test_result(&case.test, &case.result, config.verbose, use_color, output);
+        } else {
+            emit_json_result(&case.test, &case.result, &case.id, workspace_context, output);
+        }
+    }
     let failures: Vec<_> = results
         .iter()
-        .filter(|(_, r)| matches!(r, TestResult::Failed(_, _) | TestResult::XPassed(_)))
+        .filter(|case| matches!(case.result, TestResult::Failed(_, _) | TestResult::XPassed(_)))
         .collect();
 
     if report_format == TestOutputFormat::Console && !failures.is_empty() {
@@ -1934,7 +1996,7 @@ pub(crate) fn execute_tests_with_owner(
             "{}",
             style(centered_eq_banner("FAILURES"), RED, use_color)
         ));
-        for (test, result) in failures {
+        for TestCaseResult { test, result, .. } in failures {
             let display_name = test_display_name(test);
             output.line("");
             output.line(format_args!(
@@ -1956,13 +2018,12 @@ pub(crate) fn execute_tests_with_owner(
         }
     }
 
-    let total_time = start_time.elapsed();
-    if let Some(path) = junit_path.as_ref() {
+    if let Some(path) = config.junit_path.as_ref() {
         write_junit_report(path, &results, total_time)?;
     }
     if report_format == TestOutputFormat::Console {
-        if let Some(count) = durations {
-            print_durations(&results, count, use_color, &stable_id_root, &output);
+        if let Some(count) = config.durations {
+            print_durations(&results, count, use_color, output);
         }
         output.line("");
     }
@@ -2004,7 +2065,7 @@ pub(crate) fn execute_tests_with_owner(
                 "shuffle_seed": shuffle_seed,
             }
         });
-        if let (Some(object), Some(workspace)) = (record.as_object_mut(), workspace_context.as_ref()) {
+        if let (Some(object), Some(workspace)) = (record.as_object_mut(), workspace_context) {
             object.insert(
                 "workspace".to_string(),
                 serde_json::json!({
@@ -2020,9 +2081,9 @@ pub(crate) fn execute_tests_with_owner(
         output.line(format_args!("{record}"));
     }
 
-    if failed > 0 || xpassed > 0 {
-        // Tests failed - return error with empty message (summary already printed).
-        Err(CliError::new("", ExitCode::FAILURE))
+    if exit_code != 0 {
+        // The owner has already applied failure policy; the CLI only presents its result.
+        Err(CliError::with_code("", exit_code))
     } else {
         Ok(ExitCode::SUCCESS)
     }
@@ -2073,6 +2134,109 @@ mod tests {
             let request: TestExecutionRequest = serde_json::from_slice(&wire)?;
             assert_eq!(request.as_config().languages, languages);
         }
+        Ok(())
+    }
+
+    /// Typed completion preserves resolved IDs and every status without requiring source files at render time.
+    #[test]
+    fn typed_completion_renders_original_identity_and_all_statuses() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let source = directory.path().join("test_original.incn");
+        std::fs::write(&source, "def test_original(): pass\n")?;
+        let duration = Duration::from_millis(7);
+        let statuses = [
+            TestResult::Passed(duration),
+            TestResult::Failed(duration, "failure <details>".to_string()),
+            TestResult::Skipped("skip & reason".to_string()),
+            TestResult::XFailed(duration, "expected".to_string()),
+            TestResult::XPassed(duration),
+        ];
+        let results = statuses
+            .into_iter()
+            .enumerate()
+            .map(|(index, result)| {
+                let mut test = make_test(&format!("test_{index}"), vec![TestMarker::Mark("selected".to_string())]);
+                test.file_path = source.clone();
+                TestCaseResult {
+                    id: format!("retained/test_original.incn::test_{index}"),
+                    test,
+                    result,
+                }
+            })
+            .collect();
+        let report = TestRunReport {
+            results,
+            summary: TestSummary {
+                total: 5,
+                passed: 1,
+                failed: 1,
+                skipped: 1,
+                xfailed: 1,
+                xpassed: 1,
+                duration,
+            },
+            shuffle_seed: Some(27),
+            exit_code: ExitCode::FAILURE.0,
+        };
+        let wire = serde_json::to_vec(&report)?;
+        let restored: TestRunReport = serde_json::from_slice(&wire)?;
+        std::fs::remove_file(&source)?;
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = std::sync::Arc::clone(&received);
+        let output = TestOutputSink::new(move |event| {
+            if let output::TestOutput::Stdout(text) = event
+                && let Ok(mut received) = capture.lock()
+            {
+                received.push(text);
+            }
+        });
+        let mut config = list_test_config("/unavailable-source-root");
+        config.list_only = false;
+        config.report_format = TestOutputFormat::Json;
+        config.junit_path = Some(directory.path().join("report.xml"));
+        assert!(render_test_report(restored, &config, &output).is_err());
+        let text = received.lock().map_err(|_| "poisoned output capture")?.concat();
+        let records: Vec<serde_json::Value> = text.lines().map(serde_json::from_str).collect::<Result<_, _>>()?;
+        assert_eq!(records.len(), 6);
+        for (index, status) in ["passed", "failed", "skipped", "xfailed", "xpassed"].iter().enumerate() {
+            assert_eq!(
+                records[index]["test_id"],
+                format!("retained/test_original.incn::test_{index}")
+            );
+            assert_eq!(records[index]["status"], *status);
+        }
+        assert_eq!(records[5]["summary"]["shuffle_seed"], 27);
+        assert_eq!(records[5]["summary"]["xpassed"], 1);
+        let junit = std::fs::read_to_string(directory.path().join("report.xml"))?;
+        assert!(junit.contains("failures=\"2\" skipped=\"2\""));
+        assert!(junit.contains("failure &lt;details&gt;"));
+        assert!(junit.contains("skip &amp; reason"));
+        Ok(())
+    }
+
+    /// A successful execution cannot hide a client-side report destination failure.
+    #[test]
+    fn typed_completion_reports_client_junit_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let occupied = directory.path().join("occupied");
+        std::fs::write(&occupied, "not a directory")?;
+        let report = TestRunReport {
+            results: vec![TestCaseResult {
+                id: "original::test_one".to_string(),
+                test: make_test("test_one", Vec::new()),
+                result: TestResult::Passed(Duration::ZERO),
+            }],
+            summary: TestSummary {
+                total: 1,
+                passed: 1,
+                ..TestSummary::default()
+            },
+            shuffle_seed: None,
+            exit_code: ExitCode::SUCCESS.0,
+        };
+        let mut config = list_test_config("/unavailable-source-root");
+        config.junit_path = Some(occupied.join("report.xml"));
+        assert!(render_test_report(report, &config, &TestOutputSink::new(|_| {})).is_err());
         Ok(())
     }
 
