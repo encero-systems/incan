@@ -36,7 +36,7 @@ pub struct OvenNativeTestInventory {
 /// Request-owned native inventory, bound to its original executable and invocation context.
 /// Only supervised collection constructs this value; case execution still checks names, output evidence and deadlines.
 pub struct OvenNativeTestCollection {
-    inventory: OvenNativeTestInventory,
+    inventory: Arc<OvenNativeTestInventory>,
     ignored: OvenNativeTestInventory,
     executable: PathBuf,
     environment: BTreeMap<String, String>,
@@ -189,8 +189,9 @@ pub struct OvenNativeTestBatchRequest<'a> {
 /// One verified all-in-one native libtest execution used when fixture scope requires a shared process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenNativeTestBatchReport {
-    /// Complete inventory consulted before execution.
-    pub inventory: OvenNativeTestInventory,
+    /// Complete inventory shared with the original collection, without copying every name per selected case.
+    #[serde(serialize_with = "serialize_shared_inventory")]
+    pub inventory: Arc<OvenNativeTestInventory>,
     /// Whether the process exited successfully and selected case evidence is complete and green.
     pub success: bool,
     /// Raw process success, kept distinct from complete case accounting.
@@ -219,6 +220,14 @@ pub struct OvenNativeTestBatchReport {
     pub output: String,
     /// The slice this execution covered when the root was divided; `None` for a whole-root or exact run.
     pub case_slice: Option<OvenNativeTestCaseSliceReport>,
+}
+
+/// Preserve the existing report wire shape while the collection and per-case reports share one inventory.
+fn serialize_shared_inventory<S>(inventory: &Arc<OvenNativeTestInventory>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    inventory.as_ref().serialize(serializer)
 }
 
 /// Wall-clock timings for one all-in-one native libtest batch.
@@ -298,7 +307,7 @@ pub fn inventory_native_tests_for_collection(
         });
     }
     Ok(OvenNativeTestCollection {
-        inventory: all,
+        inventory: Arc::new(all),
         ignored,
         executable: executable.to_path_buf(),
         environment: environment.clone(),
@@ -428,7 +437,7 @@ pub fn run_native_test_batch(
     let case_timings = Vec::new();
     let command_timings = parse_native_test_command_timings(&transcript);
     Ok(OvenNativeTestBatchReport {
-        inventory,
+        inventory: Arc::new(inventory),
         success: output.status.success() && !timed_out,
         process_success: output.status.success(),
         timed_out,
@@ -515,6 +524,8 @@ fn run_native_tests_exact_selected(
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact").entered();
     let selection_started = Instant::now();
+    let selection_trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact_selection").entered();
     let requested = normalized_exact_names(exact_names)?;
     let inventory_started = Instant::now();
     let inventory_timeout = remaining_native_test_timeout(&selection_started, timeout).map_err(|timeout| {
@@ -529,21 +540,21 @@ fn run_native_tests_exact_selected(
         collection.filter(|collection| collection.matches(executable, environment, working_directory))
     {
         tracing::trace!(target: "incan::invocation", decision = "reuse_native_test_inventory");
-        collection.inventory.clone()
+        Arc::clone(&collection.inventory)
     } else {
         tracing::trace!(target: "incan::invocation", decision = "collect_native_test_inventory");
-        inventory_native_tests_with_environment_and_timeout(
+        Arc::new(inventory_native_tests_with_environment_and_timeout(
             executable,
             environment,
             working_directory,
             false,
             inventory_timeout,
-        )?
+        )?)
     };
     let inventory_elapsed_ms = duration_millis(inventory_started.elapsed());
-    let available = inventory.names.iter().collect::<BTreeSet<_>>();
+    // Supervised collection always parses through the canonical sorted, duplicate-free inventory.
     for exact_name in &requested {
-        if !available.contains(exact_name) {
+        if inventory.names.binary_search(exact_name).is_err() {
             return Err(OvenNativeTestError::MissingExactTest {
                 name: exact_name.clone(),
             });
@@ -551,7 +562,7 @@ fn run_native_tests_exact_selected(
     }
     let executable = verified_executable(executable)?;
     let mut report = OvenNativeTestBatchReport {
-        inventory: inventory.clone(),
+        inventory,
         success: true,
         process_success: true,
         timed_out: false,
@@ -565,6 +576,7 @@ fn run_native_tests_exact_selected(
         output: String::new(),
         case_slice: None,
     };
+    drop(selection_trace);
     for exact_name in requested {
         let process_timeout = match remaining_native_test_timeout(&selection_started, timeout) {
             Ok(timeout) => timeout,
@@ -763,7 +775,7 @@ pub fn run_native_test_batch_all_for_request(
         .map_or_else(|| inventory.names.clone(), |slice| slice.selected.clone());
     if case_slice.as_ref().is_some_and(|slice| slice.selected.is_empty()) {
         return Ok(OvenNativeTestBatchReport {
-            inventory,
+            inventory: Arc::new(inventory),
             success: true,
             process_success: true,
             timed_out: false,
@@ -823,7 +835,7 @@ pub fn run_native_test_batch_all_for_request(
     }
     let command_timings = parse_native_test_command_timings(&transcript);
     Ok(OvenNativeTestBatchReport {
-        inventory,
+        inventory: Arc::new(inventory),
         success: output.status.success()
             && !timed_out
             && evidence.counts.as_ref().is_some_and(|counts| counts.failed == 0),
@@ -1333,6 +1345,8 @@ fn run_native_batch_child_with_log(
     reporter: Option<NativeTestProgressReporter>,
     mut result_log: Option<NativeTestLog>,
 ) -> Result<(std::process::Output, bool, NativeTestEvidence), OvenNativeTestError> {
+    let setup_trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_setup").entered();
     if let Some(log) = &result_log {
         command.arg("--logfile").arg(log.path());
     }
@@ -1422,7 +1436,9 @@ fn run_native_batch_child_with_log(
     });
     let deadline = timeout.map(|timeout| Instant::now() + timeout);
     let mut timed_out = false;
+    drop(setup_trace);
     let completion = (|| {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_wait").entered();
         loop {
             poll_native_result_log(&mut result_log, &root_progress, executable)?;
             match child.try_wait().map_err(|source| OvenNativeTestError::Io {
@@ -1440,6 +1456,8 @@ fn run_native_batch_child_with_log(
     })();
     // A root may exit with a descendant still holding its pipes. Finish the entire owned process group before
     // joining readers, on success as well as failure. A supervisor I/O error follows this same cleanup path.
+    let _cleanup_trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_child_cleanup").entered();
     let containment = if timed_out && completion.is_ok() {
         Ok(())
     } else {
@@ -2770,6 +2788,7 @@ mod tests {
         Ok(())
     }
 
+    /// Inject reader failure only after the complete descendant PID is published, then prove group containment.
     #[cfg(unix)]
     #[test]
     fn result_reader_failure_reaps_the_running_root_and_descendants() -> Result<(), Box<dyn std::error::Error>> {
@@ -2781,7 +2800,7 @@ mod tests {
         let child_pid = directory.path().join("child.pid");
         fs::write(
             &executable,
-            "#!/bin/sh\necho $$ > \"$ROOT_PID\"\nsleep 30 &\necho $! > \"$CHILD_PID\"\nwait\n",
+            "#!/bin/sh\necho $$ > \"$ROOT_PID\"\nsleep 30 &\necho $! > \"$CHILD_PID.pending\"\nmv \"$CHILD_PID.pending\" \"$CHILD_PID\"\nwait\n",
         )?;
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))?;
         let mut command = Command::new(&executable);
