@@ -18,6 +18,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// The complete SDK reader adapter preserves every chunk and completion byte through its captured error mapper.
+#[test]
+fn original_sdk_reader_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("original-sdk-reader")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+    )
+}
+
 /// The original take adapter retains its live legacy oracle while the native source-trait implementation is absent.
 #[test]
 fn sdk_fallible_take_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
