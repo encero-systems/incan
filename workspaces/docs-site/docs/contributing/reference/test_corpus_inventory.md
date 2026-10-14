@@ -12,12 +12,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4257 | 279 | 431 |
+| keep | 4258 | 280 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **unclassified** | 1 | 1 | 0 |
 | **Total** | **9229** | **736** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
@@ -1834,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2523 tests in 155 files: keep 2509, unaffected 13, unclassified 1)
+### `loaves/compiler/incan_frontend` (2523 tests in 155 files: keep 2510, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1912,7 +1911,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/surface_semantics.rs` | 3 | 138 | 48 | keep | - | - | - | #1561 | parser 2 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/symbols.rs` | 18 | 3237 | 482 | keep | - | - | - | #1561 | checker 12 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/testing_markers.rs` | 7 | 882 | 164 | keep | - | - | - | #1561 | checker 1, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/body_ir_factories/tests.rs` | 1 | 82 | 82 | **unclassified** | - | - | - | - | checker 1, parser 1 | no row in dispositions.json |
+| `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/body_ir_factories/tests.rs` | 1 | 82 | 82 | keep | - | - | - | #1337 | checker 1, parser 1 | Body IR-only static factory facts retain authenticated published owner bound provenance without changing legacy tables. |
 | `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs` | 44 | 2565 | 1457 | keep | - | - | - | #1561 | text 2, checker 44, parser 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs` | 1 | 5066 | 32 | keep | - | - | - | #1561 | checker 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/identity_surface_tests.rs` | 9 | 325 | 325 | keep | - | - | - | #1561 | checker 9, parser 9 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
