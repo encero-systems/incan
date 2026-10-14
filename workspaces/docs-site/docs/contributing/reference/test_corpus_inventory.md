@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3645 | 256 | 431 |
 | re-point | 1488 | 91 | 1060 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2111 | 220 | 5 |
+| unaffected | 2115 | 221 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8752** | **720** | **1496** |
+| **Total** | **8756** | **721** | **1496** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2621,7 +2621,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/oven/oven_rustc` (494 tests in 54 files: keep 13, unaffected 481)
+### `loaves/oven/oven_rustc` (498 tests in 55 files: keep 13, unaffected 485)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -2672,8 +2672,9 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/sdk_closure/digest_reuse_tests.rs` | 2 | 209 | 209 | unaffected | - | - | - | #1698 | - | Oven native input freshness: actual linker and extern planners retain raw content identities, zero-byte warm observations, preserved-mtime edits, symlink retargets and missing-input refusal; child-local cache and tracing prevent environment races. |
 | `loaves/oven/oven_rustc/src/sdk_closure/environment.rs` | 8 | 500 | 182 | unaffected | - | - | - | #1698 | - | Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt. |
 | `loaves/oven/oven_rustc/src/sdk_closure/index_batch/tests.rs` | 5 | 212 | 212 | unaffected | - | - | - | #1698 | - | Pinned registry-index transport preserves exact blob bytes and pin/path authority, bounds Git subprocess work, and reaps command-owned children. These controls remain required for ordinary native preparation. |
-| `loaves/oven/oven_rustc/src/sdk_closure/local.rs` | 8 | 1240 | 354 | unaffected | - | - | - | #1698 | - | Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata. |
+| `loaves/oven/oven_rustc/src/sdk_closure/local.rs` | 8 | 1201 | 354 | unaffected | - | - | - | #1698 | - | Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata. |
 | `loaves/oven/oven_rustc/src/sdk_closure/local/dependency_identity.rs` | 5 | 317 | 179 | unaffected | - | - | - | #1698 | - | Native producer source mapping, transitive authored path identity, relocation, embedded inputs and feature activation; no Cargo declaration is required. |
+| `loaves/oven/oven_rustc/src/sdk_closure/local/execution/tests.rs` | 4 | 273 | 273 | unaffected | - | - | - | #1698 | - | Shared Oven native executor: serial/parallel local output and receipt equality, retained-owner reuse and source conflict, failure isolation, cycle refusal and host procedural-macro versus target edges. |
 | `loaves/oven/oven_rustc/src/sdk_closure/local/predicate_tests.rs` | 2 | 134 | 134 | keep | - | - | - | #1337 | - | Source-bound target decisions for ordinary local native loaves: exact declaration coverage, inactive missing dependencies, original-owner reuse and target invalidation. |
 | `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 3 | 340 | 125 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
 | `loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs` | 9 | 487 | 487 | unaffected | - | - | - | #1698 | - | Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse. |

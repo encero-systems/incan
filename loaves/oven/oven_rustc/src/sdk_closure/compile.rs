@@ -74,11 +74,15 @@ impl Schedule {
 
 /// Compile independent dependencies with a conservative process bound; unchanged owner requests skip this path.
 pub(super) fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result<SdkCompiledClosure, Error> {
-    let jobs = std::thread::available_parallelism()
+    compile_units_with_jobs(units, context, worker_bound())
+}
+
+/// Use one conservative compiler process ceiling for both registry and local native graphs.
+pub(super) fn worker_bound() -> usize {
+    std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1)
-        .min(4);
-    compile_units_with_jobs(units, context, jobs)
+        .min(4)
 }
 
 /// Refill a free worker as soon as its dependencies finish, without a barrier across unrelated branches.
@@ -92,49 +96,71 @@ fn compile_units_with_jobs(
     jobs: usize,
 ) -> Result<SdkCompiledClosure, Error> {
     let schedule = Schedule::new(units)?;
-    let outcomes: Vec<OnceLock<Outcome>> = (0..units.len()).map(|_| OnceLock::new()).collect();
+    let dependencies = schedule
+        .edges
+        .iter()
+        .map(|edges| edges.iter().map(|(_, index)| *index).collect())
+        .collect::<Vec<Vec<usize>>>();
     let jobs = jobs.max(1).min(units.len().max(1));
     let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::compile_native_dependencies", units = units.len(), jobs).entered();
+    let results = execute_ready(&schedule.order, &dependencies, jobs, |index, outcomes| {
+        if units[index].build_script && units[index].fact.is_none() {
+            return Ok(Outcome::Refused);
+        }
+        let (unit, reused) = compile_selected(index, units, context, &schedule, outcomes)?;
+        Ok(Outcome::Compiled {
+            unit: Box::new(unit),
+            reused,
+        })
+    })?;
+    let outcomes = results
+        .into_iter()
+        .map(|slot| {
+            let outcome = match slot.into_inner() {
+                Some(Ok(outcome)) => outcome,
+                Some(Err(error)) => Outcome::Failed(error),
+                None => Outcome::Failed("native unit has no completion".to_string()),
+            };
+            OnceLock::from(outcome)
+        })
+        .collect();
+    finish_units(units, context, &schedule, outcomes)
+}
 
-    // ---- One coordinator owns readiness; workers only complete their own slot ----
+/// Execute one already ordered graph with a bounded worker set and original borrowed input owners.
+///
+/// Registry and local producers supply their existing selection/compilation functions. This coordinator owns only
+/// readiness and scoped lifetime; it never resolves edges, reconstructs owners, or admits cached results. Failed
+/// dependencies are complete slots so the producer can report their refusal without blocking independent branches.
+pub(super) fn execute_ready<T: Send + Sync>(
+    order: &[usize],
+    dependencies: &[Vec<usize>],
+    jobs: usize,
+    execute: impl Fn(usize, &[OnceLock<Result<T, String>>]) -> Result<T, Error> + Sync,
+) -> Result<Vec<OnceLock<Result<T, String>>>, Error> {
+    let outcomes: Vec<OnceLock<Result<T, String>>> = (0..dependencies.len()).map(|_| OnceLock::new()).collect();
+    let jobs = jobs.max(1);
     std::thread::scope(|scope| -> Result<(), Error> {
         let (sender, receiver) = mpsc::channel();
         let mut workers = BTreeMap::new();
         let mut completed = 0;
-        while completed < units.len() {
-            for &index in &schedule.order {
+        while completed < dependencies.len() {
+            for &index in order {
                 if outcomes[index].get().is_some() || workers.contains_key(&index) {
                     continue;
                 }
-                if units[index].build_script && units[index].fact.is_none() {
-                    outcomes[index]
-                        .set(Outcome::Refused)
-                        .map_err(|_| "native unit completed twice")?;
-                    completed += 1;
-                    continue;
-                }
-                if schedule.edges[index]
+                if dependencies[index]
                     .iter()
-                    .any(|(_, dependency)| outcomes[*dependency].get().is_none())
+                    .any(|dependency| outcomes[*dependency].get().is_none())
                 {
-                    continue;
-                }
-                if schedule.edges[index]
-                    .iter()
-                    .any(|(_, dependency)| !matches!(outcomes[*dependency].get(), Some(Outcome::Compiled { .. })))
-                {
-                    outcomes[index]
-                        .set(Outcome::Failed("dependency was refused or failed".to_string()))
-                        .map_err(|_| "native unit completed twice")?;
-                    completed += 1;
                     continue;
                 }
                 if workers.len() == jobs {
                     break;
                 }
                 let sender = sender.clone();
-                let schedule = &schedule;
                 let outcomes = &outcomes;
+                let execute = &execute;
                 let dispatcher = tracing::dispatcher::get_default(Clone::clone);
                 let parent = tracing::Span::current();
                 let worker = std::thread::Builder::new()
@@ -143,28 +169,22 @@ fn compile_units_with_jobs(
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             tracing::dispatcher::with_default(&dispatcher, || {
                                 let _parent = parent.enter();
-                                match compile_selected(index, units, context, schedule, outcomes) {
-                                    Ok((unit, reused)) => Outcome::Compiled {
-                                        unit: Box::new(unit),
-                                        reused,
-                                    },
-                                    Err(error) => Outcome::Failed(error.to_string()),
-                                }
+                                execute(index, outcomes).map_err(|error| error.to_string())
                             })
                         }))
-                        .unwrap_or_else(|_| Outcome::Failed("native compiler worker panicked".to_string()));
+                        .unwrap_or_else(|_| Err("native compiler worker panicked".to_string()));
                         let result = outcomes[index]
                             .set(outcome)
                             .map(|()| index)
                             .map_err(|_| "native unit completed twice");
-                        // The receiver can be gone only after the coordinator has already failed. Scoped joining still
-                        // retains the source and dependency owners until this worker completes.
+                        // The receiver can disappear only after coordinator failure; scoped joining still retains
+                        // owners.
                         let _ = sender.send(result);
                     })?;
                 workers.insert(index, worker);
             }
             if workers.is_empty() {
-                if completed == units.len() {
+                if completed == dependencies.len() {
                     break;
                 }
                 return Err("native dependency scheduler made no progress".into());
@@ -179,16 +199,14 @@ fn compile_units_with_jobs(
         }
         Ok(())
     })?;
-
-    // ---- Report and inspection order depend on the graph, never wall-clock completion ----
-    finish_units(units, context, &schedule, outcomes)
+    Ok(outcomes)
 }
 
 /// Borrow a successfully completed dependency under the exact original Store lease.
-fn selected(outcomes: &[OnceLock<Outcome>], index: usize) -> Result<&SdkCompiledUnit, Error> {
+fn selected(outcomes: &[OnceLock<Result<Outcome, String>>], index: usize) -> Result<&SdkCompiledUnit, Error> {
     match outcomes.get(index).and_then(OnceLock::get) {
-        Some(Outcome::Compiled { unit, .. }) => Ok(unit),
-        _ => Err("compiled dependency has no producer selection".into()),
+        Some(Ok(Outcome::Compiled { unit, .. })) => Ok(unit),
+        _ => Err("dependency was refused or failed".into()),
     }
 }
 
@@ -198,7 +216,7 @@ fn compile_selected(
     units: &[PreparedUnit],
     context: &CompileContext<'_>,
     schedule: &Schedule,
-    outcomes: &[OnceLock<Outcome>],
+    outcomes: &[OnceLock<Result<Outcome, String>>],
 ) -> Result<(SdkCompiledUnit, bool), Error> {
     let unit = &units[index];
     let dependencies = schedule.edges[index]
