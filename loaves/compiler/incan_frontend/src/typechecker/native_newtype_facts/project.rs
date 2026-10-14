@@ -50,7 +50,10 @@ struct BodyFactsBuilder<'source> {
 pub(super) fn project(program: &Program, info: &TypeCheckInfo) -> NativeNewtypeFacts {
     // ---- Context: exact local target domain and admitted owner frames ----
     let owners = collect_owners(program, info);
-    let mut result = NativeNewtypeFacts::default();
+    let mut result = NativeNewtypeFacts {
+        owners: owners.iter().map(|owner| owner.identity.clone()).collect(),
+        ..NativeNewtypeFacts::default()
+    };
     let Some(domain) = TargetDomain::collect(program, info) else {
         return result;
     };

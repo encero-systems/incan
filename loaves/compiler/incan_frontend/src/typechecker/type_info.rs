@@ -1584,6 +1584,9 @@ pub struct CallArtifacts {
     /// Closed call-site parameters under the same checked instantiation, preserving declaration roles and defaults.
     /// Only Body IR reads this contract; legacy parameter snapshots retain their original inferred holes.
     pub body_ir_call_parameter_types: HashMap<(usize, usize), Vec<CallableParam>>,
+    /// Checked static factory constraints that conflict with their destination. Only Body IR reads this denial;
+    /// later supplemental value propagation cannot authorize a closed result at the same call span.
+    pub body_ir_factory_result_conflicts: HashSet<(usize, usize)>,
     /// Executable constructor carriers recovered from original declared fields and checked values after contextual
     /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
     pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,

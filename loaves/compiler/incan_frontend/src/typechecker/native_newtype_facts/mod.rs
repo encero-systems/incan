@@ -24,6 +24,8 @@ pub(super) fn project(program: &Program, info: &TypeCheckInfo) -> NativeNewtypeF
 #[derive(Debug, Default, Clone)]
 pub(crate) struct NativeNewtypeFacts {
     bodies: Vec<NativeBodyFacts>,
+    /// Source owners whose storage is controlled by this atomic projection, even when a body transaction is rejected.
+    owners: Vec<CanonicalSymbolId>,
 }
 
 /// Body-local refinements cannot outlive a conflicting write or an altered canonical selection.
@@ -97,6 +99,20 @@ impl NativeFactGuard {
 }
 
 impl NativeNewtypeFacts {
+    /// Keep a cached source owner's generic storage under atomic authority. This is a denial boundary: other additive
+    /// call facts cannot repair a rejected transaction or a damaged supporting fact by supplying the same closed type.
+    pub(crate) fn controls_type(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Generic(owner, arguments) => {
+                self.owners.iter().any(|identity| identity.declaration_name == *owner)
+                    || arguments.iter().any(|ty| self.controls_type(ty))
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.controls_type(inner),
+            ResolvedType::Tuple(elements) => elements.iter().any(|ty| self.controls_type(ty)),
+            _ => false,
+        }
+    }
+
     /// Read an expression refinement only while its whole body transaction retains its checked authority.
     pub(crate) fn expression_type(&self, span: Span, info: &TypeCheckInfo) -> Option<&ResolvedType> {
         self.valid_body(span, info, |body, key| body.expressions.contains_key(&key))?

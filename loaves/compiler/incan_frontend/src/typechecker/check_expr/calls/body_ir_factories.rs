@@ -62,6 +62,7 @@ impl TypeChecker {
             }
             self.infer_type_param_bindings(&parameter, &actual, &mut bindings);
             if !self.types_compatible(&substitute_resolved_type(&parameter, &bindings), &actual) {
+                self.refuse_body_ir_factory_result(span);
                 return;
             }
         }
@@ -86,6 +87,9 @@ impl TypeChecker {
         }
         let output = substitute_resolved_type(&result, &bindings);
         if !concrete(&output) || expected.is_some_and(|expected| !self.types_compatible(&output, expected)) {
+            if concrete(&output) {
+                self.refuse_body_ir_factory_result(span);
+            }
             return;
         }
         self.type_info
@@ -96,6 +100,16 @@ impl TypeChecker {
             .calls
             .body_ir_call_result_types
             .insert((span.start, span.end), output);
+    }
+
+    /// Retain a checked factory contradiction once, clearing only supplemental native results. Legacy inference and
+    /// signatures stay unchanged; neither nominal member propagation nor destination filling may reopen this call.
+    fn refuse_body_ir_factory_result(&mut self, span: Span) {
+        let key = (span.start, span.end);
+        self.type_info.calls.body_ir_factory_result_conflicts.insert(key);
+        self.type_info.calls.body_ir_call_result_types.remove(&key);
+        self.type_info.calls.body_ir_call_type_arguments.remove(&key);
+        self.type_info.expressions.body_ir_expr_types.remove(&key);
     }
 
     /// Recover missing SDK bound provenance only from the exact authenticated owner declaration.

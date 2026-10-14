@@ -72,6 +72,14 @@ impl TypeChecker {
         expression: &Spanned<Expr>,
         recorded: &ResolvedType,
     ) {
+        if self
+            .type_info
+            .calls
+            .body_ir_factory_result_conflicts
+            .contains(&(expression.span.start, expression.span.end))
+        {
+            return;
+        }
         if matches!(expression.node, Expr::Call(_, _, _) | Expr::MethodCall(_, _, _, _))
             && let Some(actual) = self
                 .type_info
@@ -194,6 +202,14 @@ impl TypeChecker {
         recorded: &ResolvedType,
         expected: Option<&ResolvedType>,
     ) {
+        if self
+            .type_info
+            .calls
+            .body_ir_factory_result_conflicts
+            .contains(&(expression.span.start, expression.span.end))
+        {
+            return;
+        }
         let Some(expected) = expected.filter(|ty| Self::is_settled_type_argument(ty)) else {
             return;
         };

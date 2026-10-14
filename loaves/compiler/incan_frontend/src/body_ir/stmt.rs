@@ -196,6 +196,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
         let assignment_span = ast::Span::new(span.start, span.end);
+        let atomic_storage = self
+            .type_info
+            .assignment_binding_type(assignment_span)
+            .is_some_and(|ty| self.type_info.body_ir_newtypes.controls_type(ty));
         let mut ty = self
             .type_info
             .body_ir_newtypes
@@ -205,6 +209,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         if assignment.ty.is_none()
+            && !atomic_storage
             && let Some(returned) = self
                 .type_info
                 .expressions
