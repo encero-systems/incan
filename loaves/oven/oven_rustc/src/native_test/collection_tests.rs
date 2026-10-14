@@ -104,6 +104,12 @@ fn retained_inventory_avoids_relisting_and_executes_fresh_outcomes() -> TestResu
     assert!(!second.success);
     assert_eq!(fixture.listings()?, 2);
     assert_eq!(fs::read(fixture.root.join("executions"))?, b"xx");
+    assert!(std::sync::Arc::ptr_eq(&first.inventory, &collection.inventory));
+    assert!(std::sync::Arc::ptr_eq(&first.inventory, &second.inventory));
+    assert_eq!(
+        serde_json::to_value(&first)?["inventory"]["names"],
+        serde_json::json!(["selected"])
+    );
     Ok(())
 }
 
