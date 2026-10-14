@@ -300,7 +300,7 @@ incan oven compiler-libtests [--compiler-root PATH] [--rustc PATH] [--feature NA
 | `store inspect` | Reports physical allocation and logical artifact bytes, reclaimable and lease-protected allocation, and, for a direct-`rustc` plan, the full receipt of the compilation that produced it. |
 | `store prune` | Removes inactive entries to meet the store policy. `--dry-run` reports them and removes nothing. |
 | `test` | Compiles a native test binary from a stored plan, lists its tests, refuses any `--exact` name that is not listed, then runs the named tests. `--edition` defaults to `2024`. |
-| `run` | Compiles one binary from a stored plan and runs it, holding the store entry's lease until the process exits, and passes it the arguments after `--`. `--edition` defaults to `2024`. |
+| `run` | Compiles or reuses one binary from a stored plan, then runs it with the arguments after `--`. On Unix, native preparation uses the same compatible owner as build and tests, retaining guarded compiler observations between requests. The invoking command retains stdin/stdout/stderr and the original Store lease until the child exits. Receipt, source, selected plan, compiler and output checks still apply to every request. Other platforms prepare in process. `--edition` defaults to `2024`. |
 | `compiler-libtests` | Compiles and runs the compiler repository's native test suite through a stored direct-`rustc` plan; `--target` and `--exact` select part of it. |
 
 Store policy:

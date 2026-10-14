@@ -96,11 +96,10 @@ use oven_rustc::rustc::{
     OvenCallerOwnedRustcLibrary, OvenDirectRustcBake, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
     OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
     OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, attach_caller_owned_rustc_libraries,
-    bake_stored_direct_rustc_run, bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib,
-    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_test, clear_inherited_cargo_environment, resolve_active_rustc,
-    resolve_compile_environment_value, run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target,
-    rustc_identity,
+    bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
+    bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
+    clear_inherited_cargo_environment, resolve_active_rustc, resolve_compile_environment_value,
+    run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target, rustc_identity,
 };
 use oven_store::compiler_suite_env::{
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
@@ -3511,7 +3510,7 @@ pub fn oven_test(options: OvenTestCommandOptions) -> CliResult<ExitCode> {
 pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
     let receipt = read_receipt(&options.receipt)?;
     let store = open_store(&options.store)?;
-    let bake = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
+    let (bake, _execution_lease) = crate::project_owner::prepare_stored_native(OvenStoredDirectRustcRunRequest {
         store: &store,
         plan_identity: options.plan_identity,
         receipt,
@@ -3521,11 +3520,27 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
         crate_name: options.crate_name,
         edition: options.edition,
         source_evidence_key: options.source_evidence_key,
-    })
-    .map_err(oven_error)?;
-    let executable = bake.output.clone();
-    let mut command = std::process::Command::new(&executable);
-    command.args(&options.arguments);
+    })?;
+    run_prepared_native(
+        &bake.output,
+        &options.arguments,
+        options.format,
+        bake.cargo_process_started,
+        bake.reused,
+    )
+}
+
+/// Execute in the invoking process so stdin, stdout, stderr and program arguments never cross owner transport.
+/// The caller must retain its original Store execution lease until this function returns.
+fn run_prepared_native(
+    executable: &Path,
+    arguments: &[std::ffi::OsString],
+    format: OvenOutputFormat,
+    cargo_process_started: bool,
+    reused: bool,
+) -> CliResult<ExitCode> {
+    let mut command = std::process::Command::new(executable);
+    command.args(arguments);
     clear_inherited_cargo_environment(&mut command);
     let status = command.status().map_err(|error| {
         CliError::failure(format!(
@@ -3539,12 +3554,12 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
             executable.display(),
         )));
     }
-    match options.format {
+    match format {
         OvenOutputFormat::Text => println!("Oven ran {} without a Cargo consumer.", executable.display()),
         OvenOutputFormat::Json => print_json(&serde_json::json!({
             "executable": executable,
-            "cargo_process_started": bake.cargo_process_started,
-            "reused": bake.reused,
+            "cargo_process_started": cargo_process_started,
+            "reused": reused,
         }))?,
     }
     Ok(ExitCode::SUCCESS)
@@ -3563,8 +3578,8 @@ mod tests {
         DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
         DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
         DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES, OvenCompilerSuiteTargetCapabilities,
-        OvenImportCommandOptions, OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenRunCommandOptions,
-        OvenStoreCommandOptions, OvenTestCommandOptions, apply_compiler_suite_target_capabilities,
+        OvenImportCommandOptions, OvenLoafBakeCommandOptions, OvenPlanPublishCommandOptions, OvenStoreCommandOptions,
+        OvenTestCommandOptions, apply_compiler_suite_target_capabilities,
         attach_compiler_suite_target_workspace_libraries, bake_planned_compiler_suite_binaries,
         bake_planned_compiler_suite_workspace_libraries, compiler_suite_auto_parallel_jobs,
         compiler_suite_child_state_root, compiler_suite_cli_output, compiler_suite_completion_failures,
@@ -3577,10 +3592,10 @@ mod tests {
         loaf_envelope_compatibility_map, loaf_envelope_compatibility_map_with_release_member,
         loaf_envelope_default_limits, loaf_envelope_evidence, loaf_fixture_action_name,
         loaf_generation_identity_with_release_member, native_test_failure_summary, oven_import,
-        oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
+        oven_publish_direct_rustc_plan, oven_test, parse_named_path, prepare_compiler_suite_child,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
-        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
-        write_native_test_transcript,
+        run_prepared_compiler_suite_children, run_prepared_native, select_compiler_suite_shards,
+        write_compiler_suite_report, write_native_test_transcript,
     };
     use crate::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use incan_driver::oven_store::{default_store_root, resolve_limits_with_environment_and_defaults};
@@ -6867,19 +6882,26 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             store: store.clone(),
             format: OvenOutputFormat::Json,
         })?;
-        oven_run(OvenRunCommandOptions {
-            receipt,
-            plan_identity: inspection.entries[0].manifest.identity.clone(),
-            rustc,
-            source,
-            output: output.path().join("command-surface-run"),
-            crate_name: "oven_command_surface_run".to_string(),
-            edition: "2024".to_string(),
-            source_evidence_key: "direct-rustc-source".to_string(),
-            arguments: vec![OsString::from("--oven-proof")],
-            store,
-            format: OvenOutputFormat::Json,
-        })?;
+        let selected_store = OvenStore::new(store_root.path(), limits);
+        let bake =
+            oven_rustc::rustc::bake_stored_direct_rustc_run(&oven_rustc::rustc::OvenStoredDirectRustcRunRequest {
+                store: &selected_store,
+                receipt: serde_json::from_slice(&fs::read(receipt)?)?,
+                plan_identity: inspection.entries[0].manifest.identity.clone(),
+                rustc,
+                source,
+                output: output.path().join("command-surface-run"),
+                crate_name: "oven_command_surface_run".to_string(),
+                edition: "2024".to_string(),
+                source_evidence_key: "direct-rustc-source".to_string(),
+            })?;
+        run_prepared_native(
+            &bake.output,
+            &[OsString::from("--oven-proof")],
+            OvenOutputFormat::Json,
+            bake.cargo_process_started,
+            bake.reused,
+        )?;
         Ok(())
     }
 

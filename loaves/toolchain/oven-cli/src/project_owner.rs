@@ -10,6 +10,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod source_format;
+mod stored_native;
+
+pub(crate) use stored_native::prepare_stored_native;
 
 #[cfg(unix)]
 mod protocol;
@@ -165,7 +168,40 @@ struct BuildIntent {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NativeBuildIntent {
-    native_build: incan_driver::build::executable::NativeExecutableBuildRequest,
+    native_build: NativeBuildRequest,
+}
+
+/// Both declared and explicitly selected native builds use the same owner and canonical executors.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum NativeBuildRequest {
+    /// Existing compiler helper intent resolves its ordinary dependency declaration.
+    Declared(incan_driver::build::executable::NativeExecutableBuildRequest),
+    /// Public Oven Run already identifies a frozen Store plan.
+    Stored(stored_native::StoredNativeBuildRequest),
+}
+
+impl NativeBuildRequest {
+    /// Reject relative coordinates before selecting either existing native preparation operation.
+    fn validate_paths(&self) -> CliResult<()> {
+        match self {
+            Self::Declared(request) => request.validate_paths(),
+            Self::Stored(request) => request.validate_paths(),
+        }
+    }
+
+    /// Prepare without executing the program; the client owns execution and its original Store lease.
+    fn execute(
+        &self,
+        owner: &mut incan_driver::build::executable::ExecutableBuildOwner,
+    ) -> CliResult<serde_json::Value> {
+        match self {
+            Self::Declared(request) => owner.build_native(request),
+            Self::Stored(request) => {
+                serde_json::to_value(request.prepare()?).map_err(|error| CliError::failure(error.to_string()))
+            }
+        }
+    }
 }
 
 /// Submit an explicit receipt-bound native executable to the selected compiler's existing project owner.
@@ -192,7 +228,7 @@ pub fn build_native_executable(
     source_key: &str,
 ) -> CliResult<String> {
     let intent = NativeBuildIntent {
-        native_build: incan_driver::build::executable::NativeExecutableBuildRequest {
+        native_build: NativeBuildRequest::Declared(incan_driver::build::executable::NativeExecutableBuildRequest {
             store: std::path::absolute(store.root()).map_err(|error| CliError::failure(error.to_string()))?,
             limits: *store.limits(),
             source_receipt: source_receipt.clone(),
@@ -208,7 +244,7 @@ pub fn build_native_executable(
             crate_name: crate_name.to_string(),
             edition: edition.to_string(),
             source_key: source_key.to_string(),
-        },
+        }),
     };
     intent.native_build.validate_paths()?;
     #[cfg(unix)]
@@ -220,7 +256,9 @@ pub fn build_native_executable(
     #[cfg(not(unix))]
     let result = {
         let _host = owner_executable;
-        incan_driver::build::executable::ExecutableBuildOwner::default().build_native(&intent.native_build)?
+        intent
+            .native_build
+            .execute(&mut incan_driver::build::executable::ExecutableBuildOwner::default())?
     };
     serde_json::to_string(&result).map_err(|error| CliError::failure(error.to_string()))
 }
