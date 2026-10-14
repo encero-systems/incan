@@ -297,14 +297,24 @@ impl rustc_driver::Callbacks for Callbacks {
             if let Err(error) = callees::verify_bounds(tcx, def, args) {
                 refuse(tcx, error);
             }
-            // After native bounds hold, normalize associated outputs and opaque trait returns under the concrete Self
-            // implementation; the result must still equal the plan's retained carrier.
-            let signature = tcx.normalize_erasing_regions(
-                rustc_middle::ty::TypingEnv::fully_monomorphized(),
-                tcx.fn_sig(def)
-                    .instantiate(tcx, args)
-                    .map(|signature| tcx.instantiate_bound_regions_with_erased(signature)),
-            );
+            let signature =
+                tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate(tcx, args).skip_normalization());
+            // A hidden concrete factory layout is not the SDK method's opaque return ABI. Borrow checking still
+            // requires the opaque type, so revealing its layout here would admit a broken MIR call destination.
+            if has_opaque_return_abi(tcx, signature.output())
+                && signature.output() != native_type_or_refuse(tcx, &external.return_type)
+            {
+                refuse(
+                    tcx,
+                    PlanError::Unsupported {
+                        function: external.path.clone(),
+                        reason: "opaque SDK trait return ABI differs from its concrete carrier".into(),
+                    },
+                );
+            }
+            // Ordinary associated outputs still normalize under the checked concrete Self implementation.
+            let signature =
+                tcx.normalize_erasing_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), signature);
             let parameters: Vec<_> = external
                 .parameters
                 .iter()
@@ -326,6 +336,20 @@ impl rustc_driver::Callbacks for Callbacks {
             }
         }
         rustc_driver::Compilation::Continue
+    }
+}
+
+/// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated
+/// projections remain eligible for concrete normalization; an implicit return-position `impl Trait` associated type
+/// keeps the opaque boundary its caller must satisfy before constructing MIR.
+fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> bool {
+    match output.kind() {
+        rustc_middle::ty::Alias(_, alias) => match alias.kind {
+            rustc_middle::ty::Opaque { .. } => true,
+            rustc_middle::ty::Projection { def_id } => tcx.is_impl_trait_in_trait(def_id),
+            _ => false,
+        },
+        _ => false,
     }
 }
 
