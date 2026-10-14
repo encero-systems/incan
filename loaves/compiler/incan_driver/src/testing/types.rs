@@ -17,18 +17,21 @@ pub enum TestOutputFormat {
     Json,
 }
 
-/// Summary of test run
+/// Authoritative counts and elapsed time from one fresh test run.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct TestSummary {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
     pub xfailed: usize,
+    /// Unexpected passes contribute to a failed run.
+    pub xpassed: usize,
     pub duration: Duration,
 }
 
 /// Information about a discovered test
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestInfo {
     pub file_path: PathBuf,
     pub function_name: String,
@@ -45,7 +48,7 @@ pub struct TestInfo {
 }
 
 /// A single parametrized test variant's call information.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParametrizeCall {
     /// Display ID shown in test output (e.g. `"test_add[1-2-3]"`).
     pub display_id: String,
@@ -64,7 +67,7 @@ impl ParametrizeCall {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TestMarker {
     /// Explicit discovery marker from `@std.testing.test`.
     Test,
@@ -83,7 +86,7 @@ pub enum TestMarker {
 }
 
 /// One parameter set inside a `@parametrize` decorator.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParametrizeCase {
     /// Dash-separated display ID used in test names (e.g. `"1-2-3"`).
     pub display_id: String,
@@ -130,7 +133,7 @@ pub struct FixtureInfo {
 }
 
 /// Result of running a single test.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum TestResult {
     Passed(Duration),
     Failed(Duration, String),
@@ -138,6 +141,31 @@ pub enum TestResult {
     XFailed(Duration, String),
     #[allow(dead_code)]
     XPassed(Duration),
+}
+
+/// One completed case with its already resolved portable identity and original typed result.
+/// Clients format these facts without consulting source files or reinterpreting execution outcomes.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct TestCaseResult {
+    /// Stable root-relative identifier established by the executing request.
+    pub id: String,
+    /// Original collection facts, including display parameters and markers.
+    pub test: TestInfo,
+    /// Fresh execution result after skip and expected-failure policy.
+    pub result: TestResult,
+}
+
+/// Completed test facts crossing the owner/client boundary, independent of the requested display format.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct TestRunReport {
+    /// Results in selected execution/report order; passing results are never retained for another invocation.
+    pub results: Vec<TestCaseResult>,
+    /// Counts and duration calculated by the single runner.
+    pub summary: TestSummary,
+    /// Actual shuffle seed, if shuffling was requested.
+    pub shuffle_seed: Option<u64>,
+    /// Command outcome, including fail-on-empty policy.
+    pub exit_code: i32,
 }
 
 /// Result of discovering tests and fixtures in a file.

@@ -276,9 +276,9 @@ fn dispatch(
             return Ok(false);
         }
         let reply = match result {
-            Ok(exit) => Reply::Complete {
+            Ok(report) => Reply::Complete {
                 pid: std::process::id(),
-                result: serde_json::json!(exit.0),
+                result: serde_json::to_value(report).map_err(io::Error::other)?,
             },
             Err(error) => Reply::Failure {
                 message: error.message,
