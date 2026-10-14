@@ -1839,6 +1839,48 @@ model Reversed with Ord:
     Ok(())
 }
 
+/// Importing only Ord retains the Eq supertrait's own-method and default slots for every adopter spelling.
+#[test]
+fn ord_adopters_retain_inherited_comparison_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/lowering_declarations/ne_reaches_the_eq_default_of_an_ord_only_adopter.incn"
+    );
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["m".to_owned(), "ordinal_comparison".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let info = checker.type_info();
+    let module = build_body_ir_module_v0(&program, &path, info);
+    for owner in ["Ordered", "Qualified", "Level"] {
+        for name in ["__eq__", "__ne__"] {
+            let implementation = module
+                .trait_implementations
+                .iter()
+                .find(|implementation| {
+                    implementation.owner.declaration_name == owner && implementation.method.declaration_name == name
+                })
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "missing {owner}.{name}; binders={:?}; implementations={:?}",
+                        info.traits.type_params, module.trait_implementations,
+                    ))
+                })?;
+            assert!(implementation.type_arguments.is_empty());
+            if name == "__eq__" {
+                assert_eq!(implementation.implementation.origin, implementation.owner.origin);
+                assert_ne!(implementation.implementation, implementation.method);
+            } else {
+                assert_eq!(implementation.implementation, implementation.method);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// An adopter of a standard-library protocol with type parameters retains the slot its own method fills, exactly as an
 /// adopter of a protocol without them does.
 #[test]
