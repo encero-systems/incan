@@ -82,17 +82,33 @@ fn ordinal_map_unconstrained_decode_keeps_owner_open() -> Result<(), Box<dyn std
 /// A conflicting destination cannot authorize a native factory result even when legacy leaves the owner open.
 #[test]
 fn static_factory_conflicting_context_publishes_no_closed_result() -> Result<(), Box<dyn std::error::Error>> {
-    let module = build(
-        "class Holder[T]:\n    value: T\n\n    @staticmethod\n    def from_value(value: T) -> Self:\n        return Holder(value=value)\n\ndef choose() -> None:\n    holder: Holder[str] = Holder.from_value(3)\n",
-        &["m", "factory_conflict"],
-    )?;
+    let source = "class Holder[T]:\n    value: T\n\n    @staticmethod\n    def from_value(value: T) -> Self:\n        return Holder(value=value)\n\ndef choose() -> None:\n    holder: Holder[str] = Holder.from_value(3)\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let path = vec!["m".to_owned(), "factory_conflict".to_owned()];
+    let mut checker = crate::typechecker::TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let start = source.find("Holder.from_value(3)").ok_or("factory call missing")?;
+    let span = crate::ast::Span::new(start, start + "Holder.from_value(3)".len());
+    let facts = checker.type_info();
+    let module = super::build_body_ir_module_v0(&program, &path, facts);
     let body = body_named(&module, "choose")?;
     assert!(
         body.locals.iter().any(|local| matches!(&local.ty,
             IncanType::Generic { base, args } if base == "Holder" && args == &[IncanType::Unknown]
         )),
-        "{}",
-        body.render_snapshot()
+        "legacy={:?}, native result={:?}, native expression={:?}, conflict={}\n{}",
+        facts.expr_type(span),
+        facts.calls.body_ir_call_result_types.get(&(span.start, span.end)),
+        facts.expressions.body_ir_expr_types.get(&(span.start, span.end)),
+        facts
+            .calls
+            .body_ir_factory_result_conflicts
+            .contains(&(span.start, span.end)),
+        body.render_snapshot(),
     );
     Ok(())
 }
