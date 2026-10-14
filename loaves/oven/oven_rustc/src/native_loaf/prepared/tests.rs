@@ -770,7 +770,11 @@ fn dev7_native_loaf_prepared_local_current_candidate_ambiguity_refuses() -> Test
             roots,
         },
     )?;
-    let retained = prepare_with(&fixture.request(), || Err(refused("unselected facet preparation")))?;
+    let retained = prepare_with(&fixture.request(), || Err(refused("unselected facet preparation")))?
+        .reconcile(&fixture.request())?
+        .ok_or("unchanged local candidate selection missed")?;
+    assert_eq!(retained.report.dependency_candidate_projections, 0);
+    assert!(retained.report.dependency_candidate_reuses > 0);
     std::fs::write(&alternative, original_alternative)?;
     let error = retained
         .reconcile(&fixture.request())
@@ -924,6 +928,7 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
     assert_eq!(retained.report.index_file_requests, 0);
     assert_eq!(retained.report.index_blob_reads, 0);
     assert_eq!(retained.report.current_registry_bindings, 0);
+    assert_eq!(retained.report.dependency_candidate_projections, 0);
     assert_eq!(retained.report.graph_verification.edge_checks, 0);
     assert_eq!(retained.report.preparation_calls, 0);
     assert!(Arc::ptr_eq(
@@ -1123,5 +1128,139 @@ fn dev7_native_loaf_prepared_declaration_permutations_reuse() -> TestResult {
             .select_dependency_roots(&fixture.dependencies, fixture.root.path(), "target")
             .is_err()
     );
+    Ok(())
+}
+
+/// Create a real unselected registry source archive and bind it into the fixture's existing resolution input.
+fn unselected_candidate_archive(fixture: &Fixture) -> TestResult<PathBuf> {
+    let project = fixture.root.path().join("archive-source");
+    std::fs::create_dir(&project)?;
+    std::fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname='crates-io/child'\nversion='1.0.0'\n[rust]\nname='child'\nedition='2021'\n",
+    )?;
+    let path = fixture.index.join("candidate.tar");
+    let output = std::process::Command::new("tar")
+        .env("COPYFILE_DISABLE", "1")
+        .args(["--format=ustar", "-cf"])
+        .arg(&path)
+        .arg("-C")
+        .arg(&project)
+        .arg("loaf.toml")
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    let digest = oven_store::digest_bytes(&std::fs::read(&path)?);
+    let archive = fixture.index.join(format!(
+        "{}.tar",
+        digest.strip_prefix("sha256:").ok_or("digest prefix missing")?
+    ));
+    std::fs::rename(path, &archive)?;
+    std::fs::write(
+        fixture.root.path().join("lock.json"),
+        serde_json::to_vec(&serde_json::json!({"schema":"incan.oven.loaf-resolution/2", "units":[{
+            "loaf":"crates-io/child", "version":"1.0.0", "archive_digest":digest,
+            "domain":"target", "features":[], "target_predicates":[], "edges":[]
+        }]}))?,
+    )?;
+    Ok(archive)
+}
+
+/// Unselected archive metadata guards retained candidates; corrupt, missing and linked inputs never inherit old facts.
+#[test]
+fn dev7_native_loaf_retained_unselected_registry_candidates_reconcile_archive_changes() -> TestResult {
+    for change in ["corrupt-preserved-mtime", "missing", "identical-replacement", "linked"] {
+        let mut fixture = Fixture::new()?;
+        fixture.index = fixture.index.canonicalize()?;
+        let archive = unselected_candidate_archive(&fixture)?;
+        let closure = NativeLoafGraph::default().select(&[])?;
+        let mut current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        assert_eq!(
+            current
+                .current_candidates(&fixture.request(), &closure, "crates-io/child")?
+                .len(),
+            1
+        );
+        assert_eq!(current.candidate_projections, 1);
+        let mut repeat = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        assert_eq!(repeat.key, current.key);
+        repeat.local_declarations = current.local_declarations.take();
+        assert_eq!(
+            repeat
+                .current_candidates(&fixture.request(), &closure, "crates-io/child")?
+                .len(),
+            1
+        );
+        assert_eq!(repeat.candidate_projections, 0);
+        assert_eq!(repeat.candidate_reuses, 1);
+        let bytes = std::fs::read(&archive)?;
+        let modified = std::fs::metadata(&archive)?.modified()?;
+        match change {
+            "corrupt-preserved-mtime" => {
+                let mut changed = bytes.clone();
+                changed[0] ^= 1;
+                std::fs::write(&archive, changed)?;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&archive)?
+                    .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+            }
+            "missing" => std::fs::remove_file(&archive)?,
+            "identical-replacement" => {
+                let replacement = archive.with_extension("replacement");
+                std::fs::write(&replacement, &bytes)?;
+                std::fs::rename(replacement, &archive)?;
+            }
+            "linked" => {
+                let target = archive.with_extension("linked-target");
+                std::fs::rename(&archive, &target)?;
+                std::os::unix::fs::symlink(target, &archive)?;
+            }
+            _ => return Err("unknown archive change".into()),
+        }
+        let mut changed = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        assert_eq!(changed.key, repeat.key);
+        changed.local_declarations = repeat.local_declarations.take();
+        let result = changed.current_candidates(&fixture.request(), &closure, "crates-io/child");
+        if matches!(change, "corrupt-preserved-mtime" | "missing") {
+            assert!(result.is_err(), "{change}");
+            std::fs::write(&archive, &bytes)?;
+            let mut recovered = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+            assert_eq!(
+                recovered
+                    .current_candidates(&fixture.request(), &closure, "crates-io/child")?
+                    .len(),
+                1
+            );
+            assert_eq!(recovered.candidate_projections, 1);
+        } else {
+            assert_eq!(result?.len(), 1, "{change}");
+            assert_eq!(changed.candidate_projections, 1, "{change}");
+            if change == "linked" {
+                assert!(
+                    !changed
+                        .local_declarations
+                        .as_ref()
+                        .ok_or("observations missing")?
+                        .inputs
+                        .supports_retention()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Moving the explicit archive source directory changes the private request key before candidate state can move.
+#[test]
+fn dev7_native_loaf_candidate_archive_coordinate_changes_request_identity() -> TestResult {
+    let fixture = Fixture::new()?;
+    let original = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    let other = fixture.root.path().join("other-archives");
+    let mut request = fixture.request();
+    request.blobs = &other;
+    let changed = Current::read(&request, &mut NativeLoafConsumerReport::default())?;
+    assert_ne!(original.key, changed.key);
     Ok(())
 }
