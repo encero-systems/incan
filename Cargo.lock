@@ -2431,6 +2431,7 @@ version = "0.6.0-dev.5"
 dependencies = [
  "ar_archive_writer",
  "hex",
+ "libc",
  "oven_model",
  "serde",
  "serde_json",

@@ -5,6 +5,7 @@ version = "0.6.0-dev.5"
 private = true
 
 [dependencies]
+libc = { loaf = "crates-io/libc", version = "0.2" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
 ar_archive_writer = { loaf = "crates-io/ar_archive_writer", version = "=0.5.3" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
