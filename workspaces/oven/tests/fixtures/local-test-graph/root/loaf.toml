@@ -1,0 +1,15 @@
+[project]
+name='root'
+version='1.0.0'
+[project.features]
+default=['chosen']
+chosen=['dep:leaf','leaf/extra']
+[dependencies]
+leaf={loaf='leaf',path='../leaf',version='1',optional=true,default-features=false}
+macros={loaf='macros',path='../macro',version='1'}
+absent={loaf='absent',path='../absent',target='cfg(windows)'}
+[envs.test.dependencies]
+leaf={optional=false,features=['test-only']}
+support={loaf='support',path='../support',version='1'}
+[rust]
+type='lib'

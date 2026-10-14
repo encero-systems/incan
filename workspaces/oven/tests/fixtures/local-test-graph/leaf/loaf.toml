@@ -1,0 +1,14 @@
+[project]
+name='leaf'
+version='1.0.0'
+[project.features]
+default=['unwanted']
+unwanted=[]
+extra=['registry/extra']
+test-only=[]
+[dependencies]
+registry={loaf='test/leaf',version='1',default-features=false}
+[envs.test.dependencies]
+wrong={loaf='absent',path='../absent'}
+[rust]
+type='lib'

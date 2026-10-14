@@ -1,0 +1,30 @@
+{
+  "env": "test",
+  "dependencies": {
+    "leaf": {
+      "loaf": "leaf",
+      "path": "../leaf",
+      "version": "1",
+      "optional": false,
+      "default-features": false,
+      "features": [
+        "test-only"
+      ]
+    },
+    "macros": {
+      "loaf": "macros",
+      "path": "../macro",
+      "version": "1"
+    },
+    "absent": {
+      "loaf": "absent",
+      "path": "../absent",
+      "target": "cfg(windows)"
+    },
+    "support": {
+      "loaf": "support",
+      "path": "../support",
+      "version": "1"
+    }
+  }
+}
