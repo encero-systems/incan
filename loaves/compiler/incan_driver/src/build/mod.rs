@@ -63,6 +63,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::ProjectGenerator;
+use crate::backend::project::RunProfile;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::build::output_paths::{project_relative_entrypoint, validated_project_output_relative_path};
@@ -150,8 +151,14 @@ pub struct OvenPreparedProject {
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
 
+/// One executable preparation request, shared by direct and retained-owner callers.
+///
+/// The executable profile selects both fresh compilation and completed-output reuse; it does not select SDK profiles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildCommandOptions {
+    /// Requested executable profile. Older requests without this field retain the established release default.
+    #[serde(default)]
+    pub executable_profile: RunProfile,
     pub cargo_policy: CargoPolicy,
     pub package_features: FeatureSelection,
     pub sdk_profile: Option<String>,

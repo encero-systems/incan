@@ -563,7 +563,7 @@ pub fn publish_prepared_project_output(
     Ok(output)
 }
 
-/// Select the default sealed release output without entering frontend or report reconstruction.
+/// Select the requested profile's default sealed output without entering frontend or report reconstruction.
 pub fn select_default_executable_project_output(
     file_path: &str,
     output_dir: Option<&String>,
@@ -588,7 +588,7 @@ pub fn select_default_executable_project_output(
         file_path,
         &completed_output_policy,
         OvenBakeProjectTarget::Executable,
-        "release",
+        options.executable_profile.as_str(),
         authority,
     )?
     else {
