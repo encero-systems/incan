@@ -168,16 +168,22 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
 }
 
 /// Request integer constants by their checked canonical identities from active SDK providers, preserving published
-/// values.
+/// values. Constants already retained by the source-validated Body IR collector keep that literal route; every
+/// unretained identity still requires the existing package publication checks.
 fn referenced_sdk_constants(
     type_info: &incan_frontend::typechecker::TypeCheckInfo,
     plan: &incan_frontend::provider::ProviderPlan,
 ) -> std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, incan_semantics_core::CanonicalSymbolId> {
+    let retained = incan_frontend::body_ir::library_constant_declarations(type_info)
+        .into_iter()
+        .map(|declaration| declaration.canonical)
+        .collect::<std::collections::BTreeSet<_>>();
     type_info
         .references
         .resolved_identities
         .values()
         .filter(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Const)
+        .filter(|identity| !retained.contains(*identity))
         .filter_map(|identity| {
             let mut published = identity.clone();
             match &identity.origin {
