@@ -935,6 +935,8 @@ impl CompilationSession {
         provider_plan: &ProviderPlan,
         sdk_path_dependencies: &[oven_model::manifest::DependencySpec],
     ) -> CliResult<Arc<incan_provider::lock_semantics::CheckedProviderSemanticIdentities>> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::session_provider_identities").entered();
         self.provider_semantic_identities
             .identities(provider_plan, sdk_path_dependencies)
             .map_err(CliError::failure)
