@@ -3650,6 +3650,10 @@ pub enum HelperOp {
     ValidationErrorNew,
     /// Construct the dependency-owned builtin validation error from its checked message and code.
     ValidationErrorWithCode,
+    /// Add two retained numeric-newtype payloads with the frozen release summation bridge's wrapping arithmetic.
+    NewtypeSumAdd,
+    /// Extract the one post-exhaustion newtype hook result, retaining the frozen sum failure message.
+    NewtypeSumExtract,
 }
 
 impl HelperOp {
@@ -3687,6 +3691,8 @@ impl HelperOp {
             Self::NewtypeFieldHookExtract => "newtype_field_hook_extract",
             Self::ValidationErrorNew => "validation_error_new",
             Self::ValidationErrorWithCode => "validation_error_with_code",
+            Self::NewtypeSumAdd => "newtype_sum_add",
+            Self::NewtypeSumExtract => "newtype_sum_extract",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",

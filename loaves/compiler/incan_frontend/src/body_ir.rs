@@ -1990,6 +1990,7 @@ mod newtype_constraints;
 mod newtype_field_ingress;
 mod newtype_hooks;
 mod newtype_ingress;
+mod newtype_sum;
 mod validation_errors;
 
 mod closures;

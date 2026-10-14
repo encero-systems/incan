@@ -83,6 +83,11 @@ pub struct TypeCheckInfo {
     pub body_ir_runtime_types: BTreeMap<String, CanonicalSymbolId>,
     /// Atomic accepted-body refinements consumed only by Body IR; no checker or legacy consumer reads this group.
     pub(crate) body_ir_newtypes: super::native_newtype_facts::NativeNewtypeFacts,
+    /// Accepted zero-argument iterator sum item types within the direct profile, keyed by the exact checked call span.
+    ///
+    /// Source newtype trait adoptions and source `sum` members need explicit dispatch and stay outside this snapshot.
+    /// Only Body IR reads it; checking decisions and legacy-consumed facts are unchanged.
+    pub(crate) body_ir_iterator_sum_items: BTreeMap<(usize, usize), ResolvedType>,
 }
 
 /// Checked source-path facts for active import-derived bindings.

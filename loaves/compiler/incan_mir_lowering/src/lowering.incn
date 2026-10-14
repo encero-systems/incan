@@ -199,6 +199,7 @@ from option_tests import is_option_carrier, is_union_carrier, option_isinstance,
 from derived_defaults import is_derived_default, lower_derived_default
 from models import field_path, field_projection
 from newtype_hooks import lower_newtype_hook_result
+from newtype_sums import lower_newtype_sum_add, lower_newtype_sum_extract
 from validation_errors import lower_validation_error, display_validation_error
 from models import model_type, model_place, constructor_index, field_slot
 from reflection import lower_reflection
@@ -4112,6 +4113,8 @@ def lower_runtime_helper(
         RustHelper.NewtypeHookExtract => return lower_newtype_hook_result(builder, arguments, destination, false, span)
         RustHelper.NewtypeFieldHookExtract =>
             return lower_newtype_hook_result(builder, arguments, destination, true, span)
+        RustHelper.NewtypeSumAdd => return lower_newtype_sum_add(builder, arguments, destination, span)
+        RustHelper.NewtypeSumExtract => return lower_newtype_sum_extract(builder, arguments, destination, span)
         RustHelper.ValidationErrorNew => return lower_validation_error(builder, arguments, destination, false, span)
         RustHelper.ValidationErrorWithCode => return lower_validation_error(builder, arguments, destination, true, span)
         RustHelper.NewtypeConstraintValidate =>

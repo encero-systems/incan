@@ -16098,3 +16098,78 @@ fn function_value_model_field_output_matches_legacy() -> Result<(), Box<dyn std:
         "model Op:\n    step: (int) -> int\n\ndef double(value: int) -> int:\n    return value * 2\n\ndef main() -> None:\n    op = Op(step=double)\n    step = op.step\n    println(step(4))\n",
     )
 }
+
+/// Primitive adapters and raw/checked numeric newtype terminal sums match the original legacy fixture.
+#[test]
+fn numeric_newtype_iterator_sum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-newtype-iterator-sum")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/iterator_adapters.incn"
+        ),
+    )
+}
+
+/// Empty raw sums and checked sums preserve item polling and exactly one final construction hook.
+#[test]
+fn numeric_newtype_sum_effects_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-newtype-sum-effects")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Money = newtype int
+
+type Constrained = newtype int[gt=0]
+
+type Nonnegative = newtype int:
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        println(value)
+        if value < 0:
+            return Err(ValidationError("negative sum"))
+        return Ok(Nonnegative(value))
+
+def main() -> None:
+    empty: list[Money] = []
+    println(empty.iter().sum().0)
+    overflow = [Money(9223372036854775807), Money(1)]
+    println(overflow.iter().sum().0)
+    constrained_empty: list[Constrained] = []
+    println(constrained_empty.iter().sum().0)
+    values = [Nonnegative(1), Nonnegative(2)]
+    total = values.iter().sum()
+    println(total.0)
+    checked_empty: list[Nonnegative] = []
+    println(checked_empty.iter().sum().0)
+"#,
+    )
+}
+
+/// The empty checked terminal rejects once through the frozen sum panic contract after one final hook.
+#[test]
+fn numeric_newtype_sum_failure_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_validation_failure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-newtype-sum-failure")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Positive = newtype int:
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        println("hook")
+        if value <= 0:
+            return Err(ValidationError("positive required"))
+        return Ok(Positive(value))
+
+def main() -> None:
+    values: list[Positive] = []
+    println(values.iter().sum().0)
+"#,
+        "validated newtype construction failed: Positive::from_underlying\n",
+    )
+}

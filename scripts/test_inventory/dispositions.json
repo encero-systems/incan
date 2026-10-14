@@ -6160,6 +6160,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_sum.rs": {
+      "disposition": "keep",
+      "notes": "Canonical numeric-newtype payload projection and terminal reconstruction in checked Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs": {
       "disposition": "keep",
       "notes": "Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission.",
