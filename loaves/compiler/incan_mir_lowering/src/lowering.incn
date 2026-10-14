@@ -360,6 +360,7 @@ from defaults import (
     model_default_arguments,
 )
 from type_parameters import Instance, instantiate, substitute
+from generic_callables import owned_callable_slots
 from computed_statics import (
     enters_module_initialization,
     initialize_module_statics,
@@ -379,6 +380,7 @@ from closures import (
     callable_signature,
     function_pointer_storage,
     parameter_representation,
+    local_representation,
     return_representation,
     closure_arguments,
     closure_capture_type,
@@ -1086,6 +1088,13 @@ def is_text_or_nominal(ty: PlanType) -> bool:
         _ => return false
 
 
+def is_owned_callable(ty: PlanType) -> bool:
+    """Identify an environment owner, which transfers and drops separately from copied callable references."""
+    match ty:
+        PlanType.Closure(_signature) => return true
+        _ => return false
+
+
 def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int]) -> Result[None, str]:
     """
     Refuse a branch that leaves different owners live than it started with.
@@ -1583,7 +1592,9 @@ def lower_local_assignment(
         RustRvalue.Generator(source=source, captured_operands=captures, body=generator) =>
             return lower_generator_expression(module, builder, target, source, captures, generator, span)
         RustRvalue.Use(operand) =>
-            if callable_copy_type(place_type(builder.locals, target)):
+            if callable_copy_type(place_type(builder.locals, target)) or is_owned_callable(
+                place_type(builder.locals, target),
+            ):
                 callable = stored_callable(builder, operand, span)?
                 match operand_type(builder, callable)?:
                     PlanType.Closure(signature) =>
@@ -1779,7 +1790,13 @@ def assign_callable(
     if target.projection != Projection.Whole:
         return Err("unsupported Body IR projected callable assignment")
     source = operand_type(builder, value)?
-    ty, operation = function_assignment(place_type(builder.locals, target), source, value, pointer_storage)?
+    ty, operation = function_assignment(
+        place_type(builder.locals, target),
+        source,
+        value,
+        pointer_storage,
+        f"binding in {builder.name}",
+    )?
     builder.locals[target.local].ty = ty
     record_partial(builder, target.local, [])
     builder.emit(plan_assign(target, operation, span))
@@ -2973,8 +2990,8 @@ def instantiated_method_body(
     mut body = module.bodies[index].clone()
     if len(body.type_parameters) != 0:
         closed = checked_type_arguments(builder, target.type_args)?
-        builder.instances.append(Instance(body=body.clone(), arguments=closed))
-        body = instantiate(body, closed)?
+        builder.instances.append(Instance(body=body.clone(), arguments=closed, owned_callable_slots=[]))
+        body = instantiate(body, closed, [])?
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
@@ -3376,8 +3393,10 @@ def lower_type_parameter_call(
     """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
     _ = validate_static_receiver(module, target)?
     closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
-    concrete_body = instantiate(body, closed)?
-    builder.instances.append(Instance(body=body.clone(), arguments=closed))
+    typed_body = instantiate(body, closed, [])?
+    owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding)?
+    concrete_body = instantiate(body, closed, owned)?
+    builder.instances.append(Instance(body=body.clone(), arguments=closed, owned_callable_slots=owned))
     return lower_local_call(module, builder, target, concrete_body, arguments, destination, span)
 
 
@@ -4054,7 +4073,7 @@ def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: 
     match ty:
         PlanType.FunctionPointer(_signature) =>
             source = operand_type(builder, value)?
-            _type, operation = function_assignment(ty, source, value, true)?
+            _type, operation = function_assignment(ty, source, value, true, f"call argument in {builder.name}")?
             match operation:
                 RvalueKind.ReifyFunction(_value) =>
                     result = temporary(builder, ty, span)
@@ -5822,7 +5841,7 @@ def lower_instances(
         cursor += 1
         if instance_is_retained(instance, completed):
             continue
-        body = instantiate(instance.body, instance.arguments)?
+        body = instantiate(instance.body, instance.arguments, instance.owned_callable_slots)?
         owner = body_module_identity(body)?
         mut source_index = -1
         for index in range(len(owners)):
@@ -5851,7 +5870,7 @@ def lower_instances(
 def instance_is_retained(instance: Instance, completed: list[Instance]) -> bool:
     """Deduplicate by checked declaration identity and arguments; an emitted spelling is never execution authority."""
     for retained in completed:
-        if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals:
+        if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals and retained.owned_callable_slots == instance.owned_callable_slots:
             return true
     return false
 
@@ -6019,9 +6038,9 @@ def lower_function(
                 builder.owned.append(handle.local)
             None => return Err("unsupported Body IR generator return type")
     for index in range(len(parameters)):
-        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or owned_collection(
+        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or is_owned_callable(
             parameters[index].ty,
-        ) or is_future(parameters[index].ty):
+        ) or is_future(parameters[index].ty) or owned_collection(parameters[index].ty):
             builder.owned.append(index + 1)
     # Legacy initializes the module's computed statics on entry to each of its functions (RFC 052), in `main` before
     # it installs the panic hook.
@@ -6149,6 +6168,7 @@ def frame_locals(
             None =>
                 ty = body_frame_type(module, body, local, intrinsics)?
         index = int(local.id.index()) + 1
+        ty = local_representation(body, index - 1, ty)
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:
@@ -9466,7 +9486,13 @@ def boundary_plan_operand(
         None => pass
     match target:
         PlanType.FunctionPointer(_signature) =>
-            ty, operation = function_assignment(target, operand_type(builder, value)?, value, true)?
+            ty, operation = function_assignment(
+                target,
+                operand_type(builder, value)?,
+                value,
+                true,
+                f"value boundary in {builder.name}",
+            )?
             pointer = temporary(builder, ty, span)
             builder.emit(plan_assign(pointer, operation, span))
             return Ok(read_place(pointer, false, span))

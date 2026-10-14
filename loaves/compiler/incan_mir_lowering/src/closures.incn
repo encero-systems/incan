@@ -132,7 +132,12 @@ def callable_component(ty: &RustType) -> Result[PlanType, str]:
 
 pub def function_pointer_storage(body: &RustBody) -> list[int]:
     """The return slot and explicit function annotations keep pointer storage; inferred item locals keep their type."""
-    mut locals = [0]
+    mut locals: list[int] = []
+    match body.callable_representation:
+        Some(representation) =>
+            if not representation.closure_holding_return:
+                locals.append(0)
+        None => locals.append(0)
     match body.callable_representation:
         Some(representation) =>
             for local in representation.function_pointer_locals:
@@ -141,7 +146,11 @@ pub def function_pointer_storage(body: &RustBody) -> list[int]:
     for parameter in body.params:
         match parameter.ty:
             RustType.Function(params=_parameters, return_type=_result) =>
-                locals.append(int(parameter.local.index()) + 1)
+                match body.callable_representation:
+                    Some(representation) =>
+                        if parameter.local not in representation.closure_holding_locals:
+                            locals.append(int(parameter.local.index()) + 1)
+                    None => locals.append(int(parameter.local.index()) + 1)
             _ => pass
     return locals
 
@@ -169,6 +178,9 @@ pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> R
         PlanType.FunctionPointer(signature) =>
             match body.callable_representation:
                 Some(representation) =>
+                    for held in representation.closure_holding_locals:
+                        if int(held.index()) == local:
+                            return Ok(PlanType.Closure(signature))
                     for held in representation.closure_holding_parameters:
                         if int(held.index()) == local:
                             _ = closure_arguments(signature)?
@@ -176,6 +188,20 @@ pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> R
                 None => pass
         _ => pass
     return Ok(ty)
+
+
+pub def local_representation(body: &RustBody, local: int, ty: PlanType) -> PlanType:
+    """Keep an instance's owned generic aliases at the environment-carrying ABI retained with their source local."""
+    match ty:
+        PlanType.FunctionPointer(signature) =>
+            match body.callable_representation:
+                Some(representation) =>
+                    for held in representation.closure_holding_locals:
+                        if int(held.index()) == local:
+                            return PlanType.Closure(signature)
+                None => pass
+        _ => pass
+    return ty
 
 
 pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType, str]:
@@ -373,6 +399,7 @@ pub def function_assignment(
     source: PlanType,
     value: Operand,
     pointer_storage: bool,
+    context: str,
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Preserve exact item, pointer, or shared closure signatures; reify only a proven function-pointer destination."""
     match source:
@@ -397,7 +424,10 @@ pub def function_assignment(
             if callable_signature(destination)? != signature:
                 return Err("invalid Body IR shared closure assignment signature")
             return Ok((source, RvalueKind.Use(value)))
-        _ => return Err(f"unsupported Body IR noncallable assignment to function value: {source:?} to {destination:?}")
+        _ =>
+            return Err(
+                f"unsupported Body IR noncallable assignment to function value from {source:?} into {destination:?} at {context}",
+            )
 
 
 pub def source_function_item(
