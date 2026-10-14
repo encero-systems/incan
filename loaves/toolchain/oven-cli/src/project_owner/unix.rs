@@ -391,7 +391,7 @@ fn dispatch(
     if request.intent.get("native_build").is_some() {
         let result = serde_json::from_value::<NativeBuildIntent>(request.intent)
             .map_err(transport_error)
-            .and_then(|intent| owner.build_native(&intent.native_build));
+            .and_then(|intent| intent.native_build.execute(owner));
         let reply = match result {
             Ok(result) => Reply::Complete {
                 pid: std::process::id(),

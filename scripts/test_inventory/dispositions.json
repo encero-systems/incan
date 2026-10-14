@@ -11969,6 +11969,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/project_owner/stored_native.rs": {
+      "disposition": "keep",
+      "notes": "Stored native owner requests reject relative paths before Store or compiler access and refuse mixed request shapes. Real CLI handoff, invalidation and lease lifetime have separate runtime proof.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/project_owner/unix.rs": {
       "disposition": "keep",
       "notes": "Shared-owner generation, absolute path and request failure isolation at the toolchain transport boundary; runtime delegation is covered separately.",
