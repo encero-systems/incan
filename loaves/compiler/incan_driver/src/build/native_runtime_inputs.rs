@@ -452,11 +452,19 @@ pub(crate) fn dependency_inputs(
 /// Exact verified compiler output and adjacent engine binding, retained for one command.
 #[derive(Clone)]
 struct BoundCompilerEngine {
+    compiler: PathBuf,
     engine: PathBuf,
     engine_digest: String,
     compiler_receipt: String,
     compiler_output: String,
     toolchain: String,
+}
+
+/// Return the compiler executable from the existing verified toolchain binding for child-test execution.
+/// The runner forwards this exact path after clearing inherited Cargo variables. It does not resolve another
+/// compiler or accept a caller's ambient binary override when launched as Incan or Oven.
+pub fn bound_compiler_executable() -> CliResult<PathBuf> {
+    Ok(compiler_engine_binding()?.compiler)
 }
 
 /// Resolve and verify the source-built compiler and its engine once during this compiler process.
@@ -544,6 +552,7 @@ fn resolve_compiler_engine() -> CliResult<BoundCompilerEngine> {
         .ok_or_else(|| CliError::failure("source compiler has no parent"))?
         .join(NATIVE_RUNTIME_ENGINE_FILE);
     Ok(BoundCompilerEngine {
+        compiler,
         engine,
         engine_digest: digest,
         compiler_receipt: receipt.identity,

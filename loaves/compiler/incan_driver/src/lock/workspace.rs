@@ -600,7 +600,7 @@ fn collect_project_lock_context_impl(
         require_sdk_inventory_for_lock_write(
             session_manifest.project_root(),
             workspace,
-            session.sdk_inventory.is_some(),
+            session.sdk_inventory().is_some(),
         )?;
     }
     #[cfg(any(test, feature = "test_support"))]
@@ -625,7 +625,7 @@ fn collect_project_lock_context_impl(
         Some(&session.library_imported_vocab),
         Some(&session.library_imported_dsl_surfaces),
         Some(&session.library_manifest_index),
-        session.provider_plan.as_ref(),
+        session.provider_plan().as_ref(),
         session,
     )?;
 
@@ -661,9 +661,9 @@ fn collect_project_lock_context_impl(
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
         session_manifest.interop_c(),
-        session.sdk_inventory.as_deref(),
-        session.sdk_components.as_ref(),
-        session.package_feature_plan.as_ref(),
+        session.sdk_inventory().as_deref(),
+        session.sdk_components().as_ref(),
+        session.package_feature_plan().as_ref(),
         &provider_plan,
         &semantic_sdk_paths,
     )

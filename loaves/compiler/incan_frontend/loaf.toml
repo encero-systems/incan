@@ -57,3 +57,8 @@ test_support = [
 edition = "2024"
 name = "incan_frontend"
 type = "lib"
+
+# Test-only dependencies and helper features; production defaults are unchanged.
+[envs.test.dependencies]
+rust_inspect = { features = ["test_fixtures"] }
+tempfile = { optional = false }

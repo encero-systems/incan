@@ -15,6 +15,7 @@ use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 /// Display label used for the project-level overlay in resolved chains.
 pub const PROJECT_BASE_OVERLAY: &str = "project";
 const DEFAULT_ENV_NAME: &str = "default";
+const STANDARD_ENV_NAMES: [&str; 4] = ["dev", "test", "lint", "docs"];
 
 /// Parsed and optionally base-seeded environment configuration for a project.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -132,24 +133,21 @@ impl EnvConfigSet {
     /// Return all available env names in deterministic order.
     ///
     /// `default` is ambient and always available, even when it is not explicitly configured in
-    /// `[tool.incan.envs.default]`.
+    /// `[envs.default]`.
     #[must_use]
     pub fn env_names(&self) -> Vec<String> {
-        let mut names = Vec::with_capacity(self.envs.len().saturating_add(1));
-        names.push(DEFAULT_ENV_NAME.to_string());
-        names.extend(
-            self.envs
-                .keys()
-                .filter(|name| name.as_str() != DEFAULT_ENV_NAME)
-                .cloned(),
-        );
-        names
+        std::iter::once(DEFAULT_ENV_NAME.to_string())
+            .chain(STANDARD_ENV_NAMES.into_iter().map(str::to_string))
+            .chain(self.envs.keys().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// Resolve one env into deterministic, display-friendly data.
     pub fn resolve_env(&self, name: &str) -> Result<ResolvedEnv, EnvConfigError> {
-        let target = if name == DEFAULT_ENV_NAME {
-            None
+        let target = if name == DEFAULT_ENV_NAME || STANDARD_ENV_NAMES.contains(&name) {
+            self.envs.get(name)
         } else {
             Some(
                 self.envs
@@ -234,7 +232,7 @@ impl EnvConfigSet {
                     .get(workspace_name)
                     .ok_or_else(|| EnvConfigError::MissingEnv { name: name.to_string() })?,
             )
-        } else if name == DEFAULT_ENV_NAME {
+        } else if name == DEFAULT_ENV_NAME || STANDARD_ENV_NAMES.contains(&name) {
             self.envs.get(name)
         } else {
             Some(
@@ -247,6 +245,9 @@ impl EnvConfigSet {
         state.seen.insert(name.to_string());
         state.stack.push(name.to_string());
 
+        if matches!(name, "test" | "lint" | "docs") && env.is_none_or(|env| env.extends.is_empty() && !env.detached) {
+            self.resolve_named_overlay("dev", state)?;
+        }
         if let Some(env) = env {
             for extended in &env.extends {
                 self.resolve_named_overlay(extended, state)?;
@@ -394,6 +395,65 @@ mod tests {
         Ok(EnvConfigSet::from_manifest(&manifest))
     }
 
+    /// Selected test dependencies keep native Loaf identity and do not alter production requirements.
+    #[test]
+    fn test_environment_materializes_native_dependencies_only_in_selected_view()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = ProjectManifest::from_str(
+            r#"
+[dependencies]
+base = { loaf = "crates-io/base", version = "1", features = ["one"] }
+[envs.test.dependencies]
+base = { features = ["two"] }
+probe = { loaf = "crates-io/probe", version = "2" }
+"#,
+            Path::new("loaf.toml"),
+        )?;
+        let selected = EnvConfigSet::from_manifest(&manifest).resolve_env("test")?;
+        let effective = manifest.with_environment_dependencies(&selected.dependencies)?;
+        assert!(effective.loaf_dependencies.contains_key("probe"));
+        assert_eq!(effective.rust_dependencies()["base"].features, vec!["one", "two"]);
+        assert_eq!(effective.loaf_dependencies["base"][0].loaf, "crates-io/base");
+        assert!(!manifest.rust_dependencies().contains_key("probe"));
+        assert_eq!(manifest.rust_dependencies()["base"].features, vec!["one"]);
+        Ok(())
+    }
+
+    /// Retired placement must not create a second independently resolved environment model.
+    #[test]
+    fn retired_environment_root_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let error = parse_config("[tool.incan.envs.test]\n")
+            .err()
+            .ok_or("retired root accepted")?;
+        assert!(error.to_string().contains("move named environments to [envs]"));
+        Ok(())
+    }
+
+    /// Standard test intent inherits dev through the canonical Loaf environment table.
+    #[test]
+    fn standard_test_environment_uses_loaf_root() -> Result<(), Box<dyn std::error::Error>> {
+        let config = parse_config(
+            r#"
+[envs.dev]
+env-vars = { SHARED = "dev" }
+[envs.test]
+extends = "dev"
+[envs.test.dependencies]
+probe = { loaf = "crates-io/probe", version = "1" }
+"#,
+        )?;
+        for name in ["dev", "test", "lint", "docs"] {
+            assert!(config.env_names().contains(&name.to_string()));
+            let selected = config.resolve_env(name)?;
+            assert_eq!(selected.env_vars.get("SHARED").map(String::as_str), Some("dev"));
+        }
+        let test = config.resolve_env("test")?;
+        assert!(test.dependencies.contains_key("probe"));
+        assert!(!config.resolve_env("dev")?.dependencies.contains_key("probe"));
+        assert_eq!(test.overlay_chain, vec!["project", "default", "dev", "test"]);
+        Ok(())
+    }
+
     #[test]
     fn parses_env_names_in_deterministic_order() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
@@ -402,13 +462,16 @@ mod tests {
             name = "demo"
             version = "0.1.0"
 
-            [tool.incan.envs.unit]
+            [envs.unit]
 
-            [tool.incan.envs.default]
+            [envs.default]
             "#,
         )?;
 
-        assert_eq!(config.env_names(), vec!["default".to_string(), "unit".to_string()]);
+        assert_eq!(
+            config.env_names(),
+            vec!["default", "dev", "docs", "lint", "test", "unit"]
+        );
         Ok(())
     }
 
@@ -416,11 +479,14 @@ mod tests {
     fn ambient_default_is_listed_when_undeclared() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.unit]
+            [envs.unit]
             "#,
         )?;
 
-        assert_eq!(config.env_names(), vec!["default".to_string(), "unit".to_string()]);
+        assert_eq!(
+            config.env_names(),
+            vec!["default", "dev", "docs", "lint", "test", "unit"]
+        );
         Ok(())
     }
 
@@ -446,7 +512,7 @@ mod tests {
     fn member_env_can_explicitly_extend_a_workspace_fragment() -> Result<(), Box<dyn std::error::Error>> {
         let member = ProjectManifest::from_str(
             r#"
-[tool.incan.envs.ci]
+[envs.ci]
 extends = ["workspace:ci"]
 env-vars = { MEMBER = "1", SHARED = "member" }
 "#,
@@ -492,24 +558,24 @@ test = ["incan", "test"]
     fn resolves_default_extends_and_target_in_overlay_order() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.default]
+            [envs.default]
             env-vars = { SHARED = "default", DEFAULT_ONLY = "1" }
 
-            [tool.incan.envs.default.scripts]
+            [envs.default.scripts]
             test = ["incan", "test"]
 
-            [tool.incan.envs.unit]
+            [envs.unit]
             env-vars = { SHARED = "unit", UNIT_ONLY = "1" }
 
-            [tool.incan.envs.unit.scripts]
+            [envs.unit.scripts]
             test = ["incan", "test", "--unit"]
 
-            [tool.incan.envs.docs]
+            [envs.docs]
             extends = ["unit"]
             cwd = "workspaces/docs-site"
             env-vars = { DOCS_ONLY = "1" }
 
-            [tool.incan.envs.docs.scripts]
+            [envs.docs.scripts]
             docs_build = ["python3", "-m", "mkdocs", "build", "-q"]
             "#,
         )?;
@@ -546,10 +612,10 @@ test = ["incan", "test"]
     fn detached_env_skips_implicit_default() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.default]
+            [envs.default]
             env-vars = { DEFAULT_ONLY = "1" }
 
-            [tool.incan.envs.clean]
+            [envs.clean]
             detached = true
             env-vars = { CLEAN_ONLY = "1" }
             "#,
@@ -567,9 +633,9 @@ test = ["incan", "test"]
     fn duplicate_inclusion_is_reported() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.default]
+            [envs.default]
 
-            [tool.incan.envs.unit]
+            [envs.unit]
             extends = ["default"]
             "#,
         )?;
@@ -597,15 +663,15 @@ test = ["incan", "test"]
     fn duplicate_inclusion_through_shared_parent_is_reported() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.shared]
+            [envs.shared]
 
-            [tool.incan.envs.a]
+            [envs.a]
             extends = ["shared"]
 
-            [tool.incan.envs.b]
+            [envs.b]
             extends = ["shared"]
 
-            [tool.incan.envs.target]
+            [envs.target]
             detached = true
             extends = ["a", "b"]
             "#,
@@ -627,14 +693,14 @@ test = ["incan", "test"]
     fn cycles_are_reported_with_cycle_path() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.a]
+            [envs.a]
             detached = true
             extends = ["b"]
 
-            [tool.incan.envs.b]
+            [envs.b]
             extends = ["c"]
 
-            [tool.incan.envs.c]
+            [envs.c]
             extends = ["a"]
             "#,
         )?;
@@ -665,11 +731,11 @@ test = ["incan", "test"]
 
         let config = parse_config(
             r#"
-            [tool.incan.envs.unit.dependencies.serde]
+            [envs.unit.dependencies.serde]
             version = "1.1"
             features = ["alloc", "derive"]
 
-            [tool.incan.envs.unit.dev-dependencies.proptest]
+            [envs.unit.dev-dependencies.proptest]
             version = "1"
             "#,
         )?
@@ -698,10 +764,10 @@ test = ["incan", "test"]
     fn rust_dependency_aliases_parse_to_dependency_overlays() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.unit.rust-dependencies.serde]
+            [envs.unit.rust-dependencies.serde]
             version = "1"
 
-            [tool.incan.envs.unit.rust-dev-dependencies.proptest]
+            [envs.unit.rust-dev-dependencies.proptest]
             version = "1"
             "#,
         )?;
@@ -717,10 +783,10 @@ test = ["incan", "test"]
     fn duplicate_dependency_table_spellings_are_parse_errors() -> Result<(), Box<dyn std::error::Error>> {
         let error = match ProjectManifest::from_str(
             r#"
-            [tool.incan.envs.unit.dependencies.serde]
+            [envs.unit.dependencies.serde]
             version = "1"
 
-            [tool.incan.envs.unit.rust-dependencies.serde]
+            [envs.unit.rust-dependencies.serde]
             version = "1"
             "#,
             Path::new("loaf.toml"),
@@ -741,11 +807,11 @@ test = ["incan", "test"]
     fn dry_run_preview_resolves_cwd_and_appends_passthrough_args() -> Result<(), Box<dyn std::error::Error>> {
         let config = parse_config(
             r#"
-            [tool.incan.envs.unit]
+            [envs.unit]
             cwd = "tests"
             env-vars = { INCAN_NO_BANNER = "1" }
 
-            [tool.incan.envs.unit.scripts]
+            [envs.unit.scripts]
             test = ["incan", "test"]
             "#,
         )?;
@@ -778,10 +844,10 @@ test = ["incan", "test"]
             [project]
             requires-incan = ">=0.3,<0.5"
 
-            [tool.incan.envs.default]
+            [envs.default]
             requires-incan = ">=0.3,<0.4"
 
-            [tool.incan.envs.release]
+            [envs.release]
             requires-incan = ">=0.3.1,<0.4"
             "#,
         )?;
@@ -837,7 +903,7 @@ test = ["incan", "test"]
     fn unknown_env_keys_are_parse_errors() -> Result<(), Box<dyn std::error::Error>> {
         let error = match ProjectManifest::from_str(
             r#"
-            [tool.incan.envs.unit]
+            [envs.unit]
             env-varz = {}
             "#,
             Path::new("loaf.toml"),

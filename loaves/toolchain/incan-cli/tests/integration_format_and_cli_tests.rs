@@ -620,7 +620,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     fs::write(
         &manifest_path,
         format!(
-            "{}\n[rust-dependencies.serde]\nversion = \"1.0\"\nfeatures = [\"derive\"]\n\n[tool.incan.envs.default]\nenv-vars = {{ INCAN_NO_BANNER = \"1\" }}\n\n[tool.incan.envs.unit]\ncwd = \".\"\n\n[tool.incan.envs.unit.rust-dependencies.serde]\nversion = \"1.0\"\nfeatures = [\"alloc\"]\n\n[tool.incan.envs.unit.scripts]\nprobe = [\"{}\", \"--version\"]\n",
+            "{}\n[rust-dependencies.serde]\nversion = \"1.0\"\nfeatures = [\"derive\"]\n\n[envs.default]\nenv-vars = {{ INCAN_NO_BANNER = \"1\" }}\n\n[envs.unit]\ncwd = \".\"\n\n[envs.unit.rust-dependencies.serde]\nversion = \"1.0\"\nfeatures = [\"alloc\"]\n\n[envs.unit.scripts]\nprobe = [\"{}\", \"--version\"]\n",
             fs::read_to_string(&manifest_path)?,
             incan_debug_binary().display()
         ),
@@ -844,10 +844,10 @@ version = "0.1.0"
 [rust-dependencies.serde_json]
 version = "999.0.0"
 
-[tool.incan.envs.unit.scripts]
+[envs.unit.scripts]
 run = ["{}", "run", "src/main.incn"]
 
-[tool.incan.envs.unit.rust-dependencies.serde_json]
+[envs.unit.rust-dependencies.serde_json]
 version = "1.0"
 "#,
             incan_debug_binary().display()
@@ -912,11 +912,11 @@ fn env_run_nested_incan_env_show_prefers_parent_project_override() -> Result<(),
 name = "parent_project"
 version = "0.1.0"
 
-[tool.incan.envs.unit]
+[envs.unit]
 cwd = "child"
 env-vars = {{ PARENT = "1" }}
 
-[tool.incan.envs.unit.scripts]
+[envs.unit.scripts]
 inspect = ["{}", "env", "show", "unit", "--format", "json"]
 "#,
             incan_debug_binary().display()
@@ -928,7 +928,7 @@ inspect = ["{}", "env", "show", "unit", "--format", "json"]
 name = "child_project"
 version = "0.1.0"
 
-[tool.incan.envs.unit]
+[envs.unit]
 env-vars = { CHILD = "1" }
 "#,
     )?;

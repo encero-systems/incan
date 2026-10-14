@@ -729,6 +729,12 @@ impl ProviderPlan {
         self.public_artifacts.values()
     }
 
+    /// Borrow materialized metadata used by checked-source semantic routes for physical input observation.
+    /// These records grant no native execution route; callers retain the checked-source boundary.
+    pub fn checked_source_artifacts(&self) -> impl Iterator<Item = &PublicProviderArtifact> {
+        self.checked_source_materialized.values()
+    }
+
     /// Project a foreign type through already-admitted public dependency edges and exact public membership.
     ///
     /// This query does not read dependency source or rediscover artifacts. The native route follows the existing

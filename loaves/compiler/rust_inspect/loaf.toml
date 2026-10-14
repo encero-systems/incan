@@ -54,3 +54,8 @@ test_fixtures = []
 edition = "2024"
 name = "rust_inspect"
 type = "lib"
+
+# Test-only dependencies and helper features; production defaults are unchanged.
+[envs.test.dependencies]
+oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
