@@ -81,7 +81,8 @@ fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dy
     Ok(())
 }
 
-/// A resolved SDK closure reaches the separate trait-valued iterator carrier, with no invalid-body driver failure.
+/// A checked SDK iterator chain reaches its remaining package publication boundary without an invalid-body driver
+/// failure.
 #[test]
 fn published_fallible_iterator_reaches_carrier_admission() -> Result<(), Box<dyn std::error::Error>> {
     let graph = driver_fixture()?;
@@ -103,7 +104,7 @@ fn published_fallible_iterator_reaches_carrier_admission() -> Result<(), Box<dyn
     assert_eq!(class, "refused", "{detail}");
     assert_eq!(
         detail,
-        "unsupported Body IR type FallibleIterator[int, str] in main frame local 4"
+        "unsupported Body IR package executable representation: package `incan_stdlib_core` version 0.6.0-dev.6 cannot satisfy the executable representation requirement: this package publishes no executable representation for `collect`"
     );
     Ok(())
 }

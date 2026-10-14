@@ -3,24 +3,30 @@
 use super::{CanonicalSymbolId, IncanType, ResolvedType, SemanticSourceTargetKind, TypeCheckInfo, bir};
 
 /// One source function whose checked trait contract has a single proven nominal carrier.
-struct Carrier {
+pub(super) struct Carrier {
     function: CanonicalSymbolId,
     declared: IncanType,
     concrete: IncanType,
     self_results: Vec<CanonicalSymbolId>,
 }
 
-/// Keep local opaque return carriers at the Body IR boundary; unresolved producers retain their original refusal.
+/// Snapshot checked local opaque return contracts before representation refinement replaces their declared traits with
+/// concrete carriers.
 ///
 /// Only nongeneric source functions with straight-line, unprojected nominal returns qualify. The checked source
 /// establishes the trait obligation; this pass retains the already checked value type legacy uses for `impl Trait`.
 /// It never resolves imported traits, selects an adopter by spelling, or creates a trait-object layout.
-pub(super) fn retain(module: &mut bir::BodyIrModule, type_info: &TypeCheckInfo) {
-    let carriers = module
+pub(super) fn collect(module: &bir::BodyIrModule, type_info: &TypeCheckInfo) -> Vec<Carrier> {
+    module
         .bodies
         .iter()
         .filter_map(|body| carrier(module, body, type_info))
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+/// Apply the checked opaque contracts captured before trait-return refinement replaces their interface carriers. The
+/// snapshot preserves exact Self-returning slots without resolving names or adding dispatch authority.
+pub(super) fn retain(module: &mut bir::BodyIrModule, carriers: &[Carrier]) {
     for body in &mut module.bodies {
         if let Some(selected) = carriers
             .iter()
@@ -28,7 +34,7 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, type_info: &TypeCheckInfo) 
         {
             body.return_type = selected.concrete.clone();
         }
-        retain_call_results(&mut body.block, &mut body.locals, &carriers);
+        retain_call_results(&mut body.block, &mut body.locals, carriers);
     }
 }
 
