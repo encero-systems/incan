@@ -300,6 +300,18 @@ impl CheckedNativeDemands {
                 ));
             }
             for path in facts.used_module_paths.union(&facts.public_dependency_modules) {
+                if path.first().map(String::as_str) == Some("std") {
+                    // The checked catalog already owns selected standard modules. A publisher's own source
+                    // namespace remains separate and is checked by its original publication capability below.
+                    if matches!(
+                        selected.resolve_module(path),
+                        incan_provider::ProviderModuleResolution::Active(_)
+                    ) || selected.catalogs_modules_below(path)
+                    {
+                        modules.insert(path.clone());
+                    }
+                    continue;
+                }
                 if path.first().map(String::as_str) != Some("pub") {
                     continue;
                 }

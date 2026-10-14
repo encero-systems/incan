@@ -287,11 +287,17 @@ fn ordinary_native_public_demands_require_exact_checked_owners() -> Result<(), B
             .require_ordinary_source_inspection(Some((&owners, &plan)))
             .is_err()
     );
-    for field in ["provider_contracts", "public_dependency_modules", "dependency_aliases"] {
+    for field in [
+        "provider_contracts",
+        "public_dependency_modules",
+        "dependency_aliases",
+        "used_module_paths",
+    ] {
         let mut changed = encoded.clone();
         changed["observed"][field] = match field {
             "provider_contracts" => serde_json::json!({}),
             "public_dependency_modules" => serde_json::json!([["pub", "unselected"]]),
+            "used_module_paths" => serde_json::json!([["std", "registry"]]),
             _ => serde_json::json!(["unselected_native"]),
         };
         let decoded: crate::build::library_metadata::requirements::CheckedNativeDemands =
