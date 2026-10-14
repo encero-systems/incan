@@ -47,7 +47,7 @@ fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), B
     Ok(())
 }
 
-/// An SDK constructor factory retains its checked applied owner independently of the method's own type arguments.
+/// An SDK constructor factory retains its checked applied owner and the associated call's closed owner argument.
 #[test]
 fn sdk_constructor_factory_retains_applied_owner() -> Result<(), Box<dyn std::error::Error>> {
     let source = "from std.graph import DiGraph\n\ndef build() -> DiGraph[str]:\n    return DiGraph[str]()\n";
@@ -65,7 +65,7 @@ fn sdk_constructor_factory_retains_applied_owner() -> Result<(), Box<dyn std::er
         "{}",
         body_named(&module, "build")?.render_snapshot()
     );
-    assert!(target.type_args.is_empty());
+    assert_eq!(target.type_args, [IncanType::Primitive(IncanPrimitiveType::Str)]);
     assert_eq!(
         target.canonical.as_ref().map(|identity| &identity.kind),
         Some(&SemanticSourceTargetKind::Method)
