@@ -16581,3 +16581,54 @@ fn closed_testing_helper_output_matches_legacy() -> Result<(), Box<dyn std::erro
         "unsupported Body IR type Option[Unit]",
     )
 }
+
+// ============ Checked SDK factory defaults ============
+
+/// All-default flags and ordered explicit overrides preserve live legacy bytes, with each flag evaluated once.
+#[test]
+fn omitted_regex_factory_flags_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("omitted-regex-factory-flags")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.regex import Regex
+
+def flag(label: str, value: bool) -> bool:
+    println(label)
+    return value
+
+def main() -> None:
+    match Regex("x+"):
+        Ok(regex) => println(f"{regex.is_match("aXXb")} {regex.is_match("axxb")}")
+        Err(error) => println(error.message())
+    match Regex("x+", ignore_case=flag("ignore", true), verbose=flag("verbose", false)):
+        Ok(regex) => println(regex.is_match("aXXb"))
+        Err(error) => println(error.message())
+    match Regex("^x+$", multiline=true):
+        Ok(regex) => println(regex.is_match("a\nxxx\nb"))
+        Err(error) => println(error.message())
+"#,
+    )
+}
+
+/// Reordered factory arguments remain refused until their legacy evaluation policy has retained ownership facts.
+#[test]
+fn reordered_regex_factory_arguments_are_refused() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_refusal(
+        "reordered-regex-factory",
+        r#"from std.regex import Regex
+
+def flag(label: str, value: bool) -> bool:
+    println(label)
+    return value
+
+def main() -> None:
+    match Regex("x+", verbose=flag("verbose", false), ignore_case=flag("ignore", true)):
+        Ok(regex) => println(regex.is_match("aXXb"))
+        Err(error) => println(error.message())
+"#,
+        "unsupported Body IR Unsupported: checked constructor factory argument evaluation outside declaration order",
+    )
+}

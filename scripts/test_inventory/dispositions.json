@@ -6288,6 +6288,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_factory_defaults.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK factory identity and source-owned default frame, absent selection refusal and source shadowing.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
       "disposition": "keep",
       "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
