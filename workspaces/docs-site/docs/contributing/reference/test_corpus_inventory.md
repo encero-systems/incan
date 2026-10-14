@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3612 | 250 | 431 |
 | re-point | 1488 | 91 | 1058 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2032 | 216 | 5 |
+| unaffected | 2033 | 216 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8640** | **710** | **1494** |
+| **Total** | **8641** | **710** | **1494** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (741 tests in 99 files: keep 334, re-point 19, retire 105, unaffected 283)
+### `loaves/compiler/incan_driver` (742 tests in 99 files: keep 334, re-point 19, retire 105, unaffected 284)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -165,7 +165,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 3 | 346 | 346 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
 | `loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs` | 3 | 195 | 195 | unaffected | - | - | - | #1337 | - | Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority. |
 | `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 2 | 584 | 64 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
-| `loaves/compiler/incan_driver/src/build/native_sdk_plan.rs` | 2 | 894 | 282 | unaffected | - | - | - | #1698 | - | Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata. |
+| `loaves/compiler/incan_driver/src/build/native_sdk_plan.rs` | 3 | 999 | 329 | unaffected | - | - | - | #1698 | - | Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata. |
 | `loaves/compiler/incan_driver/src/build/native_source_output.rs` | 1 | 397 | 134 | unaffected | - | - | - | #1337 | replacement 1 | Completed Body IR executable reuse through the shared project-output Store, with source/native argument freshness and caller projection integrity. |
 | `loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs` | 7 | 174 | 174 | unaffected | - | - | - | #1337 | - | Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves. |
 | `loaves/compiler/incan_driver/src/build/output_materialization.rs` | 4 | 1469 | 512 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
