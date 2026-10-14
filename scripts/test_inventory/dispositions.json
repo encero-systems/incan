@@ -9780,6 +9780,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure/local/execution/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Shared Oven native executor: serial/parallel local output and receipt equality, retained-owner reuse and source conflict, failure isolation, cycle refusal and host procedural-macro versus target edges.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/sdk_closure/local/predicate_tests.rs": {
       "disposition": "keep",
       "notes": "Source-bound target decisions for ordinary local native loaves: exact declaration coverage, inactive missing dependencies, original-owner reuse and target invalidation.",

@@ -11,6 +11,7 @@ use crate::rustc::{rustc_host_target, rustc_identity};
 use oven_store::store::{OvenStore, OvenStoreLimits};
 
 mod dependency_identity;
+mod execution;
 pub use dependency_identity::local_native_dependency_source_digest;
 
 /// One already selected local compile unit; feature resolution belongs to the authored graph's resolver.
@@ -62,77 +63,16 @@ pub(crate) fn compile_local_native_facets_for_profile(
     profile: &str,
     store: &OvenStore,
 ) -> Result<(), Error> {
-    if !matches!(profile, "debug" | "release") {
-        return Err("local native profile must be debug or release".into());
-    }
-    if selections.is_empty() {
-        return Ok(());
-    }
-    let target = rustc_host_target(rustc)?;
-    let mut pending: BTreeSet<_> = (0..selections.len()).collect();
-    let mut names = BTreeMap::new();
-    for (index, selection) in selections.iter().enumerate() {
-        if selection.target.as_deref().is_some_and(|selected| selected != target)
-            || (!selection.target_predicates.is_empty() && selection.target.is_none())
-        {
-            return Err("local predicate selection does not bind the requested native target".into());
-        }
-        let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(
-            owner.join(&selection.project).join("loaf.toml"),
-        )?)?;
-        let name = declaration
-            .get("project")
-            .and_then(|project| project.get("name"))
-            .and_then(toml::Value::as_str)
-            .ok_or("selected local unit has no Loaf project name")?;
-        if names
-            .insert((name.to_string(), selection.domain.clone()), index)
-            .is_some()
-        {
-            return Err(format!("duplicate selected local facet {name}").into());
-        }
-    }
-    while !pending.is_empty() {
-        let mut progressed = false;
-        for index in pending.clone() {
-            let selection = &selections[index];
-            let project = owner.join(&selection.project);
-            let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(project.join("loaf.toml"))?)?;
-            let demands = local_dependency_demands(&declaration, &selection.features, &selection.target_predicates)?;
-            let waits = demands.iter().any(|dependency| {
-                names
-                    .get(&(dependency.loaf.clone(), selection.domain.clone()))
-                    .or_else(|| names.get(&(dependency.loaf.clone(), "host".to_string())))
-                    .is_some_and(|dependency| pending.contains(dependency))
-            });
-            if waits {
-                continue;
-            }
-            pending.remove(&index);
-            progressed = true;
-            if let Err(error) = compile_local_native_facet_for_target_and_profile(
-                closure,
-                &project,
-                &selection.features,
-                &selection.domain,
-                output,
-                rustc,
-                &target,
-                profile,
-                store,
-                &selection.target_predicates,
-            ) {
-                closure
-                    .report
-                    .failed
-                    .push(format!("local facet {}: {error}", selection.project.display()));
-            }
-        }
-        if !progressed {
-            return Err("cycle in selected local Loaf facets".into());
-        }
-    }
-    Ok(())
+    execution::compile_local_graph(
+        closure,
+        selections,
+        owner,
+        output,
+        rustc,
+        profile,
+        store,
+        super::compile::worker_bound(),
+    )
 }
 
 /// Recompute a local facet's portable source snapshot identity for source-current consumer admission.
@@ -284,22 +224,57 @@ fn compile_local_native_facet_for_target_and_profile(
     if !matches!(profile, "debug" | "release") {
         return Err("local native profile must be debug or release".into());
     }
+    let toolchain = rustc_identity(rustc)?;
+    let context = CompileContext {
+        rustc,
+        target,
+        toolchain: &toolchain,
+        output,
+        store,
+        compiler_digest: compiler_closure_digest(rustc, target)?,
+        compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
+        profile,
+        unit_codegen: &[],
+    };
+    let available = closure.units.iter().collect::<Vec<_>>();
+    let result = compile_local_with_owners(&available, project, features, domain, predicates, &context)?;
+    execution::append_compilation(closure, result)
+}
+
+/// Compile or reuse one local source against borrowed original owners, without mutating their graph.
+///
+/// Both the single-facet adapter and bounded graph executor use this exact selection, conflict, receipt and
+/// publication path. Successful results transfer their owner only after dependency-ordered graph assembly.
+fn compile_local_with_owners(
+    available: &[&SdkCompiledUnit],
+    project: &Path,
+    features: &[String],
+    domain: &str,
+    predicates: &[crate::native_loaf::NativeLoafPredicate],
+    context: &CompileContext<'_>,
+) -> Result<execution::LocalCompilation, Error> {
     if !matches!(domain, "host" | "target") {
         return Err("local SDK facet domain must be host or target".into());
     }
     let started = std::time::Instant::now();
+    let CompileContext {
+        output,
+        profile,
+        target,
+        rustc,
+        ..
+    } = *context;
     std::fs::create_dir_all(output)?;
     let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
     let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
     unit.binding.target_predicates = predicates.to_vec();
-    let edges = selected_local_edges(&unit, closure)?;
+    let edges = selected_local_edges(&unit, available)?;
     for (alias, index) in &edges {
-        if closure.units[*index].owner.manifest().intent.profile != profile {
+        if available[*index].owner.manifest().intent.profile != profile {
             return Err(format!("local dependency {alias} does not match requested {profile} profile").into());
         }
     }
-    if let Some(selected) = closure
-        .units
+    if let Some(selected) = available
         .iter()
         .find(|selected| selected.binding.loaf == unit.binding.loaf && selected.binding.domain == domain)
     {
@@ -319,7 +294,7 @@ fn compile_local_native_facet_for_target_and_profile(
         }
         let dependencies = edges
             .iter()
-            .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
+            .map(|(alias, index)| (alias.as_str(), available[*index]))
             .collect::<Vec<_>>();
         super::physical_edges::verify(
             &selected.owner,
@@ -328,11 +303,12 @@ fn compile_local_native_facet_for_target_and_profile(
             &dependencies,
         )?;
         selected.owner.verify_admitted_payload()?;
-        closure.report.reused.push(format!(
-            "{} {} {domain} {profile}",
-            unit.binding.loaf, unit.binding.version
-        ));
-        return Ok(());
+        return Ok(execution::LocalCompilation {
+            unit: None,
+            reused: true,
+            label: format!("{} {} {domain} {profile}", unit.binding.loaf, unit.binding.version),
+            seconds: 0.0,
+        });
     }
     let (source, lease) =
         super::environment::stable_sources(&unit.root, &unit.binding, &unit.about, unit.primary, None)?;
@@ -340,32 +316,19 @@ fn compile_local_native_facet_for_target_and_profile(
     unit._source_lease = Some(lease);
     let externs = edges
         .iter()
-        .map(|(alias, index)| (alias.clone(), closure.units[*index].output.clone()))
+        .map(|(alias, index)| (alias.clone(), available[*index].output.clone()))
         .collect();
-    let searches = closure
-        .units
+    let searches = available
         .iter()
         .filter_map(|unit| unit.output.parent().map(Path::to_path_buf))
         .collect();
-    let toolchain = rustc_identity(rustc)?;
-    let context = CompileContext {
-        rustc,
-        target,
-        toolchain: &toolchain,
-        output,
-        store,
-        compiler_digest: compiler_closure_digest(rustc, target)?,
-        compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
-        profile,
-        unit_codegen: &[],
-    };
     let selected_dependencies = edges
         .iter()
-        .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
+        .map(|(alias, index)| (alias.as_str(), available[*index]))
         .collect::<Vec<_>>();
     let physical_bindings = super::selected_native_bindings(&selected_dependencies)?;
     let (path, reused, owner, reproduced_receipt) =
-        compile_unit(&unit, &context, externs, searches, &physical_bindings)?;
+        compile_unit(&unit, context, externs, searches, &physical_bindings)?;
     let physical_edges = super::physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
     let dependencies = edges
         .iter()
@@ -373,21 +336,20 @@ fn compile_local_native_facet_for_target_and_profile(
         .collect();
     let inspection = inspection_unit(&unit, &owner.artifact_root().join("source"), dependencies)?;
     let label = format!("{} {} {domain} {profile}", unit.binding.loaf, unit.binding.version);
-    closure.units.push(SdkCompiledUnit {
+    let compiled = SdkCompiledUnit {
         binding: unit.binding,
         output: path,
         owner,
         inspection,
         physical_edges,
         reproduced_receipt,
-    });
-    if reused {
-        closure.report.reused.push(label);
-    } else {
-        closure.report.compiled.push(label);
-    }
-    closure.report.seconds += started.elapsed().as_secs_f64();
-    Ok(())
+    };
+    Ok(execution::LocalCompilation {
+        unit: Some(Box::new(compiled)),
+        reused,
+        label,
+        seconds: started.elapsed().as_secs_f64(),
+    })
 }
 
 /// Snapshot a local Rust facet under the adopted executor's file-root convention.
@@ -643,9 +605,8 @@ fn collect_local_sources(
 }
 
 /// Select declared aliases from the frozen closure, rejecting missing, ambiguous, or feature-incomplete bindings.
-fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Result<Vec<(String, usize)>, Error> {
-    let candidates = closure
-        .units
+fn selected_local_edges(unit: &PreparedUnit, available: &[&SdkCompiledUnit]) -> Result<Vec<(String, usize)>, Error> {
+    let candidates = available
         .iter()
         .map(|selected| LocalDependencyCandidate {
             loaf: &selected.binding.loaf,
