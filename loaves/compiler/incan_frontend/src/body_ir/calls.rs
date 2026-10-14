@@ -463,7 +463,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         Ok(DirectCallDeclaration {
             is_async: signature.is_some_and(|(is_async, _)| is_async),
-            slots: signature.map(|(_, parameters)| parameters.iter().map(DeclaredSlot::from_checked_param).collect()),
+            slots: signature.map(|(_, parameters)| {
+                self.type_info
+                    .body_ir_call_site_callable_params(call_span)
+                    .unwrap_or(parameters)
+                    .iter()
+                    .map(DeclaredSlot::from_checked_param)
+                    .collect()
+            }),
             direct_call_id: None,
             builtin,
             canonical,
@@ -987,7 +994,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
-            .call_site_callable_params(span)
+            .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
             .or_else(|| {
                 self.enum_payload_types(&target.variant_canonical, &self.resolve_ty(span))
@@ -1156,7 +1163,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// not bind settles nothing; binding the arguments for the call itself still reports those.
     pub(super) fn settle_open_call_arguments(&mut self, span: ast::Span, args: &[ast::CallArg]) {
         let type_info = self.type_info;
-        let Some(params) = type_info.call_site_callable_params(span) else {
+        let Some(params) = type_info.body_ir_call_site_callable_params(span) else {
             return;
         };
         let slots: Vec<DeclaredSlot> = params.iter().map(DeclaredSlot::from_checked_param).collect();
@@ -1353,7 +1360,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
             let declared: Option<Vec<DeclaredSlot>> = self
                 .type_info
-                .call_site_callable_params(span)
+                .body_ir_call_site_callable_params(span)
                 .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
             let (mut operands, binding) =
                 match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
@@ -1618,7 +1625,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let declared = self
             .type_info
-            .call_site_callable_params(span)
+            .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
         let display_name = canonical.declaration_name.clone();
         let legacy_enumerate_argument = legacy_enumerate_argument(Some(builtin), args);
@@ -1832,7 +1839,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
-            .call_site_callable_params(span)
+            .body_ir_call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
         let (operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declared, args, scope, out) {
@@ -2470,7 +2477,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info
             .body_ir_newtypes
             .callable_params(span, self.type_info)
-            .or_else(|| self.type_info.call_site_callable_params(span))
+            .or_else(|| self.type_info.body_ir_call_site_callable_params(span))
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
     }
 
