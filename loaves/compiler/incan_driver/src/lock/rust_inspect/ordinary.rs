@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oven_rustc::rustc::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 
-use oven_rustc::native_loaf::{NativeLoafInspectionInputs, NativeLoafRequestObservation};
+use oven_rustc::native_loaf::{NativeLoafInspectionInputs, NativeLoafRequestObservation, NativeLoafRoot};
 use oven_store::OvenBuildIntent;
 use rust_inspect::{RetainedInspectionProject, RustMetadataError, RustWorkspace};
 
@@ -17,6 +17,7 @@ struct OrdinaryInspectionProject {
     observation: NativeLoafRequestObservation,
     toolchain: Arc<OvenRustInspectionToolchain>,
     inputs: NativeLoafInspectionInputs,
+    roots: Vec<NativeLoafRoot>,
     rustc: PathBuf,
     intent: OvenBuildIntent,
     manifest_dir: PathBuf,
@@ -28,10 +29,45 @@ impl RetainedInspectionProject for OrdinaryInspectionProject {
         self.observation
             .verify_intent(&self.rustc, &self.intent)
             .map_err(|error| invalid(&self.manifest_dir, error))?;
-        let graph = self
+        let mut graph = self
             .inputs
             .inspection_project()
             .map_err(|error| invalid(&self.manifest_dir, error))?;
+        // Bind the consumer's namespace to exact records, even when host or transitive crates share names.
+        let consumer_source = self.manifest_dir.join("src/main.rs");
+        if std::fs::read(&consumer_source).map_err(|error| invalid(&self.manifest_dir, error))? != b"fn main() {}\n" {
+            return Err(invalid(
+                &self.manifest_dir,
+                "ordinary inspection consumer source changed",
+            ));
+        }
+        let dependencies = self
+            .roots
+            .iter()
+            .map(|root| {
+                let index = self
+                    .inputs
+                    .units()
+                    .keys()
+                    .position(|identity| identity == &root.record_identity)
+                    .ok_or_else(|| {
+                        invalid(
+                            &self.manifest_dir,
+                            "ordinary inspection root is outside its retained closure",
+                        )
+                    })?;
+                Ok(serde_json::json!({"crate": index, "name": root.alias.replace('-', "_")}))
+            })
+            .collect::<Result<Vec<_>, RustMetadataError>>()?;
+        let crates = graph
+            .get_mut("crates")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| invalid(&self.manifest_dir, "ordinary inspection graph has no crate array"))?;
+        // No display name: this generated root contributes dependency aliases, not a new public crate namespace.
+        crates.push(serde_json::json!({
+            "root_module": consumer_source, "edition": "2024", "deps": dependencies,
+            "cfg": [], "env": {}, "is_workspace_member": true, "is_proc_macro": false,
+        }));
         self.toolchain
             .verify_compiler(&self.rustc, &self.intent.target)
             .map_err(|error| invalid(&self.manifest_dir, error))?;
@@ -73,10 +109,15 @@ pub(super) fn prepare(
         features: authority.features.to_vec(),
     };
     let digest = observation.verify_intent(rustc, &intent).map_err(failure)?.to_string();
-    let inputs = observation.graph().inspection_inputs().map_err(failure)?;
     let roots = observation
         .graph()
         .select_dependency_roots(authority.registry_dependencies, project_root, "target")
+        .map_err(failure)?;
+    let inputs = observation
+        .graph()
+        .select(&roots)
+        .map_err(failure)?
+        .inspection_inputs()
         .map_err(failure)?;
     for query in queries {
         let name = query.split("::").next().unwrap_or_default();
@@ -91,14 +132,14 @@ pub(super) fn prepare(
                     "ordinary inspection query `{query}` has no declared native root"
                 ))
             })?;
-        let candidates = inputs
-            .units()
-            .iter()
-            .filter(|(_, unit)| unit.crate_name() == name)
-            .collect::<Vec<_>>();
-        if candidates.len() != 1 || candidates[0].0 != &root.record_identity || candidates[0].1.is_proc_macro() {
+        let unit = inputs.units().get(&root.record_identity).ok_or_else(|| {
+            failure(format!(
+                "ordinary inspection query `{query}` has no retained declared root"
+            ))
+        })?;
+        if unit.is_proc_macro() {
             return Err(failure(format!(
-                "ordinary inspection query `{query}` has an ambiguous, renamed or macro source binding"
+                "ordinary inspection query `{query}` requires separate native macro authority"
             )));
         }
     }
@@ -114,6 +155,7 @@ pub(super) fn prepare(
         toolchain: Arc::clone(&toolchain),
         observation: observation.clone(),
         inputs,
+        roots,
         rustc: rustc.to_path_buf(),
         intent,
         manifest_dir: manifest_dir.to_path_buf(),

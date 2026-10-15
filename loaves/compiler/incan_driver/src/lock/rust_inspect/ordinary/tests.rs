@@ -24,7 +24,8 @@ struct Fixture {
     toolchain: String,
     lock: PathBuf,
     output: PathBuf,
-    facets: [NativeLoafFacet; 2],
+    facets: Vec<NativeLoafFacet>,
+    dependency_alias: String,
 }
 
 impl Fixture {
@@ -55,13 +56,17 @@ impl Fixture {
             toolchain,
             lock,
             output,
-            facets: ["probe_leaf", "unselected_leaf"].map(|name| NativeLoafFacet {
-                target_predicates: Vec::new(),
-                target: None,
-                project: name.into(),
-                features: Vec::new(),
-                domain: "target".to_string(),
-            }),
+            dependency_alias: "probe_leaf".to_string(),
+            facets: ["probe_leaf", "unselected_leaf"]
+                .into_iter()
+                .map(|name| NativeLoafFacet {
+                    target_predicates: Vec::new(),
+                    target: None,
+                    project: name.into(),
+                    features: Vec::new(),
+                    domain: "target".to_string(),
+                })
+                .collect(),
         })
     }
 
@@ -84,7 +89,7 @@ impl Fixture {
     /// Exact authored path dependency declared by the consumer; the unselected unit remains in the full request.
     fn dependencies(&self) -> Vec<DependencySpec> {
         vec![DependencySpec {
-            crate_name: "probe_leaf".to_string(),
+            crate_name: self.dependency_alias.clone(),
             version: Some("=1.0.0".to_string()),
             features: Vec::new(),
             default_features: true,
@@ -236,7 +241,17 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
     let reuse = super::OrdinaryInspectionProject {
         toolchain: Arc::clone(toolchain),
         observation: observation.clone(),
-        inputs: observation.graph().inspection_inputs()?,
+        inputs: observation
+            .graph()
+            .select(&observation.graph().select_dependency_roots(
+                &fixture.dependencies(),
+                fixture.root.path(),
+                "target",
+            )?)?
+            .inspection_inputs()?,
+        roots: observation
+            .graph()
+            .select_dependency_roots(&fixture.dependencies(), fixture.root.path(), "target")?,
         rustc: fixture.rustc.clone(),
         intent: oven_store::OvenBuildIntent {
             target: fixture.target.clone(),
@@ -353,5 +368,79 @@ fn ordinary_source_loader_refuses_unowned_macro_paths_before_loading() -> TestRe
         matches!(result, Err(rust_inspect::RustMetadataError::LoadWorkspace { message, .. }) if message.contains("projection markers"))
     );
     assert!(!target.exists());
+    Ok(())
+}
+
+/// Exact target roots and authored aliases win over a same-name host variant without weakening full-request checks.
+#[test]
+fn ordinary_native_source_inspection_binds_declared_target_with_host_duplicate() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let source = fixture.root.path().join("probe_leaf/src/lib.rs");
+    fs::write(
+        &source,
+        "#[cfg(feature = \"host_variant\")] pub fn answer() -> bool { true }\n#[cfg(not(feature = \"host_variant\"))] pub fn answer() -> i64 { 42 }\n",
+    )?;
+    let manifest = fixture.root.path().join("probe_leaf/loaf.toml");
+    fs::write(
+        &manifest,
+        format!("{}\n[features]\nhost_variant=[]\n", fs::read_to_string(&manifest)?),
+    )?;
+    fixture.facets.push(NativeLoafFacet {
+        target_predicates: Vec::new(),
+        target: None,
+        project: "probe_leaf".into(),
+        features: vec!["host_variant".to_string()],
+        domain: "host".to_string(),
+    });
+    let native = prepare_native_loafs(&fixture.request())?;
+    assert_eq!(native.report().compiled.len(), 3);
+    let observation = native.request_observation()?;
+    assert_eq!(
+        observation
+            .graph()
+            .inspection_inputs()?
+            .units()
+            .values()
+            .filter(|unit| unit.crate_name() == "probe_leaf")
+            .count(),
+        2
+    );
+    let cache = RustMetadataCache::new();
+    for alias in ["probe_leaf", "renamed_leaf"] {
+        fixture.dependency_alias = alias.to_string();
+        let query = format!("{alias}::answer");
+        let prepared = prepare(
+            &fixture,
+            &fixture.root.path().join(format!("consumer-{alias}")),
+            observation.clone(),
+            &query,
+            "debug",
+            &[],
+            None,
+        )?;
+        let metadata = cache.get_or_extract_complete(prepared.manifest_dir(), &query, &|_| {})?;
+        let incan_lang::interop::metadata::RustItemKind::Function(signature) = &metadata.kind else {
+            return Err("declared target did not yield callable metadata".into());
+        };
+        assert_eq!(signature.return_type, "i64");
+        let graph: serde_json::Value = serde_json::from_slice(&fs::read(
+            prepared
+                .manifest_dir()
+                .join(rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE),
+        )?)?;
+        assert_eq!(graph["crates"].as_array().ok_or("missing crates")?.len(), 2);
+        assert_eq!(graph["crates"][1]["deps"][0]["name"], alias);
+        assert_eq!(graph["crates"][1]["deps"][0]["crate"], 0);
+        let consumer = prepared.manifest_dir().join("src/main.rs");
+        let bytes = fs::read(&consumer)?;
+        fs::write(&consumer, "fn changed() {}\n")?;
+        assert!(
+            cache
+                .get_or_extract_complete(prepared.manifest_dir(), &query, &|_| {})
+                .is_err()
+        );
+        fs::write(&consumer, bytes)?;
+        cache.invalidate_manifest_dir(prepared.manifest_dir())?;
+    }
     Ok(())
 }
