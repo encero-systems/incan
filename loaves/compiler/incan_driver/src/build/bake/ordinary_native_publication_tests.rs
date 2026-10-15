@@ -1291,8 +1291,15 @@ fn run_consumer(
         for profiles in checked_dependencies.values() {
             for checked in profiles {
                 let path = checked.artifact_root.join(&checked.package.library_relative_path);
-                assert_eq!(oven_store::digest_bytes(&fs::read(&path)?), checked.package.library_digest);
-                paths.insert(path.parent().ok_or("checked library output has no parent")?.to_path_buf());
+                assert_eq!(
+                    oven_store::digest_bytes(&fs::read(&path)?),
+                    checked.package.library_digest
+                );
+                paths.insert(
+                    path.parent()
+                        .ok_or("checked library output has no parent")?
+                        .to_path_buf(),
+                );
             }
         }
         for path in paths {
