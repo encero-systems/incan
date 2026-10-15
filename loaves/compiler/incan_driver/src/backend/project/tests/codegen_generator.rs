@@ -146,7 +146,7 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
         "0.6.0-dev.6",
     )?;
     let output = tempfile::tempdir()?;
-    let generator = ProjectGenerator::new(output.path(), "ordinary_core", false);
+    let mut generator = ProjectGenerator::new(output.path(), "ordinary_core", false);
     let mut modules: HashMap<Vec<String>, String> = [
         (vec!["traits".into(), "callable".into()], "pub trait Callable {}".into()),
         (vec!["application".into()], "pub struct Unowned;".into()),
@@ -157,6 +157,9 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
     generator.project_owned_standard_namespace(&mut unowned, &modules, &ProviderPlan::default())?;
     assert_eq!(unowned, original);
 
+    generator
+        .compiled_provider_modules
+        .insert("published_dependency".into(), ["external".into()].into());
     let mut projected = original.to_string();
     generator.project_owned_standard_namespace(&mut projected, &modules, &plan)?;
     assert!(projected.contains("pub use crate::traits;"), "{projected}");
@@ -164,7 +167,11 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
     assert!(!projected.contains("pub use crate::derives;"), "{projected}");
     generator.generate_nested(&projected, &modules)?;
     let emitted = std::fs::read_to_string(generator.crate_root_path())?;
-    assert!(emitted.contains("pub mod __incan_std"), "{emitted}");
+    assert_eq!(emitted.matches("pub mod __incan_std").count(), 1, "{emitted}");
+    assert!(
+        emitted.contains("pub use published_dependency::__incan_std::*;"),
+        "{emitted}"
+    );
     assert!(emitted.contains("pub mod application;"), "{emitted}");
 
     modules.insert(vec!["__incan_std".into()], String::new());
