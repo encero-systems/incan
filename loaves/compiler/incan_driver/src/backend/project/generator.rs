@@ -1836,6 +1836,7 @@ impl ProjectGenerator {
         sorted_top.sort();
         let consumer_stdlib_facade = self.links_compiled_standard_provider()
             && !(self.native_sdk_publication || is_sdk_provider_build())
+            && !full_main.contains("mod __incan_std")
             && !sorted_top.iter().any(|module| module == "__incan_std");
         if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };
