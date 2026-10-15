@@ -887,40 +887,119 @@ fn observe_admitted_library_metadata(
     }
 }
 
-/// Discover the conventional or explicitly declared binary roots of a project's Rust facet.
-fn discover_project_rust_binary_units(manifest: &ProjectManifest) -> CliResult<Vec<(String, PathBuf)>> {
+/// One authored Rust caller target; library and binary projections never share receipts or output paths.
+/// This is the existing RFC 097 host target description, not an additional dependency or reuse authority.
+pub(super) struct ProjectRustUnit {
+    pub(super) name: String,
+    pub(super) source: PathBuf,
+    pub(super) library: bool,
+    pub(super) edition: String,
+}
+
+impl ProjectRustUnit {
+    /// Preserve the established binary target layout for conventional and explicit binary callers.
+    pub(super) fn binary(name: String, source: PathBuf) -> Self {
+        Self {
+            name,
+            source,
+            library: false,
+            edition: "2024".into(),
+        }
+    }
+
+    /// Distinguish target kinds in reports while retaining the existing binary spelling.
+    pub(super) fn report_target(&self) -> String {
+        format!("{}:{}", if self.library { "rust-library" } else { "rust" }, self.name)
+    }
+
+    /// Keep caller projections and scan records separate when a library and binary have the same crate name.
+    fn caller_key(&self) -> String {
+        if self.library {
+            format!("library/{}", self.name)
+        } else {
+            self.name.clone()
+        }
+    }
+
+    /// Locate mutable output and receipt projections using a kind-specific namespace.
+    /// Names are checked before joining paths, and library outputs use the native rlib spelling.
+    pub(super) fn output_paths(&self, root: &Path, profile: &str) -> CliResult<(PathBuf, PathBuf)> {
+        let relative = validated_project_output_relative_path(&self.name, "Rust unit")?;
+        if relative.components().count() != 1 {
+            return Err(CliError::failure("Rust unit name must be a single path component"));
+        }
+        let target = root.join("target/rust");
+        if self.library {
+            Ok((
+                target
+                    .join("library")
+                    .join(profile)
+                    .join(format!("lib{}.rlib", self.name.replace('-', "_"))),
+                target
+                    .join("receipts/library")
+                    .join(format!("{}-{profile}.json", self.name)),
+            ))
+        } else {
+            Ok((
+                target.join(profile).join(&self.name),
+                target.join("receipts").join(format!("{}-{profile}.json", self.name)),
+            ))
+        }
+    }
+}
+
+/// Discover caller targets through the manifest's canonical Rust source roots.
+/// Libraries reuse the same caller planner as binaries; procedural macros require their host execution contract.
+fn discover_project_rust_units(manifest: &ProjectManifest) -> CliResult<Vec<ProjectRustUnit>> {
     let mut units = manifest
         .rust_binary_roles()
         .iter()
-        .map(|role| (role.name.clone(), manifest.project_root().join(&role.path)))
+        .map(|role| ProjectRustUnit::binary(role.name.clone(), manifest.project_root().join(&role.path)))
         .collect::<Vec<_>>();
     if units.is_empty() {
-        let rust_root = manifest
-            .rust_source
-            .as_ref()
-            .map(|source| manifest.project_root().join(&source.root))
-            .unwrap_or_else(|| manifest.project_root().to_path_buf());
-        let source = rust_root.join("src/main.rs");
+        let source = manifest.rust_source_directory().join("main.rs");
         if source.is_file() {
             let name = manifest
                 .project
                 .as_ref()
                 .and_then(|project| project.name.clone())
                 .unwrap_or_else(|| "rust_unit".to_string());
-            units.push((name, source));
+            units.push(ProjectRustUnit::binary(name, source));
         }
     }
-    for (_, source) in &units {
-        let metadata = fs::symlink_metadata(source).map_err(|error| {
+    if let Some(facet) = &manifest.rust_facet {
+        let source = manifest.rust_library_path();
+        if source.is_file() || facet.path.is_some() || facet.kind.is_some() {
+            if facet.kind.as_deref() == Some("proc-macro") {
+                return Err(CliError::failure(
+                    "Rust caller procedural macros require a host caller contract",
+                ));
+            }
+            let name = facet
+                .name
+                .clone()
+                .or_else(|| manifest.project.as_ref().and_then(|project| project.name.clone()))
+                .unwrap_or_else(|| "rust_unit".to_string());
+            units.push(ProjectRustUnit {
+                name,
+                source,
+                library: true,
+                edition: facet.edition.clone().unwrap_or_else(|| "2024".into()),
+            });
+        }
+    }
+    for unit in &units {
+        unit.output_paths(manifest.project_root(), "debug")?;
+        let metadata = fs::symlink_metadata(&unit.source).map_err(|error| {
             CliError::failure(format!(
-                "project Rust binary source {} cannot be read: {error}",
-                source.display()
+                "project Rust source {} cannot be read: {error}",
+                unit.source.display()
             ))
         })?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(CliError::failure(format!(
-                "project Rust binary source must be a regular file: {}",
-                source.display()
+                "project Rust source must be a regular file: {}",
+                unit.source.display()
             )));
         }
     }
@@ -1197,17 +1276,13 @@ struct ProjectRustBakeContext<'a> {
 /// consumes.
 fn project_rust_unit_receipt(
     context: &ProjectRustBakeContext<'_>,
-    unit_name: &str,
-    source: &Path,
+    unit: &ProjectRustUnit,
     profile: &str,
     callee_identity: &str,
     facet_id: &str,
 ) -> CliResult<(oven_store::OvenReceipt, PathBuf)> {
-    let receipt_path = context
-        .manifest
-        .project_root()
-        .join("target/rust/receipts")
-        .join(format!("{unit_name}-{profile}.json"));
+    let source = &unit.source;
+    let (_, receipt_path) = unit.output_paths(context.manifest.project_root(), profile)?;
     let request = OvenGeneratedProjectRequest::new(
         context.manifest.project_root(),
         context.project_name,
@@ -1225,14 +1300,17 @@ fn project_rust_unit_receipt(
             .ok_or_else(|| CliError::failure("Rust source has no parent directory"))?,
     )
     .with_build_unit_input("callee-incan-unit", callee_identity)
-    .with_build_unit_input("caller-facet", facet_id);
+    .with_build_unit_input("caller-facet", facet_id)
+    .with_build_unit_input("rust-caller-target", unit.report_target())
+    .with_build_unit_input("rust-caller-edition", &unit.edition);
     let mut request = request;
     let mut declared_driver = false;
-    if let Some(role) = context
-        .manifest
-        .rust_binary_roles()
-        .iter()
-        .find(|role| role.name == unit_name)
+    if !unit.library
+        && let Some(role) = context
+            .manifest
+            .rust_binary_roles()
+            .iter()
+            .find(|role| role.name == unit.name)
         && let Some(grant) =
             oven_rustc::rustc::driver_grant::authorize_driver_grant(role, context.rustc).map_err(oven_rustc_error)?
     {
@@ -1257,8 +1335,7 @@ fn project_rust_unit_receipt(
 
 /// One checked Rust caller unit, shared unchanged by its debug and release profile bakes.
 struct ProjectRustCallerUnit<'a> {
-    unit_name: &'a str,
-    source: &'a Path,
+    target: &'a ProjectRustUnit,
     library: &'a str,
     dependency: &'a oven_model::manifest::LibraryDependencySpec,
     selection: &'a crate::build::caller_facet::CallerFacetSelection,
@@ -1435,14 +1512,20 @@ fn prepare_rust_caller_library<'a>(
     profile: &str,
 ) -> CliResult<RetainedLibraryPreparation<'a>> {
     let ProjectRustCallerUnit {
-        unit_name,
+        target,
         library,
         dependency,
         selection,
         facet_id,
         ..
     } = *unit;
-    let receipt_reference = format!("target/rust/receipts/{unit_name}-{profile}.json");
+    let unit_name = target.caller_key();
+    let (_, receipt_path) = target.output_paths(context.manifest.project_root(), profile)?;
+    let receipt_reference = receipt_path
+        .strip_prefix(context.manifest.project_root())
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .to_string_lossy()
+        .into_owned();
     let caller = CallerFacetRequest {
         exports: selection.exports.iter().cloned().collect(),
         facet_id: facet_id.to_string(),
@@ -1460,7 +1543,7 @@ fn prepare_rust_caller_library<'a>(
         .manifest
         .project_root()
         .join("target/rust/caller-libraries")
-        .join(validated_project_output_relative_path(unit_name, "Rust unit")?)
+        .join(validated_project_output_relative_path(&unit_name, "Rust unit")?)
         .join(validated_project_output_relative_path(library, "caller library")?)
         .join(profile);
     let output = output
@@ -1514,12 +1597,14 @@ fn bake_project_rust_profile(
     profile: &str,
 ) -> CliResult<OvenProjectBakeProfileReport> {
     let ProjectRustCallerUnit {
-        unit_name,
-        source,
+        target,
         library,
         facet_id,
         ..
     } = *unit;
+
+    let unit_name = &target.name;
+    let source = &target.source;
 
     // ---- Checked sibling Incan caller ----
     let mut preparation = prepare_rust_caller_library(context, unit, profile)?;
@@ -1568,14 +1653,8 @@ fn bake_project_rust_profile(
     if let Some((_, preparation)) = &own_dependencies {
         compose_rust_unit_dependencies(&mut artifact_plan, preparation, context.manifest)?;
     }
-    let (mut receipt, receipt_path) = project_rust_unit_receipt(
-        context,
-        unit_name,
-        source,
-        profile,
-        &selected.receipt.identity,
-        facet_id,
-    )?;
+    let (mut receipt, receipt_path) =
+        project_rust_unit_receipt(context, target, profile, &selected.receipt.identity, facet_id)?;
     if let Some((dependency_receipt, preparation)) = &own_dependencies {
         receipt = oven_store::receipt_with_build_unit_input(
             &receipt,
@@ -1587,32 +1666,29 @@ fn bake_project_rust_profile(
     }
 
     // ---- Receipt-authorized native compilation ----
-    let output = context
-        .manifest
-        .project_root()
-        .join("target/rust")
-        .join(profile)
-        .join(unit_name);
-    let bake = bake_trusted_direct_rustc_run_with_artifact_role(
-        &OvenTrustedDirectRustcTargetRequest {
-            receipt: &receipt,
-            artifacts: selected.plan_selection.artifacts(),
-            artifact_root: selected.plan_selection.output_guard_root(),
-            artifact_plan: Some(&artifact_plan),
-            rustc: context.rustc,
-            source,
-            output: &output,
-            crate_name: &unit_name.replace('-', "_"),
-            edition: "2024",
-            source_evidence_key: "rust-unit",
-            features: &[],
-            prefer_dynamic: false,
-        },
-        "generated-root",
-    )
+    let (output, _) = target.output_paths(context.manifest.project_root(), profile)?;
+    let request = OvenTrustedDirectRustcTargetRequest {
+        receipt: &receipt,
+        artifacts: selected.plan_selection.artifacts(),
+        artifact_root: selected.plan_selection.output_guard_root(),
+        artifact_plan: Some(&artifact_plan),
+        rustc: context.rustc,
+        source,
+        output: &output,
+        crate_name: &unit_name.replace('-', "_"),
+        edition: &target.edition,
+        source_evidence_key: "rust-unit",
+        features: &[],
+        prefer_dynamic: false,
+    };
+    let bake = if target.library {
+        oven_rustc::rustc::bake_trusted_direct_rustc_library_with_artifact_role(&request, "generated-root")
+    } else {
+        bake_trusted_direct_rustc_run_with_artifact_role(&request, "generated-root")
+    }
     .map_err(oven_rustc_error)?;
     Ok(OvenProjectBakeProfileReport {
-        project_target: format!("rust:{unit_name}"),
+        project_target: target.report_target(),
         profile: profile.to_string(),
         target: context.target.to_string(),
         toolchain: context.toolchain.to_string(),
@@ -1624,10 +1700,10 @@ fn bake_project_rust_profile(
     })
 }
 
-/// Build every Rust-only project binary against its checked sibling Incan caller facet.
+/// Build each Rust library or binary against its checked sibling Incan caller facet.
 fn bake_project_rust_units(
     manifest: &ProjectManifest,
-    units: &[(String, PathBuf)],
+    units: &[ProjectRustUnit],
     package_features: &FeatureSelection,
     requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
@@ -1664,9 +1740,12 @@ fn bake_project_rust_units(
     let mut profiles = Vec::new();
     let mut generated_sources = BTreeMap::new();
 
-    for (unit_name, source) in units {
+    for target in units {
+        let unit_name = &target.name;
+        let source = &target.source;
         let source_text = project_rust_source_text(source)?;
-        let requested_by_library = cached_rust_caller_paths(manifest.project_root(), unit_name, &source_text)?;
+        let requested_by_library =
+            cached_rust_caller_paths(manifest.project_root(), &target.caller_key(), &source_text)?;
         if requested_by_library.is_empty() {
             return Err(CliError::failure(format!(
                 "project Rust unit `{unit_name}` does not reference an Incan `<library>::caller::incan::<export>` path"
@@ -1687,7 +1766,7 @@ fn bake_project_rust_units(
             let admitted = AdmittedLibraryPreparation::discover_ordinary_native(
                 &provider_manifest,
                 package_features,
-                Some(&target),
+                Some(context.target),
             )?;
             let checked = checked_library_exports_with_admission(&library_source, package_features, admitted.as_ref())?;
             let body_ir_identity = caller_body_ir_identity(manifest, &dependency.path)?;
@@ -1696,8 +1775,7 @@ fn bake_project_rust_units(
                     .map_err(CliError::failure)?;
             let facet_id = caller_facet_digest(&library, &requested);
             let unit = ProjectRustCallerUnit {
-                unit_name,
-                source,
+                target,
                 library: &library,
                 dependency,
                 selection: &selection,
@@ -1705,7 +1783,7 @@ fn bake_project_rust_units(
                 admitted: admitted.as_ref(),
             };
             for profile in explicit_bake_profiles() {
-                generated_sources.insert(format!("rust:{unit_name}"), source.clone());
+                generated_sources.insert(target.report_target(), source.clone());
                 profiles.push(bake_project_rust_profile(&context, &unit, profile)?);
             }
         }
@@ -1828,7 +1906,7 @@ fn bake_oven_project_targets_with_admission(
             project_root.display()
         ))
     })?;
-    let rust_units = discover_project_rust_binary_units(&manifest)?;
+    let rust_units = discover_project_rust_units(&manifest)?;
     let has_incan_target = project_root
         .join(OvenBakeProjectTarget::Library.source_relative_path())
         .is_file()
@@ -1859,7 +1937,7 @@ fn bake_oven_project_targets_with_admission(
                 .as_ref()
                 .is_some_and(|current| current == key)
         {
-            crate::build::rust_bake_reuse::publish_rust_bake(&store, key, &report)?;
+            crate::build::rust_bake_reuse::publish_rust_bake(&store, key, &report, &rust_units)?;
         }
         return Ok(report);
     }
@@ -2934,3 +3012,6 @@ mod admitted_publication_tests;
 
 #[cfg(test)]
 mod ordinary_native_publication_tests;
+
+#[cfg(test)]
+mod rust_caller_target_tests;

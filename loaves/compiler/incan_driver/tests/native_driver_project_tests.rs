@@ -158,6 +158,68 @@ fn native_source_completed_output_reuses_before_frontend() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Library callers reuse exact generations and repair missing projections without repeating native compilation.
+#[test]
+fn completed_rust_library_caller_reuses_and_restores() -> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let root = project.path().canonicalize()?;
+    let provider = root.join("provider");
+    let caller = root.join("caller");
+    let home = support::oven_fixture_home()?;
+    fs::create_dir_all(provider.join("src"))?;
+    fs::create_dir_all(caller.join("src"))?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname='library_provider'\nversion='0.1.0'\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        "pub def value() -> int:\n    return 42\n",
+    )?;
+    bake(&provider, &home)?;
+    fs::write(
+        caller.join("loaf.toml"),
+        "[project]\nname='library_caller'\nversion='0.1.0'\n[dependencies]\nlibrary_provider={loaf='library_provider',path='../provider'}\n[rust]\nname='library_caller'\ntype='lib'\nedition='2021'\n",
+    )?;
+    let source = caller.join("src/lib.rs");
+    let original = "pub use library_provider::caller::incan::value;\n";
+    fs::write(&source, original)?;
+    bake(&caller, &home)?;
+    let native = caller.join("target/rust/library/debug/liblibrary_caller.rlib");
+    let receipt = caller.join("target/rust/receipts/library/library_caller-debug.json");
+    let original_bytes = fs::read(&native)?;
+    let original_receipt = fs::read(&receipt)?;
+    let modified = fs::metadata(&native)?.modified()?;
+    bake_with_reuse_requirement(&caller, &home, true)?;
+    assert_eq!(fs::read(&native)?, original_bytes);
+    assert_eq!(fs::metadata(&native)?.modified()?, modified);
+    let output: serde_json::Value = serde_json::from_slice(&fs::read(native.with_extension("rlib.oven-output.json"))?)?;
+    assert_eq!(output["output_kind"], "library");
+    assert_eq!(output["edition"], "2021");
+
+    fs::remove_file(&native)?;
+    bake_with_reuse_requirement(&caller, &home, true)?;
+    assert_eq!(fs::read(&native)?, original_bytes);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&native)?.permissions().mode() & 0o777, 0o644);
+    }
+
+    fs::write(
+        &source,
+        "pub use library_provider::caller::incan::value;\npub fn another_value() -> i64 { value() + 1 }\n",
+    )?;
+    bake(&caller, &home)?;
+    assert_ne!(fs::read(&native)?, original_bytes);
+    bake_with_reuse_requirement(&caller, &home, true)?;
+    fs::write(&source, original)?;
+    bake_with_reuse_requirement(&caller, &home, true)?;
+    assert_eq!(fs::read(&native)?, original_bytes);
+    assert_eq!(fs::read(receipt)?, original_receipt);
+    Ok(())
+}
+
 /// Shared Rust caller generations replace read-only projections without modifying aliases or invoking compilation.
 #[cfg(unix)]
 #[test]
