@@ -327,13 +327,27 @@ pub struct ProjectGenerator {
     pub(crate) public_namespace_facades: Option<BTreeMap<Vec<String>, BTreeSet<String>>>,
 }
 
-/// Cargo profile used for `incan run`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Executable compilation profile shared by preparation, completed-output selection and execution.
+///
+/// Build requests default to release for compatibility; Run callers select debug explicitly unless requested otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RunProfile {
-    /// `cargo build` (debug profile).
+    /// Unoptimized executable with debug information.
     Debug,
-    /// `cargo build --release` (optimized profile).
+    /// Optimized executable; the established default for Build requests.
+    #[default]
     Release,
+}
+
+impl RunProfile {
+    /// Return the canonical profile spelling used in existing Oven requests and output identities.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
 }
 
 impl ProjectGenerator {

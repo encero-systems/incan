@@ -788,6 +788,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 lib_mode,
                 output_dir: output_dir.map(|path| path.to_string_lossy().to_string()),
                 options: incan_driver::build::BuildCommandOptions {
+                    executable_profile: incan_driver::backend::project::RunProfile::Release,
                     cargo_policy: CargoPolicy::from_cli_and_env(
                         CargoPolicyCliFlags {
                             offline,

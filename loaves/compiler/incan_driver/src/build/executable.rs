@@ -479,6 +479,7 @@ impl ExecutableBuildOwner {
             tracing::trace_span!(target: "incan::invocation", "incan_driver::build_executable", input = file_path)
                 .entered();
         reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
+        let profile = options.executable_profile.as_str();
         let total_start = Instant::now();
         self.authority.begin_request();
 
@@ -547,7 +548,7 @@ impl ExecutableBuildOwner {
             options.cargo_features,
             options.cargo_no_default_features,
             options.cargo_all_features,
-            "release",
+            profile,
             OvenProjectPlanMode::ConsumeOnly,
             None,
             session,
@@ -566,7 +567,7 @@ impl ExecutableBuildOwner {
         ));
         progress("Building with Oven Alpha...".to_string());
         let oven_build_start = Instant::now();
-        let bake = bake_oven_project(&prepared, "release", None)?;
+        let bake = bake_oven_project(&prepared, profile, None)?;
         let oven_build_ms = elapsed_ms(oven_build_start);
         progress("✓ Oven build successful!".to_string());
         progress(format!("Binary: {}", bake.output.display()));

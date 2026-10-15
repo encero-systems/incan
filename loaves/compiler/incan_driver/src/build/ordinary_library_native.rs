@@ -363,8 +363,12 @@ impl OrdinaryLibraryNativeProfiles {
             oven_store::receipt_generated_project(&request).map_err(failure)?
         };
         // ---- Select and retain the same genuine producer graph for future generated tests ----
-        let (receipt, plan_selection) = self.select_plan(store, &selected_receipt, &physical, owner)?;
+        let closure = self.closure(&selected_receipt.intent, &physical, owner)?;
+        let (receipt, plan_selection) =
+            super::native_loaf_plan::select_native_loaf_plan(store, &selected_receipt, &closure)?;
+        self.metadata.verify_profile(&receipt.intent)?;
         Ok(super::PreparedOvenTestDependencyEnvelope {
+            native_roots: Some(closure.roots().clone()),
             receipt,
             dependency_surface_digest,
             dependencies,

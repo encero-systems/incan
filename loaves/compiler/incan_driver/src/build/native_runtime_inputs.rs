@@ -116,11 +116,7 @@ struct OrdinaryRoot<'a> {
 
 /// Encode declared roots identically for the Incan exchange and the final native consumer receipt.
 pub(crate) fn ordinary_roots_digest(roots: &BTreeMap<String, String>) -> CliResult<String> {
-    let roots = roots
-        .iter()
-        .map(|(alias, record_identity)| OrdinaryRoot { alias, record_identity })
-        .collect::<Vec<_>>();
-    Ok(oven_store::digest_bytes(&serde_json::to_vec(&roots).map_err(failure)?))
+    oven_rustc::native_loaf::native_loaf_roots_digest(roots).map_err(failure)
 }
 
 /// Physical identity exchange; no semantic, macro or namespace authority is conveyed by this payload.

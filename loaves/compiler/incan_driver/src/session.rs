@@ -600,6 +600,17 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
+        #[cfg(feature = "cli")]
+        if let Some(session) =
+            crate::build::library_project::discover_ordinary_dependency_session(entry_path, feature_selection)?
+        {
+            if sdk_profile_override.is_some() {
+                return Err(CliError::failure(
+                    "ordinary package admission does not accept an SDK profile override",
+                ));
+            }
+            return Ok(session);
+        }
         Self::discover_with_dependency_mode_and_sdk_source(
             entry_path,
             DependencyManifestMode::OvenArtifacts,

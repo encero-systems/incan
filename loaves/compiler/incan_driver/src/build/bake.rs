@@ -95,11 +95,20 @@ pub fn bake_oven_project(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<oven_rustc::rustc::OvenDirectRustcBake> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::native_build", input = %prepared.entrypoint.display()).entered();
+    if let Some(native) = &prepared.ordinary_native {
+        native.verify()?;
+        prepared
+            .ordinary_session
+            .as_ref()
+            .and_then(|session| session.admitted_library_dependencies())
+            .ok_or_else(|| CliError::failure("ordinary executable lost its original semantic owners"))?
+            .verify()?;
+    }
     let mut caller_owned_libraries = prepared.caller_owned_libraries.clone();
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&prepared.plan_selection)?;
     let mut extra_dependency_search_paths = Vec::new();
-    if has_caller_owned_project_libraries(&prepared.provider_plan) {
+    if prepared.ordinary_native.is_none() && has_caller_owned_project_libraries(&prepared.provider_plan) {
         let closure = collect_caller_owned_provider_registry_leaf_authority(
             &open_default_oven_store()?,
             &prepared.provider_plan,
@@ -192,7 +201,17 @@ pub fn bake_oven_project(
         },
         &open_default_oven_store()?,
     );
-    classify_direct_rustc_bake(&prepared.crate_name, direct)
+    let baked = classify_direct_rustc_bake(&prepared.crate_name, direct)?;
+    if let Some(native) = &prepared.ordinary_native {
+        native.verify()?;
+        prepared
+            .ordinary_session
+            .as_ref()
+            .and_then(|session| session.admitted_library_dependencies())
+            .ok_or_else(|| CliError::failure("ordinary executable lost its original semantic owners"))?
+            .verify()?;
+    }
+    Ok(baked)
 }
 
 /// Return the caller-owned direct-rustc library artifact path.
@@ -563,7 +582,7 @@ pub fn publish_prepared_project_output(
     Ok(output)
 }
 
-/// Select the default sealed release output without entering frontend or report reconstruction.
+/// Select the requested profile's default sealed output without entering frontend or report reconstruction.
 pub fn select_default_executable_project_output(
     file_path: &str,
     output_dir: Option<&String>,
@@ -588,7 +607,7 @@ pub fn select_default_executable_project_output(
         file_path,
         &completed_output_policy,
         OvenBakeProjectTarget::Executable,
-        "release",
+        options.executable_profile.as_str(),
         authority,
     )?
     else {
@@ -2305,12 +2324,17 @@ fn bake_oven_project_targets_with_admission(
         } else {
             authority_context.native_sdk_context()?
         };
-        let (registry_dependencies, dev_registry_dependencies) =
+        // Ordinary publication retains the exact native roots selected above, not a synthesized Cargo source catalog.
+        // Its full producer requests and declaration coverage are already checked by the original admission.
+        let (registry_dependencies, dev_registry_dependencies) = if ordinary_native.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
             crate::build::plan_selection::canonical_project_inspection_dependencies_with_native_sdk(
                 dependency_surface,
                 inspection_target_receipts.first(),
                 native_sdk_context.as_deref(),
-            )?;
+            )?
+        };
         if inspection_target_receipts
             .first()
             .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))

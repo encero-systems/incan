@@ -254,6 +254,7 @@ mod tests {
         let lock = project.path().join("inspection.lock");
         fs::write(&lock, "retained inspection lock")?;
         let payload = OvenProjectInspectionAuthorityPayload {
+            native_roots: None,
             schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
             project_identity: output.project_identity.clone(),
             source_authority_digest: output.source_authority_digest.clone(),

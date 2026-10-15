@@ -531,7 +531,7 @@ pub fn prepare_library_project_with_caller_facet(
 /// The original native request is shared with the consumer, never prepared again. Core owns its source publication;
 /// consumers retain its exact checked metadata/generation and independently source-bound namespace issuer. Existing
 /// completed-output reuse skips publication only after the original Store, source and preparation checks pass.
-fn prepare_core_checked_dependency(
+pub(super) fn prepare_core_checked_dependency(
     source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
     native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
     target: &str,
@@ -652,6 +652,15 @@ fn ordinary_library_session(
 /// The configured ordinary route requires existing publications matching the host target, toolchain and resolved
 /// features. Failures propagate; only an unconfigured toolchain or a manifest-free source uses the existing reader.
 pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Option<CompilationSession>> {
+    discover_ordinary_dependency_session(entry, &FeatureSelection::default())
+}
+
+/// Select the original checked package owners for a consumer's exact feature projection.
+/// This is shared by metadata and executable consumers; native profiles are selected separately by the latter.
+pub(crate) fn discover_ordinary_dependency_session(
+    entry: &Path,
+    package_features: &FeatureSelection,
+) -> CliResult<Option<CompilationSession>> {
     if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none() {
         return Ok(None);
     }
@@ -659,8 +668,7 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
     let Some(manifest) = discover_effective_project_manifest(&root)? else {
         return Ok(None);
     };
-    let package_features = FeatureSelection::default();
-    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, &package_features)
+    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, package_features)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
@@ -690,7 +698,7 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
             *open_default_oven_store()?.limits(),
         )?,
     );
-    ordinary_library_session(&manifest, entry, &package_features, dependencies, core_source).map(Some)
+    ordinary_library_session(&manifest, entry, package_features, dependencies, core_source).map(Some)
 }
 
 /// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
