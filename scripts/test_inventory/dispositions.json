@@ -144,6 +144,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/bake/rust_caller_target_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "RFC 097 Rust library caller target discovery, source roots, editions and kind-specific output/receipt separation; shared direct native caller path.",
+      "owner": 1486,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/caller_facet.rs": {
       "disposition": "keep",
       "notes": "checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary.",
