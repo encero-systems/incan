@@ -124,6 +124,9 @@ pub const OVEN_PROJECT_OUTPUT_ARTIFACT_PATH: &str = "output/native";
 /// This deliberately contains no Cargo target path or command. Generated Rust and the final binary are caller-owned;
 /// the selected native closure retains its store lease until the direct-Rustc bake and any child execution complete.
 pub struct OvenPreparedProject {
+    /// Original ordinary language and native owners retained through compilation; no copied SDK authority.
+    pub(crate) ordinary_session: Option<Arc<crate::session::CompilationSession>>,
+    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
     /// Command-owned native admission retained through compilation and child execution.
     pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub generator: ProjectGenerator,
@@ -790,6 +793,8 @@ pub struct OvenProjectDependencySurface<'a> {
 
 /// Receipt-selected dependency closure prepared once for every generated native-test batch in a project bake.
 pub struct PreparedOvenTestDependencyEnvelope {
+    /// Original ordinary native root map, sealed by the selected receipt; legacy envelopes leave this absent.
+    pub native_roots: Option<BTreeMap<String, String>>,
     /// Receipt for the immutable non-package constituent selected by the authority.
     pub receipt: oven_store::OvenReceipt,
     /// Complete normal/dev/test surface, including roots owned by separately validated package Loafs.

@@ -593,6 +593,56 @@ pub(super) fn has_complete_packaged_library_loaf(
     }))
 }
 
+/// Select ordinary dependency closures directly from their published package Stores, preserving original leases.
+/// Exact package coordinates and receipts remain authoritative. Locally restored outputs without an exported Store
+/// use the same exact selection from the primary Store; neither path imports or copies dependency payloads (#2216).
+pub fn select_ordinary_packaged_provider_plans(
+    primary_store: &OvenStore,
+    checked_profiles: &[CheckedPackagedProviderProfile],
+    profile: &str,
+) -> CliResult<oven_rustc::plan::selection::SelectedPackagedProviderPlans> {
+    let mut plans = oven_rustc::plan::selection::SelectedPackagedProviderPlans::default();
+    for checked in checked_profiles.iter().filter(|checked| checked.profile == profile) {
+        let root = packaged_library_loaf_store_root(&checked.artifact_root);
+        let published = root
+            .try_exists()
+            .map_err(|error| CliError::failure(format!("cannot inspect package Store: {error}")))?;
+        for entry in &checked.package.entries {
+            if entry.kind != OvenArtifactKind::DirectRustcPlan || entry.base_loaf_identity.is_some() {
+                return Err(CliError::failure(
+                    "ordinary package requires a self-contained direct closure",
+                ));
+            }
+            let plan = if published {
+                let mut owners = PublishedOvenStore::new(&root)
+                    .select_payloads_for_execution(std::slice::from_ref(&entry.identity))
+                    .map_err(|error| CliError::failure(format!("cannot select published package closure: {error}")))?;
+                if owners.len() != 1 {
+                    return Err(CliError::failure(
+                        "published package closure has no unique original owner",
+                    ));
+                }
+                oven_rustc::plan::selection::packaged_direct_rustc_plan_from_selected(
+                    owners.remove(0),
+                    &entry.receipt,
+                    &entry.identity,
+                )
+                .map_err(crate::error::oven_plan_error)?
+            } else {
+                oven_rustc::plan::selection::select_packaged_direct_rustc_execution_plan(
+                    primary_store,
+                    &entry.receipt,
+                    &entry.identity,
+                )
+                .map_err(crate::error::oven_plan_error)?
+                .ok_or_else(|| CliError::failure("ordinary package closure is missing from its primary Store"))?
+            };
+            plans.direct.push((checked.dependency_key.clone(), entry.clone(), plan));
+        }
+    }
+    Ok(plans)
+}
+
 /// Import a compatible public provider closure into the consumer's bounded Oven store without running Cargo.
 ///
 /// This is the explicit consumer bake boundary. A provider artifact normally carries its own portable package-store

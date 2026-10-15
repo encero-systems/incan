@@ -238,7 +238,7 @@ pub(super) fn preflight_project_inspection_authority_schema(
             message: format!("payload has no valid project inspection authority header: {error}"),
         }
     })?;
-    if header.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION {
+    if header.schema_version != OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION && header.schema_version != 2 {
         return Err(OvenRustcError::UnsupportedProjectInspectionAuthoritySchema {
             found: header.schema_version,
             expected: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
@@ -591,7 +591,8 @@ pub fn project_inspection_test_dependency_envelope_mismatch(
                 }
             })?;
         let (expected, source_matches) = match root {
-            OvenProjectInspectionTestDependencyRoot::Registry { dependency_digest, .. } => (
+            OvenProjectInspectionTestDependencyRoot::NativeRegistry { dependency_digest, .. }
+            | OvenProjectInspectionTestDependencyRoot::Registry { dependency_digest, .. } => (
                 dependency_digest,
                 matches!(dependency.source, DependencySource::Registry),
             ),

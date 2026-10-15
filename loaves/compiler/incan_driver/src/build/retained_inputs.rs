@@ -98,6 +98,9 @@ pub(super) struct ExecutableDependencyInputs {
     key: ExecutableDependencyRequest,
     provider: Arc<ProviderPlan>,
     pub(super) context: Option<Arc<NativeSdkCommandContext>>,
+    /// Original ordinary producer requests and semantic owners survive retained plan reuse.
+    pub(super) ordinary: Option<Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
+    pub(super) ordinary_session: Option<Arc<CompilationSession>>,
     pub(super) build_inputs: BTreeMap<String, String>,
     observations: ModelInputs,
     plan_observed: bool,
@@ -119,6 +122,8 @@ impl ExecutableDependencyInputs {
             key,
             provider,
             context,
+            ordinary: None,
+            ordinary_session: None,
             build_inputs,
             observations,
             plan_observed: false,
@@ -132,6 +137,12 @@ impl ExecutableDependencyInputs {
             && Arc::ptr_eq(&self.provider, provider)
             && self.observations.supports_retention()
             && self.observations.current()
+            && self.ordinary.as_ref().is_none_or(|native| native.verify().is_ok())
+            && self.ordinary_session.as_ref().is_none_or(|session| {
+                session
+                    .admitted_library_dependencies()
+                    .is_some_and(|dependencies| dependencies.verify().is_ok())
+            })
     }
 
     /// Require observation of a replacement selection instead of treating the previous plan as still retained.
@@ -500,6 +511,9 @@ impl RetainedProjectInputs {
         root: &Path,
         session: &Arc<CompilationSession>,
     ) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
+        if session.has_admitted_library_dependencies() {
+            return Ok(None);
+        }
         let Some(retained) = self
             .projects
             .get_mut(root)
