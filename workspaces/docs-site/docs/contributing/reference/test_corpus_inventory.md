@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3656 | 257 | 434 |
 | re-point | 1488 | 91 | 1061 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2144 | 223 | 5 |
+| unaffected | 2145 | 223 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8796** | **724** | **1500** |
+| **Total** | **8797** | **724** | **1500** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2540,11 +2540,11 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `host_bridge_match_rejects_path_and_identifier_lookalikes` | retire | `dies` | test-only demangled-symbol matcher for generated host-bridge evidence: accepting or rejecting host path lookalikes is not observable from Incan source once physical symbol inspection retires with #654. | - | - |
 | `generic_match_requires_exact_item_path_and_u64_suffix` | retire | `dies` | test-only demangled-symbol matcher for proving a generated generic host specialization: the item-path and host type-suffix evidence is not an Incan language observable and retires with physical symbol inspection under #654. | - | - |
 
-### `loaves/compiler/rust_inspect` (110 tests in 10 files: keep 1, unaffected 109)
+### `loaves/compiler/rust_inspect` (111 tests in 10 files: keep 1, unaffected 110)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-| `loaves/compiler/rust_inspect/src/cache_tests.rs` | 43 | 2976 | 2976 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/cache_tests.rs` | 44 | 3036 | 3036 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/digest/tests.rs` | 17 | 634 | 634 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/extractor.rs` | 21 | 4115 | 1898 | unaffected | - | - | required | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/extractor/trait_candidates_tests.rs` | 1 | 151 | 151 | keep | - | - | - | #1337 | - | Compatibility oracle for query-scoped trait candidate acquisition preserves aliases, generics, primitives, mutable receivers, built-in derives and unnamed-const implementations. Uses the existing analyzer index without a second candidate cache. |
