@@ -8,30 +8,47 @@ extern crate rustc_driver;
 extern crate rustc_feature;
 extern crate rustc_hir;
 extern crate rustc_index;
+extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_trait_selection;
 extern crate thin_vec;
 
 mod adapter;
+mod ast_build;
 mod bodies;
+mod callable_bridges;
 mod callees;
 mod captured_generators;
+mod checked_json;
+mod cloneable_closures;
 mod closures;
+mod comparison_bridges;
+mod coroutines;
 mod declarations;
 mod error;
+mod fallible_bridges;
+mod field_metadata;
 mod frontend;
+mod frozen_values;
+mod futures;
 mod identity;
+mod marker_traits;
 mod plan;
+mod shared_callables;
 mod spans;
+mod statics;
 mod terminators;
 mod types;
+mod union_debug;
 mod unit;
 mod validation;
+mod value_enum_serde;
 mod values;
 
-use incan_mir_lowering::caller::incan::scalar_example;
+use incan_mir_lowering::caller::incan::{consuming_closure_example, scalar_example};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -70,8 +87,9 @@ fn relaunch_with_native_environment(native_link: &Command) -> Result<(), Box<dyn
 
 /// Take the hand-filled fixture plan from Incan and compile it through the native boundary.
 ///
-/// Arguments are source, crate name, output, sysroot, runtime rlib, optional mode, and admitted dependency directories.
-/// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
+/// Arguments are source, crate name, output, sysroot, runtime rlib, optional scalar or consuming-closure mode, and
+/// admitted dependency directories. The shared opt-in invocation sink is initialized before dispatch; disabled tracing
+/// uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     oven_cli::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -88,21 +106,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if args.len() < 5 {
-        return Err("usage: incan-rustc-driver SOURCE CRATE OUTPUT SYSROOT RUNTIME_RLIB [normal|overflow|dangling] [DEPENDENCY_DIR ...]".into());
+        return Err("usage: incan-rustc-driver SOURCE CRATE OUTPUT SYSROOT RUNTIME_RLIB [normal|overflow|dangling|consuming-closure] [DEPENDENCY_DIR ...]".into());
     }
     let mode = args.get(5).map(String::as_str).unwrap_or("normal");
-    if !matches!(mode, "normal" | "overflow" | "dangling") {
+    if !matches!(mode, "normal" | "overflow" | "dangling" | "consuming-closure") {
         return Err("unknown fixture mode".into());
     }
     let identity = identity::verify(Path::new(&args[3]))?;
     let (native_link, _) = native_link(&identity)?;
     relaunch_with_native_environment(&native_link)?;
-    let plan = scalar_example(
-        args[0].clone(),
-        "native_output::print_int".into(),
-        mode == "overflow",
-        mode == "dangling",
-    );
+    let plan = if mode == "consuming-closure" {
+        consuming_closure_example(args[0].clone(), "native_output::print_int".into())
+    } else {
+        scalar_example(
+            args[0].clone(),
+            "native_output::print_int".into(),
+            mode == "overflow",
+            mode == "dangling",
+        )
+    };
     adapter::compile(
         plan,
         &args[1],

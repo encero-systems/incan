@@ -98,6 +98,20 @@ pub(super) struct RawVocabExports {
     pub(super) desugarer_artifact: Option<VocabDesugarerArtifact>,
 }
 
+impl RawVocabExports {
+    /// Preserve the single vocabulary wire shape for library publication and producer identity encoding.
+    pub(super) fn from_semantic(vocab: &VocabExports) -> Self {
+        Self {
+            crate_path: vocab.crate_path.clone(),
+            package_name: vocab.package_name.clone(),
+            keyword_registrations: vocab.keyword_registrations.clone(),
+            dsl_surfaces: vocab.dsl_surfaces.clone(),
+            provider_manifest: vocab.provider_manifest.clone(),
+            desugarer_artifact: vocab.desugarer_artifact.clone(),
+        }
+    }
+}
+
 impl RawLibraryManifest {
     /// Convert the compiler-facing manifest model into the serialized manifest transport shape.
     pub fn from_semantic(semantic: &LibraryManifest) -> Self {
@@ -119,14 +133,7 @@ impl RawLibraryManifest {
                 consts: semantic.exports.consts.clone(),
                 statics: semantic.exports.statics.clone(),
             },
-            vocab: semantic.vocab.as_ref().map(|vocab| RawVocabExports {
-                crate_path: vocab.crate_path.clone(),
-                package_name: vocab.package_name.clone(),
-                keyword_registrations: vocab.keyword_registrations.clone(),
-                dsl_surfaces: vocab.dsl_surfaces.clone(),
-                provider_manifest: vocab.provider_manifest.clone(),
-                desugarer_artifact: vocab.desugarer_artifact.clone(),
-            }),
+            vocab: semantic.vocab.as_ref().map(RawVocabExports::from_semantic),
             soft_keywords: RawSoftKeywordExports {
                 activations: semantic.soft_keywords.activations.clone(),
             },

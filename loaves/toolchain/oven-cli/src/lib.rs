@@ -45,6 +45,24 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
         }
         OvenCommand::ConvertCargo { workspace, project } => commands::oven::convert_cargo::run(&workspace, &project),
         OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
+        OvenCommand::BootstrapCompiler {
+            compiler_root,
+            preparation_output,
+            output,
+            profile,
+            rustc,
+            store,
+        } => commands::oven::oven_bootstrap_compiler(
+            &compiler_root,
+            &preparation_output,
+            &output,
+            &rustc,
+            &store,
+            &profile,
+        ),
+        OvenCommand::PrepareStandardPackages { native_graph_output } => {
+            commands::oven::oven_prepare_standard_packages(&native_graph_output)
+        }
         OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),
         OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
         OvenCommand::ReconcilePartitions { reports, summary } => {

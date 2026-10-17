@@ -1,4 +1,6 @@
-"""Monomorphic exact-carrier boundaries using the legacy language semantics."""
+"""Monomorphic exact-carrier boundaries preserving numeric widths and language display contracts."""
+
+from model_values import display_value
 
 
 pub def format_i8(value: i8) -> str:
@@ -137,8 +139,11 @@ pub def float_u128(value: u128) -> float:
 
 
 pub def format_f32(value: f32) -> str:
-    """Format the exact f32 carrier through the legacy language contract."""
-    return str(value)
+    """Keep an exact f32 visibly floating without widening its shortest carrier-specific digits, including negative zero."""
+    text = display_value(value)
+    if "." in text or "e" in text or "E" in text:
+        return text
+    return text + ".0"
 
 
 pub def int_f32(value: f32) -> int:

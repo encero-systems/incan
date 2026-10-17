@@ -761,3 +761,108 @@ pub(super) fn shared_native_plan_retains_multi_store_owners_and_refuses_substitu
     );
     Ok(())
 }
+
+/// A real compiler process edits a generated sibling before returning; neither changed nor restored bytes may be
+/// published under the pre-compilation source evidence. Unchanged execution still uses the same native Store.
+#[cfg(unix)]
+pub(super) fn generated_binary_store_refuses_sibling_edits_before_publication() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    let sources = root.join("src");
+    fs::create_dir(&sources)?;
+    let source = sources.join("main.rs");
+    let sibling = sources.join("helper.rs");
+    let original = "pub fn answer() -> u8 { 42 }\n";
+    fs::write(
+        &source,
+        "mod helper; fn main() { println!(\"{}\", helper::answer()); }\n",
+    )?;
+    fs::write(&sibling, original)?;
+    let marker = root.join("mutation-mode");
+    let real_rustc = rustc_path()?;
+    let rustc = root.join("rustc-guard-control");
+    let quote = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+    fs::write(
+        &rustc,
+        format!(
+            "#!/bin/sh\n{} \"$@\"\nstatus=$?\ncase \"$*\" in *--crate-name*) if [ \"$status\" = 0 ] && [ -f {} ]; then printf '%s\n' 'pub fn answer() -> u8 {{ 43 }}' > {}; if [ \"$(cat {})\" = restore ]; then printf '%s\n' 'pub fn answer() -> u8 {{ 42 }}' > {}; fi; fi ;; esac\nexit \"$status\"\n",
+            quote(&real_rustc),
+            quote(&marker),
+            quote(&sibling),
+            quote(&marker),
+            quote(&sibling),
+        ),
+    )?;
+    fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))?;
+    let input = OvenGeneratedProjectRequest::new(
+        &root,
+        "generated_guard",
+        "0.1.0",
+        rustc_host_target(&real_rustc)?,
+        rustc_identity(&real_rustc)?,
+        "debug",
+        Vec::new(),
+    )
+    .with_generated_source("generated-root", &source)
+    .with_generated_source_tree("generated-source-tree", &sources);
+    let receipt = receipt_generated_project(&input)?;
+    let artifacts = empty_manifest(&receipt);
+    let store = OvenStore::new(
+        root.join("store"),
+        OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+    );
+    let artifact_root = root.join("artifacts");
+    fs::create_dir(&artifact_root)?;
+    let output = root.join("program");
+    let request = OvenTrustedDirectRustcTargetRequest {
+        receipt: &receipt,
+        artifacts: &artifacts,
+        artifact_root: &artifact_root,
+        artifact_plan: None,
+        rustc: &rustc,
+        source: &source,
+        output: &output,
+        crate_name: "generated_guard",
+        edition: "2024",
+        source_evidence_key: "generated-root",
+        features: &[],
+        // Keep this controlled compiler wrapper instead of the normalized sysroot executable.
+        prefer_dynamic: true,
+    };
+    fs::write(&sibling, "pub fn answer() -> u8 { 43 }\n")?;
+    let stale = executor::bake_trusted_direct_rustc_run_in_store_with_generated_sources(&request, &store, &input)
+        .err()
+        .ok_or("stale sibling accepted before native execution")?;
+    assert!(stale.to_string().contains("differs from its admitted receipt"));
+    for mode in ["changed", "restore"] {
+        fs::write(&sibling, original)?;
+        fs::write(&marker, mode)?;
+        let error = executor::bake_trusted_direct_rustc_run_in_store_with_generated_sources(&request, &store, &input)
+            .err()
+            .ok_or("native compilation published a changed sibling")?;
+        assert!(
+            error
+                .to_string()
+                .contains("generated source inputs changed during compilation"),
+            "{mode}: {error}"
+        );
+        assert!(!output.exists(), "refused result must not reach caller projection");
+        assert!(
+            store
+                .select_payloads_matching_for_execution(|_| true, |_, _| true)?
+                .is_empty(),
+            "refused result must not poison native output reuse"
+        );
+    }
+    fs::remove_file(&marker)?;
+    fs::write(&sibling, original)?;
+    let first = executor::bake_trusted_direct_rustc_run_in_store_with_generated_sources(&request, &store, &input)?;
+    assert!(!first.reused);
+    assert_eq!(Command::new(&output).output()?.stdout, b"42\n");
+    let second = executor::bake_trusted_direct_rustc_run_in_store_with_generated_sources(&request, &store, &input)?;
+    assert!(second.reused);
+    assert_eq!(first.output_digest, second.output_digest);
+    Ok(())
+}

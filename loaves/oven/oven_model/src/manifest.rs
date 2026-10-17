@@ -606,11 +606,11 @@ pub enum RustFactArtifactKind {
     Tree,
 }
 
-/// One regular file in a declared tree artifact.
+/// One regular file in a declared artifact tree or executable runtime closure.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactArtifactMember {
-    /// Portable path relative to the tree root.
+    /// Portable path relative to the containing tree or executable owner root.
     pub path: String,
     /// Exact member byte identity.
     pub digest: String,
@@ -657,6 +657,9 @@ pub struct RustFactExecutable {
     pub path: String,
     /// Exact executable byte identity.
     pub digest: String,
+    /// Sorted owner-relative regular files needed by the executable loader; their bytes enter the owner identity.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_files: Vec<RustFactArtifactMember>,
 }
 
 /// One ordered producer argument without a physical path.
@@ -2238,6 +2241,19 @@ fn validate_rust_fact_target(value: &str) -> Result<(), String> {
 fn validate_rust_fact_executable(executable: &RustFactExecutable) -> Result<(), String> {
     validate_rust_fact_name(&executable.name, "executable name")?;
     validate_rust_fact_path(&executable.path, "executable path")?;
+    if executable
+        .runtime_files
+        .windows(2)
+        .any(|pair| pair[0].path >= pair[1].path)
+    {
+        return Err("executable runtime_files must be sorted and unique".to_string());
+    }
+    for member in &executable.runtime_files {
+        validate_rust_fact_path(&member.path, "executable runtime file")?;
+        if !is_sha256_identity(&member.digest) {
+            return Err("executable runtime file has an invalid digest".to_string());
+        }
+    }
     if !is_sha256_identity(&executable.owner) {
         return Err("executable owner must be a `sha256:` identity".to_string());
     }
@@ -5866,6 +5882,7 @@ outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }
             name: "bindgen".to_string(),
             target: "aarch64-apple-darwin".to_string(),
             executable: Some(RustFactExecutable {
+                runtime_files: Vec::new(),
                 name: "bindgen".to_string(),
                 owner: digest.to_string(),
                 path: "bin/bindgen".to_string(),
@@ -6128,5 +6145,48 @@ outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }
                 RustVersionRequirement::parse("^1.0.0").unwrap_or_else(|error| panic!("{error}"))
             ))
         );
+    }
+}
+
+#[cfg(test)]
+mod publisher_runtime_tests {
+    use super::{RustFactArtifactMember, RustFactExecutable, validate_rust_fact_executable};
+
+    /// Old executable records round-trip without new fields; runtime authority is explicit, sorted and portable.
+    #[test]
+    fn executable_runtime_files_preserve_old_records_and_refuse_invalid_paths() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let identity = format!("sha256:{}", "a".repeat(64));
+        let old = serde_json::json!({"name":"cc", "owner":identity, "path":"bin/cc", "digest":identity});
+        let mut executable: RustFactExecutable = serde_json::from_value(old.clone())?;
+        assert!(executable.runtime_files.is_empty());
+        assert_eq!(serde_json::to_value(&executable)?, old);
+        executable.runtime_files = ["runtime/libc.so.6", "runtime/loader"]
+            .into_iter()
+            .map(|path| RustFactArtifactMember {
+                path: path.to_string(),
+                digest: identity.clone(),
+            })
+            .collect();
+        validate_rust_fact_executable(&executable)?;
+        assert_ne!(serde_json::to_value(&executable)?, old);
+        executable.runtime_files[0].digest = "sha256:invalid".to_string();
+        assert!(validate_rust_fact_executable(&executable).is_err());
+        for files in [
+            vec!["../escape"],
+            vec!["/absolute"],
+            vec!["runtime/lib", "runtime/lib"],
+            vec!["z", "a"],
+        ] {
+            executable.runtime_files = files
+                .into_iter()
+                .map(|path| RustFactArtifactMember {
+                    path: path.to_string(),
+                    digest: identity.clone(),
+                })
+                .collect();
+            assert!(validate_rust_fact_executable(&executable).is_err());
+        }
+        Ok(())
     }
 }

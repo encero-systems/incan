@@ -12,16 +12,16 @@ from std.fs import Path
 from std.json import parse
 from loaf_closure_exchange import resolve_snapshot
 from sdk_local_roots import host_roots
-
-# The triple both the selected target and the build host must name; the roots file states it explicitly.
-const SUPPORTED_TRIPLE: str = "aarch64-apple-darwin"
+from plan_json import text_field
 
 
 def lock(directory: str, names_file: str, cfg_file: str, roots_file: str, commit: str) -> Result[None, str]:
-    """Resolve the roots for the supported triple as both target and host, and print the resolution."""
+    """Resolve the explicitly declared native host and target using their retained cfg snapshot."""
     source = Path(roots_file).read_text("utf-8", "strict").map_err((e) => e.message())?
     # The roots document wraps the request array as `deps`, the same spelling an index line uses.
     document = parse(source).map_err((e) => e.message())?
+    target = text_field(document, "target", []).map_err((e) => e.message())?
+    host = text_field(document, "host", []).map_err((e) => e.message())?
     mut roots_array = ""
     mut requests = document.get("deps")
     match requests:
@@ -40,8 +40,8 @@ def lock(directory: str, names_file: str, cfg_file: str, roots_file: str, commit
         cfg_file,
         roots_array,
         commit,
-        SUPPORTED_TRIPLE,
-        SUPPORTED_TRIPLE,
+        target,
+        host,
         host_roots(document, roots_file)?,
         retain_refusals,
     )?

@@ -100,6 +100,59 @@ pub fn publisher_owner_closure<'a>(
     Ok(closure.into_values().collect())
 }
 
+/// Validate the portable runtime coordinate list without consulting a producer installation.
+pub fn validate_publisher_runtime_coordinates(
+    paths: &[oven_model::manifest::RustFactArtifactMember],
+) -> Result<(), PublisherOwnerIdentityError> {
+    if paths.windows(2).any(|pair| pair[0].path >= pair[1].path) {
+        return Err(PublisherOwnerIdentityError::InvalidToolchain(
+            "runtime files must be sorted and unique".to_string(),
+        ));
+    }
+    for member in paths {
+        validate_owner_path(&member.path)?;
+        if !oven_model::manifest::is_sha256_identity(&member.digest) {
+            return Err(PublisherOwnerIdentityError::InvalidToolchain(
+                "runtime file has an invalid digest".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve exact runtime files without following any owner-relative symlink or admitting a directory.
+///
+/// The caller includes these paths in the same executable owner identity before launch. Their recorded digests are
+/// checked through the existing Store observation mechanism before a virtual owner can adopt current installation
+/// state. This helper neither discovers loader dependencies nor invents additional read authority.
+pub fn publisher_runtime_files(
+    root: &Path,
+    paths: &[oven_model::manifest::RustFactArtifactMember],
+) -> Result<Vec<PathBuf>, PublisherOwnerIdentityError> {
+    validate_publisher_runtime_coordinates(paths)?;
+    let mut files = Vec::with_capacity(paths.len());
+    for member in paths {
+        let path = &member.path;
+        let metadata = virtual_toolchain::checked_metadata(root, path)?;
+        if !metadata.is_file() {
+            return Err(PublisherOwnerIdentityError::Special(root.join(path)));
+        }
+        let physical = root.join(path);
+        let (_, actual) =
+            crate::store::digest_regular_file(&physical).map_err(|error| PublisherOwnerIdentityError::Io {
+                path: physical.clone(),
+                source: std::io::Error::other(error),
+            })?;
+        if actual != member.digest {
+            return Err(PublisherOwnerIdentityError::InvalidToolchain(format!(
+                "runtime file {path} digest changed"
+            )));
+        }
+        files.push(physical);
+    }
+    Ok(files)
+}
+
 /// Build the canonical inventory and resolved closure in one filesystem walk.
 fn publisher_owner_inventory<'a>(
     root: &Path,
@@ -438,6 +491,64 @@ mod tests {
         assert_owner_fixture_observation(root.path(), "missing-file", &[])?;
         fs::rename(&owner, root.path().join("owner-moved"))?;
         assert_owner_fixture_observation(root.path(), "missing-root", &[])?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod runtime_file_tests {
+    use super::{fs, publisher_owner_identity, publisher_runtime_files};
+    use oven_model::manifest::RustFactArtifactMember;
+
+    /// Runtime changes alter the original owner identity; directories, traversal, duplicates and symlinks refuse.
+    #[test]
+    fn publisher_runtime_files_are_exact_regular_owner_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("cc"), b"compiler")?;
+        fs::write(root.path().join("runtime"), b"library")?;
+        let paths = vec![RustFactArtifactMember {
+            path: "runtime".to_string(),
+            digest: crate::digest_bytes(b"library"),
+        }];
+        assert_eq!(
+            publisher_runtime_files(root.path(), &paths)?,
+            vec![root.path().join("runtime")]
+        );
+        let initial = publisher_owner_identity(root.path(), ["cc", "runtime"])?;
+        fs::write(root.path().join("runtime"), b"changed")?;
+        assert!(publisher_runtime_files(root.path(), &paths).is_err());
+        assert_ne!(publisher_owner_identity(root.path(), ["cc", "runtime"])?, initial);
+        fs::write(root.path().join("runtime"), b"library")?;
+        assert_eq!(publisher_owner_identity(root.path(), ["cc", "runtime"])?, initial);
+        fs::create_dir(root.path().join("directory"))?;
+        for paths in [
+            vec!["directory".to_string()],
+            vec!["../escape".to_string()],
+            vec!["runtime".to_string(), "runtime".to_string()],
+        ] {
+            let members = paths
+                .into_iter()
+                .map(|path| RustFactArtifactMember {
+                    path,
+                    digest: crate::digest_bytes(b"library"),
+                })
+                .collect::<Vec<_>>();
+            assert!(publisher_runtime_files(root.path(), &members).is_err());
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("runtime", root.path().join("alias"))?;
+            assert!(
+                publisher_runtime_files(
+                    root.path(),
+                    &[RustFactArtifactMember {
+                        path: "alias".to_string(),
+                        digest: crate::digest_bytes(b"library")
+                    }]
+                )
+                .is_err()
+            );
+        }
         Ok(())
     }
 }

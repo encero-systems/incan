@@ -296,7 +296,7 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
         ));
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-sealed-provider-store-v2\0");
+    hasher.update(b"incan-sdk-sealed-provider-store-v3\0");
     hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
     hasher.update(incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(distribution_profile.as_bytes());
@@ -305,7 +305,8 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
     hasher.update(sdk_provider_compiler_digest(executable)?);
     let compiler_digest_ms = compiler_start.elapsed().as_secs_f64() * 1000.0;
     let source_start = Instant::now();
-    hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    let ordinary_locks = sealed_sdk_ordinary_lock_coordinates(stdlib_root)?;
+    hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &ordinary_locks, &mut hasher)?;
     let stdlib_source_hash_ms = source_start.elapsed().as_secs_f64() * 1000.0;
     let graph_start = Instant::now();
     if let Some(graph) = compiler_graph {
@@ -323,7 +324,7 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
             let root = source_root.join(relative);
             if root.is_dir() {
                 companion_roots += 1;
-                hash_sealed_sdk_source_tree(&root, &root, &mut hasher)?;
+                hash_sealed_sdk_source_tree(&root, &root, &BTreeSet::new(), &mut hasher)?;
             } else {
                 hasher.update(b"absent\0");
             }
@@ -360,24 +361,77 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Hash a portable SDK source tree while leaving Cargo metadata, build scripts, and generated targets inert.
-fn hash_sealed_sdk_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> ProviderResult<()> {
+/// Derive only the ordinary lock coordinates owned by unchanged compiler-registered standard declarations.
+///
+/// SDK resolution is sealed by sdk-lock.json, the selected native graph and native receipts, not these generated
+/// ordinary-package locks. Unknown declarations and nested lock files remain source inputs. Workspace discovery is
+/// the same canonical lock-owner policy used by ordinary publication; an external workspace lock is not projected.
+fn sealed_sdk_ordinary_lock_coordinates(stdlib_root: &Path) -> ProviderResult<BTreeSet<PathBuf>> {
+    let mut locks = BTreeSet::new();
+    for policy in incan_lang::lang::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES {
+        let project = stdlib_root.join(policy.source_directory);
+        let declaration = project.join("loaf.toml");
+        let metadata = match fs::symlink_metadata(&declaration) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(ProviderError::failure(error.to_string())),
+        };
+        if !metadata.is_file() {
+            return Err(ProviderError::failure(
+                "sealed SDK source tree contains a link or special file",
+            ));
+        }
+        let bytes = match fs::read(&declaration) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(ProviderError::failure(error.to_string())),
+        };
+        if bytes != policy.declaration.as_bytes() {
+            continue;
+        }
+        let workspace = oven_model::workspace::WorkspaceGraph::discover(&project)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let lock = workspace
+            .map(|workspace| workspace.root().join(oven_model::lock::LOCK_FILENAME))
+            .unwrap_or_else(|| project.join(oven_model::lock::LOCK_FILENAME));
+        if lock.starts_with(stdlib_root) {
+            locks.insert(lock);
+        }
+    }
+    Ok(locks)
+}
+
+/// Hash SDK source while leaving Cargo inputs, canonical ordinary locks and reserved mutable output inert.
+///
+/// Reserved output names follow the shared Oven policy and are never traversed, including relocated cache links.
+/// Only regular files at exact admitted ordinary lock coordinates are omitted; authored and lock symlinks refuse.
+fn hash_sealed_sdk_source_tree(
+    root: &Path,
+    current: &Path,
+    ordinary_locks: &BTreeSet<PathBuf>,
+    hasher: &mut Sha256,
+) -> ProviderResult<()> {
     let mut entries = fs::read_dir(current)
         .map_err(|error| ProviderError::failure(error.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        if matches!(
-            entry.file_name().to_str(),
-            Some("target" | "Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock" | "build.rs")
-        ) {
+        if oven_store::is_mutable_project_output_directory(&entry.path())
+            || matches!(
+                entry.file_name().to_str(),
+                Some("Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock" | "build.rs")
+            )
+        {
             continue;
         }
         let path = entry.path();
         let kind = entry
             .file_type()
             .map_err(|error| ProviderError::failure(error.to_string()))?;
+        if kind.is_file() && ordinary_locks.contains(&path) {
+            continue;
+        }
         let relative = path
             .strip_prefix(root)
             .map_err(|error| ProviderError::failure(error.to_string()))?;
@@ -385,7 +439,7 @@ fn hash_sealed_sdk_source_tree(root: &Path, current: &Path, hasher: &mut Sha256)
         hasher.update([0]);
         if kind.is_dir() {
             hasher.update(b"directory\0");
-            hash_sealed_sdk_source_tree(root, &path, hasher)?;
+            hash_sealed_sdk_source_tree(root, &path, ordinary_locks, hasher)?;
         } else if kind.is_file() {
             hasher.update(b"file\0");
             hasher.update(fs::read(&path).map_err(|error| ProviderError::failure(error.to_string()))?);
@@ -811,6 +865,140 @@ pub fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> ProviderRe
 mod tests {
     use super::*;
 
+    /// Generated ordinary publications do not rename an SDK; original authored/native/compiler inputs still do.
+    #[test]
+    fn sealed_sdk_identity_is_stable_across_standard_publication() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Equivalent fresh and locally prepared source checkouts ----
+        let root = tempfile::tempdir()?;
+        let stdlib = root.path().join("producer/loaves/stdlib");
+        let fresh = root.path().join("consumer/loaves/stdlib");
+        let policy = incan_lang::lang::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES
+            .iter()
+            .find(|policy| policy.package_name == "incan_stdlib_core")
+            .ok_or("missing registered Core declaration")?;
+        for source in [&stdlib, &fresh] {
+            fs::create_dir_all(source.join("core/src"))?;
+            fs::write(source.join("sdk-lock.json"), "sealed seed")?;
+            fs::write(source.join("core/loaf.toml"), policy.declaration)?;
+            fs::write(
+                source.join("core/src/lib.incn"),
+                "pub def value() -> int:\n    return 1\n",
+            )?;
+        }
+        let executable = root.path().join("incan");
+        fs::write(&executable, "original SDK publisher")?;
+        let receipts =
+            std::collections::BTreeMap::from([("core target []".into(), format!("sha256:{}", "1".repeat(64)))]);
+        let identity =
+            |source: &Path| sdk_provider_sealed_store_identity_with_graph(source, &executable, "full", &receipts, None);
+        let original = identity(&stdlib)?;
+        assert_eq!(original, identity(&fresh)?);
+
+        // ---- Actual canonical output coordinates are not authored SDK input ----
+        for relative in [
+            "core/.incan/oven/library-debug-receipt.json",
+            "core/target/lib/provider.incnlib",
+            "core/.ralph-cache/state",
+            "core/.git/index",
+        ] {
+            let path = stdlib.join(relative);
+            fs::create_dir_all(path.parent().ok_or("output needs parent")?)?;
+            fs::write(&path, "mutable producer output")?;
+            assert_eq!(
+                original,
+                identity(&stdlib)?,
+                "generated {relative} must not rename the SDK"
+            );
+        }
+        fs::write(stdlib.join("core/oven.lock"), "first ordinary publication")?;
+        assert_eq!(
+            original,
+            identity(&stdlib)?,
+            "the registered canonical lock has its own publication authority"
+        );
+        fs::write(stdlib.join("core/oven.lock"), "later ordinary publication")?;
+        assert_eq!(
+            identity(&fresh)?,
+            identity(&stdlib)?,
+            "fresh consumers must select the same SDK identity"
+        );
+
+        // ---- No filename-wide lock exclusion or stale publisher generation ----
+        fs::write(stdlib.join("core/src/oven.lock"), "authored nested input")?;
+        assert_ne!(original, identity(&stdlib)?);
+        fs::remove_file(stdlib.join("core/src/oven.lock"))?;
+        fs::write(stdlib.join("core/loaf.toml"), "changed declaration")?;
+        let changed_declaration = identity(&stdlib)?;
+        assert_ne!(original, changed_declaration);
+        fs::write(stdlib.join("core/oven.lock"), "unregistered lock change")?;
+        assert_ne!(
+            changed_declaration,
+            identity(&stdlib)?,
+            "a changed declaration cannot project away its lock"
+        );
+        fs::write(stdlib.join("core/loaf.toml"), policy.declaration)?;
+        assert_eq!(original, identity(&stdlib)?);
+        fs::write(&executable, "final receipt-bound SDK publisher")?;
+        assert_ne!(
+            original,
+            identity(&stdlib)?,
+            "the final compiler must publish its own SDK generation"
+        );
+        assert_eq!(identity(&fresh)?, identity(&stdlib)?);
+        Ok(())
+    }
+
+    /// Ignored output links are inert, while authored and canonical lock links remain refusals.
+    #[cfg(unix)]
+    #[test]
+    fn sealed_sdk_identity_refuses_authored_coordinate_symlinks() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Original authored source and compiler identity ----
+        let root = tempfile::tempdir()?;
+        let stdlib = root.path().join("loaves/stdlib");
+        fs::create_dir_all(stdlib.join("core"))?;
+        fs::write(stdlib.join("sdk-lock.json"), "sealed seed")?;
+        let policy = incan_lang::lang::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES
+            .iter()
+            .find(|policy| policy.package_name == "incan_stdlib_core")
+            .ok_or("missing registered Core declaration")?;
+        fs::write(stdlib.join("core/loaf.toml"), policy.declaration)?;
+        let executable = root.path().join("incan");
+        fs::write(&executable, "publisher")?;
+        let receipts =
+            std::collections::BTreeMap::from([("core target []".into(), format!("sha256:{}", "1".repeat(64)))]);
+        let identity = || sdk_provider_sealed_store_identity_with_graph(&stdlib, &executable, "full", &receipts, None);
+        let original = identity()?;
+        let outside = root.path().join("outside");
+        fs::create_dir(&outside)?;
+
+        // ---- Relocated build/cache output is never followed or admitted ----
+        for relative in ["core/target", "core/.incan"] {
+            std::os::unix::fs::symlink(&outside, stdlib.join(relative))?;
+            assert_eq!(
+                original,
+                identity()?,
+                "ignored {relative} must not become authored input"
+            );
+            fs::remove_file(stdlib.join(relative))?;
+        }
+
+        // ---- Authored input and a projected canonical lock cannot be replaced with links ----
+        fs::write(outside.join("bytes"), "external source")?;
+        for relative in ["core/lib.incn", "core/oven.lock", "core/loaf.toml"] {
+            if relative == "core/loaf.toml" {
+                fs::remove_file(stdlib.join(relative))?;
+            }
+            std::os::unix::fs::symlink(outside.join("bytes"), stdlib.join(relative))?;
+            let error = identity().err().ok_or("SDK source symlink was accepted")?;
+            assert!(
+                error.to_string().contains("symlink") || error.to_string().contains("link"),
+                "{error}"
+            );
+            fs::remove_file(stdlib.join(relative))?;
+        }
+        Ok(())
+    }
+
     /// Sealed publication ignores Cargo bytes and partitions identities on sources and native receipts.
     #[test]
     fn sealed_sdk_identity_uses_sources_and_native_receipts() -> Result<(), Box<dyn std::error::Error>> {
@@ -919,7 +1107,9 @@ mod tests {
 
         let error = match sdk_provider_builder_executable(None, utility) {
             Err(error) => error,
-            Ok(path) => return Err(format!("missing sibling CLI unexpectedly resolved to {}", path.display()).into()),
+            Ok(path) => {
+                return Err(format!("missing sibling CLI unexpectedly resolved to {}", path.display()).into());
+            }
         };
         assert!(error.message.contains("requires the incan CLI executable"));
         Ok(())

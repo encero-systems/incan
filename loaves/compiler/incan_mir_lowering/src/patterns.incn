@@ -1,6 +1,11 @@
-"""Checked primitive, tuple and source-local model pattern tests for direct-route match dispatch."""
+"""Checked primitive, tuple, source-local model and carrier pattern tests for direct-route match dispatch."""
 
-from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Constant as RustConstant, NominalPatternTarget
+from rust::incan_semantics_core::body_ir import (
+    Pattern as RustPattern,
+    Constant as RustConstant,
+    NominalPatternTarget,
+    OwnershipFact,
+)
 from pub::incan_mir_plan import (
     PlanType,
     Place,
@@ -16,6 +21,10 @@ from frame import Builder, temporary, place_type, read_place, literal, external_
 from tuples import tuple_fields, is_tuple_type
 from text_plan import owned_literal
 from layout_types import native_source_type as retained_type
+from enums import pattern_variant
+from unions import union_pattern_slot
+from options import intrinsic_pattern, variant_condition
+from numerics import numeric_constant
 
 
 pub def pattern_tests(
@@ -31,8 +40,19 @@ pub def pattern_tests(
         RustPattern.Wildcard => builder.finish(TerminatorKind.Goto(selected), span)
         RustPattern.Var(_binding) => builder.finish(TerminatorKind.Goto(selected), span)
         RustPattern.Literal(value) =>
+            # `None` names a carrier variant; every other literal compares a primitive value.
+            if value.clone() == RustConstant.None:
+                return carrier_tests(builder, source, pattern, selected, rejected, span)
             condition = literal_test(builder, source, value, span)?
             builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), rejected, selected), span)
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=_fields) =>
+            return carrier_tests(builder, source, pattern, selected, rejected, span)
+        RustPattern.Result(variant=_variant, fields=_fields) =>
+            return carrier_tests(builder, source, pattern, selected, rejected, span)
+        RustPattern.FieldlessEnumVariant(_target) =>
+            return carrier_tests(builder, source, pattern, selected, rejected, span)
+        RustPattern.UnionMember(ty=_ty, fields=_fields) =>
+            return carrier_tests(builder, source, pattern, selected, rejected, span)
         RustPattern.Tuple(items) =>
             ty = place_type(builder.locals, source)
             if not is_tuple_type(ty):
@@ -66,34 +86,140 @@ pub def pattern_tests(
     return Ok(None)
 
 
+pub def carrier_pattern_slot(builder: Builder, owner: int, pattern: &RustPattern) -> Result[int, str]:
+    """Select the variant a source enum, union, `Option` or `Result` pattern names; a wildcard names none (-1)."""
+    if owner < len(builder.enums):
+        return pattern_variant(builder.enums[owner], pattern)
+    declaration = builder.intrinsics[owner - len(builder.enums)]
+    if declaration.carrier == "":
+        return union_pattern_slot(builder.nominals, builder.enums, builder.unions, owner, pattern, builder.intrinsics)
+    return intrinsic_pattern(declaration, pattern)
+
+
+pub def carrier_payload_types(builder: Builder, owner: int, slot: int) -> Result[list[PlanType], str]:
+    """The declared payload types of one variant of a retained source enum or standard carrier."""
+    if owner < len(builder.enums):
+        mut types: list[PlanType] = []
+        for ty in builder.enums[owner].variants[slot].fields:
+            types.append(retained_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?)
+        return Ok(types)
+    return Ok(builder.intrinsics[owner - len(builder.enums)].variants[slot].fields)
+
+
+pub def has_refutable_payload(pattern: &RustPattern) -> bool:
+    """Report whether a carrier pattern tests more than its variant: a literal or a nested pattern in a payload, or an alternation."""
+    match pattern:
+        RustPattern.Or(_alternatives) => return true
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
+            return any_refutable(fields)
+        RustPattern.Result(variant=_variant, fields=fields) => return any_refutable(fields)
+        RustPattern.UnionMember(ty=_ty, fields=fields) => return any_refutable(fields)
+        _ => return false
+
+
+def any_refutable(fields: &list[RustPattern]) -> bool:
+    """Report whether any payload pattern can reject a value of its type."""
+    for field in fields:
+        match field:
+            RustPattern.Wildcard => pass
+            RustPattern.Var(_binding) => pass
+            _ => return true
+    return false
+
+
+def carrier_tests(
+    mut builder: Builder,
+    source: Place,
+    pattern: &RustPattern,
+    selected: int,
+    rejected: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Test a carrier pattern's variant, then each payload pattern against its projected payload, in order."""
+    mut owner = -1
+    match place_type(builder.locals, source):
+        PlanType.Enum(index, _name) =>
+            owner = index
+        _ => return Err("invalid Body IR carrier pattern scrutinee")
+    slot = carrier_pattern_slot(builder, owner, pattern)?
+    if slot < 0:
+        builder.finish(TerminatorKind.Goto(selected), span)
+        return Ok(None)
+    matched = builder.new_block(span)
+    condition = variant_condition(builder, source, slot, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, rejected, matched), span)
+    builder.current = matched
+    match pattern:
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
+            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+        RustPattern.Result(variant=_variant, fields=fields) =>
+            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+        RustPattern.UnionMember(ty=_ty, fields=fields) =>
+            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+        _ => builder.finish(TerminatorKind.Goto(selected), span)
+    return Ok(None)
+
+
+def payload_tests(
+    mut builder: Builder,
+    source: Place,
+    owner: int,
+    slot: int,
+    fields: &list[RustPattern],
+    selected: int,
+    rejected: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Test each payload pattern of a selected variant against its payload, rejecting at the first mismatch."""
+    types = carrier_payload_types(builder, owner, slot)?
+    if len(types) != len(fields):
+        return Err("invalid Body IR carrier pattern payload layout")
+    for index in range(len(fields)):
+        payload = appended_field(source, FieldProjection(slot=index, ty=types[index], variant=slot), span)?
+        next_payload = builder.new_block(span)
+        pattern_tests(builder, payload, fields[index], next_payload, rejected, span)?
+        builder.current = next_payload
+    builder.finish(TerminatorKind.Goto(selected), span)
+    return Ok(None)
+
+
 pub def pattern_binds(pattern: &RustPattern) -> bool:
     """Report whether any position of a pattern binds a name."""
+    return len(bound_in_place(pattern)) != 0
+
+
+pub def binds_in_place(pattern: &RustPattern) -> bool:
+    """Report whether a pattern binds a name its arm changes in place, as an exclusive borrow of the scrutinee."""
+    return true in bound_in_place(pattern)
+
+
+def bound_in_place(pattern: &RustPattern) -> list[bool]:
+    """For every name a pattern binds, in source order, whether the name borrows its part of the scrutinee exclusively."""
+    mut bound: list[bool] = []
     match pattern:
-        RustPattern.Var(_binding) => return true
-        RustPattern.Tuple(items) => return any_pattern_binds(items)
-        RustPattern.Or(alternatives) => return any_pattern_binds(alternatives)
+        RustPattern.Var(binding) => bound.append(binding.fact == OwnershipFact.MutBorrow)
+        RustPattern.Tuple(items) => bound.extend(all_bound_in_place(items))
+        RustPattern.Or(alternatives) => bound.extend(all_bound_in_place(alternatives))
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
-            return any_pattern_binds(fields)
-        RustPattern.Result(variant=_variant, fields=fields) => return any_pattern_binds(fields)
-        RustPattern.UnionMember(ty=_ty, fields=fields) => return any_pattern_binds(fields)
+            bound.extend(all_bound_in_place(fields))
+        RustPattern.Result(variant=_variant, fields=fields) => bound.extend(all_bound_in_place(fields))
+        RustPattern.UnionMember(ty=_ty, fields=fields) => bound.extend(all_bound_in_place(fields))
         RustPattern.Nominal(target=_target, fields=fields) =>
             for _name, field_pattern in fields:
-                if pattern_binds(field_pattern):
-                    return true
+                bound.extend(bound_in_place(field_pattern))
         RustPattern.Struct(canonical=_identity, name=_name, fields=fields) =>
             for _name, field_pattern in fields:
-                if pattern_binds(field_pattern):
-                    return true
+                bound.extend(bound_in_place(field_pattern))
         _ => pass
-    return false
+    return bound
 
 
-def any_pattern_binds(patterns: &list[RustPattern]) -> bool:
-    """Report whether any of several patterns binds a name."""
+def all_bound_in_place(patterns: &list[RustPattern]) -> list[bool]:
+    """Collect `bound_in_place` across several patterns, in order."""
+    mut bound: list[bool] = []
     for pattern in patterns:
-        if pattern_binds(pattern):
-            return true
-    return false
+        bound.extend(bound_in_place(pattern))
+    return bound
 
 
 pub def nominal_field(
@@ -144,6 +270,12 @@ def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span
         RustConstant.Bool(flag) =>
             constant = Constant.Bool(flag)
             expected = PlanType.Bool
+        RustConstant.TypedNumeric(number) =>
+            constant = numeric_constant(number)?
+            match constant:
+                Constant.Numeric(_spelling, carrier) =>
+                    expected = carrier
+                _ => return Err("unsupported Body IR nonprimitive numeric literal pattern")
         RustConstant.Unit => pass
         _ => return Err("unsupported Body IR nonprimitive literal pattern")
     if ty != expected:

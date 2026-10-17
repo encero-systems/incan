@@ -46,5 +46,5 @@ incan_test_support = { loaf = "incan_test_support", path = "../../../loaves/comp
 syn = { loaf = "crates-io/syn", version = "2.0", features = ["printing"] }
 byteorder = { loaf = "crates-io/byteorder", version = "1" }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8" }
-incan_std_core = { loaf = "incan_std_core", path = "../../../loaves/stdlib/core" }
+incan_stdlib_core = { loaf = "incan_stdlib_core", path = "../../../loaves/stdlib/core" }
 incan_derive = { loaf = "incan_derive", path = "../../../loaves/stdlib/derive/incan_derive" }

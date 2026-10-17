@@ -1,5 +1,5 @@
 {
-  "index_commit": "ee71d3e50de10d4fd7d8f817e0b1df04885bddb0",
+  "index_commit": "b0e8547d9fbd0a6a7e8db2686b76cf8a9472bd5f",
   "registry_lock": "compiler-suite-native-lock.json",
   "facets": [
     {
@@ -74,6 +74,11 @@
       "project": "../../loaves/compiler/incan_semantics_stdlib"
     },
     {
+      "project": "../../loaves/compiler/incan_test_support",
+      "domain": "target",
+      "features": []
+    },
+    {
       "domain": "target",
       "features": [
         "inspector"
@@ -134,12 +139,42 @@
       "project": "../../loaves/oven/oven_store"
     },
     {
-      "project": "../../loaves/compiler/incan_test_support",
       "domain": "target",
-      "features": []
+      "features": [],
+      "project": "../../loaves/stdlib/async"
     },
     {
-      "project": "../../loaves/toolchain/oven-cli",
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/core"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/data"
+    },
+    {
+      "domain": "host",
+      "features": [],
+      "project": "../../loaves/stdlib/derive/incan_derive"
+    },
+    {
+      "domain": "host",
+      "features": [],
+      "project": "../../loaves/stdlib/derive/incan_web_macros"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/testing"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/web"
+    },
+    {
+      "project": "../../loaves/toolchain/incan-cli",
       "domain": "target",
       "features": [
         "rust_inspect",
@@ -149,7 +184,7 @@
       ]
     },
     {
-      "project": "../../loaves/toolchain/incan-cli",
+      "project": "../../loaves/toolchain/oven-cli",
       "domain": "target",
       "features": [
         "rust_inspect",

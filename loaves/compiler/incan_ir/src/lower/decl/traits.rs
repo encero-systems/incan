@@ -44,9 +44,9 @@ impl AstLowering {
 
     /// Resolve a trait declaration to the canonical source callable role owned by `std.traits.callable`.
     ///
-    /// SDK component projects compile the contents of the public `std` namespace as crate-local module paths. Restore
-    /// that public mount only for the trusted provider-build boundary so a user package named `traits.callable` cannot
-    /// acquire compiler-managed callable behavior.
+    /// Standard source projects compile the public `std` namespace as crate-local module paths. Restore that mount
+    /// only when the existing provider plan owns the source module or the legacy SDK publisher boundary applies.
+    /// Installed namespace grants and same-named user modules cannot acquire compiler-managed callable behavior.
     fn source_callable_trait(&self, trait_name: &str) -> Option<callables::CallableTraitId> {
         let mut module_path = self
             .current_source_module_name
@@ -54,15 +54,19 @@ impl AstLowering {
             .split('.')
             .map(str::to_string)
             .collect::<Vec<_>>();
-        let internal_stdlib_source = module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE);
-        if self.sdk_provider_build || internal_stdlib_source {
-            if internal_stdlib_source {
-                // Normal Oven consumers re-emit compiler-owned provider source below the compiler-reserved
-                // `__incan_std` namespace. It has the same callable contract as the published Loaf fixture, even though
-                // the consumer itself must not acquire general SDK-provider lowering privileges.
-                module_path[0] = stdlib::STDLIB_ROOT.to_string();
-            } else if module_path.first().is_none_or(|segment| segment != stdlib::STDLIB_ROOT) {
-                module_path.insert(0, stdlib::STDLIB_ROOT.to_string());
+        if module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
+            // Normal Oven consumers re-emit compiler-owned provider source below the compiler-reserved
+            // `__incan_std` namespace without acquiring general SDK-provider lowering privileges.
+            module_path[0] = stdlib::STDLIB_ROOT.to_string();
+        } else if module_path.first().is_none_or(|segment| segment != stdlib::STDLIB_ROOT) {
+            module_path.insert(0, stdlib::STDLIB_ROOT.to_string());
+            if !self.sdk_provider_build
+                && !self
+                    .provider_plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.bootstrap_owns_sdk_module(&module_path))
+            {
+                return None;
             }
         }
         callables::module_path_matches(&module_path)

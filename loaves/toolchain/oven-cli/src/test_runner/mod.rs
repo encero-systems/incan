@@ -911,6 +911,9 @@ struct ActiveUnit {
     serial: bool,
 }
 
+/// Results from one scheduled unit, retaining its original index for stable report ordering.
+type CompletedExecutionUnit = (usize, Vec<(TestInfo, TestResult)>);
+
 /// Run one planned execution unit through the normal Oven native harness path.
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
@@ -1205,6 +1208,10 @@ fn batch_has_failure(results: &[(TestInfo, TestResult)]) -> bool {
 }
 
 /// Run planned execution units with a small resource-aware worker scheduler.
+///
+/// Workers can compile Incan harnesses, so they use the same stack contract as the compiler entrypoint (#2213).
+/// A failed worker startup stops new launches and drains existing workers before returning the error.
+/// A worker unwind likewise stops scheduling and is resumed on the caller after the other active workers finish.
 #[allow(clippy::too_many_arguments)]
 fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
@@ -1218,33 +1225,48 @@ fn run_scheduled_execution_units(
     no_capture: bool,
     verbose: bool,
     output: TestOutputSink,
-) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
-    // A single compilation batch has no parallel work. Keep it on the owner thread, avoiding a worker allocation
-    // and its smaller default stack when compiling a large imported Incan module graph.
+) -> CliResult<Vec<CompletedExecutionUnit>> {
+    let cargo_features = cargo_features.to_vec();
+    schedule_execution_units(units, jobs, stop_on_fail, move |unit| {
+        run_execution_unit(
+            unit,
+            &cargo_policy,
+            &cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+            &command_context,
+            no_capture,
+            verbose,
+            output.clone(),
+        )
+    })
+}
+
+/// Schedule the existing execution callback under the shared resource and worker limits.
+/// Every worker sends a terminal outcome, including an unwind; the first panic is resumed only after active work
+/// drains, preserving the inline compiler panic contract without treating a partially executed request as success.
+fn schedule_execution_units(
+    units: Vec<ExecutionUnit>,
+    jobs: usize,
+    stop_on_fail: bool,
+    execute: impl Fn(&ExecutionUnit) -> Vec<(TestInfo, TestResult)> + Send + Sync + 'static,
+) -> CliResult<Vec<CompletedExecutionUnit>> {
+    // A single compilation batch stays on the compiler-sized owner thread without another worker allocation.
     if jobs <= 1 || units.len() <= 1 {
         let mut completed = Vec::new();
         for unit in &units {
-            let results = run_execution_unit(
-                unit,
-                &cargo_policy,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
-                &command_context,
-                no_capture,
-                verbose,
-                output.clone(),
-            );
+            let results = execute(unit);
             let failed = batch_has_failure(&results);
             completed.push((unit.index, results));
             if stop_on_fail && failed {
                 break;
             }
         }
-        return completed;
+        return Ok(completed);
     }
 
     let total = units.len();
+    let execute = Arc::new(execute);
     let mut pending: Vec<Option<ExecutionUnit>> = units.into_iter().map(Some).collect();
     let (sender, receiver) = mpsc::channel();
     let mut active = Vec::new();
@@ -1252,6 +1274,9 @@ fn run_scheduled_execution_units(
     let mut launched = 0usize;
     let mut finished = 0usize;
     let mut stop_launching = false;
+    let mut spawn_error = None;
+    let mut worker_panic = None;
+    let mut workers = Vec::new();
 
     while finished < total {
         while !stop_launching && active.len() < jobs {
@@ -1266,10 +1291,7 @@ fn run_scheduled_execution_units(
                 break;
             };
             let sender = sender.clone();
-            let cargo_features = cargo_features.to_vec();
-            let cargo_policy = cargo_policy.clone();
-            let command_context = Arc::clone(&command_context);
-            let output = output.clone();
+            let execute = Arc::clone(&execute);
             active.push(ActiveUnit {
                 index: unit.index,
                 file_paths: unit.file_paths.clone(),
@@ -1278,40 +1300,74 @@ fn run_scheduled_execution_units(
             });
             launched += 1;
             let trace_parent = tracing::Span::current();
-            thread::spawn(move || {
-                let _parent = trace_parent.enter();
-                let unit_index = unit.index;
-                let results = run_execution_unit(
-                    &unit,
-                    &cargo_policy,
-                    &cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    &command_context,
-                    no_capture,
-                    verbose,
-                    output,
-                );
-                let _ = sender.send((unit_index, results));
-            });
+            let worker = thread::Builder::new()
+                .name(format!("incan-test-{}", unit.index))
+                .stack_size(incan_frontend::compiler_stack::compiler_stack_bytes())
+                .spawn(move || {
+                    let unit_index = unit.index;
+                    // Catch only to report completion and drain peers. No request resumes normal execution after
+                    // an unwind, so the callback's interior mutable state is never reused as a successful result.
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _parent = trace_parent.enter();
+                        execute(&unit)
+                    }));
+                    let _ = sender.send((unit_index, outcome));
+                });
+            match worker {
+                Ok(worker) => workers.push(worker),
+                Err(error) => {
+                    active.pop();
+                    launched -= 1;
+                    stop_launching = true;
+                    spawn_error = Some(error);
+                    break;
+                }
+            }
         }
 
         if active.is_empty() && launched == finished {
             break;
         }
 
-        let Ok((unit_index, results)) = receiver.recv() else {
+        let Ok((unit_index, outcome)) = receiver.recv() else {
             break;
         };
         finished += 1;
         active.retain(|unit| unit.index != unit_index);
-        if stop_on_fail && batch_has_failure(&results) {
-            stop_launching = true;
+        match outcome {
+            Ok(results) => {
+                if stop_on_fail && batch_has_failure(&results) {
+                    stop_launching = true;
+                }
+                completed.push((unit_index, results));
+            }
+            Err(payload) => {
+                stop_launching = true;
+                if worker_panic.is_none() {
+                    worker_panic = Some(payload);
+                }
+            }
         }
-        completed.push((unit_index, results));
     }
 
-    completed
+    // Completion precedes destruction of the worker's captured owners. Join before returning or resuming a panic
+    // so no original lease or output callback remains active beyond this request's scheduler boundary.
+    for worker in workers {
+        if let Err(payload) = worker.join()
+            && worker_panic.is_none()
+        {
+            worker_panic = Some(payload);
+        }
+    }
+    if let Some(payload) = worker_panic {
+        std::panic::resume_unwind(payload);
+    }
+    match spawn_error {
+        Some(error) => Err(CliError::failure(format!(
+            "could not start test compilation worker: {error}"
+        ))),
+        None => Ok(completed),
+    }
 }
 
 /// Owned collection inputs carried by the existing owner transport; no compiler authority crosses the socket.
@@ -1809,7 +1865,7 @@ pub(crate) fn execute_tests_with_owner(
         no_capture,
         verbose,
         output.clone(),
-    );
+    )?;
     if verbose {
         output.progress(TestProgress::ExecutionCompleted {
             elapsed: start_time.elapsed(),
@@ -2051,6 +2107,7 @@ pub(crate) fn render_test_report(
 
 #[cfg(test)]
 mod tests {
+    mod envelope_paths;
     mod scheduling;
 
     use super::*;

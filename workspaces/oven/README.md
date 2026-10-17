@@ -9,6 +9,7 @@ The Incan-authored half of Oven: the decisions a bake makes before any compiler 
 - **Native compilation** (`native_compilation.incn`): projects the checked native inputs of one compilation — command sections, once-only options, input digests — while keeping physical admission and compilation provenance the host's; it discovers nothing and holds no graph.
 - **Rust dependency activation** (`rust_source.incn`, `rust_activation.incn`, `rust_graph.incn`): reads dependency catalogs, evaluates `cfg` predicates and version requirements per unit, and propagates feature demands across the graph to a fixed point, keeping host and target activation separate. Authenticated roots carry the requested features, default-feature choice and declaration owner; physical units carry only their observed effective features, and source ownership remains a separate host-validated fact.
 - **Invocation** (`invocation.incn`): turns the CLI flags and environment observations a command was given into the set of restrictions it runs under (locked, frozen, offline and their implications). It reads nothing itself, and a decision admits no lock, plan, network action or publication.
+- **Lock preparation** (`lock_preparation.incn`): selects canonical fallback, reuse, publication and retention from the original owner's observations. An unchanged request and source must retain current discovery and published bytes; unavailable or racing evidence cannot be retained. The host owns physical observation, the original session and execution of the selected operation.
 
 `lib.incn` is the public facade and re-exports the host-facing functions.
 
@@ -24,8 +25,19 @@ The host and this project exchange JSON documents. The schemas this source curre
 | `incan.oven.rust-policy-exchange/5` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection, including authority-bound root intent and toolchain-bound sysroot externs, typed environment, generated-member and linked-library closure evidence; return exhaustive activations, derived default-feature demands, source inventories and inert-script warnings |
 | `incan.oven.loaf-resolution/1` | `loaf_resolve.incn` | source-selection projection: `units` in deterministic Loaf/domain order; each unit contains `loaf`, `version`, `archive_digest`, `domain` (`host` or `target`), sorted `features`, and `target_predicates` (declaration index, target expression, and boolean match). This projection is not a trust admission. |
 | `incan.oven.loaf-closure-request/1` | `loaf_closure_exchange.incn` | source dispatch for a pinned snapshot: `pin`, `index_commit`, `names`, `cfg`, index-spelled `roots`, `target` and `host`; returns the shared standalone lock driver's resolution or a refusal with `status` and `reason`. Host staging must extract committed index bytes rather than copy the worktree. The CLI currently requires `--lock` because the engine cannot bake without sealed Rust inspection authority. |
+| `incan.oven.lock-preparation/1` | `lock_preparation.incn` | `route`, `reuse` or `retain` phase with complete typed facts; returns one action bound to the SHA-256 of the exact request, or a refusal. The host retains original capabilities and verifies physical observations across the exchange. |
 
-Every wire field is required; an unknown or absent field is a refusal, not a default. A refusal carries a stable `kind` and `fields` path, and may add a `detail` naming the rule that refused; the detail is prose for the operator holding a retained exchange, never something a host branches on.
+Each schema defines its required fields and conditional response fields. Request decoders reject unknown or missing required fields rather than supplying defaults. Refusal envelopes differ by schema:
+
+| Schema family | Refusal response |
+| --- | --- |
+| `incan.oven.selection`, `incan.oven.source-unit-batch` | `status: "refused"` with an `error` object containing stable `kind` and `fields`. |
+| `incan.oven.native-compilation/2` | `status: "refused"` with a `fields` path. |
+| `incan.oven.rust-policy-exchange/5` | `status: "refused"` with an `error` object containing stable `kind`, `fields`, and optional `detail`. |
+| `incan.oven.loaf-closure-request/1` | `schema`, `status: "refused"`, and `reason`. |
+| `incan.oven.lock-preparation/1` | `schema`, `request_digest`, `status: "refused"`, and `reason`. A successful response instead has `status: "selected"` and `action`, with no `reason`. |
+
+Lock-preparation responses bind `request_digest` to the SHA-256 of the exact request bytes, including refused requests. `reason` and `detail` are explanatory text for the operator; hosts dispatch on the schema's structured status, action or error kind rather than those prose strings.
 
 ## Layout
 
@@ -66,7 +78,7 @@ The two focused test commands exercise the Rust graph policy and its strict exch
 
 ## Resolver index pin and policy boundaries
 
-`loaf_lock_main` accepts `PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE INDEX_COMMIT`. Its index pin is always caller-supplied, and the staged `revision` must match. SDK root documents use `deps` and optional local `host-projects`; closure root documents use `roots` and retain named refusals while resolving admitted roots together.
+`loaf_lock_main` accepts `PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE INDEX_COMMIT`. Its index pin is always caller-supplied, and the staged `revision` must match. The roots document must name explicit `target` and `host` triples. This transport accepts native resolution only: both triples must match and own the supplied cfg snapshot. It does not reuse one cfg snapshot for cross-compilation. SDK root documents use `deps` and optional local `host-projects`; closure root documents use `roots` and retain named refusals while resolving admitted roots together.
 
 `loaf_pin.pinned_revision()` selects incan.pub revision `6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87` from `index`. The pin audit drivers require a caller-owned immutable extraction whose `revision` file names that revision; the marker is a selection check, not an integrity attestation. `read_index` continues to accept explicit fixture directories for tests. Neither driver changes the registry checkout or reads upstream package metadata.
 

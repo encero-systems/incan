@@ -50,6 +50,31 @@ pub(crate) fn inspect_bindings(request: crate::binding_inspect::BindingInspectio
     }
 }
 
+/// Explicit lock preparation transported without duplicating the driver's selection model.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LockIntent {
+    lock: incan_driver::build::lock_preparation::LockPreparationRequest,
+}
+
+/// Submit lock preparation to the existing owner; non-Unix uses the same operation in process.
+pub(crate) fn prepare_lock(request: incan_driver::build::lock_preparation::LockPreparationRequest) -> CliResult<()> {
+    #[cfg(unix)]
+    {
+        let result = unix::submit(
+            &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
+            serde_json::to_value(LockIntent { lock: request }).map_err(|error| CliError::failure(error.to_string()))?,
+            |_| {},
+            None,
+        )?;
+        serde_json::from_value(result).map_err(|error| CliError::failure(error.to_string()))
+    }
+    #[cfg(not(unix))]
+    {
+        incan_driver::build::executable::ExecutableBuildOwner::default().prepare_lock(&request)
+    }
+}
+
 /// One metadata-only check addressed to the same compatible project owner as build and test.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

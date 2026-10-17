@@ -896,6 +896,55 @@ mod tests {
                 .filter_map(Result::ok)
                 .any(|entry| entry.file_name().to_string_lossy().contains("staging"))
         );
+
+        // An explicitly selected compiler facet is required even when every mandatory provider could publish.
+        let graph = checkout.join("compiler-graph.json");
+        fs::write(
+            &graph,
+            serde_json::to_vec(&serde_json::json!({
+                "index_commit": "0000000000000000000000000000000000000000",
+                "registry_lock": "loaves/stdlib/sdk-lock.json",
+                "facets": [{"project": "loaves/kernel/incan_lang", "features": [], "domain": "target"}]
+            }))?,
+        )?;
+        let mut graph_inputs = inputs;
+        graph_inputs.compiler_graph = Some(graph);
+        let required_source = checkout.join("loaves/kernel/incan_lang/src/lib.rs");
+        let original_source = fs::read(&required_source)?;
+        fs::write(&required_source, "compile_error!(\"required compiler facet failure\");")?;
+        let refused = prepare_native_sdk_provider_inventory(publication(), &graph_inputs, |_, output, _, _| {
+            fs::create_dir_all(output).map_err(|error| ProviderError::failure(error.to_string()))?;
+            LibraryManifest::new("fixture", "1.0.1")
+                .write_to_path(&output.join("fixture.incnlib"))
+                .map_err(|error| ProviderError::failure(error.to_string()))
+        });
+        fs::write(&required_source, original_source)?;
+        let failure = refused.err().ok_or("missing required compiler facet was published")?;
+        assert!(failure.to_string().contains("required compiler native facets failed"));
+        assert_eq!(previous_hint, fs::read(store.join(".sealed-native-receipts.json"))?);
+        let failure_report: serde_json::Value =
+            serde_json::from_slice(&fs::read(graph_inputs.output.join("closure-report.json"))?)?;
+        assert!(
+            failure_report["failed"]
+                .as_array()
+                .is_some_and(|failures| !failures.is_empty())
+        );
+
+        // Repairing the failed input retries the native closure and publishes a fresh receipt-bound generation.
+        let recovered =
+            prepare_native_sdk_provider_inventory(publication(), &graph_inputs, |_, output, _, closure| {
+                assert_eq!(closure.units().len(), 4);
+                fs::create_dir_all(output).map_err(|error| ProviderError::failure(error.to_string()))?;
+                LibraryManifest::new("fixture", "1.0.1")
+                    .write_to_path(&output.join("fixture.incnlib"))
+                    .map_err(|error| ProviderError::failure(error.to_string()))
+            })?;
+        assert_ne!(first.root, recovered.root);
+        assert_eq!(
+            crate::sdk_native::retain_sdk_native_artifacts(&recovered.root)?.len(),
+            4
+        );
+        assert!(first.root.join(SDK_INVENTORY_FILE).is_file());
         Ok(())
     }
 

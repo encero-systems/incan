@@ -9,6 +9,10 @@ use std::time::Instant;
 
 mod current_plans;
 pub(crate) mod metadata_replay;
+mod standard_dependencies;
+mod standard_preparation;
+pub(crate) mod standard_vocabulary;
+pub use standard_preparation::prepare_standard_packages;
 
 use sha2::Sha256;
 
@@ -19,8 +23,8 @@ use crate::build::caller_facet::CallerFacetRequest;
 use crate::build::caller_owned::append_oven_interop_execution_build_inputs;
 use crate::build::library_exports::{
     LibraryReexportResolver, collect_library_rust_abi_query_paths, collect_library_rust_abi_with_shipped,
-    library_rust_abi_source_queries, module_key, public_ordinal_type_identities, resolve_library_project_root,
-    validate_library_entrypoint,
+    collect_ordinary_library_rust_abi_query_paths, library_rust_abi_source_queries, module_key,
+    public_ordinal_type_identities, resolve_library_project_root, validate_library_entrypoint,
 };
 use crate::build::library_outputs::{
     dependency_artifact_skips_canonical_lock, library_output_path, library_rust_inspection_required,
@@ -130,6 +134,68 @@ struct CheckedPublicLibraryMetadata {
     stdlib_cache: StdlibAstCache,
     #[cfg(feature = "rust_inspect")]
     rust_metadata_queries: BTreeSet<String>,
+}
+
+/// Load referenced immutable values and nominal layouts from the already selected executable artifacts.
+///
+/// Checked manifests supply types and callable signatures, but constant values and field defaults belong to their
+/// executable records. Only providers that publish that representation enter this context; a linking-only provider
+/// remains a canonical external reference, never an excuse to discover its source. The existing resolver owns public
+/// membership, dependency closure and physical digest checks. Explicitly uncovered requested types contribute no
+/// context; their native linking route remains available without granting executable coverage. Context is not
+/// republished as this library's bodies.
+fn checked_dependency_executable_context(
+    plan: &incan_provider::ProviderPlan,
+    checked: &BTreeMap<PathBuf, typechecker::TypeCheckInfo>,
+    current_package: &str,
+) -> CliResult<Vec<incan_semantics_core::body_ir::BodyIrModule>> {
+    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+    let published = plan
+        .public_artifacts()
+        .filter(|artifact| artifact.manifest.contract_metadata.executable_representation.is_some())
+        .map(|artifact| artifact.identity.name.as_str())
+        .chain(plan.active_sdk_records().filter_map(|record| {
+            record
+                .manifest
+                .as_ref()?
+                .contract_metadata
+                .executable_representation
+                .as_ref()?;
+            Some(record.identity.name.as_str())
+        }))
+        .collect::<BTreeSet<_>>();
+    let required = checked
+        .values()
+        .flat_map(|info| {
+            info.references
+                .resolved_identities
+                .values()
+                .chain(info.declarations.resolved_import_identities.values())
+                .chain(info.declarations.named_type_identities.values())
+                .chain(
+                    info.expressions
+                        .expression_type_identities
+                        .values()
+                        .flat_map(|leaves| leaves.values()),
+                )
+        })
+        .filter(|identity| {
+            matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Const
+                    | SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Newtype
+                    | SemanticSourceTargetKind::TypeAlias
+            ) && matches!(&identity.origin, SymbolOrigin::Package { library, .. }
+                    if library != current_package && published.contains(library.as_str()))
+        })
+        .cloned()
+        .collect();
+    incan_frontend::executable_resolution::resolve_available_executable_context(plan, &required)
+        .map(|resolved| resolved.modules)
+        .map_err(|error| CliError::failure(format!("checked library dependency representation: {error}")))
 }
 
 /// Check the selected package projection once and retain only its public export contract.
@@ -531,7 +597,8 @@ pub fn prepare_library_project_with_caller_facet(
 /// The original native request is shared with the consumer, never prepared again. Core owns its source publication;
 /// consumers retain its exact checked metadata/generation and independently source-bound namespace issuer. Existing
 /// completed-output reuse skips publication only after the original Store, source and preparation checks pass.
-fn prepare_core_checked_dependency(
+#[cfg(test)]
+pub(super) fn prepare_core_checked_dependency(
     source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
     native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
     target: &str,
@@ -572,14 +639,14 @@ fn prepare_core_checked_dependency(
         let input = AdmittedLibraryPreparation::with_ordinary_native(session, native)?;
         super::bake::bake_admitted_library(&input, &features, Some(target))?;
     }
-    select_core_checked_dependency(source)
+    select_standard_checked_dependency(source)
 }
 
-/// Select an already published core loaf through the original namespace issuer and exact handoff bytes.
+/// Select an already published standard Loaf through the original namespace issuer and exact handoff bytes.
 ///
 /// Publication and metadata-only consumers share this boundary. Missing or stale publications refuse through the
 /// same checked dependency admission; selection never prepares native inputs or publishes a replacement.
-fn select_core_checked_dependency(
+fn select_standard_checked_dependency(
     source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
 ) -> CliResult<super::library_dependencies::LibraryDependencyInput> {
     let root = source
@@ -652,6 +719,15 @@ fn ordinary_library_session(
 /// The configured ordinary route requires existing publications matching the host target, toolchain and resolved
 /// features. Failures propagate; only an unconfigured toolchain or a manifest-free source uses the existing reader.
 pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Option<CompilationSession>> {
+    discover_ordinary_dependency_session(entry, &FeatureSelection::default())
+}
+
+/// Select the original checked package owners for a consumer's exact feature projection.
+/// This is shared by metadata and executable consumers; native profiles are selected separately by the latter.
+pub(crate) fn discover_ordinary_dependency_session(
+    entry: &Path,
+    package_features: &FeatureSelection,
+) -> CliResult<Option<CompilationSession>> {
     if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none() {
         return Ok(None);
     }
@@ -659,8 +735,7 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
     let Some(manifest) = discover_effective_project_manifest(&root)? else {
         return Ok(None);
     };
-    let package_features = FeatureSelection::default();
-    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, &package_features)
+    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, package_features)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
@@ -672,15 +747,9 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
                 CliError::failure("ordinary metadata inspection requires compiler-owned core publication")
             })?,
     );
-    let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-    let core_root = core_source
-        .verified_package_root()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let namespaces = if root == core_root {
-        Vec::new()
-    } else {
-        vec![select_core_checked_dependency(Arc::clone(&core_source))?]
-    };
+    let namespaces =
+        standard_dependencies::StandardDependencies::new(Arc::clone(&core_source), None, &target, &toolchain)
+            .for_entry(&manifest, entry, package_features)?;
     let dependencies = Arc::new(
         super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
             &features,
@@ -690,7 +759,7 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
             *open_default_oven_store()?.limits(),
         )?,
     );
-    ordinary_library_session(&manifest, entry, &package_features, dependencies, core_source).map(Some)
+    ordinary_library_session(&manifest, entry, package_features, dependencies, core_source).map(Some)
 }
 
 /// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
@@ -719,6 +788,17 @@ impl AdmittedLibraryPreparation {
         package_features: &FeatureSelection,
         requested_target: Option<&str>,
     ) -> CliResult<Option<Self>> {
+        Self::discover_ordinary_native_for_entry(manifest, package_features, requested_target, None)
+    }
+
+    /// Admit the complete explicit-bake target family while retaining its actual dependency-surface entry.
+    /// Library-only callers keep their existing source issuer; executable and script callers do not require a library.
+    pub(crate) fn discover_ordinary_native_for_entry(
+        manifest: &oven_model::manifest::ProjectManifest,
+        package_features: &FeatureSelection,
+        requested_target: Option<&str>,
+        project_entry: Option<&Path>,
+    ) -> CliResult<Option<Self>> {
         let Some(inputs) = super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()? else {
             return Ok(None);
         };
@@ -730,8 +810,6 @@ impl AdmittedLibraryPreparation {
             None => rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?,
         };
         let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-        let features = incan_provider::PackageFeaturePlan::resolve(manifest, package_features)
-            .map_err(|error| CliError::failure(error.to_string()))?;
         let output = manifest.project_root().join("target/oven/ordinary-library-native");
         let native = Arc::new(super::ordinary_library_native::OrdinaryLibraryNativeProfiles::prepare(
             super::ordinary_library_native::OrdinaryLibraryNativeRequest {
@@ -745,6 +823,41 @@ impl AdmittedLibraryPreparation {
                 profiles: &explicit_bake_profiles(),
             },
         )?);
+        Self::from_prepared_ordinary_native_for_entry(
+            manifest,
+            package_features,
+            &target,
+            &toolchain,
+            native,
+            project_entry,
+        )
+        .map(Some)
+    }
+
+    /// Share a genuinely completed native request while selecting each package's own checked dependency session.
+    /// This is the same admission path used by discovery; explicit toolchain preparation supplies no substitute
+    /// namespace, source, metadata or physical authority.
+    fn from_prepared_ordinary_native(
+        manifest: &oven_model::manifest::ProjectManifest,
+        package_features: &FeatureSelection,
+        target: &str,
+        toolchain: &str,
+        native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+    ) -> CliResult<Self> {
+        Self::from_prepared_ordinary_native_for_entry(manifest, package_features, target, toolchain, native, None)
+    }
+
+    /// Select all declared target namespaces for an explicit project while keeping original native/profile authority.
+    fn from_prepared_ordinary_native_for_entry(
+        manifest: &oven_model::manifest::ProjectManifest,
+        package_features: &FeatureSelection,
+        target: &str,
+        toolchain: &str,
+        native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+        project_entry: Option<&Path>,
+    ) -> CliResult<Self> {
+        let features = incan_provider::PackageFeaturePlan::resolve(manifest, package_features)
+            .map_err(|error| CliError::failure(error.to_string()))?;
         let core_source = Arc::new(
             incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover("incan_stdlib_core")
                 .map_err(|error| CliError::failure(error.to_string()))?
@@ -752,33 +865,32 @@ impl AdmittedLibraryPreparation {
                     CliError::failure("ordinary preparation requires compiler-owned core publication source")
                 })?,
         );
-        let root =
-            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-        let core_root = core_source
-            .verified_package_root()
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        let namespaces = if root == core_root {
-            Vec::new()
+        let mut standard = standard_dependencies::StandardDependencies::new(
+            Arc::clone(&core_source),
+            Some(Arc::clone(&native)),
+            target,
+            toolchain,
+        );
+        let namespaces = if project_entry.is_some() {
+            standard.for_project(manifest, package_features)?
         } else {
-            vec![prepare_core_checked_dependency(
-                Arc::clone(&core_source),
-                Arc::clone(&native),
-                &target,
-                &toolchain,
-            )?]
+            standard.for_library(manifest, package_features)?
         };
         let dependencies = Arc::new(
             super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
                 &features,
                 namespaces,
-                &target,
-                &toolchain,
+                target,
+                toolchain,
                 *open_default_oven_store()?.limits(),
             )?,
         );
-        let entry = validate_library_entrypoint(manifest)?;
+        let entry = match project_entry {
+            Some(entry) => entry.to_path_buf(),
+            None => validate_library_entrypoint(manifest)?,
+        };
         let session = ordinary_library_session(manifest, &entry, package_features, dependencies, core_source)?;
-        Self::with_ordinary_native(session, native).map(Some)
+        Self::with_ordinary_native(session, native)
     }
 
     /// Retain actual admitted dependencies and the original native admission without discovering an SDK.
@@ -814,6 +926,7 @@ impl AdmittedLibraryPreparation {
             .admitted_library_dependencies()
             .ok_or_else(|| CliError::failure("ordinary native preparation requires admitted language dependencies"))?
             .verify()?;
+        let native = native.for_session(&session)?;
         native.verify()?;
         Ok(Self {
             session,
@@ -835,6 +948,24 @@ impl AdmittedLibraryPreparation {
             AdmittedLibraryNative::TemporarySdk(native) => native.verify(),
             AdmittedLibraryNative::Ordinary(native) => native.verify(),
         }
+    }
+
+    /// Retain a separately produced vocabulary in this exact source session's existing native context.
+    fn with_prepared_vocabulary(
+        mut self,
+        vocabulary: Arc<standard_vocabulary::PreparedStandardVocabulary>,
+    ) -> CliResult<Self> {
+        vocabulary.verified_declaration_for_plan(self.session.provider_plan())?;
+        let native = self
+            .ordinary_native()
+            .ok_or_else(|| CliError::failure("standard vocabulary requires ordinary native publication"))?;
+        self.native = AdmittedLibraryNative::Ordinary(native.retaining_vocabulary(vocabulary)?);
+        Ok(self)
+    }
+
+    /// Forward the original explicit vocabulary producer across the canonical metadata lock transition.
+    pub(crate) fn prepared_vocabulary(&self) -> Option<&Arc<standard_vocabulary::PreparedStandardVocabulary>> {
+        self.ordinary_native().and_then(|native| native.prepared_vocabulary())
     }
 
     /// Borrow the original admitted session for the invoking publisher's source/lock finalization boundary.
@@ -1186,11 +1317,12 @@ fn prepare_library_project_with_context(
         && !cargo_all_features
     {
         if let Some(native) = &ordinary_native {
-            metadata_replay::MetadataPreparation::observe_with_ordinary_native_authority(
+            metadata_replay::MetadataPreparation::observe_with_ordinary_native_vocabulary(
                 &manifest,
                 &compilation_session,
                 &out_dir,
                 Arc::clone(native.metadata()),
+                admitted.and_then(|input| input.prepared_vocabulary().cloned()),
             )?
         } else {
             metadata_replay::MetadataPreparation::observe_with_native_context(
@@ -1362,7 +1494,11 @@ fn prepare_library_project_with_context(
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
-    let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
+    let metadata_query_paths = if ordinary_native.is_some() {
+        collect_ordinary_library_rust_abi_query_paths(&modules, &rust_extern_contexts, &provider_plan)?
+    } else {
+        collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts)
+    };
     #[cfg(feature = "rust_inspect")]
     let inspection_query_paths =
         library_rust_abi_source_queries(&metadata_query_paths, provider_plan.library_manifest_index());
@@ -1377,10 +1513,11 @@ fn prepare_library_project_with_context(
             &provider_plan,
             &metadata_query_paths.iter().cloned().collect(),
         )?
-        .require_ordinary_source_inspection(
+        .require_ordinary_source_inspection_with_vocabulary(
             compilation_session
                 .admitted_library_dependencies()
                 .map(|owners| (owners.as_ref(), provider_plan.as_ref())),
+            admitted.and_then(|input| input.prepared_vocabulary().map(Arc::as_ref)),
         )
         .map_err(|error| CliError::failure(format!("ordinary pre-check source demands: {}", error.message)))?;
         if include_interop_execution {
@@ -1704,9 +1841,13 @@ fn prepare_library_project_with_context(
         .unwrap_or_default();
     let manifest_start = Instant::now();
     #[cfg(feature = "rust_inspect")]
+    let checked_rust_metadata_queries = public_metadata.rust_metadata_queries;
+    #[cfg(not(feature = "rust_inspect"))]
+    let checked_rust_metadata_queries = BTreeSet::new();
+    #[cfg(feature = "rust_inspect")]
     let metadata_query_paths = metadata_query_paths
         .into_iter()
-        .chain(public_metadata.rust_metadata_queries)
+        .chain(checked_rust_metadata_queries.iter().cloned())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -1717,21 +1858,27 @@ fn prepare_library_project_with_context(
     let project_license = manifest.project.as_ref().and_then(|project| project.license.clone());
     std::fs::create_dir_all(&out_dir)
         .map_err(|error| CliError::failure(format!("failed to create {}: {error}", out_dir.display())))?;
+    let mut executable_context =
+        checked_dependency_executable_context(&provider_plan, &checked_type_info_by_path, &project_name)?;
     let executable_modules = modules
         .iter()
         .map(|module| {
             let type_info = checked_type_info_by_path
                 .get(&module.file_path)
                 .ok_or_else(|| CliError::failure("checked library module facts are missing"))?;
-            Ok(incan_frontend::body_ir::build_body_ir_module_v0(
+            incan_frontend::body_ir::build_body_ir_module_v0_with_checked_sources(
                 &module.ast,
                 &module.path_segments,
                 type_info,
-            ))
+                &executable_context,
+                &stdlib_cache,
+            )
+            .map_err(CliError::failure)
         })
         .collect::<CliResult<Vec<_>>>()?;
     let public_identities =
         incan_frontend::library_manifest::published_layout::public_executable_identities(&library_manifest);
+    executable_context.extend(executable_modules);
     // Sibling-module immutable values belong to the same declaring compilation. Retain their canonical context
     // before projecting bodies, so a public import is not downgraded to an unsupported global-storage read.
     let executable_modules = modules
@@ -1740,14 +1887,14 @@ fn prepare_library_project_with_context(
             let type_info = checked_type_info_by_path
                 .get(&module.file_path)
                 .ok_or_else(|| CliError::failure("checked library module facts are missing"))?;
-            Ok(
-                incan_frontend::body_ir::build_body_ir_module_v0_with_executable_context(
-                    &module.ast,
-                    &module.path_segments,
-                    type_info,
-                    &executable_modules,
-                ),
+            incan_frontend::body_ir::build_body_ir_module_v0_with_checked_sources(
+                &module.ast,
+                &module.path_segments,
+                type_info,
+                &executable_context,
+                &stdlib_cache,
             )
+            .map_err(CliError::failure)
         })
         .collect::<Result<Vec<_>, CliError>>()?;
     // A published body is unrepresentable when Body IR has a gap in it, not when one consumer cannot execute it: what
@@ -1772,11 +1919,14 @@ fn prepare_library_project_with_context(
             content_digest: hex::encode(Sha256::digest(&executable_surface)),
         });
 
+    let publication_dependencies = native_sdk
+        .map(|context| compilation_session.native_sdk_publication_dependency_index(context.inventory, context.catalog))
+        .transpose()?;
     library_manifest.contract_metadata.provider = compiled_provider_metadata(CompiledProviderMetadataInputs {
         manifest: &manifest,
         feature_plan: &package_feature_plan,
         provider_plan: &provider_plan,
-        library_manifest_index: &library_manifest_index,
+        library_manifest_index: publication_dependencies.as_ref().unwrap_or(&library_manifest_index),
         artifact_root: &out_dir,
         modules: &provider_metadata_modules,
         active_library_entrypoint: lib_module,
@@ -1855,6 +2005,7 @@ fn prepare_library_project_with_context(
                 &modules,
                 lib_module,
                 &metadata_query_paths,
+                &checked_rust_metadata_queries,
                 None,
             );
             match contract {
@@ -2208,7 +2359,8 @@ fn prepare_library_project_with_context(
     // The selected release plan owns its lease through extraction; compatibility publication retains its explicit
     // boundary and normal consumers remain Cargo-free.
     let oven_vocab_context_start = Instant::now();
-    let normal_oven_vocab_context = if manifest.vocab().is_some() {
+    let prepared_vocabulary = admitted.and_then(|input| input.prepared_vocabulary().map(Arc::as_ref));
+    let normal_oven_vocab_context = if manifest.vocab().is_some() && prepared_vocabulary.is_none() {
         if let Some(oven) = oven.as_ref() {
             // Prefer the release selection, but fall back to whatever profile this bake actually prepared.
             // An explicit bake may be narrowed to one profile (see `explicit_bake_profiles`), and the vocab
@@ -2262,12 +2414,16 @@ fn prepare_library_project_with_context(
     );
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
     let vocab_start = Instant::now();
-    if let Some(vocab_extraction) = collect_library_vocab_metadata(
-        &manifest,
-        &project_root,
-        (!normal_oven).then_some(managed_target_path.as_path()),
-        normal_oven_vocab_context.as_ref(),
-    )? {
+    let vocab_extraction = match prepared_vocabulary {
+        Some(vocabulary) => Some(vocabulary.extraction_for(&manifest)?),
+        None => collect_library_vocab_metadata(
+            &manifest,
+            &project_root,
+            (!normal_oven).then_some(managed_target_path.as_path()),
+            normal_oven_vocab_context.as_ref(),
+        )?,
+    };
+    if let Some(vocab_extraction) = vocab_extraction {
         pending_desugarer_artifact = vocab_extraction.pending_desugarer_artifact;
         library_manifest.vocab = Some(vocab_extraction.payload);
         library_manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
@@ -2311,15 +2467,17 @@ fn prepare_library_project_with_context(
             &modules,
             lib_module,
             &metadata_query_paths,
+            &checked_rust_metadata_queries,
             report_draft.backend.clone(),
         ) {
             Ok(contract) => {
                 if ordinary_native.is_some() {
                     contract
-                        .require_ordinary_source_inspection_native(
+                        .require_ordinary_source_inspection_native_with_vocabulary(
                             compilation_session
                                 .admitted_library_dependencies()
                                 .map(|owners| (owners.as_ref(), provider_plan.as_ref())),
+                            prepared_vocabulary,
                         )
                         .map_err(|error| {
                             CliError::failure(format!("ordinary checked publication demands: {}", error.message))
@@ -2391,6 +2549,7 @@ fn checked_requirement_contract(
     modules: &[ParsedModule],
     entry: &ParsedModule,
     rust_abi_queries: &[String],
+    checked_rust_metadata_queries: &BTreeSet<String>,
     backend: Option<crate::backend::selection::BackendExecutionReceipt>,
 ) -> CliResult<crate::build::library_metadata::requirements::CheckedLibraryRequirements> {
     crate::build::library_metadata::validate_required_rust_abi(
@@ -2408,6 +2567,18 @@ fn checked_requirement_contract(
         })
         .collect::<CliResult<BTreeMap<_, _>>>()?;
     let provider_plan = session.provider_plan_for_modules(modules)?;
+    let native_demands = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        manifest,
+        modules,
+        requirements,
+        provider_plan.as_ref(),
+        &rust_abi_queries.iter().cloned().collect(),
+    )?;
+    let native_demands = if session.has_admitted_library_dependencies() {
+        native_demands.with_checked_rust_abi_queries(library_manifest, checked_rust_metadata_queries)?
+    } else {
+        native_demands
+    };
     crate::build::library_metadata::requirements::CheckedLibraryRequirements::capture(
         crate::build::library_metadata::requirements::CheckedLibraryCapture {
             project: manifest,
@@ -2415,18 +2586,13 @@ fn checked_requirement_contract(
             requirements,
             imports,
             exports,
+            publication: Some(library_manifest),
             version,
             used_module_paths: session.provider_module_paths(modules),
             source_modules,
             entry_module: entry.path_segments.clone(),
             rust_abi_queries: rust_abi_queries.iter().cloned().collect(),
-            native_demands: crate::build::library_metadata::requirements::capture_checked_native_demands(
-                manifest,
-                modules,
-                requirements,
-                provider_plan.as_ref(),
-                &rust_abi_queries.iter().cloned().collect(),
-            )?,
+            native_demands,
             rust_extern_paths: rust_extern_report_paths(&collect_rust_extern_contexts(modules)),
             backend,
         },

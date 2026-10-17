@@ -23,7 +23,6 @@ use incan_frontend::library_manifest::{LibraryManifest, ProviderDependencyKind};
 use incan_frontend::library_manifest_index::{LibraryArtifactKind, LibraryArtifactMetadata};
 use incan_provider::ProviderPlan;
 #[cfg(test)]
-#[cfg(test)]
 use incan_provider::requirements::dependency_specs_match;
 use oven_cargo_compat::{OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency};
 use oven_model::manifest::{DependencySource, DependencySpec, LOAF_MANIFEST_FILENAME};
@@ -209,7 +208,9 @@ fn checked_provider_macro_dependency(
 /// would rebuild DataFusion (or any analogous provider closure) under that consumer's plan. Instead, an explicit
 /// provider bake seals those dependencies once; a consumer selection retains only its own Rust surface and composes
 /// the verified provider Loaf later. The checked records are command-local and flow through import and selection,
-/// avoiding repeated recursive source scans without introducing a cross-command cache.
+/// avoiding repeated recursive source scans without introducing a cross-command cache. Ordinary standard
+/// publications carry the same sealed native closure; reserved namespaces retain their original issuer and never
+/// imply that the consumer already has those dependencies. Legacy SDK providers remain in their selected SDK plan.
 pub fn checked_packaged_provider_profiles(
     provider_plan: &ProviderPlan,
     profiles: &[&str],
@@ -222,8 +223,21 @@ pub fn checked_packaged_provider_profiles(
         matches!(
             provider.authority,
             incan_provider::NamespaceAuthority::ProjectDependency { .. }
+        ) || matches!(
+            provider.provenance,
+            incan_provider::ProviderProvenance::StandardPublication { .. }
         )
     }) {
+        if matches!(
+            provider.provenance,
+            incan_provider::ProviderProvenance::StandardPublication { .. }
+        ) {
+            incan_frontend::provider::namespaces::SelectedProviderNamespace::from_plan(
+                provider_plan,
+                &provider.identity.stable_key(),
+            )
+            .map_err(CliError::failure)?;
+        }
         let artifact = provider.artifact.as_ref().ok_or_else(|| {
             CliError::failure(format!(
                 "Oven Alpha cannot select pub::{} because its generated library artifact is unavailable",
@@ -871,6 +885,49 @@ mod tests {
             &owned_roots,
         );
         assert_eq!(remaining, vec![caller]);
+        Ok(())
+    }
+
+    /// Ordinary standard records must enter package admission and retain a genuine namespace issuer.
+    /// Legacy SDK records still belong to their SDK plan rather than this ordinary package closure.
+    #[test]
+    fn ordinary_standard_package_profiles_require_retained_namespace_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use incan_provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
+
+        let record = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "incan_stdlib_system".to_string(),
+                version: "0.5.0".to_string(),
+                digest: "sha256:untrusted-standard-record".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::StandardPublication {
+                package_name: "incan_stdlib_system".to_string(),
+                manifest_path: PathBuf::from("untrusted/loaf.toml"),
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "io".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_system", "0.5.0"))),
+            artifact: None,
+            implementation_facets: Vec::new(),
+        };
+        let ordinary = ProviderPlan::new(LibraryManifestIndex::default(), vec![record.clone()], [])?;
+        let result = checked_packaged_provider_profiles(&ordinary, &["debug"], "target", "toolchain", None);
+        assert!(result.is_err_and(|error| error.message.contains("no retained producer issuer")));
+
+        let legacy = ProviderRecord {
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-system".to_string(),
+                inventory_path: None,
+            },
+            ..record
+        };
+        let legacy = ProviderPlan::new(LibraryManifestIndex::default(), vec![legacy], [])?;
+        assert!(checked_packaged_provider_profiles(&legacy, &["debug"], "target", "toolchain", None)?.is_empty());
         Ok(())
     }
 

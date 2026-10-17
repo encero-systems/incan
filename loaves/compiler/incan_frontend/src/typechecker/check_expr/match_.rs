@@ -603,6 +603,10 @@ impl TypeChecker {
             }
             Pattern::Literal(literal) => self.check_literal_pattern(literal, expected_ty, pattern.span),
             Pattern::Constructor(name, sub_patterns) => {
+                self.type_info
+                    .expressions
+                    .body_ir_nominal_pattern_owners
+                    .remove(&(name.span.start, name.span.end));
                 let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
@@ -669,8 +673,17 @@ impl TypeChecker {
                             }
                         }
                         ConstructorId::None => {
-                            self.record_pattern_lexical_identity(ctor_name, name.span);
-                            return;
+                            // A qualified `Maybe.None` over a non-`Option` subject names that enum's own `None`
+                            // variant, which the enum path below resolves; only an `Option` takes the builtin.
+                            let option_subject = matches!(
+                                subject_ty,
+                                ResolvedType::Generic(type_name, _)
+                                    if type_name == collections::as_str(CollectionTypeId::Option)
+                            );
+                            if enum_qualifier_opt.is_none() || option_subject {
+                                self.record_pattern_lexical_identity(ctor_name, name.span);
+                                return;
+                            }
                         }
                     }
                 }
@@ -712,6 +725,7 @@ impl TypeChecker {
                 };
 
                 if let Some((type_name, fields, field_order, substitutions)) = model_or_class_fields {
+                    let errors_before_pattern = self.errors.len();
                     self.record_pattern_lexical_identity(type_name, name.span);
                     let mut provided = HashSet::new();
                     for arg in sub_patterns {
@@ -759,6 +773,24 @@ impl TypeChecker {
                         }
                     }
                     self.record_pattern_rest_fields(name.span, type_name, &fields, &field_order, &provided);
+                    if self.errors.len() == errors_before_pattern
+                        && self.type_info.resolved_identity(name.span).is_none()
+                        && let Some(identity) = self
+                            .symbols
+                            .lookup(ctor_name)
+                            .and_then(|symbol| self.symbols.identity_of(symbol))
+                            .cloned()
+                        && matches!(
+                            identity.kind,
+                            incan_semantics_core::SemanticSourceTargetKind::Model
+                                | incan_semantics_core::SemanticSourceTargetKind::Class
+                        )
+                    {
+                        self.type_info
+                            .expressions
+                            .body_ir_nominal_pattern_owners
+                            .insert((name.span.start, name.span.end), identity);
+                    }
                     return;
                 }
 

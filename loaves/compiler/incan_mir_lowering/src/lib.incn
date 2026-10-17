@@ -1,8 +1,9 @@
 """Public facade for the checked Body-IR-to-native-plan lowering Loaf."""
 
 from assertions import lower_assertion
-from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
+from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
+from numerics import numeric_carrier as checked_numeric_carrier
 pub from lowering import BodyIrModule, BodyStatementKind
 from lowering import (
     validate_module as validate_checked_module,
@@ -10,6 +11,7 @@ from lowering import (
     is_continue as checked_is_continue,
     lower_module as lower_checked_module,
     lower_program as lower_checked_program,
+    program_plan as checked_program_plan,
     program_refusals as checked_program_refusals,
 )
 pub from pub::incan_mir_plan import (
@@ -19,6 +21,9 @@ pub from pub::incan_mir_plan import (
     CalleeKind,
     ExternalFunction,
     FieldProjection,
+    FieldMetadata,
+    FallibleIteratorMethods,
+    IteratorMethods,
     Constant,
     Function,
     ListLeaf,
@@ -28,8 +33,10 @@ pub from pub::incan_mir_plan import (
     SizedNumeric,
     TupleElement,
     tuple_element_type,
+    range_field_types,
     Local,
     ModelDeclaration,
+    MarkerTrait,
     Operand,
     OperandKind,
     Parameter,
@@ -39,7 +46,9 @@ pub from pub::incan_mir_plan import (
     Projection,
     Rvalue,
     RvalueKind,
+    FrozenValue,
     SourceSpan,
+    StaticCell,
     Statement,
     StatementKind,
     Terminator,
@@ -47,6 +56,7 @@ pub from pub::incan_mir_plan import (
     UnaryOp,
     Unwind,
     scalar_example,
+    consuming_closure_example,
 )
 
 
@@ -80,11 +90,21 @@ pub def lower_program(
     return lower_checked_program(modules, sources, files, entry)
 
 
-pub def program_refusals(
+pub def program_plan(
     modules: &list[BodyIrModule],
     sources: list[str],
     files: list[str],
     entry: int,
-) -> list[str]:
+) -> Result[Option[Plan], str]:
+    """Retain a checked missing entry as a semantic CLI outcome after every body lowers; unsupported bodies still fail."""
+    return checked_program_plan(modules, sources, files, entry)
+
+
+pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:
     """Delegate the census's per-body refusal collection through the canonical caller boundary."""
     return checked_program_refusals(modules, sources, files, entry)
+
+
+pub def numeric_carrier(ty: PlanType) -> bool:
+    """Share lowering's numeric classification with native owned-result validation without a second carrier list."""
+    return checked_numeric_carrier(ty)

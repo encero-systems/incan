@@ -36,7 +36,7 @@ private = true
 version = "0.6.0-dev.6"
 
 [project.features]
-cli = ["dep:clap"]
+cli = ["dep:clap", "rust_inspect"]
 default = [
     "cli",
     "rust_inspect",

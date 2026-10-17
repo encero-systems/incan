@@ -1,7 +1,7 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, tuple_element_type};
+use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
 /// Translate admitted scalar, model, collection, and callable types to their canonical native representations.
@@ -9,6 +9,17 @@ use rustc_middle::ty::{Ty, TyCtxt};
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,
+        PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements)?,
+        PlanType::Future(arguments) => {
+            let [output] = arguments.as_slice() else {
+                return Err(PlanError::Unsupported {
+                    function: "future".into(),
+                    reason: "future output arity".into(),
+                });
+            };
+            enum_type(tcx, &crate::futures::alias_name(output))?
+        }
         PlanType::ZipIterator(left, right) => zip_type(tcx, left, right)?,
         PlanType::ZipIteratorRef(left, right) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
@@ -31,6 +42,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         ),
         PlanType::Enum(_, name) => enum_type(tcx, name)?,
         PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
+        PlanType::EnumMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
         PlanType::CallableArguments(inputs) => Ty::new_tup(
             tcx,
@@ -46,9 +58,25 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
                 .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
+        PlanType::TupleMutRef(elements) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            native_type(tcx, &PlanType::Tuple(elements.clone()))?,
+        ),
+        PlanType::RangeValue => Ty::new_tup(
+            tcx,
+            &range_field_types()
+                .iter()
+                .map(|field| native_type(tcx, field))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         PlanType::ModelMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::List(leaf, depth) => list_type(tcx, leaf, *depth)?,
+        PlanType::ListIntoIter(leaf, depth) => list_into_iter_type(tcx, leaf, *depth)?,
+        PlanType::ListIntoIterMutRef(leaf, depth) => {
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_into_iter_type(tcx, leaf, *depth)?)
+        }
         PlanType::ListRef(leaf, depth) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?),
         PlanType::ListMutRef(leaf, depth) => {
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
@@ -94,6 +122,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::Bool => tcx.types.bool,
         PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
         PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
+        PlanType::SharedCallable(signature) => model_type(tcx, &crate::shared_callables::name(signature))?,
+        PlanType::ClosureOnce(signature) => Ty::new_box(tcx, consuming_callable_object_type(tcx, signature)?),
         PlanType::ClosureRef(signature) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
         }
@@ -106,8 +136,20 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::Decimal => decimal_type(tcx)?,
+        PlanType::ValidationError => validation_error_type(tcx)?,
+        PlanType::ValidationErrorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, validation_error_type(tcx)?),
         PlanType::FrozenStr => frozen_type(tcx)?,
+        PlanType::FrozenBytes => frozen_bytes_type(tcx)?,
+        PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
+        PlanType::FrozenCollectionRef(name, elements) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            frozen_collection_type(tcx, name, elements)?,
+        ),
+        PlanType::StaticText => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, tcx.types.str_),
+        PlanType::StaticBytes => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, Ty::new_slice(tcx, tcx.types.u8)),
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
+        PlanType::StringMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
         PlanType::StrArray(count) => array_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
@@ -128,6 +170,62 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?),
         ),
     })
+}
+
+/// Translate a preflight-validated single scalar referent, rejecting malformed arity before constructing its native
+/// reference.
+fn scalar_reference_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let [inner] = elements else {
+        return Err(PlanError::Unsupported {
+            function: "scalar reference".into(),
+            reason: "scalar reference requires exactly one referent".into(),
+        });
+    };
+    Ok(Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, native_type(tcx, inner)?))
+}
+
+/// Resolve the dependency-owned immutable wrapper and preserve its exact static storage arguments.
+pub fn frozen_collection_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    name: &str,
+    elements: &[PlanType],
+) -> Result<Ty<'tcx>, PlanError> {
+    let expected = match name {
+        "FrozenList" | "FrozenSet" => 1,
+        "FrozenDict" => 2,
+        _ => {
+            return Err(PlanError::UnknownCallee(format!(
+                "unsupported frozen collection {name}"
+            )));
+        }
+    };
+    if elements.len() != expected {
+        return Err(PlanError::UnknownCallee(format!(
+            "unsupported frozen collection {name} arity"
+        )));
+    }
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    for segment in ["frozen", name] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::frozen::{name}")))?;
+    }
+    let arguments = elements
+        .iter()
+        .map(|element| {
+            let ty = native_type(tcx, element)?;
+            Ok(ty.into())
+        })
+        .collect::<Result<Vec<_>, PlanError>>()?;
+    Ok(Ty::new_adt(tcx, tcx.adt_def(definition), tcx.mk_args(&arguments)))
 }
 
 /// Resolve the legacy runtime's actual generator ADT from dependency metadata and retain its element type.
@@ -202,16 +300,32 @@ fn bound_callable_inputs<'tcx>(
     Ok((inputs, bound))
 }
 
-/// Build the `dyn Fn(inputs) -> output` object a boxed closure or closure-holding parameter holds.
-///
-/// The object's trait and its `FnOnce::Output` projection come from language items, never from source spellings.
+/// Recover the exact injected dyn alias, including rustc's Fn supertrait and bound-input lifetime lowering.
 pub fn callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    model_type(tcx, &crate::cloneable_closures::alias_name(signature))
+}
+
+/// Build the exact dyn FnOnce object whose owned box transfers its environment during invocation.
+pub fn consuming_callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    callable_object_type_for_kind(tcx, signature, true)
+}
+
+/// Preserve one signature and output projection while selecting the declared shared or consuming trait contract.
+fn callable_object_type_for_kind<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    signature: &[PlanType],
+    consumes_environment: bool,
+) -> Result<Ty<'tcx>, PlanError> {
     let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
         function: "callable object".into(),
         reason: "callable signature has no return type".into(),
     })?;
     let missing = |item: &str| PlanError::UnknownCallee(item.into());
-    let fn_trait = tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?;
+    let fn_trait = if consumes_environment {
+        tcx.lang_items().fn_once_trait().ok_or_else(|| missing("FnOnce"))?
+    } else {
+        tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?
+    };
     let output = tcx
         .lang_items()
         .fn_once_output()
@@ -265,6 +379,12 @@ fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
 }
 
+/// Recover the dependency-owned builtin error from its canonical Incan wrapper, preserving its actual Rust identity.
+fn validation_error_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::make_validation_error")?;
+    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
+}
+
 /// Recover the dependency-owned FrozenStr identity from its canonical observation wrapper.
 fn frozen_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     let definition = crate::callees::external(tcx, "incan_native_runtime::format_frozen")?;
@@ -277,6 +397,21 @@ fn frozen_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
         .ok_or_else(|| PlanError::Invalid {
             function: "FrozenStr".into(),
             reason: "the frozen observation wrapper has no carrier argument".into(),
+        })
+}
+
+/// Recover the dependency-owned static byte wrapper from the canonical length observation function's input.
+fn frozen_bytes_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::length_frozen_bytes")?;
+    tcx.fn_sig(definition)
+        .instantiate_identity()
+        .skip_binder()
+        .inputs()
+        .first()
+        .copied()
+        .ok_or_else(|| PlanError::Invalid {
+            function: "FrozenBytes".into(),
+            reason: "the frozen byte observation wrapper has no carrier argument".into(),
         })
 }
 
@@ -340,6 +475,49 @@ fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<
         );
     }
     Ok(element)
+}
+
+/// Resolve the standard owned Vec iterator, preserving the immediate list element and default allocator.
+fn list_into_iter_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
+    if depth < 1 {
+        return Err(PlanError::Invalid {
+            function: "list iterator".into(),
+            reason: "unsupported nonpositive list depth".into(),
+        });
+    }
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "alloc")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("alloc".into()))?;
+    for segment in ["vec", "IntoIter"] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee("alloc::vec::IntoIter".into()))?;
+    }
+    let element = if depth == 1 {
+        collection_leaf_type(tcx, leaf)?
+    } else {
+        list_type(tcx, leaf, depth - 1)?
+    };
+    Ok(Ty::new_adt(
+        tcx,
+        tcx.adt_def(definition),
+        rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, _| {
+            if parameter.index == 0 {
+                element.into()
+            } else {
+                tcx.type_of(parameter.def_id)
+                    .instantiate_identity()
+                    .skip_normalization()
+                    .into()
+            }
+        }),
+    ))
 }
 
 /// Resolve the named sized carrier retained in an overflow pair.
@@ -437,5 +615,31 @@ fn zip_type<'tcx>(
         tcx,
         tcx.adt_def(definition),
         tcx.mk_args(&[left.into(), right.into()]),
+    ))
+}
+
+/// Resolve the existing SDK TypeToken carrier with its exact represented native type.
+pub fn type_token_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let [element] = elements else {
+        return Err(PlanError::UnknownCallee("unsupported TypeToken arity".into()));
+    };
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("unsupported TypeToken SDK owner".into()))?;
+    for segment in ["reflection", "TypeToken"] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee("unsupported TypeToken SDK declaration".into()))?;
+    }
+    Ok(Ty::new_adt(
+        tcx,
+        tcx.adt_def(definition),
+        tcx.mk_args(&[native_type(tcx, element)?.into()]),
     ))
 }

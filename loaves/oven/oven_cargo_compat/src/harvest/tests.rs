@@ -516,6 +516,7 @@ fn complete_link_observation(name: &str, source_path: &str) -> HarvestLinkObserv
         }],
         name: Some(name.to_string()),
         executable: Some(RustFactExecutable {
+            runtime_files: Vec::new(),
             name: "clang".to_string(),
             owner: selected_graph_sha256(b"publisher-toolchain"),
             path: "bin/clang".to_string(),
@@ -988,6 +989,7 @@ fn complete_isle_observation() -> HarvestToolObservation {
         }],
         name: Some("isle".to_string()),
         executable: Some(RustFactExecutable {
+            runtime_files: Vec::new(),
             name: "isle".to_string(),
             owner: selected_graph_sha256(b"cranelift-isle provider"),
             path: "bin/isle".to_string(),

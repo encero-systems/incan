@@ -32,6 +32,8 @@ pub struct NativeSourceOutputRequest<'a> {
     pub output: &'a Path,
     /// Crate identity passed to embedded rustc.
     pub crate_name: &'a str,
+    /// Explicit logical package override; registry subjects and completed-output reuse retain these exact bytes.
+    pub package_identity: Option<&'a str>,
     /// Canonical sysroot already verified against the driver's build-bound evidence.
     pub sysroot: &'a Path,
     /// Pinned compiler host target.
@@ -180,7 +182,8 @@ impl<'a> NativeSourceOutput<'a> {
     }
 }
 
-/// Bind source, preparation, argument order, explicit native bytes and the selected standard-library directory.
+/// Bind source, preparation, logical package, argument order, explicit native bytes and the selected standard-library
+/// directory.
 fn observe_authority(
     request: &NativeSourceOutputRequest<'_>,
     root: &Path,
@@ -221,10 +224,11 @@ fn observe_authority(
         }
     }
     let bytes = serde_json::to_vec(&(
-        "incan-native-source-output/2",
+        "incan-native-source-output/3",
         source,
         &preparation,
         request.crate_name,
+        request.package_identity,
         output,
         request.sysroot,
         request.target,
@@ -265,6 +269,43 @@ mod tests {
     use super::{NativeSourceOutput, NativeSourceOutputRequest, failure};
     use crate::error::CliResult;
     use std::fs;
+    use std::path::Path;
+
+    /// A fresh output binds an explicit logical package independently of its otherwise identical native invocation.
+    fn check_package_context_reuse(
+        request: NativeSourceOutputRequest<'_>,
+        root: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = root.join("target/package-native");
+        fs::write(&output, b"explicit package native output")?;
+        let packaged = NativeSourceOutputRequest {
+            output: &output,
+            package_identity: Some("explicit-package"),
+            ..request
+        };
+        let observe = |request| -> CliResult<NativeSourceOutput<'_>> {
+            NativeSourceOutput::observe(request)?
+                .ok_or_else(|| failure("package output optimization unexpectedly declined"))
+        };
+        observe(packaged)?.publish()?;
+        assert!(observe(packaged)?.try_reuse()?);
+        assert!(
+            !observe(NativeSourceOutputRequest {
+                package_identity: None,
+                ..packaged
+            })?
+            .try_reuse()?
+        );
+        assert!(
+            !observe(NativeSourceOutputRequest {
+                package_identity: Some("other-package"),
+                ..packaged
+            })?
+            .try_reuse()?
+        );
+        assert_eq!(fs::read(output)?, b"explicit package native output");
+        Ok(())
+    }
 
     /// The common output path restores bytes and refuses changed sources, argument order, native files and sysroot.
     #[test]
@@ -299,6 +340,7 @@ mod tests {
             source: &source,
             output: &output,
             crate_name: "native_reuse",
+            package_identity: None,
             sysroot: &sysroot,
             target,
             toolchain: "test pinned compiler\n",
@@ -360,6 +402,7 @@ mod tests {
             })?
             .try_reuse()?
         );
+        check_package_context_reuse(request, &root)?;
         fs::write(&native, b"changed native bytes")?;
         assert!(!observe(request)?.try_reuse()?);
         fs::write(&native, b"native bytes")?;

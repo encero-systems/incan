@@ -137,7 +137,7 @@ impl TrustedStandardSourcePublication {
             .ok_or_else(|| invalid(self.policy, "declaration parent missing"))
     }
 
-    /// Resolve an owned registered module only below this retained package's real source directory.
+    /// Resolve an owned module only below this retained package's real source directory.
     /// Missing files, foreign namespaces and symlinked/escaping coordinates refuse without ambient fallback.
     pub fn verified_module_source_path(
         &self,
@@ -147,10 +147,12 @@ impl TrustedStandardSourcePublication {
         Ok(member.path().to_path_buf())
     }
 
-    /// Retain the original regular source member for one owned registered module, with no ambient fallback.
+    /// Retain the original regular source member for one owned module, with no ambient fallback.
     ///
     /// The member retains this original layout and exact observed bytes. Its consumer must revalidate that member
     /// at cache/handoff boundaries; the source declaration is checked once here, rather than per symbol lookup.
+    /// Pinned publisher-only roots such as core's `features` use their package-relative source spelling without
+    /// adding them to the public stdlib namespace registry or granting consumers access to their source.
     pub fn open_source_module(
         &self,
         module: &[String],
@@ -166,11 +168,13 @@ impl TrustedStandardSourcePublication {
                 "module is outside this package's source namespaces",
             ));
         }
-        let relative = incan_lang::lang::stdlib::stdlib_stub_path(module)
-            .ok_or_else(|| invalid(self.policy, "module has no registered source path"))?;
-        let relative = Path::new(&relative)
-            .strip_prefix("stdlib")
-            .map_err(|_| invalid(self.policy, "registered source path is outside stdlib"))?;
+        let relative = match incan_lang::lang::stdlib::stdlib_stub_path(module) {
+            Some(registered) => Path::new(&registered)
+                .strip_prefix("stdlib")
+                .map_err(|_| invalid(self.policy, "registered source path is outside stdlib"))?
+                .to_path_buf(),
+            None => PathBuf::from(format!("{}.incn", module[1..].join("/"))),
+        };
         self.layout
             .open_member(&Path::new(self.policy.source_directory).join("src").join(relative))
             .map_err(TrustedStandardSourcePublicationError::from)
@@ -180,6 +184,16 @@ impl TrustedStandardSourcePublication {
     pub fn verified_policy_bytes(&self) -> Result<&[u8], TrustedStandardSourcePublicationError> {
         self.verify()?;
         Ok(&self.policy_bytes)
+    }
+
+    /// Read the publisher's own Rust facet name from its original compiler-pinned declaration.
+    ///
+    /// This identifies source import coverage only; actual native records, ABI inspection and execution remain
+    /// independently required. A caller-selected manifest or matching package spelling cannot supply this fact.
+    pub fn verified_native_facet_name(&self) -> Result<Option<String>, TrustedStandardSourcePublicationError> {
+        self.verified_declaration_bytes()?;
+        let manifest = ProjectManifest::from_str(self.policy.declaration, self.declaration.path())?;
+        Ok(manifest.rust_facet.and_then(|facet| facet.name))
     }
 
     /// Return exact retained authored declaration bytes after original-owner and source-coordinate revalidation.

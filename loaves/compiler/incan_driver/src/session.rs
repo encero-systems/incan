@@ -40,7 +40,7 @@ use incan_provider::inventory::{
     resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
-    DependencyManifestMode, SdkInventorySource, checked_source_library_manifest_index,
+    DependencyManifestMode, SdkInventorySource, SourceLibraryManifestPreference, checked_source_library_manifest_index,
     parser_only_library_manifest_index, prepare_library_dependency_artifacts,
 };
 use incan_provider::{
@@ -48,6 +48,82 @@ use incan_provider::{
     ProviderProvenance, ResolvedSdkComponents, SdkComponentSelection, SdkInventory,
 };
 use oven_model::manifest::ProjectManifest;
+/// Select only already published dependencies from this exact SDK source catalog. A same-named foreign project
+/// remains a source dependency; its name alone cannot grant it the catalog component's checked artifact.
+fn published_sdk_dependency_entries(
+    project: &ProjectManifest,
+    inventory: &SdkInventory,
+    catalog: &incan_provider::SdkSourceCatalog,
+) -> CliResult<HashMap<String, LibraryManifestIndexEntry>> {
+    let mut entries = HashMap::new();
+    for (key, dependency) in project.library_dependencies() {
+        // ---- Source ownership: only this catalog can replace a public dependency edge ----
+        let source = std::fs::canonicalize(&dependency.path).map_err(|error| CliError::failure(error.to_string()))?;
+        let mut components = catalog
+            .components
+            .values()
+            .filter(|component| std::fs::canonicalize(&component.project_root).is_ok_and(|root| root == source));
+        let Some(component) = components.next() else {
+            continue;
+        };
+        if components.next().is_some() {
+            return Err(CliError::failure(
+                "SDK source dependency has competing catalog components",
+            ));
+        }
+        // ---- Published identity: bind the selected provider to its source declaration ----
+        let declaration = ProjectManifest::discover(&source)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .ok_or_else(|| CliError::failure("SDK dependency has no source declaration"))?;
+        let declared = declaration
+            .project
+            .as_ref()
+            .ok_or_else(|| CliError::failure("SDK dependency has no project identity"))?;
+        let Some(selected) = inventory
+            .components
+            .get(&component.id)
+            .filter(|selected| selected.available)
+        else {
+            continue;
+        };
+        let mut providers = selected.providers.iter().filter(|provider| {
+            declared.name.as_deref() == Some(provider.name.as_str())
+                && declared.version.as_deref() == Some(provider.version.as_str())
+        });
+        let provider = providers
+            .next()
+            .ok_or_else(|| CliError::failure("published SDK dependency differs from its source identity"))?;
+        if providers.next().is_some() {
+            return Err(CliError::failure("SDK dependency has competing published providers"));
+        }
+        let root = provider
+            .crate_root
+            .as_ref()
+            .ok_or_else(|| CliError::failure("published SDK dependency has no artifact root"))?;
+        // ---- Physical artifact: validate bytes and the complete materialized contract ----
+        let digest = incan_frontend::library_manifest::digest_provider_artifact(root)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if digest != provider.digest {
+            return Err(CliError::failure("published SDK dependency artifact digest changed"));
+        }
+        let entry = incan_frontend::library_manifest_index::load_provider_dependency_artifact(key, root);
+        match &entry {
+            LibraryManifestIndexEntry::Loaded { manifest, metadata }
+                if manifest.name == provider.name
+                    && manifest.version == provider.version
+                    && metadata.kind == incan_frontend::library_manifest_index::LibraryArtifactKind::Materialized => {}
+            LibraryManifestIndexEntry::Failed(failure) => return Err(CliError::failure(failure.message.clone())),
+            _ => {
+                return Err(CliError::failure(
+                    "published SDK dependency has no checked materialized artifact",
+                ));
+            }
+        }
+        entries.insert(key.clone(), entry);
+    }
+    Ok(entries)
+}
+
 /// Shared immutable provider projections indexed by the canonical modules an invocation uses.
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 
@@ -600,6 +676,17 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
+        #[cfg(feature = "cli")]
+        if let Some(session) =
+            crate::build::library_project::discover_ordinary_dependency_session(entry_path, feature_selection)?
+        {
+            if sdk_profile_override.is_some() {
+                return Err(CliError::failure(
+                    "ordinary package admission does not accept an SDK profile override",
+                ));
+            }
+            return Ok(session);
+        }
         Self::discover_with_dependency_mode_and_sdk_source(
             entry_path,
             DependencyManifestMode::OvenArtifacts,
@@ -859,7 +946,12 @@ impl CompilationSession {
                 checked_source_library_manifest_index(manifest, &active_dependencies)?
             }
             (Some(manifest), DependencyManifestMode::ParserOnly) if !active_dependencies.is_empty() => {
-                parser_only_library_manifest_index(manifest, &active_dependencies)?
+                let preference = if native_sdk.is_some() {
+                    SourceLibraryManifestPreference::SourceDeclarations
+                } else {
+                    SourceLibraryManifestPreference::PublishedArtifacts
+                };
+                parser_only_library_manifest_index(manifest, &active_dependencies, preference)?
             }
             _ => LibraryManifestIndex::default(),
         };
@@ -954,6 +1046,34 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             contract_model_bundles,
         })
+    }
+
+    /// Bind publication edges to this transaction's already compiled SDK artifacts while keeping semantic
+    /// provider selection unchanged. A public dependency and a reserved SDK import may denote the same physical
+    /// owner; replacing the semantic catalog would incorrectly grant that owner two namespace identities.
+    pub(crate) fn native_sdk_publication_dependency_index(
+        &self,
+        inventory: &SdkInventory,
+        catalog: &incan_provider::SdkSourceCatalog,
+    ) -> CliResult<LibraryManifestIndex> {
+        let project = self
+            .manifest
+            .as_ref()
+            .ok_or_else(|| CliError::failure("SDK session has no project declaration"))?;
+        let published = published_sdk_dependency_entries(project, inventory, catalog)?;
+        Ok(LibraryManifestIndex::from_entries(
+            self.library_manifest_index
+                .known_libraries()
+                .into_iter()
+                .filter_map(|key| {
+                    published
+                        .get(&key)
+                        .or_else(|| self.library_manifest_index.get(&key))
+                        .cloned()
+                        .map(|entry| (key, entry))
+                })
+                .collect(),
+        ))
     }
 
     /// Borrow the validated catalog shared by this session's module-use projections.
@@ -1361,6 +1481,191 @@ mod tests {
     use super::*;
     use incan_frontend::library_manifest::{LibraryManifest, VocabExports};
     use incan_provider::test_support::{parsed_module_for_test, write_minimal_library_artifact};
+
+    /// Ordinary Core artifacts must not change a native publisher's source semantic plan or publication authority.
+    #[test]
+    fn native_sdk_component_ignores_ordinary_core_artifact_for_source_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        std::fs::create_dir_all(root.path().join("deps/core/src"))?;
+        std::fs::write(
+            root.path().join("loaf.toml"),
+            "[project]\nname='publisher'\nversion='0.1.0'\n[dependencies]\nincan_stdlib_core={path='deps/core'}\n",
+        )?;
+        std::fs::write(
+            root.path().join("deps/core/loaf.toml"),
+            "[project]\nname='incan_stdlib_core'\nversion='0.1.0'\n",
+        )?;
+        std::fs::write(
+            root.path().join("deps/core/src/lib.incn"),
+            "pub def value() -> int:\n    return 42\n",
+        )?;
+        let entry = root.path().join("src/lib.incn");
+        std::fs::write(&entry, "pub def value() -> int:\n    return 42\n")?;
+        let manifest = ProjectManifest::load(&root.path().join("loaf.toml"))?;
+        let active = BTreeSet::from(["incan_stdlib_core".to_string()]);
+        let inventory = SdkInventory {
+            root: root.path().to_path_buf(),
+            sdk_id: "incan".to_string(),
+            sdk_version: "0.1.0".to_string(),
+            compiler_requirement: "*".to_string(),
+            provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+            components: BTreeMap::new(),
+            profiles: BTreeMap::from([("default".to_string(), BTreeSet::new())]),
+        };
+        let discover = || {
+            CompilationSession::discover_for_native_sdk_component(
+                &entry,
+                &inventory,
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )
+        };
+        let cold = discover()?;
+        let cold_manifest = cold
+            .library_manifest_index
+            .loaded_entries()
+            .find_map(|(key, manifest, _)| (key == "incan_stdlib_core").then_some(manifest))
+            .ok_or("cold source manifest absent")?;
+        write_minimal_library_artifact(
+            root.path(),
+            "core",
+            "incan_stdlib_core",
+            &LibraryManifest::new("incan_stdlib_core", "0.1.0"),
+        )?;
+        let artifact = root.path().join("deps/core/target/lib/incan_stdlib_core.incnlib");
+        let original_bytes = std::fs::read(&artifact)?;
+        let ordinary = parser_only_library_manifest_index(
+            &manifest,
+            &active,
+            SourceLibraryManifestPreference::PublishedArtifacts,
+        )?;
+        assert_eq!(
+            ordinary
+                .loaded_artifact("incan_stdlib_core")
+                .ok_or("ordinary Core absent")?
+                .kind,
+            incan_frontend::library_manifest_index::LibraryArtifactKind::Materialized
+        );
+        let warm = discover()?;
+        assert_eq!(
+            warm.library_manifest_index
+                .loaded_artifact("incan_stdlib_core")
+                .ok_or("warm source Core absent")?
+                .kind,
+            incan_frontend::library_manifest_index::LibraryArtifactKind::ParserSource
+        );
+        let warm_manifest = warm
+            .library_manifest_index
+            .loaded_entries()
+            .find_map(|(key, manifest, _)| (key == "incan_stdlib_core").then_some(manifest))
+            .ok_or("warm source manifest absent")?;
+        assert_eq!(warm_manifest, cold_manifest);
+        assert_eq!(std::fs::read(&artifact)?, original_bytes);
+        std::fs::remove_file(root.path().join("deps/core/loaf.toml"))?;
+        let artifact_only = parser_only_library_manifest_index(
+            &manifest,
+            &active,
+            SourceLibraryManifestPreference::SourceDeclarations,
+        )?;
+        assert_eq!(
+            artifact_only
+                .loaded_artifact("incan_stdlib_core")
+                .ok_or("artifact-only Core absent")?
+                .kind,
+            incan_frontend::library_manifest_index::LibraryArtifactKind::Materialized
+        );
+        Ok(())
+    }
+
+    /// Reproduce SDK data publication against the genuine already published Core artifact.
+    #[test]
+    #[ignore = "requires an explicitly selected matching native SDK publication"]
+    fn native_sdk_component_uses_published_public_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+        let inventory = discover_or_reuse_published_sdk_inventory()?.ok_or("matching SDK required")?;
+        let stdlib = oven_model::toolchain_layout::find_stdlib_root().ok_or("stdlib source required")?;
+        let catalog =
+            incan_provider::SdkSourceCatalog::read_from_path(&stdlib.join(incan_provider::SDK_SOURCE_CATALOG_FILE))?;
+        let data = catalog.components.get("stdlib-data").ok_or("data component missing")?;
+        let session = CompilationSession::discover_for_native_sdk_component(
+            &data.project_root.join("src/lib.incn"),
+            &inventory,
+            &data.namespace_roots,
+            &BTreeSet::new(),
+        )?;
+        let semantic_plan = Arc::clone(session.provider_plan());
+        let published = session.native_sdk_publication_dependency_index(&inventory, &catalog)?;
+        let metadata = published
+            .loaded_artifact("incan_stdlib_core")
+            .ok_or("Core dependency absent")?;
+        assert_eq!(
+            metadata.kind,
+            incan_frontend::library_manifest_index::LibraryArtifactKind::Materialized
+        );
+        let core = inventory.components.get("stdlib-core").ok_or("Core component absent")?;
+        assert_eq!(
+            Some(metadata.crate_root.as_path()),
+            core.providers
+                .first()
+                .ok_or("Core provider absent")?
+                .crate_root
+                .as_deref()
+        );
+        assert!(Arc::ptr_eq(&semantic_plan, session.provider_plan()));
+        assert_eq!(
+            session
+                .library_manifest_index
+                .loaded_artifact("incan_stdlib_core")
+                .ok_or("source Core absent")?
+                .kind,
+            incan_frontend::library_manifest_index::LibraryArtifactKind::ParserSource
+        );
+
+        let mut changed = (*inventory).clone();
+        changed
+            .components
+            .get_mut("stdlib-core")
+            .ok_or("Core component absent")?
+            .providers
+            .first_mut()
+            .ok_or("Core provider absent")?
+            .digest
+            .push_str("-foreign");
+        assert!(
+            session
+                .native_sdk_publication_dependency_index(&changed, &catalog)
+                .is_err()
+        );
+        let mut competing = catalog.clone();
+        let duplicate = competing
+            .components
+            .get("stdlib-core")
+            .ok_or("Core component absent")?
+            .clone();
+        competing.components.insert("competing-core".to_string(), duplicate);
+        assert!(
+            session
+                .native_sdk_publication_dependency_index(&inventory, &competing)
+                .is_err()
+        );
+        let foreign = tempfile::tempdir()?;
+        let mut foreign_catalog = catalog.clone();
+        foreign_catalog
+            .components
+            .get_mut("stdlib-core")
+            .ok_or("Core component absent")?
+            .project_root = foreign.path().to_path_buf();
+        let foreign_index = session.native_sdk_publication_dependency_index(&inventory, &foreign_catalog)?;
+        assert_eq!(
+            foreign_index
+                .loaded_artifact("incan_stdlib_core")
+                .ok_or("source dependency absent")?
+                .kind,
+            incan_frontend::library_manifest_index::LibraryArtifactKind::ParserSource
+        );
+        Ok(())
+    }
 
     /// A metadata check without source dependencies keeps the already validated provider catalog and projection cache.
     #[test]

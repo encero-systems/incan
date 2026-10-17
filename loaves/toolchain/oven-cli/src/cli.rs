@@ -192,6 +192,28 @@ pub enum OvenCommand {
     },
     /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
     CompileClosure(CompileClosureArgs),
+    /// Prepare the fixed source bootstrap and build its receipt-bound compiler from an admitted SDK
+    #[command(hide = true)]
+    BootstrapCompiler {
+        /// Compiler checkout owning the fixed bootstrap source projects
+        #[arg(long)]
+        compiler_root: PathBuf,
+        /// Caller-owned directory for the first three generated bootstrap programs
+        #[arg(long)]
+        preparation_output: PathBuf,
+        /// Destination for the source-built compiler and its bound companions
+        #[arg(long)]
+        output: PathBuf,
+        /// Compiler and native dependency optimization profile; support engines retain their independent profiles
+        #[arg(long, default_value = "debug", value_parser = ["debug", "release"])]
+        profile: String,
+        /// Explicit Rust compiler executable for the native bootstrap
+        #[arg(long)]
+        rustc: PathBuf,
+        /// Existing Oven store used for preparation and the compiler build
+        #[arg(long)]
+        store: PathBuf,
+    },
     /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
     #[command(hide = true)]
     SdkHandoff {
@@ -216,6 +238,13 @@ pub enum OvenCommand {
         /// Optional path receiving the reconciliation summary
         #[arg(long, value_name = "PATH")]
         summary: Option<PathBuf>,
+    },
+    /// Prepare compiler-owned ordinary standard packages for a delivered toolchain
+    #[command(hide = true)]
+    PrepareStandardPackages {
+        /// Persisted normal native graph subsequently selected by ordinary commands
+        #[arg(long)]
+        native_graph_output: PathBuf,
     },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {

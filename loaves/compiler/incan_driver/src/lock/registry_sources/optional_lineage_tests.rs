@@ -17,7 +17,8 @@ use oven_model::manifest::{DependencySource, DependencySpec};
 use oven_rustc::rustc::{
     OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION, OvenLoadedProjectInspectionAuthority,
     OvenProjectInspectionAuthorityPayload, OvenProjectInspectionAuthorityRef, OvenProjectInspectionConstituent,
-    OvenProjectInspectionTestDependencyEnvelope, load_project_inspection_authority,
+    OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestDependencyRoot,
+    load_project_inspection_authority,
 };
 use oven_rustc::sdk_closure::{SdkLockedUnit, SdkNativeArtifact};
 use oven_store::store::{
@@ -43,6 +44,13 @@ struct LineageFixture {
 impl LineageFixture {
     /// Publish original native owners and use production plan preparation to construct the retained lineage.
     fn new() -> Result<Self, Box<dyn Error>> {
+        Self::with_dependency_roots(BTreeMap::new())
+    }
+
+    /// Publish the supplied decoded root evidence as part of the original immutable authority.
+    fn with_dependency_roots(
+        dependency_roots: BTreeMap<String, OvenProjectInspectionTestDependencyRoot>,
+    ) -> Result<Self, Box<dyn Error>> {
         let root = tempfile::tempdir()?;
         fs::create_dir_all(root.path().join("src"))?;
         fs::write(root.path().join("src/main.incn"), "def main():\n    pass\n")?;
@@ -59,6 +67,7 @@ impl LineageFixture {
         let plan_identity = prepared.plan_selection.report_identity();
         let source_digest = digest_bytes(&fs::read(root.path().join("src/main.incn"))?);
         let payload = OvenProjectInspectionAuthorityPayload {
+            native_roots: None,
             schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
             project_identity: "lineage-project".to_string(),
             source_authority_digest: source_digest.clone(),
@@ -70,7 +79,7 @@ impl LineageFixture {
                 constituent_index: 0,
                 provider_constituents: Vec::new(),
                 dependency_surface_digest: digest_dependency_specs(&[], incan_oven_facet::provider_hooks().as_ref())?,
-                dependency_roots: BTreeMap::new(),
+                dependency_roots,
             }),
             constituents: vec![OvenProjectInspectionConstituent::Stored {
                 identity: plan_identity.clone(),
@@ -263,7 +272,8 @@ fn optional_lineage_matching_first_repeat_retains_exact_test_plan() -> Result<()
         let plan = prepared
             .test_dependency_plan(&[])?
             .ok_or("matching lineage lost its test plan")?;
-        assert_eq!(plan.report_identity(), fixture.plan_identity);
+        assert!(!plan.seals_current_project_paths());
+        assert_eq!(plan.selection().report_identity(), fixture.plan_identity);
         assert_eq!(fixture.old_context.admitted_owner_count(), 1);
     }
     Ok(())
@@ -525,5 +535,56 @@ fn optional_lineage_refuses_equal_identity_at_different_store_after_load() -> Re
     .err()
     .ok_or("a different physical child became a stale-generation miss")?;
     assert!(error.message.contains("original admitted coordinate"));
+    Ok(())
+}
+
+/// Mandatory preparation cannot substitute decoded root evidence beneath an original immutable authority.
+#[test]
+fn mandatory_lineage_refuses_decoded_root_substitution_after_load() -> Result<(), Box<dyn Error>> {
+    // ---- Original published root and mandatory admission ----
+    let fixture = LineageFixture::with_dependency_roots(BTreeMap::from([(
+        "owned_path".to_string(),
+        OvenProjectInspectionTestDependencyRoot::Path {
+            dependency_digest: digest_bytes(b"original dependency evidence"),
+        },
+    )]))?;
+    let prepared = prepare_project_registry_source_authorities_with_native_sdk(
+        fixture.load()?,
+        Some(Arc::clone(&fixture.old_context)),
+    )?;
+    assert_eq!(prepared.authority_identity(), fixture.reference.identity);
+
+    // ---- Substitution after the canonical loader admitted the original ----
+    let mut authority = fixture.load()?;
+    let root = authority
+        .payload
+        .test_dependency_envelope
+        .as_mut()
+        .ok_or("fixture lost its test envelope")?
+        .dependency_roots
+        .get_mut("owned_path")
+        .ok_or("fixture lost its original dependency root")?;
+    let OvenProjectInspectionTestDependencyRoot::Path { dependency_digest } = root else {
+        return Err("fixture root is not a path".into());
+    };
+    *dependency_digest = digest_bytes(b"substituted dependency evidence");
+    let error =
+        prepare_project_registry_source_authorities_with_native_sdk(authority, Some(Arc::clone(&fixture.old_context)))
+            .err()
+            .ok_or("mandatory preparation accepted substituted decoded dependency evidence")?;
+    assert!(
+        error
+            .message
+            .contains("project inspection authority differs from its original admitted payload"),
+        "{}",
+        error.message
+    );
+
+    // ---- Fresh admission still selects the unchanged original ----
+    let restored = prepare_project_registry_source_authorities_with_native_sdk(
+        fixture.load()?,
+        Some(Arc::clone(&fixture.old_context)),
+    )?;
+    assert_eq!(restored.authority_identity(), fixture.reference.identity);
     Ok(())
 }

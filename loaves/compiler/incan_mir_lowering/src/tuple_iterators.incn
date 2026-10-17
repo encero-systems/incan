@@ -65,7 +65,7 @@ pub def zip_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[first, second], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.InstantiatedPair(path, first, second), arguments, output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [first, second]), arguments, output, span)
 
 
 pub def clone_zip(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:
@@ -158,10 +158,14 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
 
 
 pub def enumerated_element(ty: PlanType) -> Result[TupleElement, str]:
-    """Require a flat scalar or text item before constructing the builtin's indexed tuple layout."""
+    """Retain the checked item's full layout before constructing the builtin's indexed tuple, including nested lists, tuples and carriers."""
     match ty:
         PlanType.Int => return Ok(TupleElement.Int)
         PlanType.Float => return Ok(TupleElement.Float)
         PlanType.Bool => return Ok(TupleElement.Bool)
         PlanType.String => return Ok(TupleElement.String)
+        PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
+        PlanType.Unit => return Ok(TupleElement.Unit)
+        PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
+        PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
         _ => return Err("unsupported Body IR enumerate nested element layout")

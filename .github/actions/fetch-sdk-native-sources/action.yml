@@ -2,10 +2,47 @@ name: Fetch SDK native sources
 description: >-
   Provide SDK preparation with the incan.pub index the compiler pins and the source Loaf archives its resolution locks
   name (the standard library's seed, its vocabulary companions, the compiler suite and its foundation), then export
-  their locations as INCAN_SDK_NATIVE_INDEX and INCAN_SDK_NATIVE_BLOBS.
+  their locations as INCAN_SDK_NATIVE_INDEX and INCAN_SDK_NATIVE_BLOBS. Linux also reconstructs the pinned native
+  compiler owner and exports it as INCAN_OVEN_LINK_OWNERS.
 runs:
   using: composite
   steps:
+    - name: Prepare the host publisher sandbox
+      uses: ./.github/actions/prepare-publisher-confinement
+    # Source transport is independent of the fact-index pin. Reuse the recorder's reviewed owner recipe.
+    - name: Check out the pinned Linux native owner preparation
+      if: runner.os == 'Linux'
+      uses: actions/checkout@v5
+      with:
+        repository: encero-systems/incan.pub
+        ref: 5753c23aa6fc52a8c47324702711a58b499958c3
+        path: target/incan_native_owner_transport/tool
+        persist-credentials: false
+    - name: Prepare the exact Linux native owner
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        owner_work="$(mktemp -d "$RUNNER_TEMP/incan-native-owner.XXXXXX")"
+        cd "$GITHUB_WORKSPACE/target/incan_native_owner_transport"
+        TARGET=x86_64-unknown-linux-gnu \
+          NATIVE_OWNER=bake/facts/dev7-linux-20261017/native-owner.json \
+          RUNNER_TEMP="$owner_work" bash tool/scripts/prepare-native-owner.sh
+        printf 'INCAN_OVEN_LINK_OWNERS=%s\n' "$owner_work/native-owner" >> "$GITHUB_ENV"
+    - name: Select the native compiler graph and its source lock
+      shell: bash
+      run: |
+        set -euo pipefail
+        graph="$(sh scripts/select_native_compiler_graph.sh "$GITHUB_WORKSPACE")"
+        lock="$(jq -er '.registry_lock | strings | select(length > 0)' "$graph")"
+        case "$lock" in
+          /*) ;;
+          *) lock="$(dirname "$graph")/$lock" ;;
+        esac
+        test -f "$lock"
+        printf 'INCAN_TEST_NATIVE_COMPILER_GRAPH=%s\n' "$graph" >> "$GITHUB_ENV"
+        printf 'INCAN_SDK_NATIVE_COMPILER_GRAPH=%s\n' "$graph" >> "$GITHUB_ENV"
+        printf 'INCAN_SDK_NATIVE_COMPILER_LOCK=%s\n' "$lock" >> "$GITHUB_ENV"
     # The compiler pins exact index commits and reads them through Git, so the checkout keeps the branch's history.
     - name: Check out the incan.pub index
       uses: actions/checkout@v5
@@ -20,8 +57,8 @@ runs:
       with:
         path: target/incan_sdk_native_blobs
         key: >-
-          incan-sdk-native-blobs-v1-${{ hashFiles('loaves/stdlib/sdk-lock.json', 'loaves/stdlib/vocab-wasm-lock.json',
-          'workspaces/oven/compiler-suite-native-lock.json',
+          incan-sdk-native-blobs-v2-${{ hashFiles('loaves/stdlib/sdk-lock.json', 'loaves/stdlib/vocab-wasm-lock.json',
+          'workspaces/oven/compiler-suite-native-lock.json', 'workspaces/oven/compiler-suite-native-linux-lock.json',
           'loaves/oven/oven_rustc/src/fixtures/compiler_suite_foundation.lock.json') }}
     # Archives are public GHCR blobs addressed by the digest the seed records. Each one is checked against that digest
     # here, and preparation verifies it again before reading it.
@@ -51,7 +88,7 @@ runs:
           jq -r '.units[] | [.loaf, .archive_digest] | @tsv' \
             loaves/stdlib/sdk-lock.json \
             loaves/stdlib/vocab-wasm-lock.json \
-            workspaces/oven/compiler-suite-native-lock.json \
+            "$INCAN_SDK_NATIVE_COMPILER_LOCK" \
             loaves/oven/oven_rustc/src/fixtures/compiler_suite_foundation.lock.json \
             | sort -u
         )

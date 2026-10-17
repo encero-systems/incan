@@ -573,7 +573,7 @@ pub fn select_current_debug_project_outputs(
         source_authority_digest,
         native_target,
         toolchain,
-        None,
+        DebugProjectOutputPurpose::Replay,
     )
 }
 
@@ -616,7 +616,19 @@ fn debug_project_output_expectations(
     Ok(Some(expected))
 }
 
-/// Select local bake lineages for exact replay or fresh development compilation against unchanged dependencies.
+/// Exact replay requires this compiler; optional inspection may observe checked execution-only absence.
+#[cfg(feature = "rust_inspect")]
+#[derive(Clone, Copy)]
+enum DebugProjectOutputPurpose<'a> {
+    /// Select output from the current compiler for the exact authored source.
+    Replay,
+    /// Retain unchanged dependency authority, or report a validated execution-only inspection miss.
+    Inspection { dependency_authority_digest: &'a str },
+}
+
+/// Select current-compiler local bake lineages for replay or inspection against unchanged dependencies.
+/// Equal native receipts do not make older producer metadata interchangeable. Optional inspection alone may retain
+/// fully checked execution-only outputs from an older compiler to establish absence; those grant no authority.
 #[cfg(feature = "rust_inspect")]
 fn select_debug_project_outputs(
     store: &OvenStore,
@@ -625,9 +637,16 @@ fn select_debug_project_outputs(
     source_authority_digest: &str,
     native_target: &str,
     toolchain: &str,
-    dependency_authority_digest: Option<&str>,
+    purpose: DebugProjectOutputPurpose<'_>,
 ) -> CliResult<Option<Vec<(OvenBakeProjectTarget, OvenStoredProjectOutput)>>> {
+    let dependency_authority_digest = match purpose {
+        DebugProjectOutputPurpose::Replay => None,
+        DebugProjectOutputPurpose::Inspection {
+            dependency_authority_digest,
+        } => Some(dependency_authority_digest),
+    };
     let project_identity = baked_project_owner_identity(project_root)?;
+    let compiler_identity = super::source_authority::current_compiler_identity_digest()?;
     let Some(expected) = debug_project_output_expectations(project_root, targets, native_target, toolchain)? else {
         return Ok(None);
     };
@@ -679,6 +698,7 @@ fn select_debug_project_outputs(
         }
         candidates.sort_by(|left, right| left.manifest().identity.cmp(&right.manifest().identity));
         let mut exact = Vec::with_capacity(candidates.len());
+        let mut execution_only = Vec::new();
         let mut rejected = Vec::new();
         for candidate in candidates {
             let payload = match serde_json::from_slice::<OvenProjectOutputPayload>(candidate.payload()) {
@@ -692,6 +712,27 @@ fn select_debug_project_outputs(
                     continue;
                 }
             };
+            // One native receipt may have several checked metadata generations. Their source and native bytes can
+            // agree across compiler changes, so select the current producer before choosing a coherent authority.
+            let older_compiler = payload.compiler_identity_digest.as_deref() != Some(compiler_identity.as_str());
+            let optional_execution = matches!(purpose, DebugProjectOutputPurpose::Inspection { .. })
+                && payload.inspection_authority.is_none()
+                && payload
+                    .compiler_identity_digest
+                    .as_deref()
+                    .is_some_and(|identity| !identity.trim().is_empty())
+                && payload
+                    .preparation_identity_digest
+                    .as_deref()
+                    .is_some_and(|identity| !identity.trim().is_empty());
+            if older_compiler && !optional_execution {
+                rejected.push(CliError::failure(format!(
+                    "exact debug {} project-output Loaf `{}` was not published by the current compiler; rerun `incan oven bake --project .`",
+                    expected.target.as_str(),
+                    candidate.manifest().identity
+                )));
+                continue;
+            }
             if payload.project_target != expected.target.as_str()
                 || payload.target_identity != expected.target_identity
                 || payload.project_identity != project_identity
@@ -712,9 +753,20 @@ fn select_debug_project_outputs(
             }
             let (manifest, artifact_root, _payload, lease) = candidate.into_parts();
             match stored_project_output_from_parts(manifest, artifact_root, payload, lease) {
+                Ok(output) if older_compiler => {
+                    match super::output_materialization::verify_stored_project_output_native(&output) {
+                        Ok(()) => execution_only.push(output),
+                        Err(error) => rejected.push(error),
+                    }
+                }
                 Ok(output) => exact.push(output),
                 Err(error) => rejected.push(error),
             }
+        }
+        // A current producer always wins. Older execution-only outputs can establish absence only when every
+        // candidate in this target group was valid; they never hide a rejected named or damaged publication.
+        if exact.is_empty() && rejected.is_empty() {
+            exact = execution_only;
         }
         exact.sort_by(|left, right| left.identity.cmp(&right.identity));
         if exact.is_empty() {
@@ -780,7 +832,11 @@ fn select_coherent_project_outputs(
 /// This is command-scoped authority preparation for check, run and test. Own-source edits may reuse dependency
 /// authority recorded by the same local bake; native output replay still requires exact source authority. The caller
 /// retains both completed-output and inspection-entry leases across all scheduled harness batches.
-/// Missing target output is a cache miss; nonempty malformed or absent lineage is an explicit rebake error.
+/// Missing target output or an admitted execution-only output is an inspection cache miss: ordinary and cold-bootstrap
+/// outputs carry preparation identity but deliberately grant no whole-project inspection capability. A checked older
+/// execution-only output may establish this absence, but cannot supply replay or named inspection authority. The
+/// consumer must obtain its actual dependency authority separately. Named missing or malformed lineage and mixed target
+/// generations remain explicit errors; this selection never converts damaged publications into cache misses.
 #[cfg(feature = "rust_inspect")]
 pub fn load_current_project_registry_source_authorities(
     store: &OvenStore,
@@ -799,11 +855,27 @@ pub fn load_current_project_registry_source_authorities(
         &source_authority_digest,
         &target,
         &toolchain,
-        Some(&dependency_authority_digest),
+        DebugProjectOutputPurpose::Inspection {
+            dependency_authority_digest: &dependency_authority_digest,
+        },
     )?
     else {
         return Ok(None);
     };
+    // Ordinary and cold-bootstrap executions deliberately publish completed outputs without whole-project
+    // inspection lineage. They grant no inspection capability; an optional consumer must prepare its actual
+    // dependencies through the current command's original native owners. Named or mixed lineage still validates
+    // below, and canonical output selection above already rejected malformed or damaged selected publications.
+    if outputs.iter().all(|(_, output)| {
+        output.payload.inspection_authority.is_none()
+            && output
+                .payload
+                .preparation_identity_digest
+                .as_deref()
+                .is_some_and(|identity| !identity.trim().is_empty())
+    }) {
+        return Ok(None);
+    }
     let preferred = outputs
         .iter()
         .find(|(project_target, _)| *project_target == OvenBakeProjectTarget::Library)
@@ -1126,6 +1198,344 @@ mod tests {
         fn enter(&self, _span: &tracing::span::Id) {}
         /// Exiting an existing span does not change invocation counts.
         fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// Execution-only completed outputs grant no inspection authority, while a named missing owner still refuses.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn optional_project_inspection_distinguishes_execution_only_from_dangling_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for named_authority in [false, true] {
+            // ---- Completed output with optional inspection lineage ----
+            let project = tempfile::tempdir()?;
+            fs::create_dir(project.path().join("src"))?;
+            fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+            let entrypoint = project.path().join("src/main.incn");
+            fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+            let (receipt, mut payload, files) =
+                crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "inspection")?;
+            let missing_identity = format!("sha256:{}", "a".repeat(64));
+            payload.inspection_authority = named_authority.then(|| OvenProjectInspectionAuthorityRef {
+                identity: missing_identity.clone(),
+                receipt_identity: receipt.identity.clone(),
+                build_unit_identity: receipt.build_unit_identity.clone(),
+            });
+            payload.preparation_identity_digest =
+                Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+            let store_root = tempfile::tempdir()?;
+            let store = OvenStore::new(
+                store_root.path(),
+                oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            );
+            let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+            let receipt_path =
+                project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?;
+            fs::create_dir_all(receipt_path.parent().ok_or("receipt has no parent")?)?;
+            fs::write(&receipt_path, serde_json::to_vec(&receipt)?)?;
+
+            // ---- Exact stored output selected before inspection policy ----
+            let targets = discover_oven_bake_project_targets(project.path())?;
+            let outputs = select_current_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &payload.source_authority_digest,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+            )?
+            .ok_or("published debug output was not selected")?;
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].1.identity, published.identity);
+
+            // ---- Repeated absence handling and precise missing-owner refusal ----
+            for _ in 0..2 {
+                let selected = load_current_project_registry_source_authorities(&store, project.path());
+                if named_authority {
+                    let failure = match super::super::inspection_snapshot::load_output_inspection_authority(
+                        &store,
+                        &outputs[0].1,
+                    ) {
+                        Err(error) => error,
+                        Ok(_) => return Err("absent named inspection owner unexpectedly loaded".into()),
+                    };
+                    match &failure {
+                        oven_rustc::rustc::OvenRustcError::Store(oven_store::store::OvenStoreError::Io {
+                            path,
+                            source,
+                        }) => {
+                            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+                            assert_eq!(
+                                path,
+                                &store.root().join("entries").join(missing_identity.replace(':', "-"))
+                            );
+                        }
+                        other => return Err(format!("expected the absent named owner, got {other}").into()),
+                    }
+                    let error = match selected {
+                        Err(error) => error,
+                        Ok(_) => return Err("a named missing inspection owner was treated as optional".into()),
+                    };
+                    assert_eq!(error.message, failure.to_string());
+                } else {
+                    assert!(
+                        selected?.is_none(),
+                        "an execution-only output cannot supply inspection authority"
+                    );
+                }
+            }
+        }
+
+        // ---- Mixed library/executable lineage never grants optional absence ----
+        for library_has_authority in [false, true] {
+            let project = tempfile::tempdir()?;
+            fs::create_dir(project.path().join("src"))?;
+            fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+            fs::write(project.path().join("src/lib.incn"), "def helper() -> None:\n    pass\n")?;
+            fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+            let store_root = tempfile::tempdir()?;
+            let store = OvenStore::new(
+                store_root.path(),
+                oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            );
+            let mut published_outputs = Vec::new();
+            for (target, label) in [
+                (OvenBakeProjectTarget::Library, "library"),
+                (OvenBakeProjectTarget::Executable, "executable"),
+            ] {
+                let authority = OvenProjectInspectionAuthorityRef {
+                    identity: format!("sha256:{}", "b".repeat(64)),
+                    receipt_identity: format!("sha256:{}", "c".repeat(64)),
+                    build_unit_identity: format!("sha256:{}", "d".repeat(64)),
+                };
+                let (receipt, mut payload, files) = crate::build::test_support::fixture_project_output_publication_for(
+                    project.path(),
+                    "debug",
+                    label,
+                    target,
+                    authority,
+                )?;
+                if (target == OvenBakeProjectTarget::Library) != library_has_authority {
+                    payload.inspection_authority = None;
+                }
+                payload.preparation_identity_digest =
+                    Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+                let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+                write_receipt(
+                    &receipt,
+                    project_bake_receipt_path(
+                        project.path(),
+                        target,
+                        &project.path().join(target.source_relative_path()),
+                        "debug",
+                    )?,
+                )?;
+                published_outputs.push((target, published.identity));
+            }
+            let rustc = resolve_active_rustc()?;
+            let selected = select_current_debug_project_outputs(
+                &store,
+                project.path(),
+                &discover_oven_bake_project_targets(project.path())?,
+                &digest_baked_project_source_authority(project.path())?,
+                &rustc_host_target(&rustc)?,
+                &rustc_identity(&rustc)?,
+            )?
+            .ok_or("mixed project outputs were not selected")?;
+            assert_eq!(selected.len(), 2);
+            for (target, identity) in published_outputs {
+                let output = selected
+                    .iter()
+                    .find(|(selected_target, _)| *selected_target == target)
+                    .ok_or("published target missing from mixed selection")?;
+                assert_eq!(output.1.identity, identity);
+                assert_eq!(
+                    output.1.payload.inspection_authority.is_some(),
+                    (target == OvenBakeProjectTarget::Library) == library_has_authority
+                );
+            }
+            let expected = if library_has_authority {
+                "source-current debug project outputs disagree on their singular Rust inspection authority; rerun `incan oven bake --project .`"
+            } else {
+                "source-current Oven project output has no project inspection authority; rerun `incan oven bake --project .`"
+            };
+            for _ in 0..2 {
+                let error = match load_current_project_registry_source_authorities(&store, project.path()) {
+                    Err(error) => error,
+                    Ok(_) => return Err("mixed execution-only and named inspection lineage was admitted".into()),
+                };
+                assert_eq!(error.message, expected);
+            }
+        }
+        Ok(())
+    }
+
+    /// Older execution-only outputs are optional inspection misses, never replay or named-authority fallbacks.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn optional_inspection_checks_older_execution_only_outputs() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- One genuine publication from an older compiler ----
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "older_execution")?;
+        let compiler = digest_bytes(b"older execution-only compiler");
+        payload.compiler_identity_digest = Some(compiler.clone());
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_for_compiler(compiler)?);
+        payload.inspection_authority = None;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024),
+        );
+        let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        write_receipt(
+            &receipt,
+            project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?,
+        )?;
+        verify_stored_project_output_native(&published)?;
+        let strict = select_current_debug_project_outputs(
+            &store,
+            project.path(),
+            &discover_oven_bake_project_targets(project.path())?,
+            &payload.source_authority_digest,
+            &receipt.intent.target,
+            &receipt.intent.toolchain,
+        )
+        .err()
+        .ok_or("strict replay accepted an older execution-only output")?;
+        assert!(strict.message.contains("current compiler"), "{}", strict.message);
+        for _ in 0..2 {
+            assert!(load_current_project_registry_source_authorities(&store, project.path())?.is_none());
+        }
+
+        // ---- The optional miss still checks the original materialized bytes ----
+        let original = fs::read(&published.native_output)?;
+        let permissions = fs::metadata(&published.native_output)?.permissions();
+        #[cfg(unix)]
+        fs::set_permissions(&published.native_output, fs::Permissions::from_mode(0o644))?;
+        #[cfg(not(unix))]
+        {
+            let mut writable = permissions.clone();
+            writable.set_readonly(false);
+            fs::set_permissions(&published.native_output, writable)?;
+        }
+        let mut changed = original.clone();
+        let first = changed.first_mut().ok_or("fixture native output is empty")?;
+        *first ^= 0xff;
+        fs::write(&published.native_output, changed)?;
+        let corrupted = load_current_project_registry_source_authorities(&store, project.path());
+        fs::write(&published.native_output, original)?;
+        fs::set_permissions(&published.native_output, permissions)?;
+        let error = corrupted
+            .err()
+            .ok_or("damaged older execution output was treated as an inspection miss")?;
+        assert!(error.message.contains("digest differs"), "{}", error.message);
+        assert!(load_current_project_registry_source_authorities(&store, project.path())?.is_none());
+
+        // ---- An older named lineage is not hidden by the execution-only candidate ----
+        let missing_identity = format!("sha256:{}", "a".repeat(64));
+        payload.inspection_authority = Some(OvenProjectInspectionAuthorityRef {
+            identity: missing_identity.clone(),
+            receipt_identity: receipt.identity.clone(),
+            build_unit_identity: receipt.build_unit_identity.clone(),
+        });
+        let _older_named = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let error = load_current_project_registry_source_authorities(&store, project.path())
+            .err()
+            .ok_or("an older named authority was hidden by an optional miss")?;
+        assert!(error.message.contains("current compiler"), "{}", error.message);
+
+        // ---- Current named lineage wins and propagates its exact missing-owner error ----
+        payload.compiler_identity_digest = Some(super::super::source_authority::current_compiler_identity_digest()?);
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let current = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let failure = super::super::inspection_snapshot::load_output_inspection_authority(&store, &current)
+            .err()
+            .ok_or("absent current named owner unexpectedly loaded")?;
+        match &failure {
+            oven_rustc::rustc::OvenRustcError::Store(oven_store::store::OvenStoreError::Io { path, source }) => {
+                assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+                assert_eq!(
+                    path,
+                    &store.root().join("entries").join(missing_identity.replace(':', "-"))
+                );
+            }
+            other => return Err(format!("expected the absent named owner, got {other}").into()),
+        }
+        let error = load_current_project_registry_source_authorities(&store, project.path())
+            .err()
+            .ok_or("current named authority was hidden by an older optional miss")?;
+        assert_eq!(error.message, failure.to_string());
+        Ok(())
+    }
+
+    /// Same-receipt outputs from an older compiler cannot displace current inspection lineage by identity order.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn debug_inspection_rejects_older_compiler_generation() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- One current local receipt and two immutable producer generations ----
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "generation")?;
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path(),
+            oven_store::store::OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024),
+        );
+        let current = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let receipt_path =
+            project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?;
+        write_receipt(&receipt, receipt_path)?;
+        let targets = discover_oven_bake_project_targets(project.path())?;
+        let select = |store: &OvenStore| {
+            select_current_debug_project_outputs(
+                store,
+                project.path(),
+                &targets,
+                &payload.source_authority_digest,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+            )
+        };
+
+        // ---- Missing or older producer identity never supplies a fallback authority ----
+        let mut older = payload.clone();
+        let compiler = digest_bytes(b"older compiler generation");
+        older.compiler_identity_digest = Some(compiler.clone());
+        older.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_for_compiler(compiler)?);
+        for compiler in [None, older.compiler_identity_digest.clone()] {
+            let root = tempfile::tempdir()?;
+            let stale_store = OvenStore::new(root.path(), *store.limits());
+            let mut stale = older.clone();
+            stale.compiler_identity_digest = compiler;
+            let _published = publish_project_output_loaf(&stale_store, &receipt, &stale, &files)?;
+            let error = select(&stale_store)
+                .err()
+                .ok_or("a stale-only debug lineage was accepted")?;
+            assert!(error.message.contains("current compiler"), "{}", error.message);
+        }
+
+        // ---- Current producer selection survives a competing same-receipt generation ----
+        let _older = publish_project_output_loaf(&store, &receipt, &older, &files)?;
+        let selected = select(&store)?.ok_or("current debug output disappeared")?;
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            selected[0].1.identity, current.identity,
+            "same native receipt and source must not select an older compiler's inspection envelope"
+        );
+        Ok(())
     }
 
     /// Both ordinary and compiler-client selection use an exact locator without querying unrelated owners.
@@ -1526,7 +1936,9 @@ mod tests {
                 &current,
                 &receipt.intent.target,
                 &receipt.intent.toolchain,
-                Some(&dependencies)
+                DebugProjectOutputPurpose::Inspection {
+                    dependency_authority_digest: &dependencies
+                }
             )?
             .is_some()
         );
@@ -1555,7 +1967,9 @@ mod tests {
                 &current,
                 &receipt.intent.target,
                 &receipt.intent.toolchain,
-                Some(&changed)
+                DebugProjectOutputPurpose::Inspection {
+                    dependency_authority_digest: &changed
+                }
             )
             .is_err()
         );

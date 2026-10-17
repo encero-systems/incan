@@ -16,7 +16,7 @@ fn block(value: i64) -> Result<mir::BasicBlock, PlanError> {
 }
 
 /// Preserve each explicit unwind choice; never infer owned-value cleanup in the adapter.
-fn unwind(value: &Unwind) -> Result<mir::UnwindAction, PlanError> {
+pub(crate) fn unwind(value: &Unwind) -> Result<mir::UnwindAction, PlanError> {
     Ok(match value {
         Unwind::Continue => mir::UnwindAction::Continue,
         Unwind::Cleanup(target) => mir::UnwindAction::Cleanup(block(*target)?),
@@ -76,6 +76,9 @@ pub fn terminator<'tcx>(
             unwind: unwind(action)?,
         },
         TerminatorKind::Return => mir::TerminatorKind::Return,
+        // Coroutine expansion supplies the poll loop after the frame receives its native resume arguments.
+        TerminatorKind::Await(..) => mir::TerminatorKind::Unreachable,
+        TerminatorKind::CoroutineDrop => mir::TerminatorKind::CoroutineDrop,
         TerminatorKind::Unreachable => mir::TerminatorKind::Unreachable,
         TerminatorKind::UnwindResume => mir::TerminatorKind::UnwindResume,
     };
@@ -122,18 +125,26 @@ fn call_operand<'tcx>(
         arguments.push(crate::types::callable_object_type(tcx, signature)?.into());
         arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
     }
+    if let crate::plan::CalleeKind::CallClosureOnce(signature) = &callee.kind {
+        let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+            function: "consuming callable object".into(),
+            reason: "callable signature has no return type".into(),
+        })?;
+        let object = crate::types::consuming_callable_object_type(tcx, signature)?;
+        arguments.push(rustc_middle::ty::Ty::new_box(tcx, object).into());
+        arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
+    }
+    if let crate::plan::CalleeKind::CloneClosure(signature) = &callee.kind {
+        arguments.push(crate::types::callable_object_type(tcx, signature)?.into());
+    }
     if let crate::plan::CalleeKind::CloneEnum(_, name) = &callee.kind {
         arguments.push(crate::types::enum_type(tcx, name)?.into());
     }
     if let crate::plan::CalleeKind::CloneModel(_, name) = &callee.kind {
         arguments.push(crate::types::model_type(tcx, name)?.into());
     }
-    if let crate::plan::CalleeKind::Instantiated(_, ty) = &callee.kind {
-        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, std::slice::from_ref(ty))?.iter());
-    }
-    if let crate::plan::CalleeKind::InstantiatedPair(_, key, value) = &callee.kind {
-        arguments
-            .extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[key.clone(), value.clone()])?.iter());
+    if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
     }
     Ok(mir::Operand::function_handle(
         tcx,

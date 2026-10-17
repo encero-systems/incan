@@ -134,6 +134,26 @@ fn admitted_ordinary_module_usage_refuses_explicit_prelude_without_owner() -> Re
     Ok(())
 }
 
+/// Frontend-only Rust capabilities require no ordinary package owner; real standard namespaces still do.
+#[test]
+fn admitted_ordinary_module_usage_retains_frontend_only_rust_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let (_, session) = ordinary_session(root.path())?;
+    for source in ["from std.rust import Send, Static\n", "import std.rust\n"] {
+        let parsed = parsed_module_for_test(source)?;
+        let paths = session.provider_module_paths(std::slice::from_ref(&parsed));
+        assert!(paths.contains(&vec!["std".into(), "rust".into()]));
+        session.provider_plan_for_modules(&[parsed])?;
+    }
+    let parsed = parsed_module_for_test("from std.io import IoError\n")?;
+    let error = session
+        .provider_plan_for_modules(&[parsed])
+        .err()
+        .ok_or("a runtime namespace acquired an absent owner")?;
+    assert!(error.to_string().contains("std.io"), "{error}");
+    Ok(())
+}
+
 /// The actual canonical writer preserves explicit prelude imports, including imports inside inline test modules.
 #[test]
 fn admitted_ordinary_lock_writer_refuses_explicit_and_nested_prelude_without_owner()

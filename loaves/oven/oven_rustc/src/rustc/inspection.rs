@@ -13,7 +13,7 @@ use oven_store::{OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenReceipt
 use serde::{Deserialize, Serialize};
 
 /// Wire schema for one project-level Rust inspection authority.
-pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
+pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 3;
 
 /// Wire schema for compiler-support root intent retained with one explicit publisher receipt.
 pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION: u32 = 1;
@@ -102,12 +102,18 @@ pub struct OvenProjectInspectionTestProviderConstituent {
 
 /// Exact per-root evidence admitted by the generated native-test dependency envelope.
 ///
-/// Registry roots retain Cargo's locked package/source identity as well as the declared edge digest. Path and Git
+/// Registry roots retain either an original native record or the legacy Cargo package/source identity, alongside
+/// the declared edge digest. Path and Git
 /// roots carry their complete portable declaration/source digest; for paths that digest includes the source tree,
 /// never its machine-local spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum OvenProjectInspectionTestDependencyRoot {
+    /// Registry declaration bound to an original native Loaf record, independently of Cargo package identities.
+    NativeRegistry {
+        dependency_digest: String,
+        record_identity: String,
+    },
     Registry {
         dependency_digest: String,
         locked: OvenProjectInspectionRootDependency,
@@ -120,6 +126,18 @@ pub enum OvenProjectInspectionTestDependencyRoot {
     },
 }
 
+/// Exact native declaration roots retained by one original direct-plan constituent.
+/// The constituent receipt seals this complete map, including mandatory support roots. Native records carry their
+/// own source and physical edges; these coordinates do not grant legacy registry-catalog or macro authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenProjectInspectionNativeRoots {
+    /// Original direct-plan constituent whose receipt binds the complete root map.
+    pub constituent_index: usize,
+    /// Consumer aliases mapped to exact native record identities.
+    pub roots: BTreeMap<String, String>,
+}
+
 /// Singular source authority published once by an explicit project bake.
 ///
 /// The authority owns one canonical publisher lock and exact normal/dev root-edge records. Its source catalog is a
@@ -127,6 +145,9 @@ pub enum OvenProjectInspectionTestDependencyRoot {
 /// constituent; normal commands never union independent locks or search the store by dependency compatibility.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenProjectInspectionAuthorityPayload {
+    /// Original native root authority for the ordinary producer; absent for legacy registry publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_roots: Option<OvenProjectInspectionNativeRoots>,
     pub schema_version: u32,
     pub project_identity: String,
     pub source_authority_digest: String,
@@ -638,7 +659,8 @@ fn exact_project_inspection_root_dependency<'a>(
             .and_then(|envelope| envelope.dependency_roots.get(alias))
             .and_then(|root| match root {
                 OvenProjectInspectionTestDependencyRoot::Registry { locked, .. } => Some(locked),
-                OvenProjectInspectionTestDependencyRoot::Path { .. }
+                OvenProjectInspectionTestDependencyRoot::NativeRegistry { .. }
+                | OvenProjectInspectionTestDependencyRoot::Path { .. }
                 | OvenProjectInspectionTestDependencyRoot::Git { .. } => None,
             })
             .ok_or_else(|| OvenRustcError::InvalidInput {
@@ -1011,6 +1033,7 @@ mod selected_rust_facet_graph_tests {
             },
         };
         OvenProjectInspectionAuthorityPayload {
+            native_roots: None,
             schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
             project_identity: selected_graph_sha256(b"fixture project"),
             source_authority_digest: selected_graph_sha256(b"fixture source authority"),

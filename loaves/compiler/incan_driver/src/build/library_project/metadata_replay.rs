@@ -44,6 +44,7 @@ pub(crate) struct MetadataPreparation {
     pub receipt: OvenReceipt,
     pub store: OvenStore,
     native_authority: NativeMetadataAuthority,
+    vocabulary: Option<Arc<super::standard_vocabulary::PreparedStandardVocabulary>>,
     pub rustc: PathBuf,
     dependency_owners: Vec<Arc<SelectedLibraryMetadata>>,
     delivery_coordinates: BTreeMap<String, String>,
@@ -69,6 +70,7 @@ impl MetadataPreparation {
             native_sdk,
             authority,
             explicit_native_context.map(NativeMetadataAuthority::SdkCommand),
+            None,
         )
     }
 
@@ -76,12 +78,28 @@ impl MetadataPreparation {
     /// The caller must establish plain-library checked-demand coverage before supplying this authority.
     /// A successful observation verifies the complete native request while computing its semantic identity; unsupported
     /// observations return no preparation capability.
+    #[cfg(test)]
     pub(crate) fn observe_with_ordinary_native_authority(
         project: &ProjectManifest,
         session: &CompilationSession,
         out_dir: &Path,
         native: Arc<OrdinaryNativeMetadataAuthority>,
     ) -> CliResult<Option<Self>> {
+        Self::observe_with_ordinary_native_vocabulary(project, session, out_dir, native, None)
+    }
+
+    /// Bind explicitly prepared vocabulary production to the same ordinary metadata recipe and original native owners.
+    /// Only toolchain readiness supplies this capability; ordinary discovery never manufactures it from declarations.
+    pub(crate) fn observe_with_ordinary_native_vocabulary(
+        project: &ProjectManifest,
+        session: &CompilationSession,
+        out_dir: &Path,
+        native: Arc<OrdinaryNativeMetadataAuthority>,
+        vocabulary: Option<Arc<super::standard_vocabulary::PreparedStandardVocabulary>>,
+    ) -> CliResult<Option<Self>> {
+        if let Some(vocabulary) = &vocabulary {
+            vocabulary.verify_for(project)?;
+        }
         Self::observe_with_authority(
             project,
             session,
@@ -89,6 +107,7 @@ impl MetadataPreparation {
             None,
             None,
             Some(NativeMetadataAuthority::Ordinary(native)),
+            vocabulary,
         )
     }
 
@@ -100,6 +119,7 @@ impl MetadataPreparation {
         native_sdk: Option<&NativeSdkPublicationContext<'_>>,
         authority: Option<&mut OvenProjectBakeAuthorityContext>,
         explicit_native: Option<NativeMetadataAuthority>,
+        vocabulary: Option<Arc<super::standard_vocabulary::PreparedStandardVocabulary>>,
     ) -> CliResult<Option<Self>> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::observe_library_metadata", project = %project.project_root().display()).entered();
         if !metadata_output_is_observable(project.project_root(), out_dir) {
@@ -250,7 +270,8 @@ impl MetadataPreparation {
             };
             NativeMetadataAuthority::SdkCommand(context)
         };
-        let semantic_authority_digest = semantic_authority(session, native_sdk, &native_authority)?;
+        let semantic_authority_digest =
+            semantic_authority(session, native_sdk, &native_authority, vocabulary.as_deref())?;
         let policy_digest = metadata_policy_digest(native_sdk, &delivery_coordinates)?;
         let recipe = LibraryMetadataRecipe {
             name,
@@ -270,6 +291,7 @@ impl MetadataPreparation {
             receipt,
             store,
             native_authority,
+            vocabulary,
             rustc,
             dependency_owners,
             delivery_coordinates,
@@ -294,6 +316,9 @@ impl MetadataPreparation {
 
     /// Revalidate original native leases without observing a different source generation during lock finalization.
     pub(crate) fn verify_native_authority(&self) -> CliResult<()> {
+        if let Some(vocabulary) = &self.vocabulary {
+            vocabulary.verify()?;
+        }
         match &self.native_authority {
             NativeMetadataAuthority::SdkCommand(context) => context.verify(),
             NativeMetadataAuthority::Ordinary(native) => native.verify(),
@@ -335,7 +360,8 @@ impl MetadataPreparation {
         if current_delivery_coordinates(out_dir, session)? != self.delivery_coordinates
             || current_source_digest(project.project_root(), features)? != self.recipe.source_digest
             || crate::build::source_authority::current_compiler_identity_digest()? != self.recipe.producer_digest
-            || semantic_authority(session, native_sdk, &self.native_authority)? != self.recipe.semantic_authority_digest
+            || semantic_authority(session, native_sdk, &self.native_authority, self.vocabulary.as_deref())?
+                != self.recipe.semantic_authority_digest
         {
             return Err(invalid(
                 "checked library preparation authority changed before publication",
@@ -701,6 +727,7 @@ fn semantic_authority(
     session: &CompilationSession,
     native_sdk: Option<&NativeSdkPublicationContext<'_>>,
     authority: &NativeMetadataAuthority,
+    vocabulary: Option<&super::standard_vocabulary::PreparedStandardVocabulary>,
 ) -> CliResult<String> {
     crate::build::library_metadata::validate_rust_fact_agreement(
         session
@@ -721,10 +748,7 @@ fn semantic_authority(
             if native_sdk.is_some() {
                 return Err(invalid("ordinary metadata cannot substitute SDK publication authority"));
             }
-            (
-                native.semantic_inputs()?,
-                Some(native.standard_source_digest(session.provider_plan().standard_source_publication())?),
-            )
+            (native.semantic_inputs()?, Some(native.standard_source_digest()?))
         }
         NativeMetadataAuthority::SdkPublication => {
             let context = native_sdk.ok_or_else(|| invalid("original SDK publication authority is unavailable"))?;
@@ -746,9 +770,15 @@ fn semantic_authority(
             )
         }
     };
-    Ok(digest_bytes(
-        &serde_json::to_vec(&(providers, native, stdlib)).map_err(|error| invalid(error.to_string()))?,
-    ))
+    let ordinary =
+        digest_bytes(&serde_json::to_vec(&(providers, native, stdlib)).map_err(|error| invalid(error.to_string()))?);
+    match vocabulary {
+        Some(vocabulary) => Ok(digest_bytes(
+            &serde_json::to_vec(&(ordinary, vocabulary.semantic_identity()?))
+                .map_err(|error| invalid(error.to_string()))?,
+        )),
+        None => Ok(ordinary),
+    }
 }
 
 /// Preserve legacy discovery only for existing SDK-backed callers.
@@ -866,10 +896,11 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
     contract.validate()?;
     if ordinary_native.is_some() {
         contract
-            .require_ordinary_source_inspection_native(
+            .require_ordinary_source_inspection_native_with_vocabulary(
                 session
                     .admitted_library_dependencies()
                     .map(|owners| (owners.as_ref(), session.provider_plan().as_ref())),
+                preparation.vocabulary.as_deref(),
             )
             .map_err(|error| invalid(format!("ordinary metadata replay demands: {}", error.message)))?;
         if include_interop_execution {

@@ -188,7 +188,7 @@ fn verify_original_materialization(
 }
 
 /// Normalize the actual project/workspace canonical lock without following a replacement file symlink.
-pub(super) fn canonical_lock_coordinate(root: &Path) -> CliResult<PathBuf> {
+pub(in crate::build::library_project) fn canonical_lock_coordinate(root: &Path) -> CliResult<PathBuf> {
     let requested = canonical_baked_project_lock_path(root)?;
     let parent = requested
         .parent()

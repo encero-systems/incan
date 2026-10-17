@@ -1,0 +1,223 @@
+"""Checked function frames that contribute nominal layouts without adding executable bodies."""
+
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    Block,
+    StatementKind,
+    Callee,
+    CallableTarget,
+    NamedCallableTarget,
+    StaticInitializer,
+    Rvalue,
+    MatchArm,
+)
+from type_parameters import substitute, instantiate
+
+
+model ScheduledFrame:
+    """One canonical source function and the checked arguments closing its frame, with its call ancestry."""
+
+    body: Body
+    arguments: list[RustType]
+    ancestors: list[str]
+
+
+pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
+    """Inventory function, computed-static and closed source-call frames without granting execution or altering module bodies."""
+    mut frames: list[Body] = []
+    mut pending: list[ScheduledFrame] = []
+    for body in module.bodies:
+        frames.append(body.clone())
+        if len(body.type_parameters) == 0:
+            schedule_block(module, body.block, [], [], pending, [])?
+    for declaration in module.static_declarations:
+        match declaration.initial:
+            StaticInitializer.Computed(body) =>
+                append_static_frame(frames, body)
+                schedule_block(module, body.block, [], [], pending, [])?
+            _ => pass
+    mut cursor = 0
+    while cursor < len(pending):
+        request = pending[cursor]
+        cursor += 1
+        # This inventory closes layout types only; executable callable ownership is selected by call lowering.
+        frame = instantiate(request.body, request.arguments, [])?
+        frames.append(frame.clone())
+        match request.body.canonical:
+            Some(identity) =>
+                ancestry = request.ancestors + [identity.render_compact()]
+                schedule_block(
+                    module,
+                    request.body.block,
+                    request.body.type_parameters.clone(),
+                    request.arguments,
+                    pending,
+                    ancestry,
+                )?
+            None => return Err("unsupported Body IR nominal frame without canonical identity")
+    return Ok(frames)
+
+
+def append_static_frame(mut frames: list[Body], body: &Body) -> None:
+    """Append one explicit Body clone through its declared borrow, preserving the boxed initializer's ownership."""
+    frames.append(body.clone())
+
+
+def schedule_block(
+    module: &BodyIrModule,
+    block: &Block,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Visit checked calls through normalized blocks; other executable constructs retain their normal lowering path."""
+    for statement in block.stmts:
+        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+    return Ok(None)
+
+
+def schedule_statement(
+    module: &BodyIrModule,
+    kind: &StatementKind,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Borrow a statement kind explicitly so its foreign enum import survives the legacy fixture bake."""
+    match kind:
+        StatementKind.Call(destination=_destination, callee=callee, args=_args, may_panic=_panic) =>
+            match callee:
+                Callee.Function(callable) =>
+                    match callable:
+                        CallableTarget.Named(target) => schedule_call(
+                            module,
+                            target,
+                            names,
+                            arguments,
+                            pending,
+                            ancestors,
+                        )?
+                        _ => pass
+                _ => pass
+        StatementKind.Assign(place=_destination, rvalue=value) =>
+            schedule_value(module, value, names, arguments, pending, ancestors)?
+        StatementKind.Race(destination=_destination, arms=arms) =>
+            for arm in arms:
+                schedule_block(module, arm.body, names, arguments, pending, ancestors)?
+        StatementKind.Loop(body=nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+        StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) => schedule_block(
+            module,
+            nested,
+            names,
+            arguments,
+            pending,
+            ancestors,
+        )?
+        StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            schedule_block(module, then_body, names, arguments, pending, ancestors)?
+            match else_body:
+                Some(nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+def schedule_value(
+    module: &BodyIrModule,
+    value: &Rvalue,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Schedule same-frame match calls, leaving closure and generator local arenas to their own lowering."""
+    match value:
+        Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
+            for arm in arms:
+                schedule_arm(module, arm, names, arguments, pending, ancestors)?
+        _ => pass
+    return Ok(None)
+
+
+def schedule_arm(
+    module: &BodyIrModule,
+    arm: &MatchArm,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Preserve the checked generic binders and call lineage across a match guard and body."""
+    for statement in arm.guard_stmts:
+        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+    for statement in arm.body_stmts:
+        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+    return Ok(None)
+
+
+def schedule_call(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Select a source template by complete identity and its recorded arguments; unresolved or recursive calls grant no layouts."""
+    match target.canonical:
+        None => return Ok(None)
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Function or identity.render_compact() in ancestors:
+                return Ok(None)
+            match checked_function_body(module, target)?:
+                None => return Ok(None)
+                Some(body) =>
+                    if len(body.type_parameters) == 0 or len(body.type_parameters) != len(target.type_args):
+                        return Ok(None)
+                    mut closed: list[RustType] = []
+                    for argument in target.type_args:
+                        match substitute(argument, names, arguments):
+                            Ok(value) => closed.append(value.clone())
+                            Err(_error) => return Ok(None)
+                    if not closed_arguments(closed):
+                        return Ok(None)
+                    for request in pending:
+                        if request.body.canonical == body.canonical and request.arguments == closed:
+                            return Ok(None)
+                    pending.append(ScheduledFrame(body=body, arguments=closed, ancestors=ancestors))
+    return Ok(None)
+
+
+pub def closed_arguments(arguments: list[RustType]) -> bool:
+    """Reject unresolved placeholders in nominal argument trees; native carrier admission still validates other kinds."""
+    for argument in arguments:
+        match argument:
+            RustType.TypeVar(_name) => return false
+            RustType.Generic(base=_base, args=elements) =>
+                if not closed_arguments(elements):
+                    return false
+            RustType.Tuple(elements) =>
+                if not closed_arguments(elements):
+                    return false
+            RustType.SelfType => return false
+            RustType.Infer => return false
+            RustType.Unknown => return false
+            _ => pass
+    return true
+
+
+def checked_function_body(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[Option[Body], str]:
+    """Resolve one admitted function identity uniquely across retained project bodies; the entry module owns only a subset."""
+    mut selected: Option[Body] = None
+    for body in module.bodies:
+        if body.canonical != target.canonical:
+            continue
+        match selected:
+            Some(_previous) => return Err("unsupported Body IR ambiguous canonical nominal frame")
+            None =>
+                selected = Some(body.clone())
+    return Ok(selected)

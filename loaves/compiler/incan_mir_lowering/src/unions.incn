@@ -1,7 +1,13 @@
 """Anonymous unions reuse native enum layouts and legacy's normalized payload order and names."""
 
 from rust::incan_semantics_core import IncanType as RustType
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, EnumDeclaration as RustEnumDeclaration
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+    StaticInitializer,
+)
 from pub::incan_mir_plan import (
     ListLeaf,
     list_leaf_type,
@@ -28,6 +34,12 @@ from layout_types import native_source_type as retained_source_type
 pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
     """Retain each union shape once across checked frame and declaration types."""
     mut unions: list[RustType] = []
+    for delegation in module.stdlib_delegations:
+        if len(delegation.type_parameters) != 0:
+            continue
+        for parameter in delegation.parameters:
+            retain_union(unions, parameter)
+        retain_union(unions, delegation.return_type)
     for body in module.bodies:
         retain_union(unions, body.return_type)
         for local in body.locals:
@@ -39,6 +51,11 @@ pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
         for variant in declaration.variants:
             for ty in variant.fields:
                 retain_union(unions, ty)
+    for declaration in module.static_declarations:
+        retain_union(unions, declaration.ty)
+        match declaration.initial:
+            StaticInitializer.Computed(body) => retain_body_unions(unions, body)
+            _ => pass
     return unions
 
 
@@ -124,6 +141,7 @@ def legacy_spelling(ty: PlanType) -> Result[str, str]:
         PlanType.Bool => return Ok("bool")
         PlanType.String => return Ok("String")
         PlanType.FrozenStr => return Ok("FrozenStr")
+        PlanType.U8 => return Ok("u8")
         PlanType.Model(_index, name) => return Ok(name)
         PlanType.Enum(_index, name) => return Ok(name)
         PlanType.List(leaf, depth) => return list_spelling(leaf, depth)
@@ -159,21 +177,77 @@ def union_name(members: list[PlanType]) -> Result[str, str]:
     return Ok("__IncanUnion" + suffix)
 
 
+pub def require_native_union_signature(ty: &RustType, intrinsics: list[EnumDeclaration]) -> Result[None, str]:
+    """Require a retained SDK union owner before passing a semantic union across an external call boundary."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            for argument in arguments:
+                _ = require_native_union_signature(argument, intrinsics)?
+            if str(base) != "Union":
+                return Ok(None)
+            for declaration in intrinsics:
+                if declaration.source_type == str(ty) and declaration.library_item != "":
+                    return Ok(None)
+            return Err("unsupported Body IR stdlib union without admitted native representation")
+        RustType.Tuple(elements) =>
+            for element in elements:
+                _ = require_native_union_signature(element, intrinsics)?
+        RustType.Ref(inner) => return require_native_union_signature(inner, intrinsics)
+        RustType.RefMut(inner) => return require_native_union_signature(inner, intrinsics)
+        _ => pass
+    return Ok(None)
+
+
 pub def lower_union_declaration(
     module: &BodyIrModule,
     ty: &RustType,
     file: str,
     intrinsics: list[EnumDeclaration],
 ) -> Result[EnumDeclaration, str]:
-    """Construct a normalized union only after its nested payload layouts have been retained."""
-    members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
+    """
+    Construct a normalized union only after its nested payload layouts have been retained.
+
+    A source-owned union derives only Clone and prints the held member through Debug. An admitted SDK alias uses its
+    owner's existing implementations; emitting another Debug implementation for that foreign enum would be illegal.
+    """
+    mut members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
+    mut native_item = ""
+    mut name = union_name(members)?
+    mut derives = ["Clone"]
+    for declaration in module.native_union_declarations:
+        if declaration.ty != ty.clone():
+            continue
+        mut ordered: list[PlanType] = []
+        for member in declaration.members:
+            ordered.append(
+                retained_source_type(module.nominal_declarations, module.enum_declarations, [], member, intrinsics)?,
+            )
+        if len(ordered) != len(members):
+            return Err("unsupported Body IR admitted union payload mismatch")
+        for member in ordered:
+            if member not in members:
+                return Err("unsupported Body IR admitted union payload mismatch")
+        members = ordered
+        native_item = str(declaration.rust_item)
+        segments = native_item.split("::")
+        name = segments[len(segments) - 1]
+        derives = []
     mut variants: list[EnumVariant] = []
     for index in range(len(members)):
         variants.append(EnumVariant(name=f"V{index}", fields=[members[index]]))
-    return Ok(EnumDeclaration(
-        name=union_name(members)?, public=true, variants=variants, derives=["Clone"],
-        span=SourceSpan(file=file, line=1, column=1), source_type=str(ty),
-    ))
+    return Ok(
+        EnumDeclaration(
+            comparison_methods=[],
+            name=name,
+            public=true,
+            variants=variants,
+            derives=derives,
+            library_item=native_item,
+            span=SourceSpan(file=file, line=1, column=1),
+            source_type=str(ty),
+            member_debug=native_item == "",
+        ),
+    )
 
 
 def retained_union(

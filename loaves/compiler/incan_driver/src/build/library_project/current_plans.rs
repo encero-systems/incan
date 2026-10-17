@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::backend::ProjectGenerator;
-use crate::build::caller_owned::oven_caller_owned_libraries;
+use crate::build::caller_owned::{oven_caller_owned_libraries, validate_caller_owned_library_aliases};
 use crate::build::plan_authority::{
     compiler_selected_path_authority, declared_rust_libraries_missing_from_selected_plan_with_current_project_paths,
     explicit_bake_profiles,
@@ -197,9 +197,26 @@ pub(super) fn prepare_current_library_profiles(
         let plan_preparation = if let Some(runtime) = &ordinary_runtime {
             let (bound, plan_selection) = runtime.native().select_plan(store, &receipt, inline_dependencies, project_root)?;
             receipt = bound;
+            let oven_rustc::plan::OvenDirectRustcPlanSelection::Stored(native) = plan_selection else {
+                return Err(CliError::failure(
+                    "ordinary native selection lost its original direct plan",
+                ));
+            };
+            let packages = crate::build::package_loafs::select_ordinary_packaged_provider_plans(
+                store,
+                checked_provider_profiles,
+                profile,
+            )?;
+            let plan_selection = oven_rustc::plan::composition::compose_ordinary_consumer_plan(
+                *native, &receipt, packages,
+            )
+            .map_err(oven_plan_error)?;
             write_receipt(&receipt, receipt_path.clone()).map_err(|error| CliError::failure(error.to_string()))?;
-            Some(OvenDirectRustcPlanPreparation { plan_selection, materialization: OvenToolchainMaterialization::Reused,
-                cargo_process_started: false })
+            Some(OvenDirectRustcPlanPreparation {
+                plan_selection,
+                materialization: OvenToolchainMaterialization::Reused,
+                cargo_process_started: false,
+            })
         } else if let Some(selection) = packaged_provider_selection {
             Some(OvenDirectRustcPlanPreparation {
                 plan_selection: selection,
@@ -297,14 +314,7 @@ pub(super) fn prepare_current_library_profiles(
             oven_prepare_caller_owned_libraries_start,
         );
         caller_owned_libraries.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-        if caller_owned_libraries
-            .windows(2)
-            .any(|pair| pair[0].crate_name == pair[1].crate_name)
-        {
-            return Err(CliError::failure(
-                "Oven Alpha resolved duplicate caller-owned Rust library crate names while preparing a library",
-            ));
-        }
+        validate_caller_owned_library_aliases(&caller_owned_libraries)?;
         profiles.insert(
             profile.to_string(),
             OvenPreparedLibraryProfile {
@@ -324,4 +334,35 @@ pub(super) fn prepare_current_library_profiles(
         rust_edition: rust_edition.unwrap_or_else(|| "2024".to_string()),
         profiles,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use oven_rustc::rustc::OvenCallerOwnedRustcLibrary;
+
+    use super::validate_caller_owned_library_aliases;
+
+    /// A private child may share the bridge's import alias; two public aliases still refuse.
+    #[test]
+    fn library_alias_validation_preserves_transitive_names() -> Result<(), Box<dyn std::error::Error>> {
+        let direct = OvenCallerOwnedRustcLibrary {
+            crate_name: "upstream".to_string(),
+            output: PathBuf::from("bridge/libbridge.rlib"),
+            digest: oven_store::digest_bytes(b"bridge output"),
+            expose_extern: true,
+        };
+        let transitive = OvenCallerOwnedRustcLibrary {
+            crate_name: "upstream".to_string(),
+            output: PathBuf::from("upstream/libupstream.rlib"),
+            digest: oven_store::digest_bytes(b"upstream output"),
+            expose_extern: false,
+        };
+        let mut libraries = vec![direct, transitive];
+        validate_caller_owned_library_aliases(&libraries)?;
+        libraries[1].expose_extern = true;
+        assert!(validate_caller_owned_library_aliases(&libraries).is_err());
+        Ok(())
+    }
 }

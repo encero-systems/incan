@@ -298,6 +298,7 @@ pub fn prepare_oven_test_dependency_envelope(
                 | OvenDirectRustcPlanSelection::ProjectExtension(_)
         ) {
             return Ok(PreparedOvenTestDependencyEnvelope {
+                native_roots: None,
                 receipt: receipt.clone(),
                 dependency_surface_digest,
                 dependencies,
@@ -372,6 +373,7 @@ pub fn prepare_oven_test_dependency_envelope(
     };
     remove_completed_generated_cargo_lock(generator.output_dir())?;
     Ok(PreparedOvenTestDependencyEnvelope {
+        native_roots: None,
         receipt,
         dependency_surface_digest,
         dependencies,
@@ -404,6 +406,8 @@ pub fn select_or_bake_generated_project_plan(
 }
 
 /// Select the existing plan/publication route with native owners admitted once by the enclosing command.
+/// Consume-only requests retain the canonical project and compiler-suite precedence; only explicit publishers
+/// attempt the SDK fast path before entering their existing publication route.
 #[allow(clippy::too_many_arguments)] // Existing preparation inputs plus the independent native admission authority.
 pub fn select_or_bake_generated_project_plan_with_native_sdk(
     mode: OvenProjectPlanMode,
@@ -415,34 +419,34 @@ pub fn select_or_bake_generated_project_plan_with_native_sdk(
     rustc: &Path,
     context: Option<&super::NativeSdkCommandContext>,
 ) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
-    let fallback = if context.is_none() && !receipt_requires_final_interop_plan(receipt) {
-        super::NativeSdkCommandContext::discover()?
-    } else {
-        None
-    };
-    let context = context.or(fallback.as_deref());
-    if !receipt_requires_final_interop_plan(receipt)
-        && let Some(plan) = super::native_sdk_plan::select_native_sdk_plan_with_context(
-            store,
-            receipt,
-            dependency_surface.selection,
-            context,
-        )?
-    {
-        return Ok(Some(plan));
-    }
-    if receipt_requires_final_interop_plan(receipt) {
-        return select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)?.map_or_else(
-            || Err(interop_final_plan_required_error()),
-            |selection| Ok(Some(selection)),
-        );
-    }
-    let source_compiler_vocab_support = receipt
-        .sources
-        .build_unit_inputs
-        .get(OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT)
-        .is_some_and(|value| value == "v1");
     if mode.is_explicit_publisher() {
+        let fallback = if context.is_none() && !receipt_requires_final_interop_plan(receipt) {
+            super::NativeSdkCommandContext::discover()?
+        } else {
+            None
+        };
+        let context = context.or(fallback.as_deref());
+        if !receipt_requires_final_interop_plan(receipt)
+            && let Some(plan) = super::native_sdk_plan::select_native_sdk_plan_with_context(
+                store,
+                receipt,
+                dependency_surface.selection,
+                context,
+            )?
+        {
+            return Ok(Some(plan));
+        }
+        if receipt_requires_final_interop_plan(receipt) {
+            return select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)?.map_or_else(
+                || Err(interop_final_plan_required_error()),
+                |selection| Ok(Some(selection)),
+            );
+        }
+        let source_compiler_vocab_support = receipt
+            .sources
+            .build_unit_inputs
+            .get(OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT)
+            .is_some_and(|value| value == "v1");
         // The completed project-output Loaf owns generated project sources and the final native result. Do not bake
         // an empty project extension when the installed release Loaf already supplies the complete native dependency
         // closure: that would duplicate release-owned bytes without adding project authority.
@@ -780,6 +784,8 @@ pub fn oven_native_closure_refusal(crate_name: &str, reason: &str) -> CliError {
 
 #[cfg(test)]
 mod tests {
+    mod consumer_precedence;
+
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
@@ -888,6 +894,7 @@ mod tests {
             &root_digests,
             std::slice::from_ref(&locked_json),
             &[],
+            None,
         )?;
         assert!(matches!(
             exact_roots.get("json_api"),

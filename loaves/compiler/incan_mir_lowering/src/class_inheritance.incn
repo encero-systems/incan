@@ -1,0 +1,70 @@
+"""Instantiate checked inherited instance bodies while preserving their original source identities."""
+
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
+
+
+pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
+    """Add one concrete receiver frame per inherited implementation after original module validation."""
+    mut result: list[Body] = []
+    for declaration in module.nominal_declarations:
+        match declaration.class_inheritance:
+            None => pass
+            Some(inheritance) =>
+                mut instantiated: list[CanonicalSymbolId] = []
+                for record in inheritance.methods:
+                    if already_instantiated(instantiated, record.implementation):
+                        continue
+                    instantiated.append(record.implementation.clone())
+                    mut found = false
+                    for body in module.bodies:
+                        if body.canonical != Some(record.implementation):
+                            continue
+                        found = true
+                        if len(body.locals) == 0:
+                            return Err("unsupported Body IR inherited class receiver frame")
+                        if body.locals[0].ty == concrete_receiver(str(declaration.name)):
+                            continue
+                        instance = instantiate_body(body, declaration)?
+                        result.append(instance.clone())
+                    if not found:
+                        return Err("unsupported Body IR inherited class implementation without source body")
+    return Ok(result)
+
+
+def already_instantiated(retained: list[CanonicalSymbolId], identity: &CanonicalSymbolId) -> bool:
+    """Several ancestor slots can select one override; retain one receiver frame for that implementation."""
+    for previous in retained:
+        if previous == identity:
+            return true
+    return false
+
+
+def instantiate_body(body: &Body, owner: &NominalDeclaration) -> Result[Body, str]:
+    """Close only the explicit receiver; other ancestor-typed self values remain a named unsupported boundary."""
+    if len(body.locals) == 0 or len(body.params) == 0 or len(body.type_parameters) != 0 or body.is_async:
+        return Err("unsupported Body IR inherited class receiver frame")
+    if not instance_receiver(body.locals[0].origin):
+        return Err("unsupported Body IR inherited class method without instance receiver")
+    for index in range(1, len(body.locals)):
+        if body.locals[index].ty == body.locals[0].ty:
+            return Err("unsupported Body IR inherited class self value beyond the receiver")
+    mut result = body.clone()
+    # Typed locals keep the foreign field-store boundary explicit for the legacy compiler that builds this Loaf.
+    receiver: RustType = concrete_receiver(str(owner.name))
+    parameter: RustType = receiver.clone()
+    result.locals[0].ty = receiver
+    result.params[0].ty = parameter
+    return Ok(result)
+
+
+def instance_receiver(origin: &LocalOrigin) -> bool:
+    """Keep the foreign enum in a typed boundary while its pattern-only import emission is tracked by #459."""
+    match origin:
+        LocalOrigin.Receiver(mutable=_mutable) => return true
+        _ => return false
+
+
+def concrete_receiver(owner: str) -> RustType:
+    """Construct the concrete checked class receiver at an explicit foreign enum return boundary."""
+    return RustType.Named(owner)

@@ -1,7 +1,7 @@
 //! Boxed native environments for planned capturing closures.
 //!
-//! A closure constructor's AST boxes one `move` closure whose placeholder body only borrows each capture, so rustc
-//! infers an `Fn` environment holding the captures by value and coerces the box to the declared `dyn Fn` object.
+//! A closure constructor's AST boxes one `move` closure. Its placeholder borrows captures for a reusable `Fn`
+//! environment, or consumes them for a proven `FnOnce` environment, matching the planned object type.
 //! The constructor keeps rustc's own MIR; only the closure's executable body is replaced, with a call that forwards
 //! the captures and then the closure's inputs to the Incan-planned lifted function.
 
@@ -16,11 +16,22 @@ use rustc_middle::{mir, ty};
 use rustc_span::{Ident, Span, Spanned, Symbol};
 use thin_vec::{ThinVec, thin_vec};
 
-/// Identify a closure constructor by its one `ClosureBody` call, returning the lifted function and its capture count.
+/// Report whether a capture of this type moves into the environment and is cloned out for each call: owned text and
+/// owned lists, model snapshots and owned zip snapshots. Every other admitted capture is a Copy scalar.
+pub fn owned_capture(ty: &PlanType) -> bool {
+    matches!(
+        ty,
+        PlanType::String | PlanType::List(_, _) | PlanType::Model(_, _) | PlanType::ZipIterator(_, _)
+    )
+}
+
+/// Identify a reusable or consuming closure constructor, returning the lifted function and its capture count.
 pub fn constructor(function: &Function) -> Option<(&str, i64)> {
     function.blocks.iter().find_map(|block| match &block.terminator.kind {
         TerminatorKind::Call(callee, _, _, _, _) => match &callee.kind {
-            CalleeKind::ClosureBody(lifted, captures) => Some((lifted.as_str(), *captures)),
+            CalleeKind::ClosureBody(lifted, captures) | CalleeKind::ClosureBodyOnce(lifted, captures) => {
+                Some((lifted.as_str(), *captures))
+            }
             _ => None,
         },
         _ => None,
@@ -54,16 +65,17 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
     })
 }
 
-/// Declare `Box::new(move |_: A, ...| -> R { let _ = (&capture, ...); loop {} })` as the constructor's tail.
+/// Declare `::std::boxed::Box::new(move |_: A, ...| -> R { let _ = (&capture, ...); loop {} })` as the constructor's
+/// tail, spelled from the crate root so a source declaration named `Box` cannot shadow it.
 ///
-/// The placeholder borrows every capture so the `move` closure owns each one by value in parameter order while staying
-/// `Fn`; it never runs, because the closure's MIR is replaced by [`callback`]. Preflight has proved the constructor
-/// returns `Closure(signature)` and takes exactly its captures.
+/// The placeholder borrows captures for `Fn` or consumes them for `FnOnce`; it never runs because [`callback`]
+/// replaces its MIR. Preflight proves the constructor's object kind and exact capture parameters.
 pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Block>> {
     constructor(function)?;
-    let PlanType::Closure(signature) = &function.return_type else {
+    let (PlanType::Closure(signature) | PlanType::ClosureOnce(signature)) = &function.return_type else {
         return None;
     };
+    let consumes_environment = matches!(function.return_type, PlanType::ClosureOnce(_));
     let (result, inputs) = signature.split_last()?;
     let borrows = function
         .parameters
@@ -73,18 +85,27 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
                 ast::ExprKind::Path(None, ast::Path::from_ident(identifier(&parameter.name, span))),
                 span,
             );
+            if consumes_environment {
+                return capture;
+            }
             expression(
                 ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, capture),
                 span,
             )
         })
         .collect();
+    let capture_use = expression(ast::ExprKind::Tup(borrows), span);
+    let capture_use = if consumes_environment {
+        consume_captures(capture_use, span)
+    } else {
+        capture_use
+    };
     let diverge = expression(ast::ExprKind::Loop(block(ThinVec::new(), span), None, span), span);
     let closure_body = block(
         thin_vec![
             ast::Stmt {
                 id: ast::DUMMY_NODE_ID,
-                kind: ast::StmtKind::Semi(expression(ast::ExprKind::Tup(borrows), span)),
+                kind: ast::StmtKind::Semi(capture_use),
                 span,
             },
             ast::Stmt {
@@ -128,7 +149,7 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
         })),
         span,
     );
-    let mut boxing = ast::Path::from_ident(identifier("Box", span));
+    let mut boxing = declarations::boxed_path(span);
     boxing
         .segments
         .push(ast::PathSegment::from_ident(identifier("new", span)));
@@ -146,12 +167,31 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
     ))
 }
 
+/// Force rustc to infer a consuming environment by moving its captures into a never-executed drop placeholder.
+fn consume_captures(captures: Box<ast::Expr>, span: Span) -> Box<ast::Expr> {
+    let mut segments = thin_vec![ast::PathSegment::path_root(span)];
+    for name in ["std", "mem", "drop"] {
+        segments.push(ast::PathSegment::from_ident(identifier(name, span)));
+    }
+    let callee = expression(
+        ast::ExprKind::Path(
+            None,
+            ast::Path {
+                span,
+                segments,
+                tokens: None,
+            },
+        ),
+        span,
+    );
+    expression(ast::ExprKind::Call(callee, thin_vec![captures]), span)
+}
+
 /// Replace the inferred closure's placeholder blocks with a call to the lifted function.
 ///
-/// rustc retains the closure's `Fn` ABI and by-value capture layout. The call passes each capture, then each input in
-/// order; the lifted function's result is the closure's result. A Copy capture is copied from the shared environment.
-/// Owned text is cloned out of it first, because an `Fn` closure can run again and the lifted function takes its
-/// captures by value.
+/// rustc retains the closure's inferred ABI and by-value capture layout. Each call forwards captures followed by
+/// inputs, preserving the lifted result. Reusable environments copy scalars and clone owned text, lists, and models;
+/// consuming environments move their fields exactly once.
 pub fn callback<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: LocalDefId,
@@ -164,11 +204,17 @@ pub fn callback<'tcx>(
         .clone();
     let span = body.span;
     let environment = body.local_decls[mir::Local::from_usize(1)].ty;
-    let ty::Ref(_, closure, _) = environment.kind() else {
-        return Err(PlanError::Invalid {
-            function: constructor_function.name.clone(),
-            reason: "closure environment is not a shared Fn borrow".into(),
-        });
+    let consumes_environment = matches!(constructor_function.return_type, PlanType::ClosureOnce(_));
+    let closure = if consumes_environment {
+        environment
+    } else {
+        let ty::Ref(_, closure, _) = environment.kind() else {
+            return Err(PlanError::Invalid {
+                function: constructor_function.name.clone(),
+                reason: "closure environment is not a shared Fn borrow".into(),
+            });
+        };
+        *closure
     };
     let ty::Closure(_, arguments) = closure.kind() else {
         return Err(PlanError::UnknownCallee(lifted.into()));
@@ -180,8 +226,11 @@ pub fn callback<'tcx>(
             reason: "closure environment differs from the planned capture count".into(),
         });
     }
-    let environment_place =
-        mir::Place::from(mir::Local::from_usize(1)).project_deeper(&[mir::ProjectionElem::Deref], tcx);
+    let environment_place = if consumes_environment {
+        mir::Place::from(mir::Local::from_usize(1))
+    } else {
+        mir::Place::from(mir::Local::from_usize(1)).project_deeper(&[mir::ProjectionElem::Deref], tcx)
+    };
     let mut blocks = Vec::new();
     let mut operands = Vec::new();
     for (index, ty) in captures.iter().enumerate() {
@@ -192,8 +241,10 @@ pub fn callback<'tcx>(
         let owned = constructor_function
             .parameters
             .get(index)
-            .is_some_and(|parameter| parameter.ty == PlanType::String);
-        let node = if owned {
+            .is_some_and(|parameter| owned_capture(&parameter.ty));
+        let node = if consumes_environment {
+            mir::Operand::Move(field)
+        } else if owned {
             let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
             blocks.push(block);
             mir::Operand::Move(clone.into())

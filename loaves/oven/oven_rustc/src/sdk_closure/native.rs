@@ -184,6 +184,15 @@ fn select_owner(link: &RustFactLink, roots: &[PathBuf]) -> Result<(PathBuf, Virt
     let paths = owner_paths(link);
     let mut selected = Vec::new();
     for root in roots {
+        let executable = VirtualToolchainLoaf::read(
+            root,
+            &link.executable.path,
+            std::iter::once(link.executable.path.as_str()),
+        )?;
+        if executable.executable_digest() != link.executable.digest {
+            continue;
+        }
+        oven_store::publisher_owner::publisher_runtime_files(root, &link.executable.runtime_files)?;
         let descriptor = VirtualToolchainLoaf::read(root, &link.executable.path, paths.iter().copied())?;
         if descriptor.executable_digest() == link.executable.digest {
             selected.push((root.clone(), descriptor));
@@ -203,6 +212,7 @@ fn select_owner(link: &RustFactLink, roots: &[PathBuf]) -> Result<(PathBuf, Virt
 /// Project the exact owner-relative path set shared by native preparation and current-owner revalidation.
 fn owner_paths(link: &RustFactLink) -> std::collections::BTreeSet<&str> {
     std::iter::once(link.executable.path.as_str())
+        .chain(link.executable.runtime_files.iter().map(|member| member.path.as_str()))
         .chain(link.objects.iter().flat_map(|object| {
             object.arguments.iter().filter_map(|argument| match argument {
                 RustFactArgument::Owner { owner } => Some(owner.as_str()),
@@ -294,6 +304,64 @@ mod tests {
         let mut changed = link.clone();
         changed.executable.digest = "sha256:changed-compiler".to_string();
         assert!(super::prepare_link(&unit, &context, &receipt, &changed, &[]).is_err());
+        Ok(())
+    }
+
+    /// Virtual owner selection must refuse recorded runtime drift instead of adopting the changed bytes.
+    #[test]
+    fn native_owner_selection_refuses_runtime_drift_before_virtual_admission() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("clang"), b"compiler")?;
+        std::fs::write(root.path().join("runtime.so"), b"runtime")?;
+        let link: RustFactLink = serde_json::from_value(serde_json::json!({
+            "name":"native", "target":"fixture-target",
+            "executable":{"name":"cc", "owner":oven_store::digest_bytes(b"recorded owner"), "path":"clang", "digest":oven_store::digest_bytes(b"compiler"),
+                "runtime_files":[{"path":"runtime.so", "digest":oven_store::digest_bytes(b"runtime")}]},
+            "library":{"name":"shim", "kind":"static"}
+        }))?;
+        let roots = [root.path().to_path_buf()];
+        let (_, original) = select_owner(&link, &roots)?;
+        std::fs::write(root.path().join("runtime.so"), b"changed")?;
+        let error = select_owner(&link, &roots).err().ok_or("corrupt runtime was adopted")?;
+        assert!(error.to_string().contains("runtime file runtime.so digest changed"));
+        std::fs::write(root.path().join("runtime.so"), b"runtime")?;
+        let (_, restored) = select_owner(&link, &roots)?;
+        assert_eq!(original.identity()?, restored.identity()?);
+        std::fs::remove_file(root.path().join("runtime.so"))?;
+        assert!(select_owner(&link, &roots).is_err());
+        Ok(())
+    }
+
+    /// Another compiler installation's absent or different runtime does not disqualify the unique matching owner.
+    #[test]
+    fn native_owner_selection_ignores_nonmatching_runtime_and_refuses_ambiguity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let unrelated = tempfile::tempdir()?;
+        let matching = tempfile::tempdir()?;
+        let duplicate = tempfile::tempdir()?;
+        std::fs::write(unrelated.path().join("clang"), b"other compiler")?;
+        for root in [matching.path(), duplicate.path()] {
+            std::fs::write(root.join("clang"), b"compiler")?;
+            std::fs::write(root.join("runtime.so"), b"runtime")?;
+        }
+        let link: RustFactLink = serde_json::from_value(serde_json::json!({
+            "name":"native", "target":"fixture-target",
+            "executable":{"name":"cc", "owner":oven_store::digest_bytes(b"recorded owner"), "path":"clang", "digest":oven_store::digest_bytes(b"compiler"),
+                "runtime_files":[{"path":"runtime.so", "digest":oven_store::digest_bytes(b"runtime")}]},
+            "library":{"name":"shim", "kind":"static"}
+        }))?;
+        let roots = [unrelated.path().to_path_buf(), matching.path().to_path_buf()];
+        assert_eq!(select_owner(&link, &roots)?.0, matching.path());
+        std::fs::write(unrelated.path().join("runtime.so"), b"other runtime")?;
+        assert_eq!(select_owner(&link, &roots)?.0, matching.path());
+        let reversed = [matching.path().to_path_buf(), unrelated.path().to_path_buf()];
+        assert_eq!(select_owner(&link, &reversed)?.0, matching.path());
+        let ambiguous = [matching.path().to_path_buf(), duplicate.path().to_path_buf()];
+        let error = select_owner(&link, &ambiguous)
+            .err()
+            .ok_or("duplicate matching owners accepted")?;
+        assert!(error.to_string().contains("ambiguous executable owner roots"));
         Ok(())
     }
 

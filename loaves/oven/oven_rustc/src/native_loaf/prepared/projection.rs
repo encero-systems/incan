@@ -38,6 +38,39 @@ pub(super) fn prepare(
     store: &OvenStore,
     current: &mut Current,
 ) -> Result<NativeLoafPreparation> {
+    let (lock_bytes, facets, _) = selected_inputs(request, current)?;
+    std::fs::create_dir_all(request.output).map_err(failed)?;
+    let temporary = tempfile::Builder::new()
+        .prefix("native-consumer-")
+        .tempdir_in(request.output)
+        .map_err(failed)?;
+    let lock = temporary.path().join("lock.json");
+    std::fs::write(&lock, lock_bytes).map_err(failed)?;
+    let mut prepared = prepare_native_loafs_in_store(
+        &NativeLoafPreparationRequest {
+            lock: &lock,
+            blobs: request.blobs,
+            output: request.output,
+            rustc: request.rustc,
+            index: request.index,
+            index_commit: &current.graph.index_commit,
+            target: request.target,
+            profile: request.profile,
+            facet_owner: &current.owner,
+            facets: &facets,
+        },
+        store,
+    )?;
+    prepared.observation = None;
+    Ok(prepared)
+}
+
+/// Project source-authorized units once for both physical consumers and explicit complete producer documents.
+/// The source binding digest captures selected contents as well as selected coordinates; no compiled owner is read.
+pub(super) fn selected_inputs(
+    request: &NativeLoafConsumerRequest<'_>,
+    current: &mut Current,
+) -> Result<(Vec<u8>, Vec<crate::native_loaf::NativeLoafFacet>, String)> {
     let mut candidates = catalog(current)?;
     let selected = selected_candidates(request, current, &mut candidates)?;
     let registry = selected
@@ -61,39 +94,19 @@ pub(super) fn prepare(
             Origin::Registry(_) => None,
         })
         .collect::<Vec<_>>();
-    std::fs::create_dir_all(request.output).map_err(failed)?;
-    let temporary = tempfile::Builder::new()
-        .prefix("native-consumer-")
-        .tempdir_in(request.output)
-        .map_err(failed)?;
-    let lock = temporary.path().join("lock.json");
-    std::fs::write(
-        &lock,
+    let sources = selected
+        .iter()
+        .map(|index| candidates[*index].source(current))
+        .collect::<Result<Vec<_>>>()?;
+    let identity = oven_store::digest_bytes(&serde_json::to_vec(&sources).map_err(failed)?);
+    let lock =
         serde_json::to_vec(&serde_json::json!({"schema":current.seed.schema,"units":units,"unit_codegen":codegen}))
-            .map_err(failed)?,
-    )
-    .map_err(failed)?;
-    let mut prepared = prepare_native_loafs_in_store(
-        &NativeLoafPreparationRequest {
-            lock: &lock,
-            blobs: request.blobs,
-            output: request.output,
-            rustc: request.rustc,
-            index: request.index,
-            index_commit: &current.graph.index_commit,
-            target: request.target,
-            profile: request.profile,
-            facet_owner: &current.owner,
-            facets: &facets,
-        },
-        store,
-    )?;
-    prepared.observation = None;
-    Ok(prepared)
+            .map_err(failed)?;
+    Ok((lock, facets, identity))
 }
 
 /// Enumerate original package identities without hashing unrelated local source trees or reading their archives.
-fn catalog(current: &Current) -> Result<Vec<Candidate>> {
+fn catalog(current: &mut Current) -> Result<Vec<Candidate>> {
     let mut candidates = current
         .seed
         .units
@@ -110,10 +123,10 @@ fn catalog(current: &Current) -> Result<Vec<Candidate>> {
         })
         .collect::<Vec<_>>();
     for (index, facet) in current.graph.facets.iter().enumerate() {
-        let manifest: toml::Value = toml::from_str(
-            &std::fs::read_to_string(current.owner.join(&facet.project).join("loaf.toml")).map_err(failed)?,
-        )
-        .map_err(failed)?;
+        let manifest_path = current.owner.join(&facet.project).join("loaf.toml");
+        current.documents.observe(&manifest_path);
+        let manifest: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&manifest_path).map_err(failed)?).map_err(failed)?;
         let project = manifest
             .get("project")
             .ok_or_else(|| refused("current local candidate has no project"))?;

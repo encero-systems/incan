@@ -211,18 +211,24 @@ pub struct RustInspectTypecheckRequest<'a> {
     pub provider_plan: &'a ProviderPlan,
 }
 
+/// Typecheck projection retaining its generated-cache lease and complete original source, toolchain and native
+/// owners until the caller finishes semantic analysis. A path alone cannot preserve those capabilities.
 #[cfg(feature = "rust_inspect")]
 pub struct PreparedRustInspectTypecheckWorkspace {
-    manifest_dir: PathBuf,
+    workspace: PreparedRustInspectWorkspace,
     _cache_lease: Option<GeneratedCacheLease>,
-    _source_loaf: Option<OvenToolchainLoaf>,
 }
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectTypecheckWorkspace {
-    /// Return the generated Cargo workspace used for rust-inspect typechecking.
+    /// Return the projection while retaining every original source, compiler and native owner.
     pub fn manifest_dir(&self) -> &Path {
-        &self.manifest_dir
+        self.workspace.manifest_dir()
+    }
+
+    /// Revalidate original native inputs before and after semantic consumption of this projection.
+    pub fn verify_ordinary_native(&self) -> CliResult<()> {
+        self.workspace.verify_ordinary_native()
     }
 }
 
@@ -320,7 +326,7 @@ impl PreparedRustInspectWorkspace {
     }
 
     /// Revalidate complete original ordinary inputs at semantic handoffs without selecting new source owners.
-    pub(crate) fn verify_ordinary_native(&self) -> CliResult<()> {
+    pub fn verify_ordinary_native(&self) -> CliResult<()> {
         if let Some(native) = &self._ordinary_native {
             native.verify().map_err(|error| CliError::failure(error.to_string()))?;
         }
@@ -366,6 +372,9 @@ pub struct WorkspaceLockResolutionRequest<'a> {
 
 /// Fully collected dependency inputs that define a project or workspace lock's freshness surface.
 pub struct ProjectLockContext {
+    /// Canonical test discovery observations for every contributing project, including all workspace members.
+    #[cfg(feature = "cli")]
+    pub(crate) test_discovery: Vec<oven_model::observed_inputs::InputObservations>,
     resolved: ResolvedDependencies,
     project_requirements: ProjectRequirements,
     semantic: SemanticLockState,
@@ -381,9 +390,9 @@ pub struct PublishedOvenProjectLock {
 }
 
 /// Exact bytes and canonical location observed by the lock writer while holding its publication guard.
-struct PublishedLockFile {
-    canonical_path: PathBuf,
-    content_digest: String,
+pub(crate) struct PublishedLockFile {
+    pub(crate) canonical_path: PathBuf,
+    pub(crate) content_digest: String,
 }
 
 impl PublishedOvenProjectLock {
@@ -457,6 +466,9 @@ pub struct WorkspaceLockCollection {
 
 /// Test-file dependency inputs that must participate in the same project lock fingerprint as normal scripts.
 pub struct TestLockInputs {
+    /// Consulted source files, directory membership and nested manifest boundaries from canonical discovery.
+    #[cfg(feature = "cli")]
+    discovery_inputs: oven_model::observed_inputs::InputObservations,
     inline_imports: Vec<InlineRustImport>,
     project_requirement_modules: Vec<ParsedModule>,
 }

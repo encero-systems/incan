@@ -38,7 +38,7 @@ pub def list_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, element), arguments, destination, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [element]), arguments, destination, span)
     match result:
         PlanType.Model(_index, _name) => builder.owned.append(destination.local)
         PlanType.Enum(_index, _name) => builder.owned.append(destination.local)

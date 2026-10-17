@@ -157,7 +157,7 @@ impl VirtualToolchainLoaf {
 }
 
 /// Reject symlinks in declared locations and their ancestors, including paths escaping a real owner root.
-fn checked_metadata(root: &Path, relative: &str) -> Result<fs::Metadata, PublisherOwnerIdentityError> {
+pub(super) fn checked_metadata(root: &Path, relative: &str) -> Result<fs::Metadata, PublisherOwnerIdentityError> {
     validate_owner_path(relative)?;
     let mut path = root.to_path_buf();
     for component in Path::new(relative).components() {

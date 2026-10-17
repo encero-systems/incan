@@ -5,10 +5,12 @@ from plan_json import evaluate as evaluate_selection
 from rust_policy_exchange import evaluate as evaluate_rust_policy
 from loaf_closure_exchange import evaluate as evaluate_loaf_closure
 from target_predicate_exchange import evaluate as evaluate_target_predicates
+from lock_preparation import evaluate as evaluate_lock_preparation
 
 const RUST_POLICY_SCHEMA: str = "incan.oven.rust-policy-exchange/5"
 const TARGET_PREDICATE_SCHEMA: str = "incan.oven.target-predicates/1"
 const LOAF_CLOSURE_SCHEMA: str = "incan.oven.loaf-closure-request/1"
+const LOCK_PREPARATION_SCHEMA: str = "incan.oven.lock-preparation/1"
 
 
 pub def evaluate(source: str) -> JsonValue:
@@ -23,5 +25,7 @@ pub def evaluate(source: str) -> JsonValue:
                         return evaluate_target_predicates(source)
                     if name == LOAF_CLOSURE_SCHEMA:
                         return evaluate_loaf_closure(source)
+                    if name == LOCK_PREPARATION_SCHEMA:
+                        return evaluate_lock_preparation(source)
                 None => pass
     return evaluate_selection(source)

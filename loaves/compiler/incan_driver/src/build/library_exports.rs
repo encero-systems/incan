@@ -65,6 +65,27 @@ pub fn collect_library_rust_abi_query_paths(
     paths.into_iter().collect()
 }
 
+/// Collect ordinary ABI coverage through original source ownership while retaining legacy extern report labels.
+///
+/// Backend-provided protocol methods require the actual native helper's complete ABI. This adapter changes only
+/// genuine ordinary source publication queries; an ordinary consumer or legacy collector cannot acquire it by name.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn collect_ordinary_library_rust_abi_query_paths(
+    modules: &[ParsedModule],
+    contexts: &[RustExternDeclContext],
+    plan: &incan_provider::ProviderPlan,
+) -> CliResult<Vec<String>> {
+    let mut paths = collect_library_rust_abi_query_paths(modules, &[])
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for context in contexts {
+        paths.insert(crate::build::rust_extern::ordinary_rust_extern_abi_path(
+            context, modules, plan,
+        )?);
+    }
+    Ok(paths.into_iter().collect())
+}
+
 #[cfg(feature = "rust_inspect")]
 /// Extract complete Rust metadata from the generated inspect workspace and package it as manifest ABI.
 ///
@@ -1122,6 +1143,14 @@ mod tests {
         package: &str,
         sources: &[(&str, &str)],
     ) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+        Ok(published_library_manifest_and_exports(package, sources)?.0)
+    }
+
+    /// Retain both the finalized package authority and the exact checked shapes used by ordinary replay capture.
+    fn published_library_manifest_and_exports(
+        package: &str,
+        sources: &[(&str, &str)],
+    ) -> Result<(LibraryManifest, Vec<CheckedNamedExport>), Box<dyn std::error::Error>> {
         let mut modules = Vec::new();
         for (relative, source) in sources {
             let stem = relative
@@ -1192,7 +1221,117 @@ mod tests {
             &checked_exports_by_source_module,
         )?;
         manifest.contract_metadata.api = Some(api);
-        Ok(manifest)
+        Ok((manifest, selected))
+    }
+
+    /// Replay capture must preserve original multi-hop exports after the complete package manifest validates.
+    #[test]
+    fn original_multi_hop_exports_survive_checked_replay_capture() -> Result<(), Box<dyn std::error::Error>> {
+        let originals = incan_test_support::fixtures_dir().join("behavior");
+        for (relative, name, paths) in [
+            (
+                "cli_dependencies/dependency_submodule_reexports/deps/greetings/src",
+                "greetings",
+                &[
+                    "lib.incn",
+                    "inner.incn",
+                    "middle.incn",
+                    "outer.incn",
+                    "renamed.incn",
+                    "relabel.incn",
+                    "nested/relay.incn",
+                ][..],
+            ),
+            (
+                "cli_dependencies/dev7_dependency_enum_reexports/deps/messages/src",
+                "messages",
+                &["lib.incn", "inner.incn", "middle.incn"][..],
+            ),
+            (
+                "emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary/deps/querykit/src",
+                "querykit",
+                &["lib.incn", "exprs.incn"][..],
+            ),
+        ] {
+            let package = originals.join(relative);
+            let sources = paths
+                .iter()
+                .map(|path| std::fs::read_to_string(package.join(path)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let sources = paths
+                .iter()
+                .zip(&sources)
+                .map(|(path, source)| (*path, source.as_str()))
+                .collect::<Vec<_>>();
+            let (manifest, exports) = published_library_manifest_and_exports(name, &sources)?;
+            manifest.to_json_string()?;
+            let root = tempfile::tempdir()?;
+            std::fs::write(
+                root.path().join("loaf.toml"),
+                format!("[project]\nname={name:?}\nversion='0.1.0'\n"),
+            )?;
+            let project = oven_model::manifest::ProjectManifest::load(&root.path().join("loaf.toml"))?;
+            let contract = crate::build::library_metadata::requirements::CheckedLibraryRequirements::capture(
+                crate::build::library_metadata::requirements::CheckedLibraryCapture {
+                    project: &project,
+                    index: &LibraryManifestIndex::default(),
+                    requirements: &incan_provider::requirements::ProjectRequirements::default(),
+                    imports: &[],
+                    exports: &exports,
+                    publication: Some(&manifest),
+                    version: "0.1.0",
+                    used_module_paths: Default::default(),
+                    source_modules: [("src/lib.incn".into(), vec!["main".into()])].into(),
+                    entry_module: vec!["main".into()],
+                    rust_abi_queries: Default::default(),
+                    rust_extern_paths: Vec::new(),
+                    backend: None,
+                    native_demands: Default::default(),
+                },
+            )?;
+            let decoded: crate::build::library_metadata::requirements::CheckedLibraryRequirements =
+                serde_json::from_slice(&serde_json::to_vec(&contract)?)?;
+            decoded.validate()?;
+            assert_eq!(decoded.caller_exports()?.len(), exports.len());
+            for export in exports {
+                let record =
+                    incan_frontend::library_manifest::CheckedExportReplay::from_checked_in_package(&manifest, &export)?;
+                let bytes = serde_json::to_vec(&record)?;
+                let restored: incan_frontend::library_manifest::CheckedExportReplay = serde_json::from_slice(&bytes)?;
+                assert_eq!(restored.to_checked()?.identity, export.identity);
+                if name == "greetings" && export.name == "wave" {
+                    let mut broken = serde_json::to_value(&record)?;
+                    let graph = broken["projection"]["contract_metadata"]["identity_graph"]["exports"]
+                        .as_array_mut()
+                        .ok_or("missing replay identity graph")?;
+                    let before = graph.len();
+                    graph.retain(|entry| entry["public_path"] != serde_json::json!(["greetings", "relabel", "wave"]));
+                    assert_eq!(graph.len() + 1, before);
+                    assert!(
+                        serde_json::from_value::<incan_frontend::library_manifest::CheckedExportReplay>(broken)
+                            .is_err()
+                    );
+                    let mut wrong_owner = export.clone();
+                    let identity = wrong_owner
+                        .identity
+                        .canonical
+                        .as_mut()
+                        .ok_or("missing checked export owner")?;
+                    identity.origin = incan_semantics_core::SymbolOrigin::Package {
+                        library: "foreign".into(),
+                        module_path: vec!["inner".into()],
+                    };
+                    assert!(
+                        incan_frontend::library_manifest::CheckedExportReplay::from_checked_in_package(
+                            &manifest,
+                            &wrong_owner
+                        )
+                        .is_err()
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Encode `manifest` as a library build writes it, decode it again, and check `consumer` against the decoded
@@ -1370,6 +1509,141 @@ mod tests {
             Ok(())
         } else {
             Err(failures.join("\n").into())
+        }
+    }
+
+    /// The original multi-hop package publishes every namespace through the actual dependency-free source session.
+    #[test]
+    fn original_reexports_publish_through_source_session() -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::Arc;
+
+        use incan_provider::FeatureSelection;
+        use oven_store::store::OvenStoreLimits;
+
+        let original =
+            incan_test_support::fixtures_dir().join("behavior/cli_dependencies/dependency_submodule_reexports");
+        let package = original.join("deps/greetings");
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src/nested"))?;
+        std::fs::copy(package.join("loaf.toml"), root.path().join("loaf.toml"))?;
+        for relative in [
+            "lib.incn",
+            "inner.incn",
+            "middle.incn",
+            "outer.incn",
+            "renamed.incn",
+            "relabel.incn",
+            "nested/relay.incn",
+        ] {
+            std::fs::copy(
+                package.join("src").join(relative),
+                root.path().join("src").join(relative),
+            )?;
+        }
+        let entry = root.path().join("src/lib.incn");
+        let dependencies = Arc::new(crate::build::library_dependencies::PreparedLibraryDependencies::admit(
+            &[],
+            "aarch64-apple-darwin",
+            "reexport-session-control",
+            OvenStoreLimits::new(16 << 20, 16 << 20, 16 << 20),
+        )?);
+        let session = crate::session::CompilationSession::discover_with_admitted_library_dependencies(
+            &entry,
+            &FeatureSelection::default(),
+            dependencies,
+        )?;
+        let (manifest, _) = crate::build::library_project::checked_source_library_manifest(&session, &entry)?;
+        manifest.to_json_string().map_err(|error| {
+            format!(
+                "{error}; actual source-session identity graph: {:#?}",
+                manifest.contract_metadata.identity_graph
+            )
+        })?;
+        encode_and_consume(
+            "greetings",
+            &manifest,
+            &std::fs::read_to_string(original.join("src/main.incn"))?,
+        )
+    }
+
+    /// Original facade return carriers survive the actual CLI session's checked imports and registry package context.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn original_facade_carriers_survive_compilation_session() -> Result<(), Box<dyn std::error::Error>> {
+        let area = incan_test_support::fixtures_dir().join("behavior/cli_modules_and_declarations");
+        let fixture = incan_test_support::behavior_fixtures::discover(&area)?
+            .into_iter()
+            .find(|fixture| fixture.name == "facade_reexport_alias_target")
+            .ok_or("missing original facade fixture")?;
+        let root = tempfile::tempdir()?;
+        incan_test_support::behavior_fixtures::materialize(&fixture, root.path())?;
+        let entry = root.path().join("src/main.incn");
+        let session = crate::session::CompilationSession::discover_with_feature_selection(&entry, &Default::default())?;
+        let modules = crate::modules::collect_modules_detailed_with_session(entry, &session)
+            .map_err(|failure| failure.render_human())?;
+        let analysis = session
+            .analyze_modules(&modules, None)
+            .map_err(|failure| failure.render_human())?;
+        let mut context = Vec::new();
+        for source in &modules {
+            let facts = analysis
+                .type_info_for_path(&source.file_path)
+                .ok_or("missing original source facts")?;
+            let (module, _, _) = incan_frontend::body_ir::build_body_ir_module_v0_with_sdk_linkage_and_registry_package(
+                &source.ast,
+                &source.path_segments,
+                facts,
+                &context,
+                "facade_reexport_alias_target",
+            );
+            context.push(module);
+        }
+        for module in &context {
+            for body in &module.bodies {
+                let mut leaves = Vec::new();
+                collect_return_nominal_leaves(&body.return_type, &mut leaves);
+                for key in leaves {
+                    let owner = body.named_type_identities.get(key).ok_or_else(|| {
+                        let facts = modules
+                            .iter()
+                            .find(|source| source.path_segments.join("::") == module.module_id.path())
+                            .and_then(|source| analysis.type_info_for_path(&source.file_path));
+                        format!(
+                            "missing return owner {key}: {}\nframe identities={:?}\nnative checked identities={:?}",
+                            body.render_snapshot(),
+                            body.named_type_identities,
+                            facts.map(|facts| &facts.declarations.body_ir_native_type_identities)
+                        )
+                    })?;
+                    assert!(
+                        context
+                            .iter()
+                            .flat_map(|module| &module.nominal_declarations)
+                            .any(|declaration| &declaration.canonical == owner),
+                        "{}\nreturn owner={owner:?}\nlayouts={:?}",
+                        body.render_snapshot(),
+                        context
+                            .iter()
+                            .flat_map(|module| &module.nominal_declarations)
+                            .map(|declaration| (&declaration.name, &declaration.canonical))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Inventory every nominal return position, including union members not explicitly imported by the forwarder.
+    fn collect_return_nominal_leaves<'a>(ty: &'a incan_semantics_core::IncanType, out: &mut Vec<&'a String>) {
+        match ty {
+            incan_semantics_core::IncanType::Named(name) => out.push(name),
+            incan_semantics_core::IncanType::Generic { args, .. } | incan_semantics_core::IncanType::Tuple(args) => {
+                for argument in args {
+                    collect_return_nominal_leaves(argument, out);
+                }
+            }
+            _ => {}
         }
     }
 

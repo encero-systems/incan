@@ -19,6 +19,7 @@ pub use parsed_module::ParsedModule;
 pub mod api_metadata;
 pub mod ast_walk;
 pub mod body_ir;
+mod body_ir_parameter_names;
 pub mod compiler_stack;
 pub mod contract_metadata;
 pub mod decorator_resolution;

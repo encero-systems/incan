@@ -1,0 +1,68 @@
+"""Plan construction and borrowed observation of the checked builtin validation error carrier."""
+
+from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPlace
+from pub::incan_mir_plan import PlanType, SourceSpan, Place, RvalueKind, CalleeKind, ExternalFunction
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, place_type, temporary, read_place, external_call
+from lowering import argument_type, fixed_arguments, scalar_place, lower_callable_result
+
+
+pub def lower_validation_error(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    destination: &Option[RustPlace],
+    coded: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Use checked owned String arguments and the actual runtime constructor, retaining normal and unwind ownership."""
+    mut count = 1
+    mut path = "incan_native_runtime::make_validation_error"
+    if coded:
+        count = 2
+        path = "incan_native_runtime::make_coded_validation_error"
+    if len(arguments) != count:
+        return Err("invalid Body IR validation error constructor arity")
+    mut parameters: list[PlanType] = []
+    for index in range(count):
+        if argument_type(builder, arguments, index, span)? != PlanType.String:
+            return Err("unsupported Body IR validation error constructor input")
+        parameters.append(PlanType.String)
+    match destination:
+        None => return Err("unsupported Body IR validation error constructor without destination")
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if place_type(builder.locals, output) != PlanType.ValidationError:
+                return Err("unsupported Body IR validation error constructor destination")
+            operands = fixed_arguments(builder, arguments, span)?
+            builder.externals.append(
+                ExternalFunction(path=path, parameters=parameters, return_type=PlanType.ValidationError, span=span),
+            )
+            return lower_callable_result(
+                builder,
+                CalleeKind.External(path),
+                operands,
+                output,
+                PlanType.ValidationError,
+                span,
+            )
+
+
+pub def display_validation_error(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Borrow dependency-owned Display without consuming either a local error or an active Result payload."""
+    mut reference = source
+    if place_type(builder.locals, source) == PlanType.ValidationError:
+        reference = temporary(builder, PlanType.ValidationErrorRef, span)
+        builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+    elif place_type(builder.locals, source) != PlanType.ValidationErrorRef:
+        return Err("unsupported Body IR validation error display source")
+    output = temporary(builder, PlanType.String, span)
+    external_call(
+        builder,
+        "incan_native_runtime::format_validation_error",
+        [PlanType.ValidationErrorRef],
+        PlanType.String,
+        [read_place(reference, false, span)],
+        output,
+        span,
+    )
+    return Ok(output)

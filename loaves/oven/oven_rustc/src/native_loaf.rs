@@ -38,14 +38,31 @@ pub use preparation::{
     resolved_native_graph_coordinates,
 };
 pub use prepared::{
-    NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
-    prepare_declared_native_loafs_in_store,
+    NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, NativeLoafProducerProjection,
+    prepare_declared_native_loafs, prepare_declared_native_loafs_in_store, project_declared_native_loaf_request,
 };
 pub(crate) use selection::verify_native_source_declaration;
 
 pub use request_observation::NativeLoafRequestObservation;
 
 pub use producer::{NativeLoafInspectionInputs, NativeLoafInspectionUnit, NativeLoafInspectionWork};
+
+/// Encode the exact declared native roots identically in consumer receipts and inspection publication.
+/// The ordered alias/record pairs retain the existing identity format; no package-name inference participates.
+pub fn native_loaf_roots_digest(roots: &BTreeMap<String, String>) -> Result<String> {
+    #[derive(Serialize)]
+    struct Root<'a> {
+        alias: &'a str,
+        record_identity: &'a str,
+    }
+    let roots = roots
+        .iter()
+        .map(|(alias, record_identity)| Root { alias, record_identity })
+        .collect::<Vec<_>>();
+    serde_json::to_vec(&roots)
+        .map(|bytes| digest_bytes(&bytes))
+        .map_err(failed)
+}
 
 /// Independently established producer boundary for a native source generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

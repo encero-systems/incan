@@ -139,8 +139,9 @@ pub use invocation::{
     bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_library_with_artifact_role,
     bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_proc_macro_with_artifact_role,
     bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_run_in_store,
-    bake_trusted_direct_rustc_run_with_artifact_role, bake_trusted_direct_rustc_test,
-    bake_trusted_direct_rustc_test_in_store, run_trusted_rustdoc_test, trusted_artifact_plan_for_source_evidence,
+    bake_trusted_direct_rustc_run_in_store_with_generated_sources, bake_trusted_direct_rustc_run_with_artifact_role,
+    bake_trusted_direct_rustc_test, bake_trusted_direct_rustc_test_in_store, run_trusted_rustdoc_test,
+    trusted_artifact_plan_for_source_evidence,
 };
 use manifest_validation::*;
 #[cfg(test)]
