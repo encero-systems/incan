@@ -1,6 +1,8 @@
 # behavior: a program whose only main is declared under an unselected feature has no main, so the run fails without output
 # expect-stdout:
 # expect-exit: 1
+# expect-stderr-contains:
+#   Error: MissingEntrypoint
 
 
 """A program whose only main is declared under an unselected feature has no main, so the run fails without output."""

@@ -10,8 +10,18 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
     EnumDeclaration as RustEnumDeclaration,
+    nominal_carrier_key,
 )
-from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan, FieldProjection, EnumDeclaration
+from pub::incan_mir_plan import (
+    ListLeaf,
+    PlanType,
+    Local,
+    Place,
+    Projection,
+    SourceSpan,
+    FieldProjection,
+    EnumDeclaration,
+)
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
@@ -19,25 +29,43 @@ from nominal_instances import nominal_symbol
 from types import primitive_type
 from closures import function_pointer_type
 from layout_types import native_source_type as retained_type
+from ranges import range_field
 from unions import union_slot
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked scalar, collection, and callable types, resolving source-local nominals only against retained declarations."""
+    """Translate checked scalar, collection, and callable types against retained declarations; refusals preserve the unsupported type and its parameters."""
     match generator_type(ty):
         Some(result) => return result
         None => pass
     match ty:
+        RustType.RustInteropPath(path) => return Err(f"unsupported Body IR type RustInteropPath {path}")
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
-            return Err(f"unsupported Body IR nominal type {name}")
+            source_name = rejected_nominal_name(declarations, str(name))
+            return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.TypeToken(represented) =>
+            match model_type(declarations, represented)?:
+                (PlanType.Int | PlanType.Float | PlanType.Bool | PlanType.String) =>
+                    return Ok(PlanType.TypeToken([model_type(declarations, represented)?]))
+                _ => return Err("unsupported Body IR nonprimitive TypeToken carrier")
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
+            if base in ["FrozenList", "FrozenSet", "FrozenDict"]:
+                mut storage: list[PlanType] = []
+                for argument in arguments:
+                    mut element = model_type(declarations, argument)?
+                    if element == PlanType.String:
+                        element = PlanType.StaticText
+                    elif element == PlanType.List(ListLeaf.U8, 1):
+                        element = PlanType.StaticBytes
+                    storage.append(element)
+                return Ok(PlanType.FrozenCollection(str(base), storage))
             for index in range(len(declarations)):
                 declaration = declarations[index]
                 if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(
@@ -46,9 +74,11 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 ):
                     return Ok(PlanType.Model(index, str(declaration.name)))
             if base == "Set" and len(arguments) == 1:
-                return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
+                return Ok(PlanType.Set(hashed_element(declarations, arguments[0])?))
             if base == "Dict" and len(arguments) == 2:
-                return Ok(PlanType.Dict(primitive_leaf(arguments[0], true)?, primitive_leaf(arguments[1], false)?))
+                return Ok(
+                    PlanType.Dict(hashed_element(declarations, arguments[0])?, primitive_leaf(arguments[1], false)?),
+                )
             if base != "List" or len(arguments) != 1:
                 return generic_tuple_type(ty)
             element = model_type(declarations, arguments[0])?
@@ -60,11 +90,50 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
                 PlanType.Decimal => return Ok(PlanType.List(ListLeaf.Decimal, 1))
                 PlanType.FrozenStr => return Ok(PlanType.List(ListLeaf.FrozenStr, 1))
+                PlanType.FrozenBytes => return Ok(PlanType.List(ListLeaf.FrozenBytes, 1))
                 PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
                 PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
-        _ => return Err(f"unsupported Body IR type {type_name(ty)}")
+        _ => return Err(f"unsupported Body IR type {type_name(ty)} ({ty})")
+
+
+def rejected_nominal_name(declarations: list[NominalDeclaration], name: str) -> str:
+    """Report a rejected carrier's source name only through its retained canonical owner, without granting layout admission."""
+    for declaration in declarations:
+        match nominal_carrier_key(declaration.canonical):
+            Some(key) =>
+                if str(key) == name:
+                    return str(declaration.canonical.declaration_name)
+            None => pass
+    return name
+
+
+pub def hashed_element(declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
+    """
+    Admit a retained model as a set element or dictionary key with derived Hash and derived or canonically selected source Eq.
+
+    Equality can come from a source protocol rather than a derive. Actual native Eq and Hash implementations are
+    validated against every runtime call's bounds before MIR; missing source implementations remain unsupported.
+    Other elements keep the primitive hashed leaves. Keyed dictionary lookup additionally requires Display.
+    """
+    match ty:
+        RustType.Named(name) =>
+            for index in range(len(declarations)):
+                declaration = declarations[index]
+                if declaration.name == str(name) and model_equality(declaration) and "Hash" in declaration.derives:
+                    return Ok(ListLeaf.Model(index, str(name)))
+        _ => pass
+    return primitive_leaf(ty, true)
+
+
+def model_equality(declaration: &NominalDeclaration) -> bool:
+    """Require a checked derive or the explicit canonical source equality witness before hashed carrier admission."""
+    if "Eq" in declaration.derives:
+        return true
+    match declaration.comparison_equality:
+        Some(_identity) => return true
+        None => return false
 
 
 pub def model_place(
@@ -105,12 +174,33 @@ pub def model_prefix(
                         )
                     return receiver_field(declarations, index, owner, value, count, span, enums, unions, intrinsics)
                 None => pass
+            # A `mut str` or enum parameter, an in-place binding or an in-place loop item reads through its reference.
+            match exclusive_referent(locals[index].ty):
+                Some(referent) =>
+                    if count == 0:
+                        return Ok(Place(local=index, projection=Projection.Deref(referent), span=span))
+                    fields = field_path(declarations, referent, value.projection, count, enums, unions, intrinsics)?
+                    return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
+                None => pass
+            # An enum method's shared receiver reads the whole enum through its reference.
+            match locals[index].ty:
+                PlanType.EnumRef(owner, name) =>
+                    if count == 0:
+                        return Ok(Place(local=index, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
+                    return Err("unsupported Body IR projection through an enum receiver")
+                _ => pass
             if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
             fields = field_path(declarations, locals[index].ty, value.projection, count, enums, unions, intrinsics)?
             if len(fields) == 1:
                 if fields[0].variant >= 0:
-                    return Ok(Place(local=index, projection=Projection.VariantField(fields[0].variant, fields[0].slot, fields[0].ty), span=span))
+                    return Ok(
+                        Place(
+                            local=index,
+                            projection=Projection.VariantField(fields[0].variant, fields[0].slot, fields[0].ty),
+                            span=span,
+                        ),
+                    )
                 slot = fields[0].slot
                 ty = fields[0].ty
                 return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
@@ -176,11 +266,18 @@ pub def field_projection(
         PlanType.Tuple(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
-        _ => return Err("unsupported Body IR model index or slice projection")
+        PlanType.TupleMutRef(elements) =>
+            slot = tuple_slot(projection, len(elements))?
+            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        PlanType.RangeValue => return range_field(projection)
+        _ =>
+            return Err(
+                f"unsupported Body IR model index or slice projection at root {root:?}; projection {projection:?}",
+            )
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
-    """Decode the imported projection enum through a typed boundary that retains its Rust import."""
+    """Require an exact canonical stored field; report the rejected projection and selected layout for diagnosis."""
     # Legacy #459-like pattern-only imports require the typed enum parameter until dev.8.
     match value:
         RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
@@ -193,7 +290,9 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
                         if declaration.fields[slot] == str(name) and declaration.field_identities[slot] == identity.clone():
                             return Ok(slot)
                 None => pass
-            return Err("unsupported Body IR unproven model field")
+            return Err(
+                f"unsupported Body IR unproven model field; projection {value:?}; selected owner {declaration.canonical:?}; name {declaration.name:?}; fields {declaration.fields:?}; field identities {declaration.field_identities:?}; field types {declaration.field_types:?}",
+            )
         _ => return Err("unsupported Body IR model index or slice projection")
 
 
@@ -259,12 +358,29 @@ def receiver_field(
     intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
-    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value.projection, count, enums, unions, intrinsics)?
+    fields = field_path(
+        declarations,
+        PlanType.Model(owner, declarations[owner].name),
+        value.projection,
+        count,
+        enums,
+        unions,
+        intrinsics,
+    )?
     if len(fields) == 1:
         slot = fields[0].slot
         ty = fields[0].ty
         return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
     return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
+
+
+def exclusive_referent(ty: PlanType) -> Option[PlanType]:
+    """The text, enum or tuple value an exclusive reference names; model references keep their receiver projection."""
+    match ty:
+        PlanType.StringMutRef => return Some(PlanType.String)
+        PlanType.EnumMutRef(owner, name) => return Some(PlanType.Enum(owner, name))
+        PlanType.TupleMutRef(elements) => return Some(PlanType.Tuple(elements))
+        _ => return None
 
 
 def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:

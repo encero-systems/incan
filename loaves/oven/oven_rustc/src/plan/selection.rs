@@ -216,6 +216,31 @@ pub fn select_packaged_direct_rustc_execution_plan(
     let Some(selected) = selected.pop() else {
         return Ok(None);
     };
+    packaged_direct_rustc_plan_from_selected(selected, receipt, required_identity).map(Some)
+}
+
+/// Materialize an exact published package closure while retaining its original execution lease.
+/// Both writable and immutable Store selection enter this boundary; receipt and entry identity must agree before
+/// any physical artifact paths are exposed. No consumer-side copy or replacement publication is required.
+pub fn packaged_direct_rustc_plan_from_selected(
+    selected: OvenStoreExecutionPayload,
+    receipt: &OvenReceipt,
+    required_identity: &str,
+) -> OvenPlanResult<OvenStoredDirectRustcExecutionPlan> {
+    receipt
+        .verify_identity()
+        .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+    let stored = selected.manifest();
+    if stored.identity != required_identity
+        || stored.kind != OvenArtifactKind::DirectRustcPlan
+        || stored.receipt_identity != receipt.identity
+        || stored.build_unit_identity != receipt.build_unit_identity
+        || stored.intent != receipt.intent
+    {
+        return Err(OvenPlanError::selection(
+            "published package closure differs from its exact receipt or identity",
+        ));
+    }
     let (manifest, artifact_root, payload, lease) = selected.into_parts();
     let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
         OvenPlanError::selection(format!(
@@ -233,7 +258,7 @@ pub fn select_packaged_direct_rustc_execution_plan(
                 std::collections::BTreeMap::new(),
             )
         };
-    Ok(Some(OvenStoredDirectRustcExecutionPlan {
+    Ok(OvenStoredDirectRustcExecutionPlan {
         identity: manifest.identity,
         artifacts,
         artifact_root,
@@ -241,7 +266,7 @@ pub fn select_packaged_direct_rustc_execution_plan(
         _lease: lease,
         _shared_owners: shared_owners,
         shared_paths,
-    }))
+    })
 }
 
 /// Drop project extensions whose base Loaf the active toolchain does not ship, when at least one candidate's base

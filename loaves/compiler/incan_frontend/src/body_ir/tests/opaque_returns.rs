@@ -1,0 +1,353 @@
+//! Concrete producers of local trait-returning functions retain the opaque carrier legacy emits.
+
+use super::{IncanPrimitiveType, IncanType, body_named, build};
+
+/// The original local generic adapter chain retains concrete checked carriers before native lowering sees its locals.
+#[test]
+fn original_fallible_chain_retains_checked_adapter_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/fallible_iterator_adapter_chain.incn"
+        ),
+        &["m", "original_fallible_chain"],
+    )?;
+    let main = body_named(&module, "main")?;
+    let opaque = main
+        .locals
+        .iter()
+        .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleStream"));
+    if opaque {
+        for body in &module.bodies {
+            eprintln!(
+                "return witness {} parameters={:?} return={:?} identities={:?}",
+                body.name, body.type_parameters, body.return_type, body.named_type_identities
+            );
+            eprintln!("{}", body.render_snapshot());
+        }
+    }
+    assert!(!opaque, "{}", main.render_snapshot());
+    Ok(())
+}
+
+/// A checked generic method's constructor return grants its own concrete witness without relying on a Self-return slot.
+#[test]
+fn generic_method_return_retains_constructor_witness() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"trait Read:
+    """Declare the interface of the returned value."""
+    pass
+
+model Box[T with Clone] with Read:
+    """Store the checked generic argument."""
+    value: T
+
+model Factory:
+    """Return a newly constructed value through its declared interface."""
+    def make[T with Clone](self, value: T) -> Read:
+        """Retain the concrete Box witness independently of the receiver."""
+        return Box[T](value=value)
+
+def main() -> None:
+    """Keep the checked generic method result in a binding."""
+    result = Factory().make(7)
+"#,
+        &["m", "generic_method_witness"],
+    )?;
+    let main = body_named(&module, "main")?;
+    assert!(
+        main.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, args } if base == "Box" && args == &[IncanType::Primitive(IncanPrimitiveType::Int)]
+        )),
+        "{}",
+        main.render_snapshot()
+    );
+    Ok(())
+}
+
+/// Trait and nominal binders with swapped names retain their distinct checked scopes when a method returns a carrier.
+#[test]
+fn method_return_witness_keeps_swapped_adoption_binders() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"trait Read:
+    """Declare the return interface."""
+    pass
+
+model Box[T with Clone] with Read:
+    """Keep the represented payload."""
+    value: T
+
+trait Source[T with Clone, E with Clone]:
+    """Use separate owner binders for the selected result."""
+    def second(self) -> E: ...
+    def get[U with Clone](self, witness: U) -> Read:
+        """Return the trait's second argument through a concrete constructor."""
+        return Box[E](value=self.second())
+
+model Pair[T with Clone, E with Clone] with Source[E, T]:
+    """Swap the adoption's arguments without capturing either declaration's binder."""
+    value: T
+    marker: E
+    def second(self) -> T:
+        """Read the payload belonging to the nominal's first argument."""
+        return self.value
+
+def main() -> None:
+    """The trait's E is the nominal's T, which is int here."""
+    result = Pair[int, str](value=7, marker="marker").get(true)
+"#,
+        &["m", "swapped_method_witness"],
+    )?;
+    let main = body_named(&module, "main")?;
+    assert!(
+        main.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, args } if base == "Box" && args == &[IncanType::Primitive(IncanPrimitiveType::Int)]
+        )),
+        "{}",
+        main.render_snapshot()
+    );
+    Ok(())
+}
+
+/// The native loader's authenticated SDK hook identity must preserve the default constructor's concrete Self carrier.
+#[test]
+fn sdk_package_iteration_hooks_keep_concrete_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+    );
+    let tokens = super::lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = super::parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = super::TypeChecker::new();
+    let module_path = vec!["m".into(), "sdk_package_hooks".into()];
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut facts = checker.type_info().clone();
+    let mut selected = 0;
+    for hooks in facts.protocols.body_ir_iterations.values_mut() {
+        let identity = hooks
+            .iter
+            .canonical
+            .as_ref()
+            .ok_or("missing checked iterator identity")?;
+        hooks.iter.canonical =
+            Some(super::super::library_nominals::sdk_identity(identity).ok_or("missing authenticated SDK hook")?);
+        selected += 1;
+    }
+    assert!(selected > 0);
+    let module = super::build_body_ir_module_v0(&program, &module_path, &facts);
+    let body = body_named(&module, "consume")?;
+    assert!(
+        !body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, .. } if base.split([':', '.']).next_back() == Some("FallibleIterator")
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A selected SDK constructor remains a template over the caller's declared binder, ready for checked specialization.
+#[test]
+fn sdk_generic_reader_adapter_retains_its_constructor_template() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+        &["m", "generic_reader_adapter"],
+    )?;
+    let body = body_named(&module, "consume")?;
+    assert!(
+        body.named_type_identities.contains_key("ReaderChunks"),
+        "receiver identities: {:?}",
+        body.named_type_identities
+    );
+    assert!(
+        body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, args } if base == "MapErrFallibleIterator" && args.len() == 5
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    assert!(
+        !body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, .. } if base == "FallibleIterator"
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A single checked adopter returned as a trait must keep its concrete carrier through the call result.
+#[test]
+fn local_trait_return_retains_its_concrete_producer() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n    def value(self) -> T: ...\n\nmodel Reading with Read[int]:\n    number: int\n\n    def value(self) -> int:\n        return self.number\n\ndef reading() -> Read[int]:\n    return Reading(number=7)\n\ndef main() -> int:\n    return reading().value()\n",
+        &["m", "opaque_returns"],
+    )?;
+    let producer = body_named(&module, "reading")?;
+    assert_eq!(
+        producer.return_type,
+        IncanType::Named("Reading".to_owned()),
+        "{}",
+        producer.render_snapshot()
+    );
+    let main = body_named(&module, "main")?;
+    assert!(
+        main.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Reading".to_owned())),
+        "{}",
+        main.render_snapshot()
+    );
+    Ok(())
+}
+
+/// The checked Self-returning iteration contract keeps the same opaque carrier without inventing method dispatch.
+#[test]
+fn local_fallible_iterator_retains_self_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/fallible_iteration_protocol.incn"
+        ),
+        &["m", "opaque_stream"],
+    )?;
+    let body = body_named(&module, "drain_trait")?;
+    assert!(
+        !body
+            .locals
+            .iter()
+            .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleStream")),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// An explicit trait return remains opaque even when the receiver came from a proven concrete producer.
+#[test]
+fn explicit_trait_return_does_not_grant_self_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read:\n    def as_read(self) -> Read:\n        return producer()\n\nmodel Reading with Read:\n    value: int\n\ndef producer() -> Read:\n    return Reading(value=7)\n\ndef main() -> None:\n    erased = producer().as_read()\n    pass\n",
+        &["m", "explicit_trait_return"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Reading".into()))
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Read".into()))
+    );
+    Ok(())
+}
+
+/// A trait parameter has no concrete producer proof, even when the current module declares only one adopter.
+#[test]
+fn unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n    def value(self) -> T: ...\n\nmodel Reading with Read[int]:\n    number: int\n    def value(self) -> int:\n        return self.number\n\ndef identity(value: Read[int]) -> Read[int]:\n    return value\n",
+        &["m", "unknown_opaque"],
+    )?;
+    let body = body_named(&module, "identity")?;
+    assert_eq!(body.return_type, IncanType::TypeVar("__IncanTrait0".into()));
+    assert_eq!(body.return_type, body.params[0].ty);
+    let identity = body
+        .named_type_identities
+        .get("__IncanTrait0")
+        .ok_or("missing hidden trait input identity")?;
+    assert_eq!(identity.declaration_name, "Read");
+    assert_eq!(identity.kind, super::SemanticSourceTargetKind::Trait);
+    Ok(())
+}
+
+/// Observable producer side effects and discarded opaque results must keep the same concrete return ABI.
+#[test]
+fn discarded_local_trait_producer_retains_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n    def value(self) -> T: ...\n\nmodel Reading with Read[int]:\n    number: int\n    def value(self) -> int:\n        return self.number\n\ndef reading(number: int) -> Read[int]:\n    println(number)\n    return Reading(number=number)\n\ndef main() -> None:\n    reading(7)\n    reading(9)\n",
+        &["m", "discarded_opaque"],
+    )?;
+    for name in ["reading", "main"] {
+        let body = body_named(&module, name)?;
+        assert!(
+            !body
+                .locals
+                .iter()
+                .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "Read")),
+            "{}",
+            body.render_snapshot()
+        );
+        if name == "reading" {
+            assert_eq!(
+                body.return_type,
+                IncanType::Named("Reading".to_owned()),
+                "{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// SDK default adapter calls retain the concrete constructors emitted by legacy, without supplying their bodies.
+#[test]
+fn sdk_fallible_adapters_retain_concrete_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"
+        ),
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
+        ),
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
+        ),
+    ] {
+        let module = build(source, &["m", "sdk_opaque"])?;
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body
+                .locals
+                .iter()
+                .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleIterator")),
+            "{}",
+            body.render_snapshot()
+        );
+        assert!(
+            body.named_type_identities
+                .values()
+                .any(|identity| identity.declaration_name.ends_with("FallibleIterator")
+                    && identity.kind == super::SemanticSourceTargetKind::Model),
+            "the checked concrete adapter owner must accompany its carrier: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// An SDK trait parameter has no known concrete producer, so its adapter remains opaque.
+#[test]
+fn sdk_unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.derives.collection import FallibleIterator\n\ndef adapt(stream: FallibleIterator[int, str]) -> FallibleIterator[int, str]:\n    return stream.take(1)\n",
+        &["m", "sdk_unknown_opaque"],
+    )?;
+    let body = body_named(&module, "adapt")?;
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleIterator"))
+    );
+    assert!(
+        !body
+            .named_type_identities
+            .values()
+            .any(|identity| identity.declaration_name == "TakeFallibleIterator")
+    );
+    Ok(())
+}

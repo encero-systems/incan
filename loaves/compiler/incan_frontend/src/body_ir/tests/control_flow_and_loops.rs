@@ -5,6 +5,59 @@
 
 use super::*;
 
+/// An unsafe region retains its source receipt and exact nested operations before any consumer admits it.
+#[test]
+fn unsafe_region_retains_acknowledgment_receipt_and_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def probe(value: int) -> int:\n  return value\n\ndef touch(value: int) -> int:\n  mut total = 0\n  unsafe:\n    total = probe(value)\n  return total\n",
+        &["m", "unsafe_receipt"],
+    )?;
+    let body = body_named(&module, "touch")?;
+    let value = serde_json::to_value(body)?;
+    let statements = value["block"]["stmts"].as_array().ok_or("missing body statements")?;
+    let statement = statements
+        .iter()
+        .find(|statement| statement["kind"].get("UnsafeRegion").is_some())
+        .ok_or("missing unsafe acknowledgment region")?;
+    let region = &statement["kind"]["UnsafeRegion"];
+    assert_eq!(region["acknowledgment"]["receipt"]["kind"], "Statement");
+    assert_eq!(region["acknowledgment"]["span"], statement["span"]);
+    assert_eq!(region["acknowledgment"]["scope"], value["block"]["scope"]);
+    assert_eq!(region["body"]["scope"], value["block"]["scope"]);
+    assert!(
+        region["body"]["stmts"]
+            .as_array()
+            .is_some_and(|operations| operations.len() >= 2)
+    );
+    Ok(())
+}
+
+/// A declaration inside an acknowledged region remains in the enclosing Incan scope, as legacy flattening requires.
+#[test]
+fn unsafe_region_keeps_enclosing_scope_and_later_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  unsafe:\n    value = \"retained\"\n  println(value)\n",
+        &["m", "unsafe_scope"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert_eq!(body.scopes.len(), 1);
+    assert!(body.locals.iter().any(|local| local.name.as_deref() == Some("value")));
+    let value = serde_json::to_value(body)?;
+    assert!(
+        value["block"]["stmts"].as_array().is_some_and(|statements| statements
+            .iter()
+            .any(|statement| statement["kind"].get("UnsafeRegion").is_some())),
+        "{}",
+        body.render_snapshot()
+    );
+    assert!(
+        !body.render_snapshot().contains("unsupported"),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 #[test]
 fn lowers_if_while_and_for_into_normalized_control_flow() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def run(n: int) -> int:\n  mut total = 0\n  for i in 0..n:\n    if i > 2:\n      total = total + i\n  while total > 100:\n    total = total - 1\n  return total\n";
@@ -80,6 +133,7 @@ fn for_pattern_bindings_do_not_escape_the_loop_scope() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// A checked structural iterator calls its selected hooks without fallible propagation.
 #[test]
 fn lowers_for_over_a_user_defined_iteration_protocol() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model CounterIter:\n  value: int\n  limit: int\n\n  def __next__(self) -> Option[int]:\n    if self.value < self.limit:\n      return Some(self.value)\n    return None\n\nmodel Counter:\n  limit: int\n\n  def __iter__(self) -> CounterIter:\n    return CounterIter(value=0, limit=self.limit)\n\ndef total() -> int:\n  mut acc = 0\n  for item in Counter(limit=3):\n    acc = acc + item\n  return acc\n";
@@ -91,12 +145,13 @@ fn lowers_for_over_a_user_defined_iteration_protocol() -> Result<(), Box<dyn std
         "should call the resolved __iter__ method to obtain an iterator: {snapshot}"
     );
     assert!(
-        snapshot.contains("user_defined(__next__)"),
+        snapshot.contains("call method:__next__") && !snapshot.contains("try?("),
         "should poll via the resolved __next__ method, non-fallible: {snapshot}"
     );
     Ok(())
 }
 
+/// A checked fallible iterator preserves polling and propagates its checked error explicitly.
 #[test]
 fn lowers_fallible_for_iteration_with_an_implicit_try_propagate_semantic() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model ChunkStream:\n  def __iter__(self) -> ChunkStream:\n    return self\n\n  def __next__(self) -> Result[Option[int], str]:\n    return Ok(None)\n\ndef total() -> Result[int, str]:\n  mut acc = 0\n  for chunk in ChunkStream()?:\n    acc = acc + chunk\n  return Ok(acc)\n";
@@ -104,8 +159,8 @@ fn lowers_fallible_for_iteration_with_an_implicit_try_propagate_semantic() -> Re
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("user_defined(__next__, fallible)"),
-        "fallible protocol iteration should mark IterNext as fallible: {snapshot}"
+        snapshot.contains("call method:__next__") && snapshot.contains("try?("),
+        "fallible protocol iteration must retain checked polling and propagation: {snapshot}"
     );
     Ok(())
 }
@@ -149,6 +204,27 @@ fn lowers_loop_expression_break_value_into_a_merged_result_place() -> Result<(),
         !snapshot.contains("break const"),
         "break value should be assigned into the result place, not carried on `break`: {snapshot}"
     );
+    Ok(())
+}
+
+/// A loop expression's result belongs to its enclosing scope and survives the loop body's scope-exit drops.
+#[test]
+fn loop_expression_result_outlives_the_loop_scope() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def find(flag: bool) -> Option[str]:\n  return loop:\n    if flag:\n      break None\n    break Some(\"kept\")\n";
+    let module = build(source, &["m", "loop_result_scope"])?;
+    let body = body_named(&module, "find")?;
+    let bir::StatementKind::Loop { body: loop_body } = &body.block.stmts[0].kind else {
+        return Err(format!("expected a normalized loop: {body:?}").into());
+    };
+    let bir::StatementKind::Return {
+        value: Some(bir::Operand::Place(read)),
+    } = &body.block.stmts[1].kind
+    else {
+        return Err(format!("expected the loop result to be returned: {body:?}").into());
+    };
+    let result = read.place.local_id().ok_or("loop result is not a local")?;
+    assert_eq!(body.locals[result.index()].scope, body.block.scope);
+    assert_ne!(body.locals[result.index()].scope, loop_body.scope);
     Ok(())
 }
 
@@ -368,10 +444,23 @@ fn a_bound_range_loop_drives_itself_from_the_range_value_fields() -> Result<(), 
     let module = build(source, &["m", "bound_range_fields"])?;
     let snapshot = module.render_snapshot();
     let range = last_local_for_binding(&snapshot, "r").ok_or("expected a local for `r`")?;
+    // The loop evaluates the range once, as legacy's native range does, so it iterates a snapshot taken before it.
+    let snapshotted = snapshot
+        .lines()
+        .find_map(|line| {
+            let (place, value) = line.trim().split_once(" = ")?;
+            ["copy", "move", "clone"]
+                .iter()
+                .any(|fact| {
+                    [format!("{fact}({range})"), format!("{fact}({range}, last_use)")].contains(&value.to_string())
+                })
+                .then(|| place.to_string())
+        })
+        .ok_or_else(|| format!("the loop must snapshot the range before iterating: {snapshot}"))?;
 
     for field in bir::AggregateKind::RANGE_FIELDS {
         assert!(
-            snapshot.contains(&format!("copy({range}.{field})")),
+            snapshot.contains(&format!("copy({snapshotted}.{field})")),
             "the loop must read the range's own `{field}` field rather than re-deriving it: {snapshot}"
         );
     }
@@ -458,34 +547,20 @@ fn nested_or_deferred_range_uses_do_not_authorize_an_outer_range_projection() ->
 /// The indentation `render_block` gives a statement nested one block below a body's top-level statements.
 ///
 /// A body renders its own block at depth 1, so a top-level statement carries two spaces and anything inside that
-/// statement's nested block carries four. Tests that care about *where* a statement landed compare against this rather
-/// than merely finding the text somewhere in the body, which would also pass if the statement had escaped into the
-/// enclosing block. The label fragment every by-design refusal used as a test stand-in renders with.
-///
-/// Tests that need *some* refusal in a given position -- to prove a refusal stays nested inside the construct
-/// containing it, say -- must not reach for whichever construct happens to be unrepresentable that week. Four have
-/// now gone vacuous exactly that way: `value ** 2` (#1160), a byte-string literal (#1165), a callable default
-/// (#1240), and collection membership (#1246, twice over). Each was a *gap*, and #1101 exists to close gaps, so
-/// every such choice decays the moment its owning sibling lands.
-///
-/// `unsafe:` is categorically different. It is refused because Body IR v0 cannot carry the acknowledgment a
-/// consumer would need to admit the region deliberately -- a stated disposition, not pending work. Reversing it
-/// means designing the acknowledgment fact first, so it will not quietly become representable underneath a test.
-///
-/// If [`the_shared_stand_in_refusal_is_still_refused_by_design`] ever fails, every test below that uses this has
-/// gone vacuous: pick another *by-design* refusal, update these two items, and do not substitute a gap.
-const STAND_IN_REFUSAL_LABEL: &str = "`unsafe:` acknowledgment region";
+/// statement's nested block carries four. The shared stand-in is an undesugared vocab item injected after checking;
+/// its refusal is a caller input-contract violation, independent of valid language constructs gaining representation.
+const STAND_IN_REFUSAL_LABEL: &str = "Body IR input-contract violation";
 
+/// The injected stand-in must still exercise the caller-contract refusal before nesting assertions rely on it.
 #[test]
 fn the_shared_stand_in_refusal_is_still_refused_by_design() -> Result<(), Box<dyn std::error::Error>> {
     let source = format!("def f() -> int:\n{}  return 1\n", stand_in_refusal_stmt("  "));
-    let rendered = rendered_f(&source, "stand_in_guard")?;
+    let module = build_with_stand_in_refusal(&source, &["m", "stand_in_guard"])?;
+    let rendered = body_named(&module, "f")?.render_snapshot();
 
     assert!(
         rendered.contains(STAND_IN_REFUSAL_LABEL),
-        "the shared stand-in refusal is no longer refused, so every test using it now asserts nothing. Pick \
-         another refusal that is refused *by design* rather than merely unimplemented, and update \
-         STAND_IN_REFUSAL_LABEL and stand_in_refusal_stmt together: {rendered}"
+        "the injected input-contract violation must stay refused: {rendered}"
     );
     Ok(())
 }
@@ -522,6 +597,36 @@ fn a_statement_position_loop_lowers_to_the_same_loop_the_expression_spelling_pro
     assert!(
         snapshot.lines().any(|line| line.trim() == "break"),
         "the loop must be exited by a valueless break: {snapshot}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_while_true_loop_lowers_to_the_statement_loop_without_an_exit_test() -> Result<(), Box<dyn std::error::Error>> {
+    // Legacy emits Rust's `loop` for a literal `true` condition, so only the body's own `return` leaves this loop and
+    // the value-returning function needs no return after it.
+    let source = concat!(
+        "def first_even(start: int) -> int:\n",
+        "  mut i = start\n",
+        "  while true:\n",
+        "    if i % 2 == 0:\n",
+        "      return i\n",
+        "    i = i + 1\n",
+    );
+    let module = build(source, &["m", "while_true"])?;
+    let snapshot = body_named(&module, "first_even")?.render_snapshot();
+
+    assert!(
+        !snapshot.contains("unsupported("),
+        "a `while true:` loop must lower rather than refuse: {snapshot}"
+    );
+    assert!(
+        snapshot.lines().any(|line| line.trim() == "loop:"),
+        "it must lower to Body IR's one normalized loop shape: {snapshot}"
+    );
+    assert!(
+        !snapshot.lines().any(|line| line.trim() == "break"),
+        "a literal `true` condition must not lower an exit test that breaks out of the loop: {snapshot}"
     );
     Ok(())
 }
@@ -597,12 +702,7 @@ fn nested_statement_loops_each_get_their_own_loop_block() -> Result<(), Box<dyn 
 
 #[test]
 fn an_unsupported_statement_inside_a_statement_loop_keeps_its_own_refusal() -> Result<(), Box<dyn std::error::Error>> {
-    // The loop must not swallow a construct it happens to contain: a consumer loses only that statement, not the
-    // whole loop. The original stand-in was collection membership, chosen because #1160 deliberately left it
-    // refused, and with the explicit note that "a stand-in that later becomes representable turns its test
-    // vacuous" -- which is exactly what #1246 then did to it. Both this test and
-    // `an_unsupported_construct_in_a_race_arm_does_not_collapse_the_whole_race` now share one by-design refusal
-    // instead, so the next representation cannot quietly hollow them out. See STAND_IN_REFUSAL_LABEL.
+    // A caller-contract violation stays inside the loop; it must not collapse or escape its containing construct.
     let source = format!(
         concat!(
             "def scan(values: list[int]) -> int:\n",
@@ -616,7 +716,7 @@ fn an_unsupported_statement_inside_a_statement_loop_keeps_its_own_refusal() -> R
         ),
         stand_in_refusal_stmt("    ")
     );
-    let module = build(&source, &["m", "loop_stmt_partial"])?;
+    let module = build_with_stand_in_refusal(&source, &["m", "loop_stmt_partial"])?;
     let snapshot = body_named(&module, "scan")?.render_snapshot();
 
     assert!(
@@ -890,5 +990,273 @@ fn same_spelled_range_function_keeps_its_checked_iteration_target() -> Result<()
     let snapshot = module.render_snapshot();
     assert!(!snapshot.contains("range_validate"), "{snapshot}");
     assert!(snapshot.contains("iter_next("), "{snapshot}");
+    Ok(())
+}
+
+/// An inclusive source range ends at the maximum integer on both advancement edges, as a header and as a bound value,
+/// while a builtin range keeps its own runtime advancement.
+#[test]
+fn source_ranges_stop_at_the_maximum_integer_before_advancing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def run(start: int, end: int, skip: bool) -> None:\n    values = start..=end\n    for item in values:\n        if skip:\n            continue\n        println(item)\n    for other in start..=end:\n        if skip:\n            continue\n        println(other)\n    for counted in range(start, end):\n        if skip:\n            continue\n        println(counted)\n",
+        &["m", "range_maximum"],
+    )?;
+    let snapshot = body_named(&module, "run")?.render_snapshot();
+    assert_eq!(
+        snapshot.matches("9223372036854775807").count(),
+        4,
+        "each source range loop must stop at the maximum on its fallthrough and continue edges: {snapshot}"
+    );
+    assert_eq!(
+        snapshot.matches("continue").count(),
+        3,
+        "every loop must exercise a continue edge: {snapshot}"
+    );
+    Ok(())
+}
+
+/// A range header evaluates its end once, before the loop, as legacy's native range does.
+#[test]
+fn range_header_end_is_evaluated_once_before_the_loop() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def end() -> int:\n    return 3\n\ndef run() -> None:\n    for i in 0..end():\n        println(i)\n",
+        &["m", "range_header_end"],
+    )?;
+    let snapshot = body_named(&module, "run")?.render_snapshot();
+    let (before, inside) = snapshot.split_once("loop:").ok_or("missing counting loop")?;
+    let calls_end = |line: &str| line.contains("call ") && line.contains("end");
+    assert!(
+        before.lines().any(calls_end),
+        "the end bound must be evaluated before the loop: {snapshot}"
+    );
+    assert!(
+        !inside.lines().any(calls_end),
+        "the loop must not re-evaluate its end bound: {snapshot}"
+    );
+    Ok(())
+}
+
+// ---- #1561: a loop whose body changes its item in place iterates its list exclusively ----
+
+/// The iterator of `body_name`'s only builtin loop, read off the statement that materializes it from the iterable.
+fn iterable_read(module: &bir::BodyIrModule, body_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let body = body_named(module, body_name)?;
+    let loop_index = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| matches!(statement.kind, bir::StatementKind::Loop { .. }))
+        .ok_or("the body must contain a builtin loop")?;
+    let initializer = loop_index
+        .checked_sub(1)
+        .and_then(|index| body.block.stmts.get(index))
+        .ok_or("the loop must follow its iterator's initializer")?;
+    match &initializer.kind {
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            ..
+        } => Ok(format!("{:?}", read.fact)),
+        other => Err(format!("unexpected iterator initializer {other:?}").into()),
+    }
+}
+
+#[test]
+fn a_loop_that_changes_its_item_in_place_borrows_its_list_exclusively() -> Result<(), Box<dyn std::error::Error>> {
+    // Legacy iterates with `iter_mut`, so `row.append(3)` changes the caller's list; `show(row)` only passes a copy.
+    let source = concat!(
+        "model Cell:\n",
+        "  pub tags: list[int]\n",
+        "\n",
+        "  def tag(mut self, value: int) -> None:\n",
+        "    self.tags.append(value)\n",
+        "\n",
+        "def show(mut row: list[int]) -> int:\n",
+        "  return len(row)\n",
+        "\n",
+        "def grow(mut items: list[list[int]]) -> None:\n",
+        "  for row in items:\n",
+        "    row.append(3)\n",
+        "\n",
+        "def tag_all(mut cells: list[Cell]) -> None:\n",
+        "  for cell in cells:\n",
+        "    cell.tag(9)\n",
+        "\n",
+        "def measure(mut items: list[list[int]]) -> int:\n",
+        "  mut total = 0\n",
+        "  for row in items:\n",
+        "    total += show(row)\n",
+        "  return total\n",
+    );
+    let module = build(source, &["m", "in_place_iteration"])?;
+    assert_eq!(iterable_read(&module, "grow")?, "MutBorrow");
+    assert_eq!(iterable_read(&module, "tag_all")?, "MutBorrow");
+    assert_eq!(iterable_read(&module, "measure")?, "Borrow");
+    Ok(())
+}
+
+/// Direct enumeration polls the original list and binds its changed component exclusively, without an owned
+/// enumeration materialization that would disconnect the write from the source.
+#[test]
+fn enumeration_retains_the_original_list_and_changed_pattern_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def grow(mut rows: list[list[int]]) -> None:\n  for i, row in enumerate(rows):\n    row.append(i)\n",
+        &["m", "enumeration_source"],
+    )?;
+    let body = body_named(&module, "grow")?;
+    assert_eq!(iterable_read(&module, "grow")?, "MutBorrow");
+    assert!(!body.block.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. }
+            if target.builtin == Some(bir::BuiltinFnId::Enumerate))));
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing enumeration loop")?;
+    let polled = loop_body
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::IterNext { destination, .. } => destination.local_id(),
+            _ => None,
+        })
+        .ok_or("missing source item")?;
+    let row = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("row"))
+        .ok_or("missing row binding")?
+        .id;
+    assert!(loop_body.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Assign { place, rvalue: bir::Rvalue::Use(bir::Operand::Place(read)) }
+            if place.local_id() == Some(row) && read.place.local_id() == Some(polled) && read.fact == bir::OwnershipFact::MutBorrow)));
+    Ok(())
+}
+
+/// Changing an ordinary value alias in the body does not turn the loop's pattern into an exclusive source binding.
+#[test]
+fn enumeration_keeps_ordinary_body_aliases_as_values() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def copied(mut rows: list[list[int]]) -> None:\n  for i, row in enumerate(rows):\n    mut alias = row\n    alias.append(i)\n",
+        &["m", "enumeration_alias"],
+    )?;
+    let body = body_named(&module, "copied")?;
+    assert_eq!(iterable_read(&module, "copied")?, "Borrow");
+    let alias = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("alias"))
+        .ok_or("missing alias")?
+        .id;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing enumeration loop")?;
+    assert!(loop_body.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Assign { place, rvalue: bir::Rvalue::Use(bir::Operand::Place(read)) }
+            if place.local_id() == Some(alias) && read.fact != bir::OwnershipFact::MutBorrow)));
+    Ok(())
+}
+
+/// A same-named user function keeps its checked call and ordinary tuple iteration; builtin source normalization
+/// requires canonical identity rather than a name match.
+#[test]
+fn enumeration_named_user_function_keeps_its_checked_call() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def enumerate(values: list[int]) -> list[tuple[int, int]]:\n  return [(7, values[0])]\ndef shadowed(values: list[int]) -> int:\n  mut total = 0\n  for i, value in enumerate(values):\n    total += i + value\n  return total\n";
+    let module = build(source, &["m", "enumeration_shadow"])?;
+    let body = body_named(&module, "shadowed")?;
+    let calls: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } => Some(target.builtin),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, vec![None]);
+    Ok(())
+}
+
+/// Direct zip retains separate original source polls and exclusive ownership only for the changed operand.
+#[test]
+fn zip_retains_original_sources_and_operand_specific_ownership() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def grow(mut rows: list[list[int]], extra: list[int]) -> None:\n  for row, n in zip(rows, extra):\n    row.append(n)\n",
+        &["m", "zip_sources"],
+    )?;
+    let body = body_named(&module, "grow")?;
+    let rows = body.params[0].local;
+    let extra = body.params[1].local;
+    let reads: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } => Some((read.place.local_id(), read.fact)),
+            _ => None,
+        })
+        .collect();
+    assert!(reads.contains(&(Some(rows), bir::OwnershipFact::MutBorrow)));
+    assert!(reads.contains(&(Some(extra), bir::OwnershipFact::Borrow)));
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing zip loop")?;
+    assert_eq!(
+        loop_body
+            .stmts
+            .iter()
+            .filter(|statement| matches!(statement.kind, bir::StatementKind::IterNext { .. }))
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+/// Direct dictionary values poll original keys and retain the changed value as an exclusive indexed place.
+#[test]
+fn dictionary_values_retain_the_original_indexed_value() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def grow(mut table: dict[str, list[int]]) -> None:\n  for value in table.values():\n    value.append(3)\n",
+        &["m", "dictionary_values"],
+    )?;
+    let body = body_named(&module, "grow")?;
+    assert!(!body.block.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Call { callee: bir::Callee::Method(target), .. }
+            if target.canonical.as_ref().is_some_and(|identity| identity.declaration_name == "Dict.values"))));
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing value loop")?;
+    assert!(loop_body.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Assign { rvalue: bir::Rvalue::Use(bir::Operand::Place(read)), .. }
+            if read.fact == bir::OwnershipFact::MutBorrow && matches!(read.place.projection.first(), Some(bir::PlaceElem::Index(_))))));
     Ok(())
 }

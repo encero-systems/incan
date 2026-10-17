@@ -1,0 +1,9 @@
+"""Checked primitive-newtype failure boundaries used by the direct route."""
+
+from rust::incan_std_core::validation import raise_constraint_error
+
+
+pub def validate_newtype_constraint(valid: bool, target: str, constraint: str) -> None:
+    """Raise the same named constraint error as legacy after one saved input fails its checked predicates."""
+    if not valid:
+        raise_constraint_error(target, constraint)

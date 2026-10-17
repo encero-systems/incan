@@ -4,7 +4,7 @@ use crate::error::PlanError;
 use crate::identity::{self, IdentityError};
 use crate::plan::{Plan, PlanType};
 use crate::spans::Sources;
-use crate::{bodies, callees, declarations, types, validation};
+use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -84,7 +84,12 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
     });
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.
-        Some(function) if crate::closures::constructor(function).is_some() => {
+        Some(function)
+            if crate::closures::constructor(function).is_some()
+                || crate::shared_callables::constructor(function).is_some()
+                || function.is_async
+                || function.future_callee.is_some() =>
+        {
             (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def)
         }
         Some(function) => match if crate::captured_generators::producer(function).is_some() {
@@ -97,6 +102,19 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
         },
         None => {
             let parent = tcx.parent(def.to_def_id());
+            let coroutine = plan.functions.iter().find(|function| {
+                function.is_async
+                    && tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
+                    && tcx
+                        .opt_item_name(parent)
+                        .is_some_and(|name| name.as_str() == function.name)
+            });
+            if let Some(function) = coroutine {
+                return match crate::coroutines::body(tcx, def, function) {
+                    Ok(body) => tcx.alloc_steal_mir(body),
+                    Err(error) => refuse(tcx, error),
+                };
+            }
             let constructor = plan.functions.iter().find(|function| {
                 tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
                     && tcx
@@ -148,20 +166,28 @@ impl rustc_driver::Callbacks for Callbacks {
         krate: &mut ast::Crate,
     ) -> rustc_driver::Compilation {
         let sources = Sources::new(compiler.sess.source_map());
+        let span = match sources.span(&self.plan.span) {
+            Ok(span) => span,
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        };
+        match crate::cloneable_closures::items(&self.plan, span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        for output in crate::futures::outputs(&self.plan) {
+            krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
+            krate
+                .items
+                .push(crate::futures::borrowed_alias(&output, krate.spans.inner_span));
+        }
         for value in &self.plan.enums {
             let span = match sources.span(&value.span) {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
-            let mut item = declarations::enum_declaration(value, span);
-            for derive in value.derives.iter().filter(|_| value.carrier.is_empty()) {
-                item.attrs.push(declarations::derive_attribute(
-                    &compiler.sess.psess.attr_id_generator,
-                    derive,
-                    span,
-                ));
-            }
-            krate.items.push(item);
+            krate
+                .items
+                .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
         }
         for model in &self.plan.models {
             let span = match sources.span(&model.span) {
@@ -173,6 +199,14 @@ impl rustc_driver::Callbacks for Callbacks {
                 &compiler.sess.psess.attr_id_generator,
                 span,
             ));
+            if !model.checked_deserialize.is_empty() {
+                krate.items.push(crate::checked_json::forwarding_impl(model, span));
+            }
+            if !model.string_conversion_root.is_empty() {
+                krate
+                    .items
+                    .push(crate::checked_json::source_forwarding_impl(model, span));
+            }
         }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
@@ -187,11 +221,59 @@ impl rustc_driver::Callbacks for Callbacks {
             };
             krate.items.push(declarations::function(function, span));
         }
+        krate
+            .items
+            .extend(crate::shared_callables::items(&self.plan, krate.spans.inner_span));
+        match crate::field_metadata::items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        match crate::comparison_bridges::items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        match crate::fallible_bridges::items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        match crate::fallible_bridges::ordinary_items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        match crate::callable_bridges::items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        match crate::marker_traits::items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
+        // Computed statics keep rustc's own MIR for their storage and accessors (see `statics`).
+        for cell in &self.plan.statics {
+            let span = match sources.span(&cell.span) {
+                Ok(span) => span,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
+            krate.items.extend(crate::statics::items(cell, span));
+            match crate::statics::method_items(&self.plan, cell, span) {
+                Ok(items) => krate.items.extend(items),
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            }
+        }
         let mut roots: BTreeSet<_> = self
             .plan
             .externals
             .iter()
             .filter_map(|external| external.path.split("::").next())
+            .chain(
+                self.plan
+                    .models
+                    .iter()
+                    .map(|model| &model.library_item)
+                    .chain(self.plan.enums.iter().map(|value| &value.library_item))
+                    .filter_map(|item| item.split("::").next())
+                    .filter(|root| !root.is_empty()),
+            )
             .collect();
         if self.plan.functions.iter().any(|function| {
             function.locals.iter().any(|local| {
@@ -206,6 +288,19 @@ impl rustc_driver::Callbacks for Callbacks {
         }) {
             roots.insert("incan_std_core");
         }
+        for function in &self.plan.functions {
+            if let Some(callee) = &function.future_callee {
+                let path = match &callee.kind {
+                    crate::plan::CalleeKind::External(path)
+                    | crate::plan::CalleeKind::Instantiated(path, _)
+                    | crate::plan::CalleeKind::FutureMethod(path, _) => Some(path),
+                    _ => None,
+                };
+                if let Some(root) = path.and_then(|path| path.split("::").next()) {
+                    roots.insert(root);
+                }
+            }
+        }
         for root in roots {
             krate
                 .items
@@ -216,6 +311,9 @@ impl rustc_driver::Callbacks for Callbacks {
 
     /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        if let Err(error) = verify_library_argument_profiles(tcx, &self.plan) {
+            refuse(tcx, error);
+        }
         match instantiate_generic_externals(tcx, &self.plan) {
             Ok(Some(plan)) => {
                 self.plan = Arc::new(plan);
@@ -227,29 +325,63 @@ impl rustc_driver::Callbacks for Callbacks {
             Ok(None) => {}
             Err(error) => refuse(tcx, error),
         }
+        for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
+            if let Err(error) = verify_library_layout(tcx, model) {
+                refuse(tcx, error);
+            }
+        }
+        for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
+            if let Err(error) = verify_library_enum(tcx, value) {
+                refuse(tcx, error);
+            }
+        }
+        if let Err(error) = crate::cloneable_closures::verify_captures(tcx, &self.plan) {
+            refuse(tcx, error);
+        }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
             };
-            let signature = tcx.instantiate_bound_regions_with_erased(
-                tcx.fn_sig(def)
-                    .instantiate(
-                        tcx,
-                        match callees::arguments(tcx, def, &external.type_arguments) {
-                            Ok(args) => args,
-                            Err(error) => refuse(tcx, error),
-                        },
-                    )
-                    .skip_normalization(),
-            );
+            let args = match callees::arguments(tcx, def, &external.type_arguments) {
+                Ok(args) => args,
+                Err(error) => refuse(tcx, error),
+            };
+            if let Err(error) = callees::verify_bounds(tcx, def, args) {
+                refuse(tcx, error);
+            }
+            if let Err(error) = callees::verify_return_abi(tcx, def, args, &external.return_type, &external.path) {
+                refuse(tcx, error);
+            }
+            let signature = tcx
+                .fn_sig(def)
+                .instantiate(tcx, args)
+                .map(|signature| tcx.instantiate_bound_regions_with_erased(signature));
+            let raw_signature = signature.skip_normalization();
+            // A hidden concrete factory layout is not the SDK method's opaque return ABI. Borrow checking still
+            // requires the opaque type, so revealing its layout here would admit a broken MIR call destination.
+            if has_opaque_return_abi(tcx, raw_signature.output())
+                && raw_signature.output() != native_type_or_refuse(tcx, &external.return_type)
+            {
+                refuse(
+                    tcx,
+                    PlanError::Unsupported {
+                        function: external.path.clone(),
+                        reason: "opaque SDK trait return ABI differs from its concrete carrier".into(),
+                    },
+                );
+            }
+            // Ordinary associated outputs still normalize under the checked concrete Self implementation.
+            let signature =
+                tcx.normalize_erasing_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), signature);
             let parameters: Vec<_> = external
                 .parameters
                 .iter()
-                .map(|ty| native_type_or_refuse(tcx, ty))
+                .map(|ty| tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, ty)))
                 .collect();
             if signature.inputs() != parameters
-                || signature.output() != native_type_or_refuse(tcx, &external.return_type)
+                || signature.output()
+                    != tcx.erase_and_anonymize_regions(native_type_or_refuse(tcx, &external.return_type))
                 || signature.c_variadic()
                 || signature.safety().is_unsafe()
             {
@@ -264,6 +396,119 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated
+/// projections remain eligible for concrete normalization; an implicit return-position `impl Trait` associated type
+/// keeps the opaque boundary its caller must satisfy before constructing MIR.
+fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> bool {
+    match output.kind() {
+        rustc_middle::ty::Alias(_, alias) => match alias.kind {
+            rustc_middle::ty::Opaque { .. } => true,
+            rustc_middle::ty::Projection { def_id } => tcx.is_impl_trait_in_trait(def_id),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Check a stdlib layout against its crate's metadata at the plan's explicit type arguments, including their bounds.
+/// Fields keep their names and instantiated types in order. An opaque layout records no fields, so the plan never
+/// projects one.
+fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+    let invalid = |reason: &str| PlanError::Unsupported {
+        function: model.library_item.clone(),
+        reason: reason.into(),
+    };
+    let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
+    if tcx.generics_of(def).count() != model.library_type_arguments.len() {
+        return Err(invalid(
+            "unsupported stdlib layout type argument count differs from metadata",
+        ));
+    }
+    let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
+    callees::verify_bounds(tcx, def, arguments)?;
+    if model.fields.is_empty() {
+        return Ok(());
+    }
+    let adt = tcx.adt_def(def);
+    let declared = &adt.non_enum_variant().fields;
+    if declared.len() != model.fields.len() {
+        return Err(invalid("stdlib layout field count differs from metadata"));
+    }
+    for (field, planned) in declared.iter().zip(&model.fields) {
+        if field.name.as_str() != planned.name
+            || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
+        {
+            return Err(invalid("stdlib layout field differs from metadata"));
+        }
+    }
+    Ok(())
+}
+
+/// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
+/// native metadata. Construction and matching address variants by index; generic templates never authorize storage.
+fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: value.library_item.clone(),
+        reason: reason.into(),
+    };
+    let def = callees::library_item(tcx, &value.library_item, rustc_hir::def::DefKind::Enum)?;
+    if tcx.generics_of(def).count() != value.library_type_arguments.len() {
+        return Err(invalid(
+            "unsupported stdlib enum type argument count differs from metadata",
+        ));
+    }
+    let declared = tcx.adt_def(def).variants();
+    if declared.len() != value.variants.len() {
+        return Err(invalid("unsupported stdlib enum variant count differs from metadata"));
+    }
+    let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
+    callees::verify_bounds(tcx, def, arguments)?;
+    for (variant, planned) in declared.iter().zip(&value.variants) {
+        if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
+            return Err(invalid("unsupported stdlib enum variant differs from metadata"));
+        }
+        for (field, ty) in variant.fields.iter().zip(&planned.fields) {
+            if field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, ty)? {
+                return Err(invalid("unsupported stdlib enum payload differs from metadata"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One planned enum as it is injected: its declaration with derive attributes, then the impls legacy writes by hand.
+///
+/// A union prints the member it holds through its own `Debug`; a value enum's serde form is its raw values, so its
+/// serde derives become impls beside it instead of attributes, while any other enum derives serde as legacy does.
+fn enum_items(
+    value: &crate::plan::EnumDeclaration,
+    generator: &ast::attr::AttrIdGenerator,
+    span: rustc_span::Span,
+) -> Vec<Box<ast::Item>> {
+    let value_enum = !value.raw_kind.is_empty();
+    let mut item = declarations::enum_declaration(value, span);
+    if value.carrier.is_empty() {
+        for derive in value
+            .derives
+            .iter()
+            .filter(|derive| !(value_enum && derive.starts_with("serde::")))
+        {
+            item.attrs.push(declarations::derive_attribute(generator, derive, span));
+        }
+    }
+    let mut items = vec![item];
+    if value.member_debug {
+        items.push(union_debug::member_debug_impl(value, span));
+    }
+    if value_enum && value.derives.iter().any(|derive| derive == "serde::Serialize") {
+        items.push(value_enum_serde::serialize_impl(value, span));
+    }
+    if value_enum && value.derives.iter().any(|derive| derive == "serde::Deserialize") {
+        items.push(value_enum_serde::deserialize_impl(value, span));
+    }
+    items
 }
 
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching
@@ -300,16 +545,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
         let Some(types) = inferred.get(path) else {
             continue;
         };
-        callee.kind = match types.as_slice() {
-            [ty] => CalleeKind::Instantiated(path.clone(), ty.clone()),
-            [key, value] => CalleeKind::InstantiatedPair(path.clone(), key.clone(), value.clone()),
-            _ => {
-                return Err(PlanError::Invalid {
-                    function: path.clone(),
-                    reason: "an inferred external instantiation admits one or two type arguments".into(),
-                });
-            }
-        };
+        callee.kind = CalleeKind::Instantiated(path.clone(), types.clone());
     }
     Ok(Some(instantiated))
 }
@@ -376,4 +612,41 @@ pub fn compile(
         return Err(DriverError::Plan(error));
     }
     result.map_err(|_| DriverError::Compilation)
+}
+
+/// Check every foreign alias's arity and parameter kinds before any native type query can expand an alias.
+/// Bounds follow argument dependency order, so an invalid child cannot surface as a Rust alias diagnostic first.
+fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
+    for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
+        let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
+        let generics = tcx.generics_of(def);
+        let reason = if generics.count() != model.library_type_arguments.len() {
+            Some("stdlib layout type argument count differs from metadata")
+        } else if generics.parent_count != 0
+            || generics
+                .own_params
+                .iter()
+                .any(|parameter| !matches!(&parameter.kind, rustc_middle::ty::GenericParamDefKind::Type { .. }))
+        {
+            Some("stdlib layout generic parameter is not a type")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(PlanError::Unsupported {
+                function: model.library_item.clone(),
+                reason: reason.into(),
+            });
+        }
+    }
+    for index in validation::library_model_order(plan)? {
+        let model = &plan.models[index];
+        if model.library_item.is_empty() {
+            continue;
+        }
+        let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
+        let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
+        callees::verify_bounds(tcx, def, arguments)?;
+    }
+    Ok(())
 }

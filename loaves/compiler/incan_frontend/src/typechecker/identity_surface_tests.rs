@@ -176,6 +176,47 @@ def inspect(values: List[int], seen: Set[int], text: str) -> bool:
     Ok(())
 }
 
+/// Members called on an `Iterator[T]` value carry the iterator surface's builtin identities, as a generator's own do,
+/// and a list's `iter()` carries the list's.
+#[test]
+fn iterator_members_carry_builtin_identities() -> Result<(), String> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def numbers() -> Generator[int]:
+  yield 1
+
+def inspect(values: List[int], items: Iterator[int]) -> int:
+  let mapped = values.iter().map(double).collect()
+  let rest = numbers().skip(1).count()
+  return items.sum() + rest + len(mapped)
+"#;
+    let program = parse(source)?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("iterator member calls should typecheck: {errors:?}"))?;
+
+    for (call, expected) in [
+        ("values.iter()", "List.iter"),
+        ("values.iter().map(double)", "Iterator.map"),
+        ("values.iter().map(double).collect()", "Iterator.collect"),
+        ("numbers().skip(1)", "Generator.skip"),
+        ("numbers().skip(1).count()", "Iterator.count"),
+        ("items.sum()", "Iterator.sum"),
+    ] {
+        let identity = checker
+            .type_info()
+            .resolved_identity(nth_span(source, call, 0)?)
+            .ok_or_else(|| format!("`{call}` has no identity"))?;
+        assert_eq!(identity.declaration_name, expected, "`{call}`");
+        assert_eq!(identity.origin, SymbolOrigin::Builtin, "`{call}`");
+        assert_eq!(identity.namespace, SymbolNamespace::Member, "`{call}`");
+    }
+    Ok(())
+}
+
 /// Synthetic enum members with equal spellings remain distinct across nominal owners.
 #[test]
 fn compiler_synthetic_enum_members_are_owner_discriminated() -> Result<(), String> {

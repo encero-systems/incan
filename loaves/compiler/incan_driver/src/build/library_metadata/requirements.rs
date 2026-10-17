@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use incan_frontend::ast::Span;
 use incan_frontend::library_exports::CheckedNamedExport;
-use incan_frontend::library_manifest::CheckedExportReplay;
+use incan_frontend::library_manifest::{CheckedExportReplay, LibraryManifest};
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_provider::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
 use incan_provider::requirements::{
@@ -123,6 +123,8 @@ pub(crate) struct CheckedLibraryCapture<'a> {
     pub requirements: &'a ProjectRequirements,
     pub imports: &'a [InlineRustImport],
     pub exports: &'a [CheckedNamedExport],
+    /// Finalized checked package namespace authority; standalone declarations may omit this context.
+    pub publication: Option<&'a LibraryManifest>,
     pub version: &'a str,
     pub used_module_paths: BTreeSet<Vec<String>>,
     pub source_modules: BTreeMap<String, Vec<String>>,
@@ -143,6 +145,7 @@ impl CheckedLibraryRequirements {
             requirements,
             imports,
             exports,
+            publication,
             version,
             used_module_paths,
             source_modules,
@@ -198,7 +201,14 @@ impl CheckedLibraryRequirements {
             checked_exports: exports
                 .iter()
                 .map(|value| {
-                    CheckedExportReplay::from_checked(name, version, value).map_err(|error| invalid(error.to_string()))
+                    match publication {
+                        Some(package) if package.name == name && package.version == version => {
+                            CheckedExportReplay::from_checked_in_package(package, value)
+                        }
+                        Some(_) => return Err(invalid("checked replay publication package differs from its project")),
+                        None => CheckedExportReplay::from_checked(name, version, value),
+                    }
+                    .map_err(|error| invalid(error.to_string()))
                 })
                 .collect::<CliResult<_>>()?,
             source_modules,
@@ -310,8 +320,9 @@ impl CheckedLibraryRequirements {
         )>,
     ) -> CliResult<()> {
         self.validate()?;
+        self.native_demands
+            .require_ordinary_extern_paths(&self.rust_extern_paths)?;
         if self.schema_version != 2
-            || !self.rust_extern_paths.is_empty()
             || self
                 .imports
                 .iter()

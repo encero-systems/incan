@@ -2,9 +2,11 @@
 
 from rust::incan_semantics_core::body_ir import (
     ArgumentBinding,
+    BoundArgument,
     ArgumentElement,
     Body,
     CallableParamDefault,
+    MethodTarget,
     Operand as RustOperand,
 )
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
@@ -14,6 +16,7 @@ from lowering import BodyIrModule, call_argument_operand, lower_statement, list_
 from frame import Builder, drop_owned
 from lists import is_list
 from collections import is_collection
+from numerics import numeric_carrier
 
 
 pub def model_default_arguments(
@@ -35,8 +38,51 @@ pub def model_default_arguments(
                 types.append(
                     native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?,
                 )
-            return default_arguments(module, builder, binding, elements, body, types, span)
+            return default_arguments(module, builder, binding, elements, body, types, span, 0, true)
         None => return Err(f"unsupported Body IR unavailable field defaults on {declaration.name}")
+
+
+pub def method_default_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+    body: &Body,
+    types: list[PlanType],
+    span: SourceSpan,
+) -> Result[Option[list[Operand]], str]:
+    """
+    Fill a method call's omitted slots from the frame that declares them, receiver excluded.
+
+    A method partial's call carries its target's identity under the partial's own name; its presets are defaults of
+    the owner's retained frame for that name and target, whose parameters must be the target body's own. Every
+    partial of an admitted owner retains such a frame, so any other call with omitted slots, under the method's name
+    or a method alias of it, takes the method's own defaults. `None` means no slot was omitted.
+    """
+    for owner in module.nominal_declarations:
+        for preset_binding in owner.method_partial_defaults:
+            if preset_binding.name != target.name or Some(preset_binding.target.clone()) != target.canonical:
+                continue
+            frame = preset_binding.frame
+            if frame.canonical != body.canonical or len(frame.params) != len(body.params) or len(frame.params) != len(
+                types,
+            ) + 1:
+                return Err("invalid Body IR method-partial frame")
+            # One generic owner contributes a frame per closed layout; the retained receiver selects this instance.
+            if frame.params[0].ty != body.params[0].ty:
+                continue
+            for index in range(len(frame.params)):
+                if frame.params[index].name != body.params[index].name or frame.params[index].ty != body.params[index].ty:
+                    return Err("invalid Body IR method-partial parameter")
+            values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1, false)?
+            return Ok(Some(values))
+    match target.binding:
+        ArgumentBinding.Resolved(arguments=_bindings, defaulted_slots=defaults) =>
+            if len(defaults) == 0:
+                return Ok(None)
+            values = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1, false)?
+            return Ok(Some(values))
+        _ => return Ok(None)
 
 
 pub def default_arguments(
@@ -47,33 +93,136 @@ pub def default_arguments(
     body: &Body,
     types: list[PlanType],
     span: SourceSpan,
+    parameter_offset: int,
+    owned: bool,
 ) -> Result[list[Operand], str]:
-    """Fill canonical slots, using a fresh declaration-local frame for each deferred default."""
+    """
+    Fill canonical slots, using a fresh declaration-local frame for each deferred default.
+
+    `types` lists the ordinary slots the binding numbers. A method passes a `parameter_offset` of one: its receiver is
+    bound separately, yet stays the first parameter of the declaration whose defaults are evaluated. With `owned`, a
+    collection slot receives an owned value, as a model construction stores it, instead of a call's borrow.
+    """
+    if parameter_offset < 0 or len(body.params) != len(types) + parameter_offset:
+        return Err("invalid Body IR default parameter frame length")
+    mut operands = written_operands(builder, binding, elements, types, span, owned)?
+    for index in omitted_slots(binding, len(types))?:
+        operands[index] = evaluate_default(module, builder, body, index + parameter_offset, types[index], span, owned)?
+    return Ok(operands)
+
+
+pub def library_default_arguments(
+    mut builder: Builder,
+    defaults: list[CallableParamDefault],
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    parameter_offset: int,
+) -> Result[list[Operand], str]:
+    """
+    Fill a stdlib crate call's slots, passing the constant its record holds for each omitted one.
+
+    `defaults` follows the record's parameters, so a method's receiver comes first and a `parameter_offset` of one skips
+    it, as for a source method. The crate item takes every argument owned.
+    """
+    if parameter_offset < 0 or len(defaults) != len(types) + parameter_offset:
+        return Err("unsupported Body IR stdlib call omitting an argument its record has no default for")
+    mut operands = written_operands(builder, binding, elements, types, span, true)?
+    for index in omitted_slots(binding, len(types))?:
+        operands[index] = library_default(builder, defaults[index + parameter_offset], types[index], span)?
+    return Ok(operands)
+
+
+def written_operands(
+    mut builder: Builder,
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    owned: bool,
+) -> Result[list[Operand], str]:
+    """Place already evaluated arguments by their retained slots, enforcing factory declaration order and leaving omitted slots as unit placeholders."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            if len(bindings) != len(elements) or len(bindings) + len(defaults) != len(types):
-                return Err("unsupported Body IR incomplete ArgumentBinding")
-            mut operands: list[Operand] = []
-            for _index in range(len(types)):
-                operands.append(literal(Constant.Unit, span))
-            mut occupied: list[int] = []
-            for index in range(len(elements)):
-                slot = int(bindings[index].slot)
-                if slot < 0 or slot >= len(types) or slot in occupied:
-                    return Err("invalid Body IR argument slot map")
-                occupied.append(slot)
-                match elements[index].as_one():
-                    Some(value) =>
-                        operands[slot] = call_argument_operand(builder, value, types[slot], span)?
-                    None => return Err("unsupported Body IR spread ArgumentElement")
-            for slot in defaults:
-                index = int(slot.clone())
-                if index < 0 or index >= len(types) or index in occupied:
-                    return Err("invalid Body IR default slot map")
-                occupied.append(index)
-                operands[index] = evaluate_default(module, builder, body, index, types[index], span)?
-            return Ok(operands)
+            return mapped_written_operands(builder, bindings, len(defaults), elements, types, span, owned)
+        ArgumentBinding.ResolvedFactory(arguments=bindings, defaulted_slots=defaults) =>
+            for index in range(1, len(bindings)):
+                if int(bindings[index].slot) <= int(bindings[index - 1].slot):
+                    return Err("unsupported Body IR factory binding outside declaration order")
+            return mapped_written_operands(builder, bindings, len(defaults), elements, types, span, owned)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+def mapped_written_operands(
+    mut builder: Builder,
+    bindings: &list[BoundArgument],
+    default_count: int,
+    elements: &list[ArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    owned: bool,
+) -> Result[list[Operand], str]:
+    """Fill the checked written slots once, preserving their already evaluated order and omitted placeholders."""
+    if len(bindings) != len(elements) or len(bindings) + default_count != len(types):
+        return Err("unsupported Body IR incomplete ArgumentBinding")
+    mut operands: list[Operand] = []
+    for _index in range(len(types)):
+        operands.append(literal(Constant.Unit, span))
+    mut occupied: list[int] = []
+    for index in range(len(elements)):
+        slot = int(bindings[index].slot)
+        if slot < 0 or slot >= len(types) or slot in occupied:
+            return Err("invalid Body IR argument slot map")
+        occupied.append(slot)
+        match elements[index].as_one():
+            Some(value) =>
+                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
+            None => return Err("unsupported Body IR spread ArgumentElement")
+    return Ok(operands)
+
+
+def omitted_slots(binding: &ArgumentBinding, count: int) -> Result[list[int], str]:
+    """Retain defaults from either checked evaluation policy, each slot in range and none also written."""
+    match binding:
+        ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            return checked_omitted_slots(bindings, defaults, count)
+        ArgumentBinding.ResolvedFactory(arguments=bindings, defaulted_slots=defaults) =>
+            return checked_omitted_slots(bindings, defaults, count)
+        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+def checked_omitted_slots(bindings: &list[BoundArgument], defaults: &list[usize], count: int) -> Result[list[int], str]:
+    """Validate disjoint in-range omitted slots against the retained written argument map."""
+    mut occupied: list[int] = []
+    for bound in bindings:
+        occupied.append(int(bound.slot))
+    mut omitted: list[int] = []
+    for slot in defaults:
+        index = int(slot.clone())
+        if index < 0 or index >= count or index in occupied:
+            return Err("invalid Body IR default slot map")
+        occupied.append(index)
+        omitted.append(index)
+    return Ok(omitted)
+
+
+def library_default(
+    mut builder: Builder,
+    default: &CallableParamDefault,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Pass a stdlib default, which a crate-call record holds only as a closed constant with no statements to run."""
+    _ = default_type(ty)?
+    match default:
+        CallableParamDefault.Source(computation) =>
+            if len(computation.stmts) != 0:
+                return Err("unsupported Body IR stdlib default with statements")
+            return call_argument_operand(builder, computation.result, ty, span, true)
+        CallableParamDefault.Unsupported(span=_span, description=description) =>
+            return Err(f"unsupported Body IR default: {description}")
+        _ => return Err("unsupported Body IR unavailable defaulted parameter")
 
 
 pub def evaluate_default(
@@ -83,8 +232,14 @@ pub def evaluate_default(
     index: int,
     ty: PlanType,
     span: SourceSpan,
+    owned: bool,
 ) -> Result[Operand, str]:
-    """Isolate default-local identities from caller locals and drop temporary owners after extracting the result."""
+    """
+    Isolate default-local identities from caller locals and drop temporary owners after extracting the result.
+
+    With `owned`, a collection default is moved into the slot that stores it; otherwise the call borrows it and its
+    owner stays in the caller frame until the call returns.
+    """
     _ = default_type(ty)?
     match body.params[index].default:
         CallableParamDefault.Source(computation) =>
@@ -107,16 +262,21 @@ pub def evaluate_default(
                     ),
                 )
             builder.local_offset = offset
+            # The computation runs for this construction or call, so its statements report that site.
+            anchor = builder.anchor
+            builder.anchor = Some(span)
             for statement in computation.stmts:
                 lower_statement(module, builder, statement)?
-            result = call_argument_operand(builder, computation.result, ty, span)?
+            builder.anchor = anchor
+            before = builder.owned
+            result = call_argument_operand(builder, computation.result, ty, span, owned)?
             mut result_owner = -1
             match result.kind:
                 OperandKind.Move(place) =>
                     result_owner = place.local
                 _ => pass
-            if is_list(ty) or is_collection(ty):
-                result_owner = borrowed_default_owner(builder, computation.result, span)?
+            if not owned and (is_list(ty) or is_collection(ty)):
+                result_owner = borrowed_default_owner(builder, computation.result, before, span)?
             builder.local_offset = saved
             retained = builder.owned
             for owner in retained[::-1]:
@@ -129,24 +289,44 @@ pub def evaluate_default(
         _ => return Err("unsupported Body IR unavailable defaulted parameter")
 
 
-def borrowed_default_owner(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[int, str]:
+def borrowed_default_owner(
+    mut builder: Builder,
+    value: &RustOperand,
+    before: list[int],
+    span: SourceSpan,
+) -> Result[int, str]:
     """
     Find the collection a borrowed default argument refers to.
 
-    The call borrows it, so it stays owned by the caller frame and drops when that scope ends, after the call.
+    The call borrows it, so it stays owned by the caller frame and drops when that scope ends, after the call. A
+    literal default, such as a bytes literal, or a global read is the owner its borrow created after the owners in
+    `before`. Prefer that owner so a global is read exactly once and its borrowed snapshot is retained.
     """
-    match value:
-        RustOperand.Place(read) => return Ok(list_root_place(builder, read.place, span)?.local)
-        _ => return Err("unsupported Body IR constant collection default")
+    mut created: list[int] = []
+    for owner in builder.owned:
+        if owner not in before:
+            created.append(owner)
+    if len(created) == 1:
+        return Ok(created[0])
+    if len(created) == 0:
+        match value:
+            RustOperand.Place(read) => return Ok(list_root_place(builder, read.place, span)?.local)
+            _ => pass
+    return Err("unsupported Body IR constant collection default")
 
 
 pub def default_type(ty: PlanType) -> Result[None, str]:
-    """Admit scalar, string and borrowed list or hashed-collection default representations."""
-    if is_list(ty) or is_collection(ty):
+    """
+    Admit default representations a call slot owns or borrows: scalars of any numeric carrier, text, borrowed lists and
+    hashed collections, and owned models, enums (including `Option`, `Result` and unions) and tuples.
+    """
+    if is_list(ty) or is_collection(ty) or numeric_carrier(ty):
         return Ok(None)
     match ty:
-        PlanType.Int => return Ok(None)
-        PlanType.Float => return Ok(None)
         PlanType.Bool => return Ok(None)
         PlanType.String => return Ok(None)
+        # Models, Option, Result, source enum and tuple values move out of the default's frame like any owned result.
+        PlanType.Model(_index, _name) => return Ok(None)
+        PlanType.Enum(_index, _name) => return Ok(None)
+        PlanType.Tuple(_elements) => return Ok(None)
         _ => return Err("unsupported Body IR defaulted parameter type")

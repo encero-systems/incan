@@ -1,0 +1,24 @@
+"""Persistent hashed-collection cells for canonical direct-route storage slots, one typed cell per carrier."""
+
+static TEXT_INT_DICTS: dict[int, dict[str, int]] = {}
+static INT_SETS: dict[int, set[int]] = {}
+
+
+pub def read_static_text_int_dict(slot: int, initial: dict[str, int]) -> dict[str, int]:
+    """Read a snapshot of the current dictionary or its effect-free declared entries."""
+    return TEXT_INT_DICTS.get(slot, initial)
+
+
+pub def write_static_text_int_dict(slot: int, value: dict[str, int]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    TEXT_INT_DICTS[slot] = value
+
+
+pub def read_static_int_set(slot: int, initial: set[int]) -> set[int]:
+    """Read a snapshot of the current set or its effect-free declared members."""
+    return INT_SETS.get(slot, initial)
+
+
+pub def write_static_int_set(slot: int, value: set[int]) -> None:
+    """Persist a set replacement across native function frames."""
+    INT_SETS[slot] = value

@@ -32,6 +32,7 @@ fn contract(name: &str, root: &std::path::Path) -> Result<CheckedLibraryRequirem
         requirements: &ProjectRequirements::default(),
         imports: &[],
         exports: &exports,
+        publication: None,
         version: "1.0.0",
         used_module_paths: BTreeSet::from([vec!["std".to_string(), "core".to_string()]]),
         source_modules: BTreeMap::from([("src/lib.incn".to_string(), vec!["lib".to_string()])]),

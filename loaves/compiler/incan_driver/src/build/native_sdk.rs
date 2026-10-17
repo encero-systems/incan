@@ -68,6 +68,8 @@ fn bind_native_catalog(source_receipt: &oven_store::OvenReceipt, bytes: &[u8]) -
 
 /// Explicit context for one checked SDK component; the publisher owns the closure through durable publication.
 pub(crate) struct NativeSdkPublicationContext<'a> {
+    /// Source catalog proving which dependency project owns each published component.
+    pub catalog: &'a SdkSourceCatalog,
     /// Already checked providers, with remaining components recorded as unavailable.
     pub inventory: &'a SdkInventory,
     /// Reserved roots granted by the source catalog to this component only.
@@ -182,6 +184,7 @@ fn publish_component(
         .find(|component| component.project_root == project)
         .ok_or_else(|| CliError::failure("native publisher received an unknown SDK component"))?;
     let context = NativeSdkPublicationContext {
+        catalog,
         dependencies: oven_model::manifest::ProjectManifest::discover(project)
             .map_err(|error| CliError::failure(error.to_string()))?
             .ok_or_else(|| CliError::failure("SDK component has no manifest"))?
@@ -399,7 +402,7 @@ fn compile_native_sdk_facade(
             .unwrap_or(true);
         if matches_component
             && generated_sources.contains(&format!("{name}::"))
-            && (unit.binding().domain == "target" || path.extension().is_some_and(|extension| extension == "dylib"))
+            && native_facade_domain_matches(&unit.binding().domain, path)
             && externs.insert(name.to_string(), path.to_path_buf()).is_some()
         {
             return Err(CliError::failure(format!("native facade has ambiguous input `{name}`")));
@@ -476,6 +479,16 @@ fn compile_native_sdk_facade(
     })
 }
 
+/// Admit target libraries and host procedural macros using the shared portable artifact-kind contract.
+/// Host support rlibs stay outside the consumer's extern roots; the already leased macro output may use the Linux,
+/// macOS or Windows dynamic-library extension. An extension never supplies source or namespace authority.
+fn native_facade_domain_matches(domain: &str, path: &Path) -> bool {
+    domain == "target"
+        || (domain == "host"
+            && oven_rustc::rustc::OvenRustcRegistryLeafKind::ProcMacro
+                .admits_artifact_extension(path.extension().and_then(|extension| extension.to_str())))
+}
+
 /// Match a facade's direct registry requirement without selecting another version from the compiler closure.
 fn native_facade_binding_matches(
     dependency: &oven_model::manifest::DependencySpec,
@@ -519,6 +532,33 @@ fn native_facade_source_text(root: &Path) -> CliResult<String> {
 
 #[cfg(test)]
 mod tests {
+    /// The facade retains Linux and Windows host macros as well as macOS macros, without leaking host support rlibs.
+    #[test]
+    fn native_facade_keeps_portable_host_macro_outputs() {
+        for filename in ["libmacro.so", "libmacro.dylib", "macro.dll"] {
+            assert!(super::native_facade_domain_matches(
+                "host",
+                std::path::Path::new(filename)
+            ));
+        }
+        assert!(super::native_facade_domain_matches(
+            "target",
+            std::path::Path::new("libsupport.rlib")
+        ));
+        assert!(!super::native_facade_domain_matches(
+            "host",
+            std::path::Path::new("libsupport.rlib")
+        ));
+        assert!(!super::native_facade_domain_matches(
+            "host",
+            std::path::Path::new("macro")
+        ));
+        assert!(!super::native_facade_domain_matches(
+            "unknown",
+            std::path::Path::new("libmacro.so")
+        ));
+    }
+
     /// A reordered SDK catalog reuses its plan identity, while changed native units invalidate that identity.
     #[test]
     fn native_catalog_binding_is_canonical_and_source_sensitive() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,0 +1,151 @@
+"""Validation of trait implementation records whose trait another module, the standard library or an SDK declares."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
+from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
+from nominal_frames import closed_arguments
+
+
+pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
+    """Identify a generic owner's still-open inherited default arguments before validating concrete slot records."""
+    return not closed_arguments([binding.argument.clone() for binding in implementation.type_arguments])
+
+
+pub def is_well_formed_project_implementation(
+    module: &BodyIrModule,
+    implementation: &TraitImplementation,
+    modules: &list[BodyIrModule],
+) -> bool:
+    """
+    Validate one trait implementation record of `module` against every module of the project.
+
+    A record whose trait and filling body belong to this module is the module's own to validate. A record of an
+    imported trait without type parameters names a slot another module declares: it holds only when this module retains
+    the adopter's layout, the declaring module retains the trait around the slot, the adopter's own method or the slot's
+    own default fills it, and some module retains that body under its direct-call identity. A slot of a standard-library
+    or SDK protocol has no declaring project module and holds by its identity ([`is_protocol_slot`]).
+    Matching spellings never establish any of these.
+    """
+    if module.is_well_formed_trait_implementation(implementation):
+        return true
+    if not is_imported_slot_record(module, implementation):
+        return false
+    if is_protocol_slot(implementation.method):
+        return implementation.implementation == implementation.method or retains_body(
+            modules,
+            implementation.implementation,
+        )
+    if not declares_slot(modules, implementation.method):
+        return false
+    return retains_body(modules, implementation.implementation)
+
+
+pub def is_well_formed_module_implementation(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """
+    Validate one trait implementation record of a single-module program.
+
+    Besides the module's own traits, only a standard-library or SDK protocol slot can be imported here. The adopter's
+    own method, retained by this module, or the protocol's own default may fill it, exactly as a project module's
+    record may.
+    """
+    if module.is_well_formed_trait_implementation(implementation):
+        return true
+    if not is_imported_slot_record(module, implementation) or not is_protocol_slot(implementation.method):
+        return false
+    return implementation.implementation == implementation.method or module_retains_body(
+        module,
+        implementation.implementation,
+    )
+
+
+def is_imported_slot_record(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """Require closed or exact owner-bound arguments and a canonical slot filling for the retained adopter."""
+    if not module.trait_arguments_are_owner_bound(implementation) or not fills_its_slot(implementation):
+        return false
+    return retains_owner(module, implementation.owner)
+
+
+def is_protocol_slot(slot: &CanonicalSymbolId) -> bool:
+    """
+    Whether a slot belongs to a standard-library or SDK protocol, by its checked source or provider identity.
+
+    Such a slot is filled by the adopter's own method, which a module must retain, or by the protocol's own default. The
+    default's body is the one the SDK publishes, when it publishes one; a call to a default no module retains refuses
+    where it is lowered, so the record itself holds by the slot's identity.
+    """
+    match slot.origin:
+        SymbolOrigin.Module(path) => return len(path) > 0 and path[0] == "std"
+        SymbolOrigin.Package(library=library, module_path=_path) => return str(library).startswith("incan_stdlib_")
+        _ => return false
+
+
+def fills_its_slot(implementation: &TraitImplementation) -> bool:
+    """Require a method slot filled by its default or checked own method, or a property filled by its own getter."""
+    slot = implementation.method
+    filled = implementation.implementation
+    if slot.namespace != SymbolNamespace.Member:
+        return false
+    if slot.kind != SemanticSourceTargetKind.Method and slot.kind != SemanticSourceTargetKind.Property:
+        return false
+    if filled.kind != slot.kind:
+        return false
+    if filled == slot:
+        return slot.kind == SemanticSourceTargetKind.Method
+    if slot.kind == SemanticSourceTargetKind.Property and slot.declaration_name != filled.declaration_name:
+        return false
+    # The adopter's own method shares its module, and spans of different files may nest, so the origin is compared too.
+    return filled.origin == implementation.owner.origin and contains(implementation.owner, filled)
+
+
+def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
+    """Whether this module retains the adopter's well-formed model, class or enum layout."""
+    for declaration in module.nominal_declarations:
+        if declaration.canonical == owner.clone() and module.is_well_formed_nominal_declaration(declaration):
+            return true
+    for declaration in module.enum_declarations:
+        if declaration.canonical == owner.clone() and module.is_well_formed_native_enum_declaration(declaration):
+            return true
+    return false
+
+
+def declares_slot(modules: &list[BodyIrModule], slot: &CanonicalSymbolId) -> bool:
+    """Whether the module that declares the slot's trait retains that trait around the slot."""
+    for module in modules:
+        if module_declares_slot(module, slot):
+            return true
+    return false
+
+
+def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+    """Whether one module declares, as its own trait, the trait whose span encloses the slot."""
+    for declaration in module.trait_declarations:
+        if declaration.origin != slot.origin or not contains(declaration, slot):
+            continue
+        match module.declaration_id_for_canonical(
+            declaration,
+            SymbolNamespace.OrdinaryLexical,
+            SemanticSourceTargetKind.Trait,
+        ):
+            Some(_id) => return true
+            None => pass
+    return false
+
+
+def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> bool:
+    """Whether some module retains the filling body under its canonical direct-call identity."""
+    for module in modules:
+        if module_retains_body(module, identity):
+            return true
+    return false
+
+
+def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+    """Whether one module retains the body of `identity` with its span-derived direct-call identity."""
+    for body in module.bodies:
+        if body.canonical == Some(identity.clone()) and module.body_has_canonical_direct_call_id(body):
+            return true
+    return false
+
+
+pub def contains(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool:
+    """Whether the owner's declaration span encloses the member's; callers compare origins, as spans of files nest."""
+    return owner.declaration_span.start <= member.declaration_span.start and member.declaration_span.end <= owner.declaration_span.end

@@ -303,3 +303,21 @@ fn test_format_source_writes_a_tuple_statement_value_bare_issue1789() -> Result<
     assert_eq!(format_source(expected)?, expected);
     Ok(())
 }
+
+/// Formatting loop control arms must preserve parser validity and reach a fixed point.
+#[test]
+fn continue_match_arm_stays_parseable_and_idempotent() -> Result<(), FormatError> {
+    for statement in ["continue", "break", "break 1", "return", "pass"] {
+        let source = format!(
+            "def main() -> None:\n    for value in range(3):\n        match value:\n            _ =>\n                {statement}\n"
+        );
+        let formatted = assert_format_round_trip_lex_parse(&source)?;
+        assert_eq!(format_source(&formatted)?, formatted);
+        if statement == "continue" {
+            assert!(formatted.contains("_ =>\n                continue"), "{formatted}");
+        } else {
+            assert!(formatted.contains(&format!("_ => {statement}")), "{formatted}");
+        }
+    }
+    Ok(())
+}

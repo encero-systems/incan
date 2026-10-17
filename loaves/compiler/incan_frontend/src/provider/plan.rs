@@ -437,6 +437,38 @@ impl ProviderPlan {
     where
         I: IntoIterator<Item = Vec<String>>,
     {
+        Self::new_with_namespace_selections(library_manifest_index, records, used_module_paths, &[])
+    }
+
+    /// Join independently validated alias claims only through the original standard namespace issuer.
+    ///
+    /// Public records cannot opt into this join. The ordinary caller supplies retained source capabilities, and
+    /// every alias and reserved claim is checked separately before their exact physical owner is shared.
+    fn new_with_namespace_selections<I>(
+        library_manifest_index: LibraryManifestIndex,
+        records: Vec<ProviderRecord>,
+        used_module_paths: I,
+        namespaces: &[super::namespaces::SelectedProviderNamespace],
+    ) -> Result<Self, ProviderPlanError>
+    where
+        I: IntoIterator<Item = Vec<String>>,
+    {
+        let mut namespace_issuers = BTreeMap::new();
+        for namespace in namespaces {
+            namespace
+                .verify()
+                .map_err(|message| ProviderPlanError::InventoryMismatch {
+                    provider: namespace.record().identity.name.clone(),
+                    message,
+                })?;
+            let key = namespace.record().identity.stable_key();
+            if namespace_issuers
+                .insert(key.clone(), Arc::clone(namespace.issuer()))
+                .is_some()
+            {
+                return Err(ProviderPlanError::DuplicateIdentity { identity: key });
+            }
+        }
         let mut indexed_records: BTreeMap<String, ProviderRecord> = BTreeMap::new();
         let mut module_catalog: BTreeMap<Vec<String>, String> = BTreeMap::new();
         for record in records {
@@ -451,6 +483,10 @@ impl ProviderPlan {
             let shared_owner = if let Some(existing) = indexed_records.get(&key) {
                 if !(is_checked_source(existing) && is_checked_source(&record))
                     && !same_materialized_alias_owner(existing, &record)
+                    && !(namespace_issuers.contains_key(&key)
+                        && matches!(existing.authority, NamespaceAuthority::ProjectDependency { .. })
+                        && matches!(record.provenance, ProviderProvenance::StandardPublication { .. })
+                        && same_materialized_owner(existing, &record))
                 {
                     return Err(ProviderPlanError::DuplicateIdentity { identity: key });
                 }
@@ -480,6 +516,9 @@ impl ProviderPlan {
             if shared_owner {
                 // Each alias's claims were independently validated above before entering the shared owner record.
                 if let Some(existing) = indexed_records.get_mut(&key) {
+                    if matches!(record.provenance, ProviderProvenance::StandardPublication { .. }) {
+                        existing.provenance = record.provenance;
+                    }
                     existing.namespace_claims.extend(record.namespace_claims);
                 }
             } else {
@@ -490,7 +529,7 @@ impl ProviderPlan {
             let NamespaceAuthority::ProjectDependency { dependency_key } = &record.authority else { return false; };
             matches!(library_manifest_index.get(dependency_key), Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) if metadata.kind == LibraryArtifactKind::CheckedSource)
         }).map(|(key, record)| (key.clone(), record.clone())).collect();
-        let artifact_graph = resolve_artifact_graph(&indexed_records)?;
+        let artifact_graph = resolve_artifact_graph(&indexed_records, &namespace_issuers)?;
         let semantic_projection_persistent_key = provider_semantic_projection_persistent_key(&indexed_records);
         Ok(Self {
             library_manifest_index,
@@ -507,7 +546,7 @@ impl ProviderPlan {
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             source_publication: None,
             admitted_library_context: false,
-            namespace_issuers: BTreeMap::new(),
+            namespace_issuers,
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         })
@@ -1243,7 +1282,8 @@ impl ProviderPlan {
     {
         let mut records = project_dependency_records(&library_manifest_index, None)?;
         records.extend(namespaces.iter().map(|namespace| namespace.record().clone()));
-        let mut plan = Self::new(library_manifest_index, records, used_module_paths)?;
+        let mut plan =
+            Self::new_with_namespace_selections(library_manifest_index, records, used_module_paths, namespaces)?;
         plan.admitted_library_context = true;
         plan.semantic_projection_persistent_key = Some(plan.semantic_projection_persistent_key().map(|base| {
             let mut hash = Sha256::new();
@@ -1492,9 +1532,11 @@ impl ProviderPlan {
 
     /// Return whether this plan carries an SDK-owned reserved-namespace catalog.
     pub fn has_sdk_catalog(&self) -> bool {
-        self.records
-            .values()
-            .any(|provider| matches!(provider.authority, NamespaceAuthority::SdkReserved))
+        !self.namespace_issuers.is_empty()
+            || self
+                .records
+                .values()
+                .any(|provider| matches!(provider.authority, NamespaceAuthority::SdkReserved))
     }
 
     /// Return whether some provider claims a module strictly below `namespace`.
@@ -1517,8 +1559,10 @@ impl ProviderPlan {
 
     /// Iterate over active providers that own exact `std.*` namespace claims.
     pub fn active_sdk_records(&self) -> impl Iterator<Item = &ProviderRecord> {
-        self.active_records()
-            .filter(|provider| matches!(provider.authority, NamespaceAuthority::SdkReserved))
+        self.active_records().filter(|provider| {
+            matches!(provider.authority, NamespaceAuthority::SdkReserved)
+                || self.namespace_issuers.contains_key(&provider.identity.stable_key())
+        })
     }
 
     /// Iterate over active SDK providers reached by at least one canonical module in this compilation.
@@ -1577,6 +1621,7 @@ impl ProviderPlan {
     pub fn active_std_module_paths(&self) -> BTreeSet<Vec<String>> {
         self.active_sdk_records()
             .flat_map(|provider| provider.namespace_claims.iter().cloned())
+            .filter(|module| module.first().map(String::as_str) == Some("std"))
             .collect()
     }
 
@@ -1604,7 +1649,9 @@ impl ProviderPlan {
     pub fn active_sdk_provider_for_module(&self, module: &[String]) -> Option<&ProviderRecord> {
         match self.resolve_module(module) {
             ProviderModuleResolution::Active(provider)
-                if matches!(provider.authority, NamespaceAuthority::SdkReserved) =>
+                if matches!(provider.authority, NamespaceAuthority::SdkReserved)
+                    || (module.first().map(String::as_str) == Some("std")
+                        && self.namespace_issuers.contains_key(&provider.identity.stable_key())) =>
             {
                 Some(provider)
             }
@@ -1757,10 +1804,14 @@ impl ProviderPlan {
 /// have been collected. Only an enabled, available active SDK record with the exact identity can replace that path.
 fn resolve_artifact_graph(
     records: &BTreeMap<String, ProviderRecord>,
+    namespaces: &BTreeMap<String, Arc<super::namespaces::ProviderNamespaceIssuer>>,
 ) -> Result<ResolvedArtifactGraph, ProviderPlanError> {
     let sdk_records = records
         .values()
-        .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
+        .filter(|record| {
+            matches!(record.authority, NamespaceAuthority::SdkReserved)
+                || namespaces.contains_key(&record.identity.stable_key())
+        })
         .collect::<Vec<_>>();
     let mut graph = ResolvedArtifactGraph::default();
     let mut traversal = ArtifactTraversal::default();
@@ -2071,6 +2122,13 @@ fn canonical_provider_modules(provider: &ProviderRecord, module: &[String]) -> V
             .iter()
             .filter(|claim| claim.first().map(String::as_str) == Some("pub") && claim.len() >= 2)
             .map(|claim| claim[..2].to_vec())
+            .chain(
+                provider
+                    .namespace_claims
+                    .iter()
+                    .any(|claim| claim.first().map(String::as_str) == Some("std"))
+                    .then(|| vec!["std".to_string()]),
+            )
             .collect::<BTreeSet<_>>(),
         NamespaceAuthority::SdkReserved => BTreeSet::from([vec!["std".to_string()]]),
         NamespaceAuthority::Compiler => BTreeSet::from([Vec::new()]),
@@ -2236,7 +2294,27 @@ fn same_materialized_alias_owner(left: &ProviderRecord, right: &ProviderRecord) 
     else {
         return false;
     };
-    if left_alias == right_alias
+    if left_alias == right_alias || !same_materialized_owner(left, right) {
+        return false;
+    }
+    let (Some(left_artifact), Some(right_artifact)) = (&left.artifact, &right.artifact) else {
+        return false;
+    };
+    for (record, alias, artifact) in [(left, left_alias, left_artifact), (right, right_alias, right_artifact)] {
+        if artifact.dependency_key != *alias
+            || !matches!(&record.provenance,
+            ProviderProvenance::ProjectDependency { dependency_key, manifest_path }
+                if dependency_key == alias && manifest_path == &artifact.manifest_path)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Compare original materialized coordinates and checked contracts without inferring any namespace authority.
+fn same_materialized_owner(left: &ProviderRecord, right: &ProviderRecord) -> bool {
+    if left.identity != right.identity
         || left.available != right.available
         || left.enabled != right.enabled
         || left.implementation_facets != right.implementation_facets
@@ -2252,15 +2330,6 @@ fn same_materialized_alias_owner(left: &ProviderRecord, right: &ProviderRecord) 
         || right_artifact.kind != LibraryArtifactKind::Materialized
     {
         return false;
-    }
-    for (record, alias, artifact) in [(left, left_alias, left_artifact), (right, right_alias, right_artifact)] {
-        if artifact.dependency_key != *alias
-            || !matches!(&record.provenance,
-            ProviderProvenance::ProjectDependency { dependency_key, manifest_path }
-                if dependency_key == alias && manifest_path == &artifact.manifest_path)
-        {
-            return false;
-        }
     }
     let mut canonical_right = right_artifact.clone();
     canonical_right.dependency_key = left_artifact.dependency_key.clone();

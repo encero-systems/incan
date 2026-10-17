@@ -1,24 +1,113 @@
-//! Producer-side public-closure audit over checked Body IR. No source is checked or resolved here.
+//! Producer-side execution-closure audit over checked Body IR. No source is checked or resolved here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::body_ir::{
     AggregateKind, ArgumentElement, AssertionKind, Body, BodyIrModule, CallableParam, CallableParamDefault,
-    CallableTarget, Callee, DictEntry, FieldlessEnumVariantTarget, FormatPart, Operand, Pattern, Place, PlaceElem,
-    PlaceRoot, Rvalue, Statement, StatementKind, TryErrorRouting,
+    CallableTarget, Callee, DictEntry, FieldlessEnumVariantTarget, FormatPart, MethodTarget, Operand, Pattern, Place,
+    PlaceElem, PlaceRoot, Rvalue, Statement, StatementKind, TryErrorRouting,
 };
 use crate::{CanonicalSymbolId, CompilerNodeId, IncanType, SymbolOrigin};
 
-use super::CoverageReason;
+use super::{CoverageReason, ExecutableDeclaration};
 use crate::canonical_module_identity;
 
-/// One projected body together with the public identities its execution requires.
+/// One projected body together with the canonical identities its execution requires.
 ///
-/// The body is the executable projection; the requirements are the dependencies retained for it, recorded without
-/// exposing private or unresolved source declarations.
-pub(super) struct PublicBody {
+/// The body is the executable projection; requirements select already-checked dependencies without widening the
+/// finalized public import surface or reconstructing unresolved source declarations.
+pub(super) struct ProjectedBody {
     pub body: Body,
     pub requirements: BTreeSet<CanonicalSymbolId>,
+}
+
+/// Publish one retained immutable value and its exact layout requirements without interpreting source expressions.
+pub(super) fn project_constant(
+    source: &crate::body_ir::ConstantDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(crate::body_ir::ConstantDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    let mut value = source.clone();
+    let named_types = BTreeMap::new();
+    let mut audit = PublicationAudit::new(module, library, eligible, &named_types);
+    audit.identity(&mut value.canonical, false)?;
+    audit.constant(&mut value.value)?;
+    Ok((value, audit.requirements))
+}
+
+/// Select an ordinary body or the complete checked decorator replacement, preserving one public source identity.
+pub(super) fn project_callable(
+    source: &Body,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if module.decorated_bindings.iter().any(|binding| {
+        binding.original_body.canonical == source.canonical
+            && binding.initialization == crate::body_ir::DecoratedInitialization::PerInstantiation
+    }) {
+        // No portable cached-template fragment is admitted; publishing only its wrapper would erase initialization.
+        return Err(CoverageReason::UnsupportedConstruct);
+    }
+    if let Some(binding) = module.decorated_bindings.iter().find(|binding| {
+        binding.original_body.canonical == source.canonical
+            && binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
+    }) {
+        return project_invocation_body(source, binding, module, library, eligible);
+    }
+    let decorated = module
+        .static_declarations
+        .iter()
+        .any(|storage| Some(&storage.canonical) == source.canonical.as_ref());
+    if decorated {
+        let value = project_decorated_body(source, module, library, eligible)?;
+        return Ok((
+            ExecutableDeclaration::DecoratedBody {
+                body: Box::new(value.wrapper),
+                binding: Box::new(value.binding),
+                storage: Box::new(value.storage),
+            },
+            value.requirements,
+        ));
+    }
+    let value = project_body(source, module, library, eligible)?;
+    Ok((ExecutableDeclaration::Body(Box::new(value.body)), value.requirements))
+}
+
+/// Publish a generic wrapper and original atomically without inventing a polymorphic replacement cell.
+fn project_invocation_body(
+    source: &Body,
+    binding: &crate::body_ir::DecoratedBinding,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if module
+        .decorated_bindings
+        .iter()
+        .filter(|candidate| candidate.original_body.canonical == source.canonical)
+        .count()
+        != 1
+        || !is_well_formed_source_binding(module, binding, library)
+    {
+        return Err(CoverageReason::UnresolvedReference);
+    }
+    let wrapper = project_body(source, module, library, eligible)?;
+    let original = project_body(&binding.original_body, module, library, eligible)?;
+    let mut requirements = wrapper.requirements;
+    requirements.extend(original.requirements);
+    Ok((
+        ExecutableDeclaration::InvocationDecoratedBody {
+            body: Box::new(wrapper.body),
+            binding: Box::new(crate::body_ir::DecoratedBinding {
+                original_body: original.body,
+                initializer: None,
+                initialization: crate::body_ir::DecoratedInitialization::PerInvocation,
+            }),
+        },
+        requirements,
+    ))
 }
 
 /// Bind a declaration's physical fragment address to the already-published canonical owner and span.
@@ -31,22 +120,38 @@ pub(super) fn declaration_id(identity: &CanonicalSymbolId) -> Result<CompilerNod
     ))
 }
 
-/// Project one public body onto package-owned addresses and audit every retained computation and type.
+/// Project one eligible body onto package-owned addresses and audit every retained computation and type.
 ///
 /// Local slots and scope ordinals are fragment-local, not compiler-session symbol IDs. Their optional checker
 /// identities are removed because execution uses the slots and a local identity may contain a session discriminant.
 /// Declaration references keep the canonical identity minted by the declaring compilation.
+/// A nominal's actual retained default frame borrows that owner's binders; its own callable binder list stays empty.
 pub(super) fn project_body(
     source: &Body,
     module: &BodyIrModule,
     library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-) -> Result<PublicBody, CoverageReason> {
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<ProjectedBody, CoverageReason> {
     let mut body = source.clone();
-    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    audit.current_callable = source.canonical.clone();
     audit.trait_self = source.locals.first().is_some_and(|local| {
         local.ty == IncanType::SelfType && matches!(local.origin, crate::body_ir::LocalOrigin::Receiver { .. })
     });
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
+    if let Some(member) = &source.canonical {
+        for owner in &module.nominal_declarations {
+            if encloses(&owner.canonical, member) || owns_default_frame(owner, source) {
+                audit.type_parameters.extend(owner.type_parameters.iter().cloned());
+            }
+        }
+        for owner in &module.trait_declarations {
+            if encloses(owner, member) {
+                let mut owner = owner.clone();
+                audit.identity(&mut owner, true)?;
+            }
+        }
+    }
     let canonical = body.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(canonical, false)?;
     body.decl_id = declaration_id(canonical)?;
@@ -59,53 +164,91 @@ pub(super) fn project_body(
     audit.parameters(&mut body.params)?;
     audit.statements(&mut body.block.stmts)?;
     body.named_type_identities = audit.used_nominal_types;
-    Ok(PublicBody {
+    require_module_initialization(module, &mut audit.requirements);
+    Ok(ProjectedBody {
         body,
         requirements: audit.requirements,
     })
 }
 
-/// Audit a public plain-model layout with the same type/reference rules used for executable bodies.
+/// Audit a checked plain-model layout with the same type/reference rules used for executable bodies.
 ///
-/// Field names alone do not prove a public layout: every field's checked type contributes its canonical closure.
+/// Every field, including private storage, retains its checked identity and type in the required execution layout.
 pub(super) fn project_nominal(
     source: &crate::body_ir::NominalDeclaration,
     module: &BodyIrModule,
     library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
+    eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(crate::body_ir::NominalDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    // Local inheritance is executable only with the validated full source module; package closure is not admitted.
+    if source.class_inheritance.is_some() {
+        return Err(CoverageReason::UnsupportedConstruct);
+    }
     if source.fields.len() != source.field_types.len() || source.fields.len() != source.field_identities.len() {
         return Err(CoverageReason::UnresolvedReference);
     }
-    if !source.field_identities.iter().all(|field| public.contains(field)) {
-        return Err(CoverageReason::PrivateDependency);
+    if !source.field_identities.iter().all(|field| eligible.contains(field)) {
+        return Err(CoverageReason::UnresolvedReference);
     }
     let mut nominal = source.clone();
-    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    // Automatic conversion is invocation-local and cannot become a published package obligation.
+    nominal.newtype_string_conversion = crate::body_ir::NewtypeStringConversion::Unselected;
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
     audit.identity(&mut nominal.canonical, false)?;
     nominal.direct_declaration_id = declaration_id(&nominal.canonical)?;
     for ty in &nominal.field_types {
         audit.ty(ty)?;
     }
+    nominal.trait_adoptions.clear();
+    for source_adoption in &source.trait_adoptions {
+        let mut adoption = source_adoption.clone();
+        audit.identity(&mut adoption.trait_identity, false)?;
+        for argument in &adoption.arguments {
+            audit.ty(argument)?;
+        }
+        if let Some(methods) = &mut adoption.methods {
+            for method in methods {
+                audit.identity(method, false)?;
+            }
+        }
+        nominal.trait_adoptions.push(adoption);
+    }
+    if let Some(method) = &mut nominal.display_method {
+        audit.identity(method, true)?;
+    }
     if let Some(defaults) = &source.field_default_body {
-        let projected = project_body(defaults, module, library, public)?;
+        let projected = project_body(defaults, module, library, eligible)?;
         nominal.field_default_body = Some(Box::new(projected.body));
         audit.requirements.extend(projected.requirements);
+    }
+    for binding in &mut nominal.method_partial_defaults {
+        audit.identity(&mut binding.target, true)?;
+        let projected = project_body(&binding.frame, module, library, eligible)?;
+        *binding.frame = projected.body;
+        audit.requirements.extend(projected.requirements);
+    }
+    let carrier = source.carrier_name();
+    if carrier != source.name {
+        if crate::body_ir::nominal_carrier_key(&nominal.canonical).as_ref() != Some(&carrier) {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        audit.used_nominal_types.insert(carrier, nominal.canonical.clone());
     }
     nominal.named_type_identities = audit.used_nominal_types;
     Ok((nominal, audit.requirements))
 }
 
-/// Project a public normal enum, retaining canonical variant addresses and auditing every payload type.
+/// Project a checked normal enum, retaining canonical variant addresses and auditing every payload type.
 pub(super) fn project_enum(
     source: &crate::body_ir::EnumDeclaration,
     module: &BodyIrModule,
     library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
+    eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(crate::body_ir::EnumDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
     let mut value = source.clone();
-    let checked_types = BTreeMap::new();
-    let mut audit = PublicationAudit::new(module, library, public, &checked_types);
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
     audit.identity(&mut value.canonical, false)?;
     value.direct_declaration_id = declaration_id(&value.canonical)?;
     for variant in &mut value.variants {
@@ -115,6 +258,29 @@ pub(super) fn project_enum(
             audit.ty(ty)?;
         }
     }
+    value.named_type_identities = audit.used_nominal_types;
+    Ok((value, audit.requirements))
+}
+
+/// Project a checked canonical storage identity with complete initialization; source module addresses are rebased by
+/// publication.
+pub(super) fn project_static(
+    source: &crate::body_ir::StaticDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(crate::body_ir::StaticDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if source.canonical.namespace != crate::SymbolNamespace::OrdinaryLexical
+        || source.canonical.kind != crate::SemanticSourceTargetKind::Static
+        || !crate::body_ir_identity::static_initializer_matches(source)
+    {
+        return Err(CoverageReason::UnresolvedReference);
+    }
+    let mut value = source.clone();
+    let checked_types = BTreeMap::new();
+    let mut audit = PublicationAudit::new(module, library, eligible, &checked_types);
+    audit.identity(&mut value.canonical, false)?;
+    audit.ty(&value.ty)?;
     Ok((value, audit.requirements))
 }
 
@@ -123,24 +289,83 @@ pub(super) fn project_type_alias(
     source: &crate::body_ir::TypeAliasDeclaration,
     module: &BodyIrModule,
     library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
+    eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(crate::body_ir::TypeAliasDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
     let mut value = source.clone();
-    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
     audit.identity(&mut value.canonical, false)?;
     audit.ty(&value.ty)?;
     value.named_type_identities = audit.used_nominal_types;
     Ok((value, audit.requirements))
 }
 
+/// Authenticate an already checked generated getter through one exact retained value-enum owner. The member is
+/// addressed through its owner's layout; this does not invent a callable body or admit private source methods.
+pub(super) fn generated_value_getter_owner(
+    identity: &CanonicalSymbolId,
+    declarations: &[crate::body_ir::ValueEnumDeclaration],
+    library: &str,
+) -> Option<CanonicalSymbolId> {
+    if identity.namespace != crate::SymbolNamespace::Member
+        || identity.kind != crate::SemanticSourceTargetKind::Method
+        || identity.declaration_name != "value"
+    {
+        return None;
+    }
+    let mut owners = declarations.iter().filter_map(|declaration| {
+        let mut owner = declaration.canonical.clone();
+        if let SymbolOrigin::Module(path) = &owner.origin {
+            owner.origin = SymbolOrigin::Package {
+                library: library.to_owned(),
+                module_path: path.clone(),
+            };
+        }
+        (owner.namespace == crate::SymbolNamespace::OrdinaryLexical
+            && owner.kind == crate::SemanticSourceTargetKind::Enum
+            && owner.declaration_name == declaration.name
+            && owner.declaration_span.end > owner.declaration_span.start
+            && owner.origin == identity.origin
+            && owner.scope_discriminant == identity.scope_discriminant
+            && owner.declaration_span == identity.declaration_span)
+            .then_some(owner)
+    });
+    let owner = owners.next()?;
+    owners.next().is_none().then_some(owner)
+}
+
+/// Require the same canonical origin and enclosing declaration span before borrowing an owner's binders.
+fn encloses(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
+    owner != member
+        && owner.origin == member.origin
+        && owner.declaration_span.start <= member.declaration_span.start
+        && member.declaration_span.end <= owner.declaration_span.end
+}
+
+/// Borrow nominal binders only for the actual retained constructor default frame, whose identity is the owner's
+/// rather than an enclosed member's. A matching name or span alone cannot grant this declaration context.
+fn owns_default_frame(owner: &crate::body_ir::NominalDeclaration, frame: &Body) -> bool {
+    frame.canonical.as_ref() == Some(&owner.canonical) && owner.field_default_body.as_deref() == Some(frame)
+}
+
 /// One exhaustive pass owns publication's type/reference checks and artifact-local address projection.
 struct PublicationAudit<'a> {
+    /// Validated declarations whose explicit original-callable reads can retain their source implementation.
+    original_callables: BTreeSet<CanonicalSymbolId>,
+    /// The audited source declaration before package projection; original reads must belong to this exact frame.
+    current_callable: Option<CanonicalSymbolId>,
+    /// Only module-initialized replacements authorize reading storage under a callable's canonical identity.
+    replacement_storage: BTreeSet<CanonicalSymbolId>,
     /// Trait-default receiver placeholders remain abstract until concrete checked dispatch specialization.
     trait_self: bool,
+    /// Only binders retained by the declaration or its canonical nominal owner may remain open in publication.
+    type_parameters: BTreeSet<String>,
     library: &'a str,
-    public: &'a BTreeSet<CanonicalSymbolId>,
+    eligible: &'a BTreeSet<CanonicalSymbolId>,
     nominal_types: BTreeMap<String, CanonicalSymbolId>,
     checked_nominal_types: &'a BTreeMap<String, CanonicalSymbolId>,
+    /// Checked raw-value enum layouts authenticate compiler-generated getters without widening private publication.
+    value_enum_declarations: &'a [crate::body_ir::ValueEnumDeclaration],
+    nominal_declarations: &'a [crate::body_ir::NominalDeclaration],
     used_nominal_types: BTreeMap<String, CanonicalSymbolId>,
     requirements: BTreeSet<CanonicalSymbolId>,
 }
@@ -148,11 +373,12 @@ struct PublicationAudit<'a> {
 impl<'a> PublicationAudit<'a> {
     /// Combine source-local declarations with retained checked references, keeping conflicting evidence separate.
     fn new(
-        module: &BodyIrModule,
+        module: &'a BodyIrModule,
         library: &'a str,
-        public: &'a BTreeSet<CanonicalSymbolId>,
+        eligible: &'a BTreeSet<CanonicalSymbolId>,
         checked_nominal_types: &'a BTreeMap<String, CanonicalSymbolId>,
     ) -> Self {
+        // ---- Declarations: source-owned nominal identities ----
         let mut nominal_types = BTreeMap::new();
         for declaration in &module.nominal_declarations {
             nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
@@ -166,12 +392,39 @@ impl<'a> PublicationAudit<'a> {
         for declaration in &module.enum_declarations {
             nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
         }
+        for declaration in &module.trait_declarations {
+            nominal_types.insert(declaration.declaration_name.clone(), declaration.clone());
+        }
+
+        // ---- Decorators: distinct original-callable and replacement-storage permissions ----
+        let mut original_callables = BTreeSet::new();
+        let mut replacement_storage = BTreeSet::new();
+        for binding in &module.decorated_bindings {
+            if !is_well_formed_source_binding(module, binding, library) {
+                continue;
+            }
+            let Some(identity) = &binding.original_body.canonical else {
+                continue;
+            };
+            original_callables.insert(identity.clone());
+            if binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage {
+                replacement_storage.insert(identity.clone());
+            }
+        }
+
+        // ---- Context: package and type auditing ----
         Self {
+            current_callable: None,
+            replacement_storage,
+            original_callables,
             trait_self: false,
+            type_parameters: BTreeSet::new(),
             library,
-            public,
+            eligible,
             nominal_types,
             checked_nominal_types,
+            value_enum_declarations: &module.value_enum_declarations,
+            nominal_declarations: &module.nominal_declarations,
             used_nominal_types: BTreeMap::new(),
             requirements: BTreeSet::new(),
         }
@@ -190,8 +443,14 @@ impl<'a> PublicationAudit<'a> {
         }
         match &identity.origin {
             SymbolOrigin::Package { library, .. } => {
-                if library == self.library && !self.public.contains(identity) {
-                    return Err(CoverageReason::PrivateDependency);
+                if library == self.library && !self.eligible.contains(identity) {
+                    if let Some(mut owner) =
+                        generated_value_getter_owner(identity, self.value_enum_declarations, self.library)
+                    {
+                        self.identity(&mut owner, true)?;
+                    } else {
+                        return Err(CoverageReason::PrivateDependency);
+                    }
                 }
                 if required {
                     self.requirements.insert(identity.clone());
@@ -203,29 +462,21 @@ impl<'a> PublicationAudit<'a> {
         }
     }
 
-    /// Admit concrete semantic types and retain the canonical declaration behind a local nominal type.
+    /// Admit concrete types and declared binders, retaining the canonical declaration behind each named type.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
             IncanType::SelfType if self.trait_self => Ok(()),
-            IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } => Ok(()),
-            IncanType::Named(name) => {
-                let local = self.nominal_types.get(name);
-                let checked = self.checked_nominal_types.get(name);
-                if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
-                    return Err(CoverageReason::UnresolvedReference);
-                }
-                let mut identity = checked.or(local).cloned().ok_or(CoverageReason::UnresolvedReference)?;
-                self.identity(&mut identity, true)?;
-                self.used_nominal_types.insert(name.clone(), identity);
+            IncanType::TypeVar(name) if self.type_parameters.contains(name) => Ok(()),
+            IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
                 Ok(())
             }
+            IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
-                // These are the semantic model's compiler-owned generic constructors. User generic declarations
-                // lack canonical type arguments in this version and stay explicitly uncovered.
+                // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
                 if incan_lang::lang::types::collections::from_str(base).is_none()
                     && base != incan_lang::lang::types::UNION_TYPE_NAME
                 {
-                    return Err(CoverageReason::UnresolvedReference);
+                    self.named_type(base)?;
                 }
                 for arg in args {
                     self.ty(arg)?;
@@ -249,8 +500,22 @@ impl<'a> PublicationAudit<'a> {
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
             | IncanType::Infer
-            | IncanType::Unknown => Err(CoverageReason::UnresolvedReference),
+            | IncanType::Unknown
+            | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),
         }
+    }
+
+    /// Retain a named model or trait only when local declarations and checker bindings agree on its identity.
+    fn named_type(&mut self, name: &str) -> Result<(), CoverageReason> {
+        let local = self.nominal_types.get(name);
+        let checked = self.checked_nominal_types.get(name);
+        if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        let mut identity = checked.or(local).cloned().ok_or(CoverageReason::UnresolvedReference)?;
+        self.identity(&mut identity, true)?;
+        self.used_nominal_types.insert(name.to_owned(), identity);
+        Ok(())
     }
 
     /// Defaults are declaration-owned computations, including defaults nested in closure parameters.
@@ -263,7 +528,9 @@ impl<'a> PublicationAudit<'a> {
                     self.operand(&mut value.result)?;
                 }
                 CallableParamDefault::Required | CallableParamDefault::PartialPreset { .. } => {}
-                CallableParamDefault::Unsupported { .. } => return Err(CoverageReason::UnsupportedConstruct),
+                CallableParamDefault::Unsupported { .. } => {
+                    return Err(CoverageReason::UnsupportedConstruct);
+                }
             }
         }
         Ok(())
@@ -273,14 +540,64 @@ impl<'a> PublicationAudit<'a> {
     fn operand(&mut self, operand: &mut Operand) -> Result<(), CoverageReason> {
         match operand {
             Operand::Place(value) => self.place(&mut value.place),
-            Operand::Constant(_) => Ok(()),
+            Operand::Constant(value) => self.constant(value),
         }
     }
 
-    /// Canonical field references must be public; module storage requires an executable initialization contract.
+    /// Scalar data keeps its existing contract; newtype values additionally require their exact retained owner.
+    fn constant(&mut self, constant: &mut crate::body_ir::Constant) -> Result<(), CoverageReason> {
+        match constant {
+            crate::body_ir::Constant::NumericNewtype(value) => self.numeric_newtype_constant(value),
+            crate::body_ir::Constant::FrozenAggregate(_, elements) => {
+                for element in elements {
+                    self.constant(element)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Validate the source physical address before projection; a foreign inline value lacks this local authority.
+    /// Missing or duplicate owner layouts stay refused instead of reconstructing their ABI from a type name.
+    fn numeric_newtype_constant(
+        &mut self,
+        value: &mut crate::body_ir::NumericNewtypeConstant,
+    ) -> Result<(), CoverageReason> {
+        let identity = value
+            .constructor
+            .canonical
+            .as_ref()
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        let mut owners = self
+            .nominal_declarations
+            .iter()
+            .filter(|owner| &owner.canonical == identity);
+        let owner = owners.next().ok_or(CoverageReason::UnresolvedReference)?;
+        if owners.next().is_some() || !value.matches_layout(owner) {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        let identity = value
+            .constructor
+            .canonical
+            .as_mut()
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        self.identity(identity, true)?;
+        value.constructor.direct_declaration_id = Some(declaration_id(identity)?);
+        Ok(())
+    }
+
+    /// Canonical fields and static storage require checked context; a requiring body cannot outlive missing
+    /// initialization. Callable replacement storage additionally requires its validated decorator binding.
     fn place(&mut self, place: &mut Place) -> Result<(), CoverageReason> {
-        if matches!(place.root, PlaceRoot::Global(_)) {
-            return Err(CoverageReason::UnsupportedConstruct);
+        if let PlaceRoot::Global(value) = &mut place.root {
+            if value.identity.kind != crate::SemanticSourceTargetKind::Static
+                && !self.replacement_storage.contains(&value.identity)
+            {
+                return Err(CoverageReason::UnsupportedConstruct);
+            }
+            self.identity(&mut value.identity, true)?;
+            self.ty(&value.ty)?;
         }
         for projection in &mut place.projection {
             match projection {
@@ -325,7 +642,7 @@ impl<'a> PublicationAudit<'a> {
         Ok(())
     }
 
-    /// Keep enum and member addresses joined to public canonical identities.
+    /// Keep enum and member addresses joined to checked canonical identities.
     fn fieldless_variant(&mut self, target: &mut FieldlessEnumVariantTarget) -> Result<(), CoverageReason> {
         self.identity(&mut target.enum_canonical, true)?;
         self.identity(&mut target.variant_canonical, false)?;
@@ -424,6 +741,9 @@ impl<'a> PublicationAudit<'a> {
             }
             Rvalue::FieldlessEnumVariant(target) => self.fieldless_variant(target)?,
             Rvalue::ResultVariant(value) => {
+                if !value.has_complete_canonical_types() {
+                    return Err(CoverageReason::UnresolvedReference);
+                }
                 self.operand(&mut value.payload)?;
                 for identity in value.canonical_types.values_mut() {
                     self.identity(identity, true)?;
@@ -443,6 +763,12 @@ impl<'a> PublicationAudit<'a> {
                 captured_operands,
                 body,
             } => {
+                if let Some(identity) = &mut body.original_callable {
+                    if !self.original_callables.contains(identity) || self.current_callable.as_ref() != Some(identity) {
+                        return Err(CoverageReason::UnresolvedReference);
+                    }
+                    self.identity(identity, true)?;
+                }
                 self.parameters(params)?;
                 for value in captured_operands {
                     self.operand(value)?;
@@ -485,6 +811,28 @@ impl<'a> PublicationAudit<'a> {
         Ok(())
     }
 
+    /// Audit the call-site SDK claim under its own Self binder; unresolved leaves cannot cross publication.
+    fn native_trait_selection(&mut self, target: &mut MethodTarget) -> Result<(), CoverageReason> {
+        if !target.has_valid_native_trait_selection() {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        let Some(selection) = &mut target.native_trait_delegation else {
+            return Ok(());
+        };
+        self.identity(&mut selection.canonical, true)?;
+        let inserted = self.type_parameters.insert("Self".to_owned());
+        let result = selection
+            .parameters
+            .iter()
+            .chain(std::iter::once(&selection.return_type))
+            .chain(&selection.native_type_arguments)
+            .try_for_each(|ty| self.ty(ty));
+        if inserted {
+            self.type_parameters.remove("Self");
+        }
+        result
+    }
+
     /// Inspect one statement without hiding unsupported nodes behind successful codec serialization.
     fn statement(&mut self, statement: &mut Statement) -> Result<(), CoverageReason> {
         match &mut statement.kind {
@@ -516,6 +864,7 @@ impl<'a> PublicationAudit<'a> {
                     }
                     Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
                     Callee::Method(target) => {
+                        self.native_trait_selection(target)?;
                         for ty in &target.type_args {
                             self.ty(ty)?;
                         }
@@ -526,7 +875,10 @@ impl<'a> PublicationAudit<'a> {
                     Callee::Helper(_) => {}
                     // The activation state is a producer-session fact. Until the portable host-requirement
                     // contract exists it must not be exported as if it were the consumer's provider plan.
-                    Callee::ProviderOperation(_) => return Err(CoverageReason::UnsupportedConstruct),
+                    Callee::ProviderOperation(_) => {
+                        return Err(CoverageReason::UnsupportedConstruct);
+                    }
+                    Callee::TypeMetadata(_) => return Err(CoverageReason::UnsupportedConstruct),
                 }
             }
             StatementKind::If {
@@ -540,7 +892,9 @@ impl<'a> PublicationAudit<'a> {
                     self.statements(&mut block.stmts)?;
                 }
             }
-            StatementKind::Loop { body } => self.statements(&mut body.stmts)?,
+            StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+                self.statements(&mut body.stmts)?
+            }
             StatementKind::Break { value } | StatementKind::Return { value } => {
                 if let Some(value) = value {
                     self.operand(value)?;
@@ -606,4 +960,172 @@ impl<'a> PublicationAudit<'a> {
         }
         Ok(())
     }
+}
+/// A decorated declaration retains all three runtime roles and one checked execution dependency set.
+pub(super) struct ProjectedDecoratedBody {
+    pub wrapper: Body,
+    pub binding: crate::body_ir::DecoratedBinding,
+    pub storage: crate::body_ir::StaticDeclaration,
+    pub requirements: BTreeSet<CanonicalSymbolId>,
+}
+
+/// Retain the visible wrapper, original callable and checked replacement as one indivisible execution fragment.
+/// The caller publishes this only under the visible canonical identity; the original never becomes a public root.
+pub(super) fn project_decorated_body(
+    source: &Body,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<ProjectedDecoratedBody, CoverageReason> {
+    let identity = source.canonical.as_ref().ok_or(CoverageReason::UnresolvedReference)?;
+    let mut bindings = module
+        .decorated_bindings
+        .iter()
+        .filter(|binding| binding.original_body.canonical.as_ref() == Some(identity));
+    let binding = bindings.next().ok_or(CoverageReason::UnresolvedReference)?;
+    if bindings.next().is_some() || !is_well_formed_source_binding(module, binding, library) {
+        return Err(CoverageReason::UnresolvedReference);
+    }
+    let storage = module
+        .static_declarations
+        .iter()
+        .find(|storage| &storage.canonical == identity)
+        .ok_or(CoverageReason::UnresolvedReference)?;
+    let crate::body_ir::StaticInitializer::Computed(initializer) = &storage.initial else {
+        return Err(CoverageReason::UnresolvedReference);
+    };
+    let wrapper = project_body(source, module, library, eligible)?;
+    let original = project_body(&binding.original_body, module, library, eligible)?;
+    let replacement = project_body(initializer, module, library, eligible)?;
+    let mut storage = storage.clone();
+    storage.canonical = wrapper
+        .body
+        .canonical
+        .clone()
+        .ok_or(CoverageReason::UnresolvedReference)?;
+    storage.initial = crate::body_ir::StaticInitializer::Computed(Box::new(replacement.body));
+    let mut requirements = wrapper.requirements;
+    requirements.extend(original.requirements);
+    requirements.extend(replacement.requirements);
+    Ok(ProjectedDecoratedBody {
+        wrapper: wrapper.body,
+        binding: crate::body_ir::DecoratedBinding {
+            original_body: original.body,
+            initializer: None,
+            initialization: crate::body_ir::DecoratedInitialization::ModuleStorage,
+        },
+        storage,
+        requirements,
+    })
+}
+
+/// Every entry into a declaring module must preserve its checked computed initialization, including private effects.
+/// Satisfiability subsequently refuses the caller if any required initializer cannot be represented.
+fn require_module_initialization(module: &BodyIrModule, requirements: &mut BTreeSet<CanonicalSymbolId>) {
+    requirements.extend(
+        module
+            .static_declarations
+            .iter()
+            .filter(|storage| matches!(storage.initial, crate::body_ir::StaticInitializer::Computed(_)))
+            .map(|storage| storage.canonical.clone()),
+    );
+}
+
+/// Validate source-local function frames before projecting their addresses into a package-owned consumer view.
+/// The source module is unchanged. A package identity must name this exact source module and library; each role must
+/// already carry its source declaration's physical address. Methods retain refusal until their owner context can be
+/// projected with the same proof. Already-projected modules use the consumer validator directly.
+fn is_well_formed_source_binding(
+    module: &BodyIrModule,
+    binding: &crate::body_ir::DecoratedBinding,
+    library: &str,
+) -> bool {
+    // ---- Source: canonical owner and physical declaring module ----
+    let Some(identity) = binding.original_body.canonical.as_ref() else {
+        return false;
+    };
+    let Some(owner) = canonical_module_identity(identity) else {
+        return false;
+    };
+    if owner == module.module_id.path() {
+        return module.is_well_formed_decorated_binding(binding);
+    }
+    let SymbolOrigin::Package {
+        library: declared_library,
+        module_path,
+    } = &identity.origin
+    else {
+        return false;
+    };
+    if declared_library != library
+        || crate::module_identity_for_path(module_path) != module.module_id.path()
+        || identity.kind != crate::SemanticSourceTargetKind::Function
+    {
+        return false;
+    }
+
+    // ---- Roles: wrapper, original and replacement share the source address ----
+    let Some(wrapper) = module
+        .bodies
+        .iter()
+        .find(|body| body.canonical.as_ref() == Some(identity))
+    else {
+        return false;
+    };
+    let source_address = CompilerNodeId::declaration_span(
+        module.module_id.path(),
+        identity.declaration_span.start,
+        identity.declaration_span.end,
+    );
+    let mut roles = vec![&binding.original_body, wrapper];
+    if binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage {
+        let Some(storage) = module
+            .static_declarations
+            .iter()
+            .find(|storage| &storage.canonical == identity)
+        else {
+            return false;
+        };
+        let crate::body_ir::StaticInitializer::Computed(initializer) = &storage.initial else {
+            return false;
+        };
+        roles.push(initializer);
+    }
+    if roles
+        .iter()
+        .any(|body| body.decl_id != source_address || body.direct_call_id != source_address)
+    {
+        return false;
+    }
+    let Ok(projected_address) = declaration_id(identity) else {
+        return false;
+    };
+
+    // ---- Consumer: validate an isolated projection without relaxing package scope ----
+    let mut view = module.clone();
+    view.module_id = CompilerNodeId::module(owner);
+    for body in &mut view.bodies {
+        if body.canonical.as_ref() == Some(identity) {
+            body.decl_id = projected_address.clone();
+            body.direct_call_id = projected_address.clone();
+        }
+    }
+    for retained in &mut view.decorated_bindings {
+        if retained.original_body.canonical.as_ref() == Some(identity) {
+            retained.original_body.decl_id = projected_address.clone();
+            retained.original_body.direct_call_id = projected_address.clone();
+        }
+    }
+    for retained in &mut view.static_declarations {
+        if &retained.canonical == identity
+            && let crate::body_ir::StaticInitializer::Computed(body) = &mut retained.initial
+        {
+            body.decl_id = projected_address.clone();
+            body.direct_call_id = projected_address.clone();
+        }
+    }
+    view.decorated_bindings
+        .iter()
+        .find(|retained| retained.original_body.canonical.as_ref() == Some(identity))
+        .is_some_and(|retained| view.is_well_formed_decorated_binding(retained))
 }

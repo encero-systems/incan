@@ -12,7 +12,7 @@ use crate::error::RustMetadataError;
 pub const OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE: &str = ".incan_oven_proc_macros.json";
 
 /// Exact native output coordinates, checked against its immutable owner before a macro server can execute it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OvenInspectionProcMacro {
     /// Canonical crate source module selected by the frozen inspection graph.
@@ -68,18 +68,8 @@ fn select_native_macros_with_probe(
     probe: impl FnOnce(&Path) -> Result<(String, String), RustMetadataError>,
 ) -> Result<Vec<OvenStoreExecutionPayload>, RustMetadataError> {
     let path = manifest_dir.join(OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE);
-    if contains_unowned_macro_path(graph) {
-        return Err(invalid(
-            &path,
-            "native macro paths must come from admitted output authority",
-        ));
-    }
-    let crates = graph
-        .get_mut("crates")
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| invalid(&path, "native inspection graph has no crates"))?;
     if !path.is_file() {
-        return Ok(Vec::new());
+        return select_native_macros_from_original(manifest_dir, graph, Vec::new(), probe);
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -92,13 +82,43 @@ fn select_native_macros_with_probe(
     if authority.schema_version != 1 {
         return Err(invalid(&path, "unsupported native macro authority schema"));
     }
-    if authority.macros.is_empty() {
+    select_native_macros_from_original(manifest_dir, graph, authority.macros, probe)
+}
+
+/// Admit macros supplied by an original retained producer, without reading serialized authority coordinates.
+pub(super) fn select_retained_native_macros(
+    manifest_dir: &Path,
+    graph: &mut serde_json::Value,
+    macros: Vec<OvenInspectionProcMacro>,
+) -> Result<Vec<OvenStoreExecutionPayload>, RustMetadataError> {
+    select_native_macros_from_original(manifest_dir, graph, macros, active_compiler_identity)
+}
+
+/// Verify source, receipt, compiler and native bytes for either original or legacy-published macro requests.
+fn select_native_macros_from_original(
+    manifest_dir: &Path,
+    graph: &mut serde_json::Value,
+    macros: Vec<OvenInspectionProcMacro>,
+    probe: impl FnOnce(&Path) -> Result<(String, String), RustMetadataError>,
+) -> Result<Vec<OvenStoreExecutionPayload>, RustMetadataError> {
+    let path = manifest_dir.join(OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE);
+    if contains_unowned_macro_path(graph) {
+        return Err(invalid(
+            &path,
+            "native macro paths must come from admitted output authority",
+        ));
+    }
+    let crates = graph
+        .get_mut("crates")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| invalid(&path, "native inspection graph has no crates"))?;
+    if macros.is_empty() {
         return Ok(Vec::new());
     }
     let (compiler, host) = probe(&path)?;
     let mut stores = BTreeMap::<PathBuf, BTreeSet<String>>::new();
     let mut modules = BTreeSet::new();
-    for entry in &authority.macros {
+    for entry in &macros {
         if !modules.insert(entry.root_module.canonicalize()?) {
             return Err(invalid(&path, "native macro authority repeats a source module"));
         }
@@ -133,7 +153,7 @@ fn select_native_macros_with_probe(
                 .map(|owner| (selected_store.clone(), owner)),
         );
     }
-    for entry in authority.macros {
+    for entry in macros {
         let selected_store = entry.store.canonicalize()?;
         let owner = owners
             .iter()

@@ -4,7 +4,7 @@
 //! One case per fixture; a `pending:` fixture's case is ignored with its reason.
 //! Do not edit: change the area and run `make behavior-roots`.
 
-use incan_test_support::behavior_fixtures::{assert_fixture_holds, assert_pending_fixtures_still_wait};
+use incan_test_support::behavior_fixtures::assert_fixture_holds;
 
 /// The area every case of this root runs a fixture of.
 const AREA: &str = "execution_numerics_and_conversions";
@@ -77,7 +77,6 @@ fn contextual_negative_literals_survive_direct_returns_and_same_module_ca_2() ->
 
 /// Runs the fixture `contextual_negative_literals_survive_direct_returns_and_same_module_ca_3`.
 #[test]
-#[ignore = "pending: the legacy route prints a whole-number f32 without its `.0`; the direct route (#1337 stage 4)"]
 fn contextual_negative_literals_survive_direct_returns_and_same_module_ca_3() -> CaseResult {
     assert_fixture_holds(
         AREA,
@@ -509,10 +508,4 @@ fn unsupported_typed_arithmetic_refuses_at_source_span_before_any_output() -> Ca
         AREA,
         "unsupported_typed_arithmetic_refuses_at_source_span_before_any_output",
     )
-}
-
-/// Every `pending:` fixture of the area still does not show what it declares.
-#[test]
-fn pending_fixtures_still_wait() -> CaseResult {
-    assert_pending_fixtures_still_wait(AREA)
 }

@@ -1639,6 +1639,40 @@ impl TypeChecker {
         ResolvedType::Unknown
     }
 
+    /// Preserve the legacy arity/type decisions, then snapshot only direct-profile selections for Body IR.
+    fn checked_iterator_sum_output_type(
+        &mut self,
+        method: &str,
+        args: &[CallArg],
+        elem: &ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
+        let valid_arity = self.validate_iterator_method_arity(method, 0, args.len(), span);
+        let result = self.iterator_sum_output_type(elem, span);
+        if valid_arity && self.native_iterator_sum_item_profile(&result) && !matches!(result, ResolvedType::Unknown) {
+            self.type_info
+                .body_ir_iterator_sum_items
+                .insert((span.start, span.end), result.clone());
+        }
+        result
+    }
+
+    /// Keep source trait adoptions and `sum` members outside automatic reconstruction until their dispatch is retained.
+    fn native_iterator_sum_item_profile(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Named(name) => match self.lookup_semantic_type_info(name) {
+                Some(TypeInfo::Newtype(info)) => {
+                    info.traits.is_empty()
+                        && !info.methods.contains_key("sum")
+                        && !info.method_aliases.contains_key("sum")
+                        && !info.method_rebindings.contains_key("sum")
+                }
+                _ => true,
+            },
+            _ => true,
+        }
+    }
+
     /// Track the narrow same-binding case after a terminal iterator method consumes a direct local binding.
     fn mark_direct_iterator_binding_consumed(&mut self, base: &Spanned<Expr>, method: &str, span: Span) {
         if !Self::is_iterator_terminal_method(method) {
@@ -1912,10 +1946,7 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Unit)
             }
-            M::Sum => {
-                self.validate_iterator_method_arity(method, 0, args.len(), span);
-                Some(self.iterator_sum_output_type(&iterator_elem, span))
-            }
+            M::Sum => Some(self.checked_iterator_sum_output_type(method, args, &iterator_elem, span)),
         }
     }
 
@@ -1957,6 +1988,29 @@ impl TypeChecker {
     /// treated as semantic evidence.
     fn compiler_builtin_member_identity(owner: &str, member: &str) -> CanonicalSymbolId {
         crate::symbols::canonical_builtin_member_identity(owner, member)
+    }
+
+    /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
+    /// and explicit bound methods have already resolved before this boundary; no legacy fact is changed here.
+    fn record_body_ir_inferred_clone(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) {
+        if method != trait_bounds::rust::CLONE_METHOD
+            || !type_args.is_empty()
+            || !args.is_empty()
+            || self.rigid_type_param_name(receiver).is_none()
+        {
+            return;
+        }
+        self.type_info.traits.inferred_method_identities.insert(
+            (span.start, span.end),
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
@@ -2058,10 +2112,18 @@ impl TypeChecker {
                 incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
                 frozen_dict_methods::from_str(method).map(frozen_dict_methods::as_str)?,
             ),
+            // An `Iterator[T]` value, such as an adapter's result or a list's `iter()`, has the RFC 088 surface as its
+            // own members, as a `Generator[T]` does.
+            ResolvedType::Generic(name, _) if Self::is_iterator_protocol_name(name) => (
+                Self::iterator_protocol_name(),
+                iterator_methods::from_str(method).map(iterator_methods::as_str)?,
+            ),
             ResolvedType::Generic(name, _) => match collection_type_id(name) {
                 Some(CollectionTypeId::List) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
-                    list_methods::from_str(method).map(list_methods::as_str)?,
+                    list_methods::from_str(method)
+                        .map(list_methods::as_str)
+                        .or_else(|| Self::iterable_iter_member(method))?,
                 ),
                 Some(CollectionTypeId::Dict) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::Dict),
@@ -2090,6 +2152,13 @@ impl TypeChecker {
             _ => return None,
         };
         Some(Self::compiler_builtin_member_identity(owner, member))
+    }
+
+    /// Name the RFC 088 `iter()` member that starts an iterator over a list; the list method registry does not list it,
+    /// because the iterator surface owns it.
+    fn iterable_iter_member(method: &str) -> Option<&'static str> {
+        let iter = iterator_methods::IteratorMethodId::Iter;
+        (iterator_methods::from_str(method) == Some(iter)).then(|| iterator_methods::as_str(iter))
     }
 
     /// Typecheck built-in numeric resize helpers and retain their concrete target for downstream call lowering.
@@ -5428,6 +5497,25 @@ impl TypeChecker {
         }
     }
 
+    /// Retain callable-value metadata only for Body IR, excluding the checker's existing type and trait name roles.
+    /// Parentheses preserve the identifier's role; legacy resolution and return types remain unchanged.
+    fn retain_body_ir_callable_name_read(&mut self, base: &Spanned<Expr>, span: Span) {
+        let mut receiver = base;
+        while let Expr::Paren(inner) = &receiver.node {
+            receiver = inner;
+        }
+        if matches!(
+            self.type_info.ident_kind(receiver.span),
+            Some(IdentKind::TypeName | IdentKind::Trait)
+        ) {
+            return;
+        }
+        self.type_info
+            .expressions
+            .body_ir_callable_name_reads
+            .insert((span.start, span.end));
+    }
+
     /// Resolve a nominal value's field without changing the receiver's ownership or reference facts.
     fn check_nominal_field(
         &mut self,
@@ -5439,6 +5527,7 @@ impl TypeChecker {
         let checker = self;
 
         if field == "__name__" && checker.is_generic_placeholder_type(ty) {
+            checker.retain_body_ir_callable_name_read(base, span);
             if let Some(owner_name) = checker.generic_placeholder_name(ty)
                 && let Some(identity) = checker.synthetic_member_identity_for_named_owner(
                     owner_name,
@@ -5482,6 +5571,7 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
             ResolvedType::Function(_, _) if field == "__name__" => {
+                checker.retain_body_ir_callable_name_read(base, span);
                 if let Some(owner) = checker.type_info.resolved_identity(base.span).cloned() {
                     checker.type_info.record_resolved_identity(
                         span,
@@ -5516,6 +5606,7 @@ impl TypeChecker {
             }
             ResolvedType::TypeVar(name) => {
                 if field == "__name__" {
+                    checker.retain_body_ir_callable_name_read(base, span);
                     return ResolvedType::Str;
                 }
                 if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
@@ -6016,6 +6107,10 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        self.type_info
+            .traits
+            .inferred_method_identities
+            .remove(&(span.start, span.end));
         if let Some(result) = self.check_c_abi_c_string_constructor(base, method, type_args, args, span) {
             return result;
         }
@@ -6276,6 +6371,7 @@ impl TypeChecker {
                         // re-deriving a target from the qualifier and member spellings.
                         self.type_info
                             .record_call_site_callable_params_exact(span, &info.params);
+                        let errors_before_call = self.errors.len();
                         let result = self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,
@@ -6286,6 +6382,7 @@ impl TypeChecker {
                         );
                         let identity = self.type_info.resolved_identity(span).cloned();
                         self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        self.retain_body_ir_async_call_target(&info, span, span, errors_before_call);
                         result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => {
@@ -6522,11 +6619,11 @@ impl TypeChecker {
             return ret;
         }
         // In a trait's own method, a method that the trait or a supertrait of it declares, called on a `Self` value,
-        // has that declaration's signature (#1561). Any other method called on `Self` is left open, as is every one in
-        // the standard library's own source, whose trait defaults its own lowering rules expand.
+        // has that declaration's signature (#1561). Any other method called on `Self` is left open. In the standard
+        // library's own source the call's checked type stays open too, because legacy expands those trait defaults by
+        // its own rules; the slot and its declared result are retained for Body IR only.
         if matches!(base_ty, ResolvedType::SelfType) {
-            if !self.checks_standard_library_source()
-                && let Some(trait_name) = self.current_trait_name.clone()
+            if let Some(trait_name) = self.current_trait_name.clone()
                 && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
             {
                 // A default's open receiver selects the trait slot, not a concrete implementation. Retain that
@@ -6536,6 +6633,17 @@ impl TypeChecker {
                         .traits
                         .self_method_identities
                         .insert((span.start, span.end), identity.clone());
+                }
+                if self.checks_standard_library_source() {
+                    self.type_info
+                        .traits
+                        .self_method_result_types
+                        .insert((span.start, span.end), method_info.return_type.clone());
+                    self.type_info
+                        .traits
+                        .self_method_params
+                        .insert((span.start, span.end), method_info.params.clone());
+                    return ResolvedType::Unknown;
                 }
                 return self.check_generic_method_call(
                     method,
@@ -6690,6 +6798,18 @@ impl TypeChecker {
             && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
         {
             self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
+            if is_frozen_bytes(&base_ty) {
+                let owner = incan_lang::lang::types::stringlike::as_str(
+                    incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
+                );
+                self.type_info.calls.body_ir_native_codec_members.insert(
+                    (span.start, span.end),
+                    Self::compiler_builtin_member_identity(
+                        owner,
+                        bytes_methods::as_str(bytes_methods::BytesMethodId::Decode),
+                    ),
+                );
+            }
             // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
             // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
             return ResolvedType::Generic(
@@ -7363,6 +7483,7 @@ impl TypeChecker {
                 }
                 return ResolvedType::Unknown;
             }
+            self.record_body_ir_inferred_clone(&base_ty, method, type_args, args, span);
             return base_ty.clone();
         }
 

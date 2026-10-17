@@ -346,7 +346,11 @@ fn frozen_dependency_source(root: &Path, crate_name: &str) -> Option<PathBuf> {
     let normalized = normalize_crate_name(crate_name);
     let mut selected = std::collections::BTreeSet::new();
     for record in graph.get("crates")?.as_array()? {
-        let name = record.get("display_name")?.as_str()?;
+        // Generated probe crates may omit the optional display name. They cannot identify a dependency,
+        // but must not discard a named source selected elsewhere in the same graph.
+        let Some(name) = record.get("display_name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
         if normalize_crate_name(name) != normalized {
             continue;
         }

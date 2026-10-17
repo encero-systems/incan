@@ -1,0 +1,32 @@
+"""Materialize checked immutable numeric newtype values through the retained constructor layout."""
+
+from rust::incan_semantics_core::body_ir import Constant as RustConstant
+from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, literal
+from models import constructor_index
+from numerics import numeric_constant
+
+
+pub def numeric_newtype_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Require one exact canonical owner, physical address, tuple slot and numeric width before producing a value."""
+    match value:
+        RustConstant.NumericNewtype(constant) =>
+            mut found = -1
+            for index in range(len(builder.nominals)):
+                declaration = builder.nominals[index]
+                if constant.constructor.canonical == Some(declaration.canonical):
+                    if found >= 0:
+                        return Err("unsupported Body IR ambiguous numeric newtype constant layout")
+                    if not constant.matches_layout(declaration):
+                        return Err("unsupported Body IR invalid numeric newtype constant layout")
+                    found = index
+            if found < 0:
+                return Err("unsupported Body IR unretained numeric newtype constant layout")
+            storage = PlanType.Model(found, str(builder.nominals[found].name))
+            owner = constructor_index(builder.nominals, constant.constructor, 1, storage)?
+            payload = literal(numeric_constant(constant.value)?, span)
+            output = temporary(builder, storage, span)
+            builder.emit(plan_assign(output, RvalueKind.Model(owner, [payload]), span))
+            return Ok(read_place(output, true, span))
+        _ => return Err("unsupported Body IR non-newtype constant")

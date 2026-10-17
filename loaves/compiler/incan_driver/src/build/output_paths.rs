@@ -790,13 +790,15 @@ pub(crate) fn project_inspection_root_dependencies(
     Ok(roots)
 }
 
-/// Bind every promoted test dependency to its portable declaration/source digest and, for registry roots, Cargo's
-/// exact locked package identity from the selected publisher closure.
+/// Bind every promoted test dependency to its portable declaration/source digest and exact publisher root.
+/// Ordinary registry dependencies use the original receipt-bound native map; legacy publishers use their checked
+/// Cargo source catalog. Native maps must come from declaration selection, never an alias/name search.
 pub fn project_inspection_test_dependency_roots(
     dependencies: &[DependencySpec],
     dependency_root_digests: &BTreeMap<String, String>,
     registry_source_dependencies: &[OvenProjectInspectionRootDependency],
     dev_registry_source_dependencies: &[OvenProjectInspectionRootDependency],
+    native_roots: Option<&BTreeMap<String, String>>,
 ) -> CliResult<BTreeMap<String, OvenProjectInspectionTestDependencyRoot>> {
     let mut roots = BTreeMap::new();
     for dependency in dependencies {
@@ -807,6 +809,17 @@ pub fn project_inspection_test_dependency_roots(
             ))
         })?;
         let root = match dependency.source {
+            DependencySource::Registry if native_roots.is_some() => {
+                let record_identity = native_roots.and_then(|roots| roots.get(&alias)).ok_or_else(|| {
+                    CliError::failure(format!(
+                        "project inspection test dependency `{alias}` has no original native root"
+                    ))
+                })?;
+                OvenProjectInspectionTestDependencyRoot::NativeRegistry {
+                    dependency_digest,
+                    record_identity: record_identity.clone(),
+                }
+            }
             DependencySource::Registry => {
                 let mut matching = registry_source_dependencies
                     .iter()

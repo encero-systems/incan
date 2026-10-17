@@ -103,6 +103,54 @@ pub fn collect_workspace_lock_context_tolerating(
     command_session: Option<&CompilationSession>,
     tolerate_unresolved_siblings: bool,
 ) -> Result<WorkspaceLockCollection, WorkspaceLockMemberFailure> {
+    collect_workspace_lock_context_with_member_sessions(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        command_session,
+        tolerate_unresolved_siblings,
+        &[],
+    )
+}
+
+/// Lend the original reconciled member sessions to the canonical whole-workspace collector.
+/// Declared member features, entry ownership and sibling failures retain their ordinary semantics.
+pub(crate) fn collect_workspace_lock_context_with_sessions(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    sessions: &[(PathBuf, std::sync::Arc<CompilationSession>)],
+) -> CliResult<ProjectLockContext> {
+    collect_workspace_lock_context_with_member_sessions(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        None,
+        false,
+        sessions,
+    )
+    .map(|collection| collection.context)
+    .map_err(|failure| failure.error)
+}
+
+/// One collector serves ordinary, tolerant publisher and retained-owner requests without changing member policy.
+#[allow(clippy::too_many_arguments)]
+fn collect_workspace_lock_context_with_member_sessions(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+    tolerate_unresolved_siblings: bool,
+    sessions: &[(PathBuf, std::sync::Arc<CompilationSession>)],
+) -> Result<WorkspaceLockCollection, WorkspaceLockMemberFailure> {
     let outside = |error: CliError| WorkspaceLockMemberFailure { error };
     let explicit_entry = entry_file
         .map(resolve_explicit_lock_entry)
@@ -128,6 +176,8 @@ pub fn collect_workspace_lock_context_tolerating(
     let mut member_semantics = Vec::new();
     let mut has_context = false;
     let mut unresolved = Vec::new();
+    #[cfg(feature = "cli")]
+    let mut test_discovery = Vec::new();
 
     let declared_defaults = FeatureSelection::default();
     for member in workspace.members() {
@@ -137,12 +187,17 @@ pub fn collect_workspace_lock_context_tolerating(
             .effective_member_manifest(member)
             .map_err(|error| in_member(CliError::failure(error.to_string())))?;
         enforce_project_toolchain_constraint(&manifest).map_err(in_member)?;
-        let member_session = command_session.filter(|session| {
-            session
-                .manifest
-                .as_ref()
-                .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
-        });
+        let member_session = sessions
+            .iter()
+            .find(|(root, _)| project_roots_match(root, member.root()))
+            .map(|(_, session)| session.as_ref())
+            .or(command_session)
+            .filter(|session| {
+                session
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
+            });
         let member_entry = explicit_entry.as_deref().filter(|_| member_is_command_target);
         let member_context = match collect_project_lock_context(
             &manifest,
@@ -164,6 +219,8 @@ pub fn collect_workspace_lock_context_tolerating(
         if member_is_command_target {
             project_dependency_surface = Some(member_context.resolved.clone());
         }
+        #[cfg(feature = "cli")]
+        test_discovery.extend(member_context.test_discovery);
         has_context = true;
         resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved).map_err(outside)?;
         project_requirements =
@@ -181,6 +238,8 @@ pub fn collect_workspace_lock_context_tolerating(
         .map_err(|error| outside(CliError::failure(error)))?;
     Ok(WorkspaceLockCollection {
         context: ProjectLockContext {
+            #[cfg(feature = "cli")]
+            test_discovery,
             resolved,
             project_requirements,
             semantic,
@@ -388,7 +447,7 @@ fn lock_provider_used_module_paths(session: &CompilationSession, modules: &[Pars
 /// A root library need not expose a runnable script. Canonical project and workspace locks nevertheless cover its
 /// `src/lib.incn` graph, so a rooted RFC 077 workspace can publish one complete lock from its root without inventing
 /// a command-only entrypoint.
-fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
+pub(crate) fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
     if let Some(project) = &manifest.project {
         for script in project.scripts.values() {
@@ -460,10 +519,11 @@ fn ordinary_semantic_sdk_paths(
 ) -> CliResult<Vec<DependencySpec>> {
     native.verify()?;
     #[cfg(feature = "rust_inspect")]
-    let queries = crate::build::library_exports::collect_library_rust_abi_query_paths(
+    let queries = crate::build::library_exports::collect_ordinary_library_rust_abi_query_paths(
         project_requirement_modules,
         &crate::build::rust_extern::collect_rust_extern_contexts(project_requirement_modules),
-    )
+        provider_plan,
+    )?
     .into_iter()
     .collect();
     #[cfg(not(feature = "rust_inspect"))]
@@ -620,6 +680,8 @@ fn collect_project_lock_context_impl(
     }
 
     let TestLockInputs {
+        #[cfg(feature = "cli")]
+        discovery_inputs,
         inline_imports: test_inline_imports,
         project_requirement_modules: test_requirement_modules,
     } = collect_test_lock_inputs(
@@ -683,6 +745,8 @@ fn collect_project_lock_context_impl(
         })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     Ok(Some(ProjectLockContext {
+        #[cfg(feature = "cli")]
+        test_discovery: vec![discovery_inputs],
         resolved,
         project_requirements,
         semantic,

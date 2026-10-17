@@ -2,11 +2,51 @@
 
 use super::*;
 
+/// Genuine source plans validate their checked JSON root and reject corrupt native header contracts before rustc.
+#[test]
+fn checked_json_roots_require_exact_native_forwarding_contracts() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let binary = baked_carrier_caller(fixture, "checked-json-root-admission")?;
+    let output = driver_command(&binary).arg("checked-json").output()?;
+    success(&output, "checked JSON root admission controls");
+    assert_eq!(
+        output.stdout,
+        b"checked JSON admission: 1 genuine plan and 8 native forwarding ABI refusals passed\n"
+    );
+    Ok(())
+}
+
 /// Bake a test-only caller including the actual driver validator and require positive and independent negative cases.
 #[test]
 fn checked_nested_carriers_preserve_projection_and_layout_admission() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let caller = fixture.scratch("dev7-carrier-admission")?;
+    let binary = baked_carrier_caller(fixture, "dev7-carrier-admission")?;
+    let output = driver_command(&binary).output()?;
+    success(&output, "nested carrier admission controls");
+    assert_eq!(
+        output.stdout,
+        b"nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed\n"
+    );
+    Ok(())
+}
+
+/// Require instantiated stdlib Result returns to retain their final owner's normal and subsequent-call unwind drops.
+#[test]
+fn instantiated_stdlib_results_retain_owned_cleanup() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let binary = baked_carrier_caller(fixture, "instantiated-stdlib-owned-results")?;
+    let output = driver_command(&binary).arg("owned-result").output()?;
+    success(&output, "instantiated stdlib result ownership");
+    assert_eq!(
+        output.stdout,
+        b"instantiated result ownership: normal and unwind drops passed\n"
+    );
+    Ok(())
+}
+
+/// Bake the shared caller once for one test's isolated scratch directory and return its executable path.
+fn baked_carrier_caller(fixture: &DriverFixture, scratch: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let caller = fixture.scratch(scratch)?;
     let repo = support::repo_root();
     fs::create_dir_all(caller.join("src"))?;
     copy_tree(&fixture.driver.join("src"), &caller.join("src/native"))?;
@@ -15,11 +55,15 @@ fn checked_nested_carriers_preserve_projection_and_layout_admission() -> Result<
         "bodies",
         "callees",
         "captured_generators",
+        "checked_json",
         "closures",
         "declarations",
         "error",
+        "frozen_values",
+        "futures",
         "plan",
         "spans",
+        "statics",
         "terminators",
         "types",
         "validation",
@@ -31,6 +75,18 @@ fn checked_nested_carriers_preserve_projection_and_layout_admission() -> Result<
     fs::write(
         caller.join("src/main.rs"),
         include_str!("dev7_carrier_admission_caller.rs").replace("// DRIVER_MODULES", &modules),
+    )?;
+    fs::write(
+        caller.join("src/instantiated_owned_results_caller.rs"),
+        include_str!("instantiated_owned_results_caller.rs"),
+    )?;
+    fs::write(
+        caller.join("src/checked_json_admission_caller.rs"),
+        include_str!("checked_json_admission_caller.rs"),
+    )?;
+    fs::copy(
+        repo.join("loaves/stdlib/core/src/result.incn"),
+        caller.join("src/result.incn"),
     )?;
     let lowering = fixture_dependency_path(&caller, &fixture.root.join("lowering"))?;
     let frontend = fixture_dependency_path(&caller, &repo.join("loaves/compiler/incan_frontend"))?;
@@ -54,16 +110,24 @@ name = "dev7_carrier_admission"
 path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
-sysroot_dependencies = ["rustc_driver", "rustc_interface"]
+sysroot_dependencies = ["rustc_driver"]
 "#
         ),
     )?;
     bake(&caller, &fixture.home)?;
-    let output = driver_command(&caller.join("target/rust/debug/dev7_carrier_admission")).output()?;
-    success(&output, "nested carrier admission controls");
+    Ok(caller.join("target/rust/debug/dev7_carrier_admission"))
+}
+
+/// Repeated error formatting retains one live String owner before transferring both outputs to the f-string array.
+#[test]
+fn validation_error_formatting_retains_single_owned_cleanup() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let binary = baked_carrier_caller(fixture, "validation-error-format-owned-results")?;
+    let output = driver_command(&binary).arg("validation-format").output()?;
+    success(&output, "validation error formatting ownership");
     assert_eq!(
         output.stdout,
-        b"nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed\n"
+        b"validation formatting ownership: second-call cleanup and array transfer passed\n"
     );
     Ok(())
 }

@@ -5,7 +5,7 @@ from std.derives.comparison import Eq, Hash
 from rust::std::fmt import Display
 from rust::std::clone import Clone as RuntimeClone
 from rust::std::collections import HashMap as RuntimeDict
-from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get
+from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get, dict_get_mut
 
 
 pub def equal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
@@ -84,6 +84,12 @@ pub def get_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], 
     """Index a dictionary with the legacy missing-key diagnostic."""
     reference: &K = key
     return RuntimeClone.clone(dict_get(values, reference))
+
+
+pub def borrow_mut_dict[K with (Eq, Hash, Display), V](values: &mut Dict[K, V], key: K) -> &mut V:
+    """Borrow a stored value in place through the legacy missing-key diagnostic, as `d[key]` does before a change."""
+    reference: &K = key
+    return dict_get_mut(values, reference)
 
 
 pub def optional_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> Option[V]:

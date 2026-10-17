@@ -1,0 +1,173 @@
+"""Consumer checks for one compilation's selected source conversion contract and exact raw chains."""
+
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    SemanticSourceTargetKind,
+    SymbolNamespace,
+    SymbolOrigin,
+    CompilerNodeId,
+    CanonicalSymbolId,
+    canonical_module_identity,
+)
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    NominalDeclaration,
+    NewtypeStringConversion,
+    StringConversionContract,
+    nominal_carrier_key,
+)
+from symbols import symbol_component
+
+
+pub def validate_conversion_placement(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:
+    """Only this invocation's entry can supply a fresh import union; package and dependency fragments supply none."""
+    for index in range(len(modules)):
+        if index == entry:
+            continue
+        match modules[index].string_conversion_contract:
+            StringConversionContract.Unselected => pass
+            _ => return Err("unsupported Body IR misplaced string conversion contract")
+    return Ok(None)
+
+
+pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
+    """Absent and fresh inactive states grant no headers; a selected linked trait keeps its exact canonical slot."""
+    match module.string_conversion_contract:
+        StringConversionContract.Unselected => return Ok("")
+        StringConversionContract.Inactive => return Ok("")
+        StringConversionContract.Selected(selection) =>
+            owner = selection.trait_identity
+            method = selection.method_identity
+            if owner.kind != SemanticSourceTargetKind.Trait or owner.namespace != SymbolNamespace.OrdinaryLexical or owner.declaration_name != "TryFrom" or method.kind != SemanticSourceTargetKind.Method or method.namespace != SymbolNamespace.Member or method.declaration_name != "try_from" or method.origin != owner.origin or method.declaration_span.start < owner.declaration_span.start or method.declaration_span.end > owner.declaration_span.end:
+                return Err("unsupported Body IR string conversion contract identity")
+            match owner.scope_discriminant:
+                Some(_scope) => return Err("unsupported Body IR string conversion contract identity")
+                None => pass
+            match method.scope_discriminant:
+                Some(_scope) => return Err("unsupported Body IR string conversion contract identity")
+                None => pass
+            match owner.origin:
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    if library != "incan_stdlib_core" or path != ["traits", "convert"]:
+                        return Err("unsupported Body IR string conversion contract identity")
+                    return Ok(f"{library}::traits::convert::TryFrom")
+                _ => return Err("unsupported Body IR string conversion contract identity")
+
+
+pub def conversion_name(module: &BodyIrModule, declaration: &NominalDeclaration) -> Result[str, str]:
+    """A producer-attested automatic candidate becomes executable only under the selected invocation contract."""
+    if conversion_trait(module)? == "":
+        return Ok("")
+    match declaration.canonical.origin:
+        SymbolOrigin.Module(_path) => pass
+        _ => return Ok("")
+    match declaration.newtype_string_conversion:
+        NewtypeStringConversion.Unselected => return Ok("")
+        NewtypeStringConversion.Automatic =>
+            _ = conversion_chain(module, declaration, [])?
+            return Ok("__incan_string_try_from_" + symbol_component(str(declaration.name)))
+
+
+pub def conversion_chain(
+    module: &BodyIrModule,
+    declaration: &NominalDeclaration,
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Check each exact named underlying edge before scheduling roots; an unselected inner cannot be overwritten."""
+    if declaration.name in ancestors:
+        return Err("unsupported Body IR automatic string conversion cycle")
+    _ = raw_conversion_owner(declaration)?
+    match declaration.newtype_string_conversion:
+        NewtypeStringConversion.Unselected =>
+            return Err("unsupported Body IR automatic string conversion underlying selection")
+        NewtypeStringConversion.Automatic => pass
+    underlying = declaration.field_types[0]
+    match underlying:
+        RustType.Primitive(Primitive.Int) => return Ok(None)
+        RustType.Primitive(Primitive.Str) => return Ok(None)
+        RustType.Named(name) =>
+            identity = underlying_identity(declaration, name)
+            match identity:
+                None => return Err("unsupported Body IR automatic string conversion underlying identity")
+                Some(canonical) =>
+                    if canonical_module_identity(canonical) != canonical_module_identity(declaration.canonical):
+                        return Err("unsupported Body IR automatic string conversion nonlocal underlying")
+                    mut selected: Option[NominalDeclaration] = None
+                    for candidate in module.nominal_declarations:
+                        # Compare owned identity values across the foreign declaration boundary.
+                        if candidate.canonical == canonical.clone():
+                            match selected:
+                                Some(_previous) =>
+                                    return Err("unsupported Body IR automatic string conversion ambiguous underlying")
+                                None => pass
+                            selected = Some(candidate.clone())
+                    match selected:
+                        None => return Err("unsupported Body IR automatic string conversion missing underlying")
+                        Some(inner) =>
+                            if name != canonical.declaration_name and name != inner.carrier_name():
+                                return Err("unsupported Body IR automatic string conversion underlying identity")
+                            mut seen = ancestors
+                            seen.append(str(declaration.name))
+                            return conversion_chain(module, inner, seen)
+        _ => return Err("unsupported Body IR automatic string conversion primitive")
+
+
+def underlying_identity(declaration: &NominalDeclaration, name: str) -> Option[CanonicalSymbolId]:
+    """
+    Read the exact retained key and copy only its identity, preserving the map's canonical provenance.
+
+    Cold legacy interop emission can pass an owned key to BTreeMap.get. Borrowed entry iteration avoids that defect
+    without changing the frozen emitter; this small metadata lookup stays linear until key borrowing is repaired.
+    """
+    for key, identity in declaration.named_type_identities.iter():
+        if str(key) == name:
+            return Some(identity.clone())
+    return None
+
+
+def conversion_owner_name(declaration: &NominalDeclaration) -> bool:
+    """Accept a source leaf or its exact retained carrier, never carrier_name's unproven spelling fallback."""
+    if declaration.name == declaration.canonical.declaration_name:
+        return true
+    match nominal_carrier_key(declaration.canonical):
+        None => return false
+        Some(key) =>
+            if declaration.name != key:
+                return false
+            match underlying_identity(declaration, key):
+                None => return false
+                Some(identity) => return identity == declaration.canonical.clone()
+
+
+def raw_conversion_owner(declaration: &NominalDeclaration) -> Result[None, str]:
+    """Validate the canonical layout before or after project assembly gives it its exact retained carrier name."""
+    owner = declaration.canonical
+    if owner.kind != SemanticSourceTargetKind.Newtype or owner.namespace != SymbolNamespace.OrdinaryLexical or not conversion_owner_name(declaration) or len(
+        declaration.type_parameters,
+    ) != 0 or declaration.type_parameter_count != 0 or declaration.fields != ["0"] or declaration.field_identities != [owner] or len(
+        declaration.field_types,
+    ) != 1 or declaration.field_public != [true] or declaration.has_field_defaults or len(
+        declaration.method_partial_defaults,
+    ) != 0:
+        return Err("unsupported Body IR automatic string conversion owner")
+    match owner.origin:
+        SymbolOrigin.Module(_path) => pass
+        _ => return Err("unsupported Body IR automatic string conversion owner")
+    match owner.scope_discriminant:
+        Some(_scope) => return Err("unsupported Body IR automatic string conversion owner")
+        None => pass
+    match declaration.field_default_body:
+        Some(_body) => return Err("unsupported Body IR automatic string conversion owner")
+        None => pass
+    for alias in declaration.field_aliases:
+        match alias:
+            Some(_name) => return Err("unsupported Body IR automatic string conversion owner")
+            None => pass
+    match canonical_module_identity(owner):
+        None => return Err("unsupported Body IR automatic string conversion owner")
+        Some(module) =>
+            expected = CompilerNodeId.declaration_span(module, owner.declaration_span.start, owner.declaration_span.end)
+            if declaration.direct_declaration_id != expected:
+                return Err("unsupported Body IR automatic string conversion owner")
+    return Ok(None)

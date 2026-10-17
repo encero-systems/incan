@@ -182,6 +182,16 @@ impl TrustedStandardSourcePublication {
         Ok(&self.policy_bytes)
     }
 
+    /// Read the publisher's own Rust facet name from its original compiler-pinned declaration.
+    ///
+    /// This identifies source import coverage only; actual native records, ABI inspection and execution remain
+    /// independently required. A caller-selected manifest or matching package spelling cannot supply this fact.
+    pub fn verified_native_facet_name(&self) -> Result<Option<String>, TrustedStandardSourcePublicationError> {
+        self.verified_declaration_bytes()?;
+        let manifest = ProjectManifest::from_str(self.policy.declaration, self.declaration.path())?;
+        Ok(manifest.rust_facet.and_then(|facet| facet.name))
+    }
+
     /// Return exact retained authored declaration bytes after original-owner and source-coordinate revalidation.
     pub fn verified_declaration_bytes(&self) -> Result<&[u8], TrustedStandardSourcePublicationError> {
         let bytes = self.declaration.verified_bytes()?;

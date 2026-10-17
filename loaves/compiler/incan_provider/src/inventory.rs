@@ -330,7 +330,14 @@ fn extend_requirements_with_source_stdlib_namespaces(
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(());
     }
+    provider_plan
+        .verify_standard_source_publication()
+        .map_err(ProviderError::failure)?;
     for root in provider_plan.source_std_namespace_roots() {
+        if provider_plan.bootstrap_owns_sdk_module(&[stdlib::STDLIB_ROOT.to_string(), root.clone()]) {
+            // An ordinary standard publisher already retains its own declared Rust facet and native requests.
+            continue;
+        }
         let Some(namespace) = stdlib::find_namespace(&root) else {
             continue;
         };
@@ -344,13 +351,28 @@ fn extend_requirements_with_source_stdlib_namespaces(
     }
 
     // ---- Facets the program reaches whose component no active provider supplies ----
-    let supplied = provider_plan
+    let mut supplied = provider_plan
         .active_sdk_records()
-        .filter_map(|provider| match &provider.provenance {
-            crate::ProviderProvenance::Sdk { component_id, .. } => stdlib::facets::for_component(component_id),
-            _ => None,
+        .flat_map(|provider| match &provider.provenance {
+            crate::ProviderProvenance::Sdk { component_id, .. } => stdlib::facets::for_component(component_id)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            crate::ProviderProvenance::StandardPublication { .. } => provider
+                .namespace_claims
+                .iter()
+                .filter_map(|module| stdlib::stdlib_facet_for(module))
+                .collect(),
+            _ => Vec::new(),
         })
         .collect::<BTreeSet<_>>();
+    if let Some(source) = provider_plan.standard_source_publication() {
+        supplied.extend(
+            source
+                .namespace_roots()
+                .iter()
+                .filter_map(|root| stdlib::stdlib_facet_for(&[stdlib::STDLIB_ROOT.to_string(), (*root).to_string()])),
+        );
+    }
     let unsupplied = requirements
         .stdlib_facets
         .iter()
@@ -1352,38 +1374,48 @@ import std.traits
     #[test]
     fn ordinary_standard_publication_keeps_ordinary_dependency_projection() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
-        let artifact =
-            LibraryArtifactMetadata::from_crate_root("incan_stdlib_core", "incan_stdlib_core", workspace.path());
-        let expected_dependency = artifact.to_dependency_spec();
-        let module = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
-        let record = crate::ProviderRecord {
-            identity: crate::ProviderIdentity {
-                name: "incan_stdlib_core".to_string(),
-                version: "0.6.0".to_string(),
-                digest: "sha256:ordinary-core-projection".to_string(),
-                feature_projection: BTreeSet::new(),
-            },
-            provenance: crate::ProviderProvenance::StandardPublication {
-                package_name: "incan_stdlib_core".to_string(),
-                manifest_path: workspace.path().join("loaf.toml"),
-            },
-            authority: crate::NamespaceAuthority::SdkReserved,
-            namespace_claims: BTreeSet::from([module.clone()]),
-            available: true,
-            enabled: true,
-            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_core", "0.6.0"))),
-            artifact: Some(artifact),
-            implementation_facets: Vec::new(),
-        };
-        for used_modules in [Vec::new(), vec![module.clone()]] {
-            let plan = ProviderPlan::new(Default::default(), vec![record.clone()], used_modules)?;
-            assert!(plan.active_std_module_paths().contains(&module));
-            let mut requirements = ProjectRequirements::default();
-            extend_requirements_with_provider_plan(&mut requirements, &plan)?;
-            assert_eq!(requirements.dependencies, vec![expected_dependency.clone()]);
-            assert!(requirements.sdk_path_dependencies.is_empty());
-            assert!(requirements.sdk_dependency_rebindings.is_empty());
-            assert!(requirements.sdk_artifact_projections.is_empty());
+        for (package, module, facet) in [
+            ("incan_stdlib_core", vec!["std", "derives", "collection"], None),
+            ("incan_stdlib_async", vec!["std", "async"], Some("incan_std_async")),
+            (
+                "incan_stdlib_testing",
+                vec!["std", "testing"],
+                Some("incan_std_testing"),
+            ),
+        ] {
+            let artifact = LibraryArtifactMetadata::from_crate_root(package, package, workspace.path());
+            let expected_dependency = artifact.to_dependency_spec();
+            let module = module.into_iter().map(str::to_string).collect::<Vec<_>>();
+            let record = crate::ProviderRecord {
+                identity: crate::ProviderIdentity {
+                    name: package.to_string(),
+                    version: "0.6.0".to_string(),
+                    digest: "sha256:ordinary-core-projection".to_string(),
+                    feature_projection: BTreeSet::new(),
+                },
+                provenance: crate::ProviderProvenance::StandardPublication {
+                    package_name: package.to_string(),
+                    manifest_path: workspace.path().join("loaf.toml"),
+                },
+                authority: crate::NamespaceAuthority::SdkReserved,
+                namespace_claims: BTreeSet::from([module.clone()]),
+                available: true,
+                enabled: true,
+                manifest: Some(Arc::new(LibraryManifest::new(package, "0.6.0"))),
+                artifact: Some(artifact),
+                implementation_facets: Vec::new(),
+            };
+            for used_modules in [Vec::new(), vec![module.clone()]] {
+                let plan = ProviderPlan::new(Default::default(), vec![record.clone()], used_modules)?;
+                assert!(plan.active_std_module_paths().contains(&module));
+                let mut requirements = ProjectRequirements::default();
+                requirements.stdlib_facets.extend(facet.map(str::to_string));
+                extend_requirements_with_provider_plan(&mut requirements, &plan)?;
+                assert_eq!(requirements.dependencies, vec![expected_dependency.clone()]);
+                assert!(requirements.sdk_path_dependencies.is_empty());
+                assert!(requirements.sdk_dependency_rebindings.is_empty());
+                assert!(requirements.sdk_artifact_projections.is_empty());
+            }
         }
         Ok(())
     }

@@ -144,6 +144,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/bake/rust_caller_target_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "RFC 097 Rust library caller target discovery, source roots, editions and kind-specific output/receipt separation; shared direct native caller path.",
+      "owner": 1486,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/caller_facet.rs": {
       "disposition": "keep",
       "notes": "checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary.",
@@ -204,7 +212,7 @@
       "disposition": "keep",
       "notes": "library re-export resolution and Rust ABI query paths from checked declarations.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -280,10 +288,26 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_project/standard_dependencies.rs": {
+      "disposition": "keep",
+      "notes": "Ordinary standard dependency selection follows compiler-pinned namespace ownership and keeps frontend-only and unknown roots out of package admission.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_publication.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/lock_preparation.rs": {
+      "disposition": "unaffected",
+      "notes": "Existing-owner lock publication reuse guards; backend-neutral request/source/publication invalidation.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -483,7 +507,7 @@
     },
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen \u21d2 locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -497,7 +521,7 @@
           "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_no_flags_override_lock_policy_env_defaults"
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
-          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line.",
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen \u21d2 locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line.",
           "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock"
         },
         "cargo_policy_uses_cli_extra_args_before_env_extra_args": {
@@ -742,7 +766,7 @@
       "split_target": "",
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
-          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well.",
+          "dies": "the `sealed project output \u2026 no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake \u2014 the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test \u2014 folded into the #1142 requirement as well.",
           "twin": "dies"
         }
       },
@@ -756,7 +780,7 @@
       "split_target": "",
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs.",
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable \u2014 a package whose library calls a sibling module's method builds \u2014 is carried by the SDK provider prewarm every suite root performs.",
           "twin": "dies"
         },
         "generated_application_artifact_matches_baseline": {
@@ -822,9 +846,49 @@
       "split_target": "native_driver_project_tests/collections.rs for focused collection parity cases",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/calls3_leftovers.rs": {
+      "disposition": "keep",
+      "notes": "Complete assignment-three generator-set and descriptor-constant originals compare native output with live legacy.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/calls3_projections.rs": {
+      "disposition": "keep",
+      "notes": "Complete assignment-three projection originals compare native output with live legacy across ordered values and module-owned fields.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/calls3_slice_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Complete assignment-three source slice-hook original compares native output with live legacy, including a generic adopter.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs": {
       "disposition": "keep",
       "notes": "Direct-route census refusal grouping and bounded process capture; route-independent measurement support",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/composed_conversion.rs": {
+      "disposition": "keep",
+      "notes": "Actual native session retains the consumer conversion contract; Incan lowering checks source and package placement and exact planned root ABI.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/corpus.rs": {
+      "disposition": "keep",
+      "notes": "Concrete f32 print, str and interpolation retain width-specific digits, a decimal marker and signed zero; intentional correction to legacy display without a fixture cast.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -850,6 +914,102 @@
       "disposition": "keep",
       "notes": "Normal Rust caller links declaration-selected ordinary native dependencies absent from SDK coverage; runtime, selected work, completed-output reuse, native source edits, missing configured input refusal and rollback retain the original output.",
       "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sdk_reader_assembly.rs": {
+      "disposition": "keep",
+      "notes": "Actual driver session assembly retains authenticated SDK reader protocol relations, concrete bodies, independent owner frames and source provenance; wrong checked identity spans refuse selection.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sdk_reader_callback.rs": {
+      "disposition": "keep",
+      "notes": "Captured SDK IoError shared and generic owners, factory construction and complete reader parity contracts retain live normal legacy byte oracles.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sdk_reader_defaults.rs": {
+      "disposition": "keep",
+      "notes": "Live legacy parity for SDK reader defaults, closed callers and shared cursors; stream and error cases pin the later nominal callback refusal.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sdk_reader_iteration.rs": {
+      "disposition": "keep",
+      "notes": "Structural and fallible polling prerequisites compare source initialization, checked cursor calls, exhaustion and first-error routing with live normal legacy.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sdk_reader_metadata.rs": {
+      "disposition": "keep",
+      "notes": "Actual source-lowered reader plans exercise the real native metadata boundary with independent alias and trait argument corruptions.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_frozen_generators.rs": {
+      "disposition": "keep",
+      "notes": "Frozen first-source snapshots preserve lazy element evaluation and complete the unchanged frozen collection original with live legacy parity.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_hashed_models.rs": {
+      "disposition": "keep",
+      "notes": "Hashed source model storage advances to native comparison bounds while derived Eq and Hash retain live legacy parity.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_model_constants.rs": {
+      "disposition": "keep",
+      "notes": "Immutable model constant values and nested frozen carriers compared byte for byte with live legacy output.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_nominals.rs": {
+      "disposition": "keep",
+      "notes": "Same-spelled declarations retain canonical storage owners across checked imports, defaults and facades; live legacy parity and Body IR contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_projections.rs": {
+      "disposition": "keep",
+      "notes": "Indexed scalar operations and enum or Option tag comparisons retain their exact types and match live legacy for full original fixtures.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_sets.rs": {
+      "disposition": "keep",
+      "notes": "Canonical set construction retains checked iterable elements and compares the unchanged generator and frozen collection originals with live legacy.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/sweep_slice_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Checked source slice hooks retain canonical dispatch, Option arguments, generic owner behavior and receiver-first evaluation with live legacy parity.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -5799,7 +5959,7 @@
           "twin": "dies"
         },
         "std_root_prelude_trait_import_is_refused": {
-          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767).",
+          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, \u2026` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767).",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_prelude_trait_imported_from_the_std_root.incn"
         },
         "std_serde_prelude_import_snapshot": {
@@ -5847,7 +6007,7 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn"
         },
         "string_len_spelling_emit_shared_runtime_semantics": {
-          "notes": "twinned by a program counting the scalars of `héllo` through `len()` and `.len()`; the `str_len` helper spelling dies.",
+          "notes": "twinned by a program counting the scalars of `h\u00e9llo` through `len()` and `.len()`; the `str_len` helper spelling dies.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn"
         }
       },
@@ -5991,6 +6151,30 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/library_calls/tests.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only stdlib crate-call defaults retain literal and declaration-owned const values and refuse computed defaults.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/library_opaque_returns.rs": {
+      "disposition": "keep",
+      "notes": "Checked iterator identity defaults retain their original opaque return carrier.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/reads.rs": {
+      "disposition": "keep",
+      "notes": "Await and race source reads participate in ownership and last-use analysis.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs": {
       "disposition": "keep",
       "notes": "Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch.",
@@ -6007,6 +6191,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/callable_names.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only callable name operations, parenthesized reads and exclusion of ordinary fields and type metadata.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6015,10 +6207,90 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/canonical_builtin_methods.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only identities for integer registry helpers and inferred Clone, with source-method identity preservation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs": {
+      "disposition": "keep",
+      "notes": "Checked channel value arguments close send-error payload types without changing legacy inference.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/checked_json.rs": {
+      "disposition": "keep",
+      "notes": "Exact checked Deserialize hook selection, raw versus missing reconstruction policy, and damaged source or retained frame refusals.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/class_inheritance.rs": {
+      "disposition": "keep",
+      "notes": "Checked parent-first layout, canonical override selection and malformed inheritance admission; frontend-only Body IR contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/closed_callback_types.rs": {
+      "disposition": "keep",
+      "notes": "Checked callback return contracts and original fixture local types retained for direct-route execution without modifying legacy inference.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/closed_partial_instances.rs": {
+      "disposition": "keep",
+      "notes": "Checked generic function and constructor partial instances, original imported partial locals and missing instantiation refusal; Body IR-only contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/closed_sdk_rest.rs": {
+      "disposition": "keep",
+      "notes": "Closed SDK race rest carrier and source-owned spelling refusal; frontend-only checked call binding contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/collect_publication.rs": {
+      "disposition": "keep",
+      "notes": "Checked generic collection default bodies retain their canonical slots and complete declaration context at publication.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/constructed_constants.rs": {
+      "disposition": "keep",
+      "notes": "Checked constant construction preserves nominal layout, numeric widths and required native signature slots.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/constructor_owners.rs": {
+      "disposition": "keep",
+      "notes": "Original checked classmethod constructors retain exact owner identities and field layouts in local and project profiles through executable encoding.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -6031,6 +6303,78 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/decorated_bindings.rs": {
+      "disposition": "keep",
+      "notes": "Original callable identity and initialized decorator replacement contracts; frontend-only Body IR coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/decorated_publication.rs": {
+      "disposition": "keep",
+      "notes": "Checked decorated package execution retains originals, replacements and private module initialization without widening public roots.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/derived_display.rs": {
+      "disposition": "keep",
+      "notes": "Exact checked enum Display selections remain separate from automatic Debug and Clone.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/empty_list_elements.rs": {
+      "disposition": "keep",
+      "notes": "Private agreed empty-list append elements, frozen legacy initializer snapshots, complete fresh task parity and conflicting, absent, separate binding and invalid receiver controls.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/enum_payload_publication.rs": {
+      "disposition": "keep",
+      "notes": "Imported enum payload context retains exact canonical origin and required public layout; frontend-only contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/executable_roundtrips.rs": {
+      "disposition": "keep",
+      "notes": "Actual checked ordinary and SDK-delegated callable records roundtrip through the production positional executable codec without omitted fields.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/executable_wire.rs": {
+      "disposition": "keep",
+      "notes": "Production executable codec roundtrips for ordinary methods and checked SDK delegations with empty binder and default vectors.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/field_metadata.rs": {
+      "disposition": "keep",
+      "notes": "Canonical generated metadata operations and declaration-owned field values, with source method preservation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/field_owners.rs": {
+      "disposition": "keep",
+      "notes": "Original nested-trait field accesses retain distinct local and imported declaration-owned layouts in local and project production profiles through executable encoding.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/for_patterns.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6039,10 +6383,66 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/frozen_collections.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only static frozen data retention and canonical constant versus local shadowing coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "tests": {}
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/generic_decorated_publication.rs": {
+      "disposition": "keep",
+      "notes": "Generic decorated originals retain declaring binders and their execution closure; closed signatures keep a refusal until per-instantiation cache parity is implemented.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/generic_default_publication.rs": {
+      "disposition": "keep",
+      "notes": "Generic constructor defaults borrow only their actual declaring model context; publication retains checked layouts and refuses undeclared parameters.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/hashed_models.rs": {
+      "disposition": "keep",
+      "notes": "Source equality adoption retains canonical selected implementations independently of hashed collection storage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": true,
+      "split_target": "module identities and canonical imported call contracts",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/implicit_closure_parameters.rs": {
+      "disposition": "keep",
+      "notes": "Private validated implicit closure parameter requirements, unchanged legacy signature snapshot, original parity and absent/conflicting/caller-owned/shadowed controls.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/imported_integer_constants.rs": {
+      "disposition": "keep",
+      "notes": "Body IR canonical SDK constant references, local shadowing and stale declaration identity guards before verified publication.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/inferred_clone.rs": {
+      "disposition": "keep",
+      "notes": "Inferred Clone targets, same-name source method preservation and temporary call-site fact restoration; frontend-only contracts.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -6055,10 +6455,122 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/iteration_protocol.rs": {
+      "disposition": "keep",
+      "notes": "Canonical iteration hook targets, checked polling and temporary-call fact preservation; frontend contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only SDK type identity and nested declaration retention on the direct route.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "tests": {}
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs": {
+      "disposition": "keep",
+      "notes": "Checked method-partial declaration frames, value-receiver snapshots, presets and named default admission; frontend-only Body IR contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/model_constants.rs": {
+      "disposition": "keep",
+      "notes": "Model constants retain aggregate values without mutable global storage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/module_carriers.rs": {
+      "disposition": "keep",
+      "notes": "Same-spelled declarations retain canonical storage owners across checked imports, defaults and facades; live legacy parity and Body IR contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/native_carriers.rs": {
+      "disposition": "keep",
+      "notes": "Checked native stdlib ABI ownership and source-shadow controls retained in Body IR without legacy changes.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_constraints.rs": {
+      "disposition": "keep",
+      "notes": "Checked constrained-primitive predicates and explicit/implicit construction sequencing retained in Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_fields.rs": {
+      "disposition": "keep",
+      "notes": "Sole-field checked validation extraction, missing canonical layout and multi-field refusal boundaries in Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Canonical source hook calls, own-owner raw construction, and ordered fail-fast coercion chains retained in Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_json.rs": {
+      "disposition": "keep",
+      "notes": "Checked serde capabilities on raw newtype layouts retained solely for the direct Body IR boundary.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_string_conversion.rs": {
+      "disposition": "keep",
+      "notes": "Direct-only automatic conversion candidates require checked support and exclude hooks, constraints, binders and source adoptions without changing tuple layouts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_sum.rs": {
+      "disposition": "keep",
+      "notes": "Canonical numeric-newtype payload projection and terminal reconstruction in checked Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs": {
+      "disposition": "keep",
+      "notes": "Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_factories.rs": {
+      "disposition": "keep",
+      "notes": "Checked static factory owner arguments and Self result carriers without legacy inference changes.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -6066,6 +6578,22 @@
     "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs": {
       "disposition": "keep",
       "notes": "Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/opaque_returns.rs": {
+      "disposition": "keep",
+      "notes": "Body IR retains proven concrete carriers of local opaque trait returns without changing legacy checker facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/open_nominal_types.rs": {
+      "disposition": "keep",
+      "notes": "Closed checked nominal payloads, destinations, trait adoptions and canonical testing arguments retained as additive Body IR facts without rewriting legacy inference.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -6087,6 +6615,38 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/private_publication.rs": {
+      "disposition": "keep",
+      "notes": "Public-root execution retains required private helpers and layouts while preserving exact manifest membership and incomplete-closure refusal.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/project_nominal_carriers.rs": {
+      "disposition": "keep",
+      "notes": "Direct project nominal carriers retain exact checked module identity at return, parameter and deferred default use sites.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/properties.rs": {
+      "disposition": "keep",
+      "notes": "Checked computed getter bodies, canonical calls and immutable receiver frames retained for direct-route execution; original control relocated from methods_and_defaults.rs and frontend identity contracts preserved.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/protocol_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Checked truthiness receivers and length/membership method identities retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/provider_plans.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6095,9 +6655,273 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/published_generics.rs": {
+      "disposition": "keep",
+      "notes": "Checked generic publication roundtrips, exact default-frame and trait-owner closure, and undeclared type parameter refusals.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/qualified_async_calls.rs": {
+      "disposition": "keep",
+      "notes": "Private validated module-qualified async call targets, unchanged legacy output snapshots, complete task carrier, invalid-call guards and call-site transaction preservation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/raises_assertions.rs": {
+      "disposition": "keep",
+      "notes": "Deferred assertion calls retain checked function items and runtime error identities; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/reader_callable_ownership.rs": {
+      "disposition": "keep",
+      "notes": "Captured SDK callback reuse retains clone and move facts plus environment-capable local storage without converting it into a function pointer.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/reexported_call_types.rs": {
+      "disposition": "keep",
+      "notes": "Private closed function contracts through checked published rename links, complete original and legacy snapshot preservation with invalid or shadowed call guards.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/registry_descriptions.rs": {
+      "disposition": "keep",
+      "notes": "Checked method description spans and once-only local registry initialization retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/result_callbacks.rs": {
+      "disposition": "keep",
+      "notes": "Contextual Result callback parameter and settled constructor channels retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/return_pass_order.rs": {
+      "disposition": "keep",
+      "notes": "Checked model identity and source trait annotations survive ordered Body IR carrier refinement.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs": {
+      "disposition": "keep",
+      "notes": "Checked callable expression values and evaluation order retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_factory_defaults.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK factory identity and source-owned default frame, absent selection refusal and source shadowing.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_generic_newtypes.rs": {
+      "disposition": "keep",
+      "notes": "Generic SDK newtypes retain declared owner binders and borrowed deferred method signatures; same-spelled source types retain independent layouts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_iterator_dispatch.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK iteration hook identities retain native declarations independently of written call facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_optional_defaults.rs": {
+      "disposition": "keep",
+      "notes": "Declaring SDK parameter types retain optional None defaults; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_ordinal_dispatch.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK scalar Self receivers and associated trait signatures; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_reader_defaults.rs": {
+      "disposition": "keep",
+      "notes": "Source-authenticated SDK reader Self signatures, checked slot/package/span negatives, concrete constructor carriers and opaque receiver controls.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/sdk_selected_trait_calls.rs": {
+      "disposition": "keep",
+      "notes": "Checked SDK trait call identities, native width instantiations and source-method negatives remain frontend contracts for the direct route.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/set_constructors.rs": {
+      "disposition": "keep",
+      "notes": "Canonical set construction retains checked generator and frozen collection element types, including an explicit generic binder.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/slice_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Source slice hooks retain checked method identities and typed Option parts while builtin slices remain structural projections.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/source_comparison.rs": {
+      "disposition": "keep",
+      "notes": "Canonical standard comparison ABI retention and ordinary same-spelling preservation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/static_publication.rs": {
+      "disposition": "keep",
+      "notes": "Public storage publication retains canonical initialization and requires the reader's exact storage context; frontend-only contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
       "disposition": "keep",
       "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/string_slice_calls.rs": {
+      "disposition": "keep",
+      "notes": "Private checked string slice result and canonical primitive member, unchanged legacy snapshots, complete original and unproven bounds or arities.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/task_handles.rs": {
+      "disposition": "keep",
+      "notes": "Registered opaque task storage and native argument identity; unrelated Rust paths remain unprojected.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs": {
+      "disposition": "keep",
+      "notes": "Builtin codec slots and registry defaults retained in Body IR; source-owned members keep their own contract.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_adoptions.rs": {
+      "disposition": "keep",
+      "notes": "Checked canonical trait adoptions retain ordered arguments and marker protocols independently of executable method slots.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_input_arguments.rs": {
+      "disposition": "keep",
+      "notes": "Checked generic trait input arguments and canonical type-level metadata owner facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_partial_presets.rs": {
+      "disposition": "keep",
+      "notes": "Checked literal trait partial arguments and explicit override preservation at the Body IR boundary.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_placeholders.rs": {
+      "disposition": "keep",
+      "notes": "Documented trait placeholders retain interface-only context, while real default bodies and unit no-ops remain executable.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_return_witnesses.rs": {
+      "disposition": "keep",
+      "notes": "Shared generic return witnesses, swapped adoption binders and exact owner-scope negatives retained for the authenticated SDK factory prerequisite.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/trait_templates.rs": {
+      "disposition": "keep",
+      "notes": "Generic adopter defaults validate their exact owner binders and reject foreign or uninferred placeholders.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/tuple_transfers.rs": {
+      "disposition": "keep",
+      "notes": "Consumed tuple fields retain their ownership transfers without adding native Clone requirements.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/value_enum_methods.rs": {
+      "disposition": "keep",
+      "notes": "Checked value-enum layouts beside supported methods and public executable context; frontend-only contracts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/web_path.rs": {
+      "disposition": "keep",
+      "notes": "Authenticated canonical native web Path tuple storage and independent filesystem Path ownership retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/trait_returns.rs": {
+      "disposition": "keep",
+      "notes": "Trait return owners require checked, non-conflicting bindings.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -6115,6 +6939,14 @@
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/executable_resolution/tests.rs": {
+      "disposition": "keep",
+      "notes": "Selected package executable closures retain active SDK context, coverage and digest checks, reject disabled providers and refuse conflicting package instances.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -6311,6 +7143,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/body_ir_factories/tests.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only static factory facts retain authenticated published owner bound provenance without changing legacy tables.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
@@ -6355,6 +7195,14 @@
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/body_ir_adoption_arguments.rs": {
+      "disposition": "keep",
+      "notes": "Checked Body IR-only bare-adoption argument witnesses and preservation of legacy explicit-clause facts.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -10976,6 +11824,11 @@
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend.",
           "twin": ""
         },
+        "workspace_owner_retains_all_members_and_invalidates_sibling_inputs": {
+          "disposition": "unaffected",
+          "notes": "Original owner workspace lock retention, sibling source/test invalidation and shared root publication; independent of emitted backend.",
+          "twin": ""
+        },
         "workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997": {
           "disposition": "unaffected",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend.",
@@ -12041,13 +12894,13 @@
           "twin": "dies"
         },
         "merge_test_runner_dependencies_promotes_dev_deps_into_dependencies": {
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7).",
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half \u2014 a test file using a `[rust-dev-dependencies]` crate through `incan test` \u2014 is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7).",
           "disposition": "retire",
           "notes": "libtest harness of the generated test crate",
           "twin": "dies"
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7).",
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half \u2014 a normal/dev version conflict surfacing as an `incan test` failure naming the crate \u2014 is untwinned and goes with #1337's interop spec (slice 7).",
           "disposition": "retire",
           "notes": "libtest harness of the generated test crate",
           "twin": "dies"
@@ -12424,6 +13277,12 @@
       "notes": "benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not.",
       "owner": 1561,
       "pattern": "**/*.incn"
+    },
+    "workspaces/compiler-bootstrap/repros/parallel-test-compiler-stack": {
+      "disposition": "keep",
+      "owner": 2213,
+      "notes": "Two Incan source modules exercise parallel compiler workers without a stack-size environment override; run through incan test with jobs 4 and 1.",
+      "pattern": "test_*.incn"
     },
     "workspaces/docs-site/docs/_snippets/language/examples": {
       "disposition": "re-point",

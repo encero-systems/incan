@@ -132,9 +132,12 @@ fn synthetic_body() -> Body {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut module = BodyIrModule {
+        decorated_bindings: Vec::new(),
+        entrypoint_effects: Vec::new(),
+        string_conversion_contract: incan_semantics_core::body_ir::StringConversionContract::Unselected,
         constant_declarations: Vec::new(),
         type_alias_declarations: Vec::new(),
-        module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],
+        module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], native_union_declarations: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],
         fieldless_enum_declarations: vec![], value_enum_declarations: vec![], trait_declarations: vec![], trait_implementations: vec![], bodies: vec![synthetic_body()],
     };
     assert_eq!(validate_module(&module), Ok(1));

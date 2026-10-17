@@ -1,13 +1,94 @@
 """Language formatting and collection helpers used by the direct native route."""
 
+pub from fallible_defaults import (
+    fallible_next,
+    fallible_map,
+    fallible_filter,
+    fallible_flat_map,
+    fallible_take,
+    fallible_inspect,
+    fallible_map_err,
+    fallible_inspect_err,
+    fallible_collect,
+    fallible_fold,
+)
 pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
+pub from generic_decorators import cached_text_binding, callable_text_name
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
 pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
-pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier
+pub from frozen_text import length_frozen_bytes
+pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
+pub from diverging_errors import raise_value_error
+pub from frozen_collections import frozen_list_length, frozen_list_items, frozen_list_text_items
+pub from frozen_collections import frozen_list_length_ref, frozen_set_length_ref, frozen_dict_length_ref
+pub from frozen_collections import frozen_set_length, frozen_set_items, frozen_set_text_items
+pub from frozen_collections import frozen_list_byte_items, own_static_bytes
+pub from frozen_collections import (
+    frozen_dict_length,
+    frozen_dict_text_get,
+    frozen_dict_get,
+    frozen_dict_text_contains,
+    frozen_dict_contains,
+)
+pub from frozen_collections import frozen_dict_keys, frozen_dict_text_keys
+pub from raises_assertions import assert_raises_deferred
+pub from raises_assertions import assert_equal, assert_unequal
+pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
+pub from newtype_constraints import validate_newtype_constraint
+pub from newtype_hooks import checked_newtype_result
+pub from checked_json import checked_json_result
+pub from string_conversions import parse_newtype_int
+pub from newtype_field_hooks import checked_newtype_field_result
+pub from newtype_sums import add_newtype_sum, checked_sum_result
+pub from validation_errors import make_validation_error, make_coded_validation_error, format_validation_error
+pub from rust::incan_std_core::validation import ValidationError as ValidationErrorCarrier
 pub from carriers import format_carrier, clone_carrier_payload
-pub from async_ import run_async_entry
-pub from generators import poll_generator
+pub from async_ import run_async_entry, run_future_entry
+pub from race_ import race_pair
+pub from generators import (
+    poll_generator,
+    list_generator,
+    range_generator,
+    once_generator,
+    empty_generator,
+    int_step_generator,
+    float_step_generator,
+    bool_step_generator,
+    int_callable_step_generator,
+    float_callable_step_generator,
+    bool_callable_step_generator,
+    str_callable_step_generator,
+    item_callable_step_generator,
+    take_generator,
+    skip_generator,
+    batch_generator,
+    chain_generators,
+    take_while_int_generator,
+    skip_while_int_generator,
+    flat_map_int_generator,
+    flat_map_int_set_generator,
+    map_text_callable_generator,
+    flat_map_text_callable_generator,
+    any_text_callable_generator,
+    flat_map_int_generators,
+    enumerate_generator,
+    zip_generators,
+    map_int_generator,
+    map_float_generator,
+    map_bool_generator,
+    filter_int_generator,
+    filter_float_generator,
+    filter_bool_generator,
+    count_generator,
+    sum_int_generator,
+    fold_int_generator,
+    reduce_int_generator,
+    any_int_generator,
+    all_int_generator,
+    find_int_generator,
+    for_each_int_generator,
+)
 pub from pattern_assertions import (
     missing_some,
     missing_some_with,
@@ -23,7 +104,10 @@ pub from pattern_assertions import (
 pub from model_values import (
     debug_model,
     debug_value,
+    display_value,
+    display_type_parameter,
     serialize_model,
+    deserialize_model,
     serialize_int,
     serialize_float,
     serialize_bool,
@@ -35,7 +119,8 @@ pub from model_values import (
     greater_model,
     greater_equal_model,
 )
-pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text
+pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text, text_items
+pub from tuple_iterators import zip_lists_generator
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import equal_set, unequal_set, equal_dict, unequal_dict
 pub from collections import extend_list_set, extend_set, extend_dict
@@ -46,6 +131,7 @@ pub from collections import (
     contains_dict,
     clone_dict,
     get_dict,
+    borrow_mut_dict,
     optional_dict,
     keys_dict,
     values_dict,
@@ -55,6 +141,8 @@ pub from collections import (
 )
 pub from builtins import power_i64, power_f64, power_f32
 pub from builtins import sum_int, sum_bool, truth_text, truth_list
+pub from builtins import minimum_int, maximum_int, minimum_float, maximum_float
+pub from builtins import minimum_bool, maximum_bool, minimum_text, maximum_text, read_file_text, write_file_text
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (
@@ -66,6 +154,8 @@ pub from statics import (
     write_static_float,
     read_static_bool,
     write_static_bool,
+    begin_module_initialization,
+    end_module_initialization,
 )
 pub from static_lists import (
     read_static_int_list,
@@ -77,8 +167,15 @@ pub from static_lists import (
     read_static_text_list,
     write_static_text_list,
 )
+pub from static_collections import (
+    read_static_text_int_dict,
+    write_static_text_int_dict,
+    read_static_int_set,
+    write_static_int_set,
+)
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
+    slice_text,
     starts_text,
     ends_text,
     length_text,
@@ -92,6 +189,7 @@ pub from strings import (
     split_default_text,
     join_text,
     concat_text,
+    slice_text_bounds,
     equal_text,
     unequal_text,
     less_text,
@@ -101,7 +199,7 @@ pub from strings import (
 )
 pub from lists import empty_list, append_list, length_list, get_list, set_list, clone_list, slice_list
 pub from lists import equal_list, unequal_list
-pub from lists import concat_list, sorted_list, sorted_float
+pub from lists import concat_list, repeat_list, sorted_list, sorted_float
 pub from lists import contains_list
 pub from lists import borrow_list_mut
 pub from lists import count_list, index_list, extend_list, pop_list, remove_list, swap_list
@@ -193,6 +291,20 @@ pub from numerics import (
     is_nan_f32,
     parse_int,
     parse_float,
+)
+pub from integer_helpers import (
+    checked_add_u8,
+    checked_sub_u8,
+    checked_mul_u8,
+    checked_pow_u8,
+    wrapping_add_u8,
+    wrapping_sub_u8,
+    wrapping_mul_u8,
+    wrapping_pow_u8,
+    saturating_add_u8,
+    saturating_sub_u8,
+    saturating_mul_u8,
+    saturating_pow_u8,
 )
 
 
