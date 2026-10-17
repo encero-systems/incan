@@ -14,9 +14,10 @@ use incan_lang::interop::{
 };
 use ra_ap_hir::{
     Adt, AssocItem, Const as HirConst, Crate, DisplayTarget, Enum, FieldSource, Function, GenericDef, GenericParam,
-    HasSource, HasVisibility, HirDisplay, Impl, Module, ModuleDef, Mutability, Name, ScopeDef, Semantics,
-    Static as HirStatic, Trait, Type, Variant, VariantDef, Visibility, attach_db,
+    HasSource, HasVisibility, HirDisplay, Impl, ModPath, Module, ModuleDef, Mutability, Name, PathKind, ScopeDef,
+    Semantics, Static as HirStatic, Trait, Type, Variant, VariantDef, Visibility, attach_db,
 };
+use ra_ap_hir_def::{ModuleId, per_ns::PerNs, resolver::HasResolver};
 use ra_ap_hir_ty::method_resolution::TraitImpls;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_syntax::{
@@ -1543,7 +1544,7 @@ fn surface_trait_candidates(ty: &Type<'_>, authorized_trait_crates: &HashSet<Cra
     candidates
 }
 
-/// Collect non-blanket trait impls whose traits belong to the queried Rust surface dependency closure.
+/// Collect non-blanket impls of exported traits that belong to the queried Rust surface dependency closure.
 ///
 /// Candidate acquisition stays inside that closure rather than expanding every loaded analyzer crate. The trait's
 /// defining crate is checked separately, and each distinct trait is solved once for this receiver/environment;
@@ -1583,7 +1584,12 @@ fn collect_implemented_traits(
         if observe {
             work.trait_candidates += 1;
         }
-        if !authorized_trait_crates.contains(&trait_def.module(db).krate(db)) {
+        // A trait its crate does not export cannot be named from source. Recording it would also make a re-exported
+        // type's facts depend on the surface queried: std's private `SizeHint` reaches `std::time::Duration` but not
+        // `core::time::Duration`, one definition with two competing facts.
+        if !authorized_trait_crates.contains(&trait_def.module(db).krate(db))
+            || !is_exported_rust_api(trait_def.visibility(db))
+        {
             continue;
         }
         if observe {
@@ -1880,24 +1886,43 @@ fn resolved_derive_macro(
     })
 }
 
-/// Resolve all final namespaces through the existing HIR resolver and facade compatibility scope walk.
+/// Select a public callable value using its import-site visibility, not its original definition's visibility.
 ///
-/// Preserve the first selected definition while retaining any derive macro under that exact imported path. This
-/// avoids scanning unrelated graph heads to prove that a plain trait has no associated derive contract.
+/// Rust permits a module and function at one path. A private module import must not mask the callable contract, but
+/// a private function import must not replace a public module merely because its original definition is public.
+fn public_function_in_namespace(namespace: PerNs) -> Option<ModuleDef> {
+    let value = namespace.values?;
+    if value.vis != Visibility::Public {
+        return None;
+    }
+    let definition = ModuleDef::from(value.def);
+    matches!(definition, ModuleDef::Function(_)).then_some(definition)
+}
+
+/// Resolve all final namespaces through the existing analyzer resolver and facade compatibility scope walk.
+///
+/// A public function takes precedence over a same-path module for terminal item metadata. Other definition and
+/// derive-macro choices stay unchanged; intermediate segments still resolve through the module namespace.
 fn resolve_rust_path(
     db: &RootDatabase,
     krate: Crate,
     segments: &[Name],
 ) -> Result<ResolvedRustPath, RustMetadataError> {
     let root = krate.root_module(db);
-    if let Some(mut it) = root.resolve_mod_path(db, segments.iter().cloned())
-        && let Some(first) = it.next()
-    {
-        let definition = first.into_module_def();
-        let derive_macro = resolved_derive_macro(
-            std::iter::once(definition).chain(it.map(|item| item.into_module_def())),
-            db,
-        );
+    let root_id = ModuleId::from(root);
+    let namespace = root_id
+        .resolver(db)
+        .resolve_module_path_in_items(db, &ModPath::from_segments(PathKind::Plain, segments.iter().cloned()));
+    let mut definitions = namespace
+        .iter_items()
+        .map(|(item, _)| ra_ap_hir::ItemInNs::from(item).into_module_def());
+    if let Some(first) = definitions.next() {
+        let definition = if matches!(first, ModuleDef::Module(_)) {
+            public_function_in_namespace(namespace).unwrap_or(first)
+        } else {
+            first
+        };
+        let derive_macro = resolved_derive_macro(std::iter::once(definition).chain(definitions), db);
         return Ok(ResolvedRustPath {
             definition,
             derive_macro,
@@ -1918,6 +1943,13 @@ fn resolve_rust_path(
             };
             let ScopeDef::ModuleDef(definition) = scope_def else {
                 return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
+            };
+            let definition = if matches!(definition, ModuleDef::Module(_)) {
+                let module_id = ModuleId::from(module);
+                let namespace = module_id.def_map(db)[module_id].scope.get(segment);
+                public_function_in_namespace(namespace).unwrap_or(definition)
+            } else {
+                definition
             };
             let derive_macro = resolved_derive_macro(
                 std::iter::once(definition).chain(matches.filter_map(|(_, scope_def)| match scope_def {
@@ -2393,6 +2425,40 @@ mod tests {
         assert!(preview.dry_run);
         assert!(preview.skipped_active_entries.iter().any(|held| held == identity));
         assert!(!preview.removed_entries.iter().any(|removed| removed == identity));
+        Ok(())
+    }
+
+    /// Cold inspection recovers the actual pinned sysroot UTF-8 Result signature without provider metadata or caches.
+    #[test]
+    fn cold_sysroot_utf8_function_retains_result_signature() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_lang::interop::{RustTypeShapePathFallback, parse_rust_type_shape_text};
+
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("loaf.toml"),
+            "[project]\nname='cold_sysroot_probe'\nversion='0.1.0'\n[rust]\nname='cold_sysroot_probe'\nedition='2024'\ntype='lib'\n",
+        )?;
+        fs::write(tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER), b"direct\n")?;
+        fs::write(tmp.path().join("src/lib.rs"), "pub fn touch() {}\n")?;
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "std::str::from_utf8")?;
+        let RustItemKind::Function(signature) = metadata.kind else {
+            return Err(format!("from_utf8 metadata is not a function: {:?}", metadata.kind).into());
+        };
+        assert_eq!(signature.params.len(), 1);
+        assert_eq!(signature.params[0].type_display.replace(' ', ""), "&[u8]");
+        let shape = parse_rust_type_shape_text(&signature.return_type, |_| None, RustTypeShapePathFallback::RustPath);
+        let RustTypeShape::Result(ok, err) = shape else {
+            return Err(format!("from_utf8 return is not Result: {}", signature.return_type).into());
+        };
+        assert_eq!(*ok, RustTypeShape::Ref(Box::new(RustTypeShape::Str)));
+        let RustTypeShape::RustPath { path, args } = *err else {
+            return Err(format!("from_utf8 error is not a concrete Rust type: {}", signature.return_type).into());
+        };
+        assert_eq!(path.rsplit("::").next(), Some("Utf8Error"));
+        assert!(args.is_empty());
+        println!("actual_sysroot_signature={}", signature.return_type);
         Ok(())
     }
 

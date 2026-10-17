@@ -589,11 +589,16 @@ fn extern_alias(dependency_key: &str, target: &PreparedUnit) -> String {
 
 /// Share the actual native producer's alias contract with source-current physical edge validation.
 pub(crate) fn native_extern_alias(dependency_key: &str, loaf: &str, manifest: &toml::Value) -> String {
-    let package = loaf.rsplit('/').next().unwrap_or(loaf);
     let library = manifest
         .get("rust")
         .and_then(|rust| rust.get("name"))
         .and_then(toml::Value::as_str);
+    native_extern_alias_with_library_name(dependency_key, loaf, library)
+}
+
+/// Apply the producer's alias contract to an authenticated declaration or compiled library name.
+pub(crate) fn native_extern_alias_with_library_name(dependency_key: &str, loaf: &str, library: Option<&str>) -> String {
+    let package = loaf.rsplit('/').next().unwrap_or(loaf);
     let alias = match library {
         Some(library) if dependency_key == package => library,
         _ => dependency_key,
@@ -1373,6 +1378,19 @@ impl SdkCompiledClosure {
         let mut graph = crate::native_loaf::NativeLoafGraph::default();
         publish_native_loaf_units(self, store, &mut graph)?;
         Ok(graph)
+    }
+
+    /// Revalidate original native payloads and every retained auxiliary closure before a fresh executable handoff.
+    /// This preserves the original leases and checks physical corruption without reacquiring catalog entries.
+    pub fn verify_retained_outputs(&self) -> Result<(), Error> {
+        self.require_complete()?;
+        for unit in &self.units {
+            unit.owner.verify_admitted_payload()?;
+        }
+        for closure in self.auxiliary_targets.values() {
+            closure.verify_retained_outputs()?;
+        }
+        Ok(())
     }
 
     /// Project the successfully compiled subgraph while retaining its source leases in this closure.

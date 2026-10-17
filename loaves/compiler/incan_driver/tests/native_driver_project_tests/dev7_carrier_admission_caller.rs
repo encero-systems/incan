@@ -2,14 +2,26 @@
 #![feature(rustc_private)]
 extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
+extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
+extern crate rustc_trait_selection;
 extern crate thin_vec;
 
 // DRIVER_MODULES
+
+#[path = "instantiated_owned_results_caller.rs"]
+mod instantiated_owned_results;
+
+#[path = "checked_json_admission_caller.rs"]
+mod checked_json_admission;
+
+#[path = "numeric_boundaries_caller.rs"]
+mod numeric_boundaries;
 
 use incan_frontend::{body_ir::build_body_ir_module_v0, lexer, parser, typechecker::TypeChecker};
 use incan_mir_lowering::caller::incan::lower_module;
@@ -57,10 +69,16 @@ fn checked_module() -> TestResult<BodyIrModule> {
 
 /// Retain genuine frontend identities for each independent source control.
 fn checked_source(source: &str, module: &str) -> TestResult<BodyIrModule> {
+    checked_source_in_package(source, module, None)
+}
+
+/// Mint actual package identities before checking a publication control; local source controls keep module origins.
+fn checked_source_in_package(source: &str, module: &str, package: Option<&str>) -> TestResult<BodyIrModule> {
     let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let module_path = vec![module.to_owned()];
     let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(package.map(str::to_owned));
     checker.set_current_module_path(Some(module_path.clone()));
     checker
         .check_program(&program)
@@ -76,24 +94,15 @@ pub def main() -> None:
 "#;
 
 /// Decode actual package fragments whose publisher deliberately removed every call's source-local span id.
-fn published_calls(source: &BodyIrModule) -> TestResult<BodyIrModule> {
+fn published_calls() -> TestResult<BodyIrModule> {
+    let source = checked_source_in_package(CALL_SOURCE, "dev7_calls", Some("dev7_calls"))?;
     let public: BTreeSet<_> = source
         .bodies
         .iter()
-        .map(|body| {
-            let mut identity = body.canonical.clone().ok_or("missing source body identity")?;
-            let SymbolOrigin::Module(module_path) = identity.origin else {
-                return Err("expected checked source owner");
-            };
-            identity.origin = SymbolOrigin::Package {
-                library: "dev7_calls".into(),
-                module_path,
-            };
-            Ok(identity)
-        })
+        .map(|body| body.canonical.clone().ok_or("missing checked package body identity"))
         .collect::<Result<_, &str>>()?;
     let bytes = build_surface(
-        std::slice::from_ref(source),
+        std::slice::from_ref(&source),
         "dev7_calls",
         "1.0.0",
         &public,
@@ -140,7 +149,7 @@ fn callable_controls() -> TestResult<()> {
     let source = checked_source(CALL_SOURCE, "dev7_calls")?;
     let plan = lower_module(&source, CALL_SOURCE.to_owned(), "dev7_calls.incn".to_owned())?;
     validation::validate(&plan)?;
-    let mut published = published_calls(&source)?;
+    let mut published = published_calls()?;
     if named_call(&mut published)?.direct_call_id.is_some() {
         return Err("publisher retained a source-local call id".into());
     }
@@ -749,7 +758,7 @@ fn plan_controls(baseline: &plan::Plan) -> TestResult<()> {
 }
 
 /// Check nested payloads and reversed carrier ordering before independent malformed-input controls.
-fn main() -> TestResult<()> {
+fn nested_carrier_controls() -> TestResult<()> {
     let baseline = checked_module()?;
     let mut checked = baseline.clone();
     let _ = projection(&mut checked)?;
@@ -764,6 +773,7 @@ fn main() -> TestResult<()> {
     declaration.name = "HeapRecursive".into();
     declaration.carrier.clear();
     declaration.source_type.clear();
+    declaration.member_debug = false;
     declaration.variants = vec![plan::EnumVariant {
         name: "Children".into(),
         fields: vec![plan::PlanType::List(
@@ -780,4 +790,238 @@ fn main() -> TestResult<()> {
     projected_enum_borrow_controls()?;
     println!("nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed");
     Ok(())
+}
+
+/// Select independent ownership controls so each regression fails only its dedicated host test.
+fn main() -> TestResult<()> {
+    match std::env::args().nth(1).as_deref() {
+        Some("mutable-enum") => mutable_enum_reference_controls(),
+        Some("mutable-tuple") => mutable_tuple_reference_controls(),
+        Some("checked-json") => checked_json_admission::check(),
+        Some("numeric-boundaries") => numeric_boundaries::check(),
+        Some("collection-arity") => nested_collection_arity_controls(),
+        Some("owned-result") => instantiated_owned_results::check(),
+        Some("validation-format") => instantiated_owned_results::check_validation_format(),
+        _ => nested_carrier_controls(),
+    }
+}
+
+/// Check mutable-reference identity and move-only storage through the canonical native validator.
+fn mutable_enum_reference_controls() -> TestResult<()> {
+    // Reuse a genuine retained enum declaration; vary only the newly inserted unused local's type.
+    let module = checked_module()?;
+    let mut baseline = lower_module(&module, SOURCE.to_owned(), "mutable_enum_identity.incn".to_owned())?;
+    validation::validate(&baseline)?;
+    let name = baseline.enums.first().ok_or("missing source enum declaration")?.name.clone();
+    let function = baseline.functions.iter_mut().find(|function| function.name == "main").ok_or("missing main")?;
+    let slot = function.locals.len();
+    let mut local = function.locals.first().ok_or("missing return local")?.clone();
+    local.ty = plan::PlanType::EnumMutRef(0, name.clone());
+    function.locals.push(local);
+    validation::validate(&baseline)?;
+    for ty in [
+        plan::PlanType::EnumMutRef(-1, name.clone()),
+        plan::PlanType::EnumMutRef(i64::try_from(baseline.enums.len())?, name.clone()),
+        plan::PlanType::EnumMutRef(0, "NotTheDeclaredEnum".to_owned()),
+    ] {
+        let mut candidate = baseline.clone();
+        let function = candidate.functions.iter_mut().find(|function| function.name == "main").ok_or("missing main")?;
+        function.locals.get_mut(slot).ok_or("missing mutable enum local")?.ty = ty;
+        rejected_plan(&candidate, "mutable enum identity", "enum type differs from its declaration")?;
+    }
+
+    println!("mutable enum identity: valid identity passed; negative/dangling/mismatched identities refused");
+    Ok(())
+}
+
+/// Check that an initialized exclusive tuple parameter can move but cannot be implicitly copied.
+fn mutable_tuple_reference_controls() -> TestResult<()> {
+    // A checked `mut tuple` input is an initialized exclusive reference; moving it remains valid.
+    let source = "def keep(mut pair: tuple[list[int], int]) -> None:\n    pass\n\ndef main() -> None:\n    mut pair: tuple[list[int], int] = ([1], 2)\n    keep(pair)\n";
+    let module = checked_source(source, "mutable_tuple_transfer")?;
+    let baseline = lower_module(&module, source.to_owned(), "mutable_tuple_transfer.incn".to_owned())?;
+    validation::validate(&baseline)?;
+    let mut moved = baseline.clone();
+    add_tuple_transfer(&mut moved, true)?;
+    validation::validate(&moved)?;
+    let mut copied = baseline.clone();
+    add_tuple_transfer(&mut copied, false)?;
+    rejected_plan(&copied, "exclusive tuple reference copied", "owned formatting values cannot be copied")?;
+    println!("mutable tuple admission: canonical borrow and explicit move passed; implicit Copy refused");
+    Ok(())
+}
+
+/// Insert one transfer from a checked tuple parameter to otherwise identical local storage.
+fn add_tuple_transfer(plan: &mut plan::Plan, moved: bool) -> TestResult<()> {
+    let function = plan.functions.iter_mut().find(|function| function.name == "keep").ok_or("missing keep function")?;
+    let parameter = function.locals.get(1).ok_or("missing tuple parameter local")?.clone();
+    if !matches!(parameter.ty, plan::PlanType::TupleMutRef(_)) {
+        return Err("checked mut tuple parameter did not retain exclusive tuple representation".into());
+    }
+    let output = i64::try_from(function.locals.len())?;
+    let span = parameter.span.clone();
+    function.locals.push(parameter);
+    let source = plan::Place { local: 1, projection: plan::Projection::Whole, span: span.clone() };
+    let operand = plan::Operand {
+        kind: if moved { plan::OperandKind::Move(source) } else { plan::OperandKind::Copy(source) },
+        span: span.clone(),
+    };
+    let destination = plan::Place { local: output, projection: plan::Projection::Whole, span: span.clone() };
+    function.blocks.first_mut().ok_or("missing function entry")?.statements.push(plan::Statement {
+        kind: plan::StatementKind::Assign(destination, plan::Rvalue { kind: plan::RvalueKind::Use(operand), span: span.clone() }),
+        span,
+    });
+    Ok(())
+}
+
+/// Start with checked nested collection signatures, then refuse malformed leaf vectors in each native type position.
+fn nested_collection_arity_controls() -> TestResult<()> {
+    let source = r#"def lists(values: dict[str, list[int]]) -> dict[str, list[int]]:
+    return values
+
+def dictionaries(values: list[dict[str, int]]) -> list[dict[str, int]]:
+    return values
+
+def main() -> None:
+    println(lists({"a": [1]})["a"][0])
+    println(dictionaries([{"a": 2}])[0]["a"])
+    pairs = zip([[3]], [[4]])
+    for left, right in pairs:
+        println(left[0] + right[0])
+"#;
+    let module = checked_source(source, "collection_arity")?;
+    let baseline = lower_module(&module, source.to_owned(), "collection_arity.incn".to_owned())?;
+    validation::validate(&baseline)?;
+    let observed_parameters = || baseline.functions.iter().map(|function| {
+        let carrier = function.parameters.first().map_or("no parameter", |parameter| collection_carrier_name(&parameter.ty));
+        format!("{}: {carrier}", function.name)
+    }).collect::<Vec<_>>().join(", ");
+    let list_owner = baseline.functions.iter().position(|function| {
+        matches!(function.parameters.first().map(|parameter| &parameter.ty),
+            Some(plan::PlanType::Dict(_, plan::ListLeaf::List(_, _))
+                | plan::PlanType::DictRef(_, plan::ListLeaf::List(_, _))
+                | plan::PlanType::DictMutRef(_, plan::ListLeaf::List(_, _))))
+    }).ok_or_else(|| format!("genuine dictionary-of-lists parameter missing; observed {}", observed_parameters()))?;
+    let dict_owner = baseline.functions.iter().position(|function| {
+        matches!(function.parameters.first().map(|parameter| &parameter.ty),
+            Some(plan::PlanType::List(plan::ListLeaf::Dict(_), _)
+                | plan::PlanType::ListRef(plan::ListLeaf::Dict(_), _)
+                | plan::PlanType::ListMutRef(plan::ListLeaf::Dict(_), _)))
+    }).ok_or_else(|| format!("genuine list-of-dictionaries parameter missing; observed {}", observed_parameters()))?;
+    let cases = [
+        ("list-empty", list_owner, plan::ListLeaf::List(Vec::new(), 1)),
+        ("list-extra", list_owner, plan::ListLeaf::List(vec![plan::ListLeaf::Int, plan::ListLeaf::Int], 1)),
+        ("dict-short", dict_owner, plan::ListLeaf::Dict(vec![plan::ListLeaf::Str])),
+        ("dict-extra", dict_owner, plan::ListLeaf::Dict(vec![plan::ListLeaf::Str, plan::ListLeaf::Int, plan::ListLeaf::Int])),
+    ];
+    let zip = baseline.functions.iter().flat_map(|function| &function.locals).find_map(|local| {
+        if let plan::PlanType::ZipIterator(left, right) = &local.ty {
+            Some((left.clone(), right.clone()))
+        } else {
+            None
+        }
+    }).ok_or("genuine structured zip local missing")?;
+    let mut failures = Vec::new();
+    for (label, owner, leaf) in cases {
+        for position in ["local", "parameter", "return", "external"] {
+            let mut candidate = baseline.clone();
+            let function = &mut candidate.functions[owner];
+            let mut changed = match position {
+                "local" => function.locals.get(1).ok_or("genuine parameter local missing")?.ty.clone(),
+                "parameter" | "external" => function.parameters[0].ty.clone(),
+                "return" => function.return_type.clone(),
+                _ => return Err("invalid mutation position".into()),
+            };
+            match &mut changed {
+                plan::PlanType::Dict(_, value)
+                | plan::PlanType::DictRef(_, value)
+                | plan::PlanType::DictMutRef(_, value)
+                | plan::PlanType::List(value, _)
+                | plan::PlanType::ListRef(value, _)
+                | plan::PlanType::ListMutRef(value, _) => *value = leaf.clone(),
+                _ => return Err(format!("{label}/{position}: expected existing collection carrier in {}, observed {}", function.name, collection_carrier_name(&changed)).into()),
+            }
+            match position {
+                "local" => function.locals.push(plan::Local { ty: changed, span: function.span.clone() }),
+                "parameter" => {
+                    function.parameters[0].ty = changed.clone();
+                    function.locals[1].ty = changed;
+                }
+                "return" => {
+                    function.return_type = changed.clone();
+                    function.locals[0].ty = changed;
+                }
+                "external" => {
+                    let external = candidate.externals.iter_mut()
+                        .find(|external| external.path == "incan_native_runtime::println_text")
+                        .ok_or("genuine println_text external missing")?;
+                    let parameter = external.parameters.first_mut().ok_or("genuine println_text parameter missing")?;
+                    *parameter = changed;
+                }
+                _ => return Err("invalid mutation position".into()),
+            }
+            record_collection_arity_refusal(&candidate, &format!("{label}/{position}"), &mut failures);
+        }
+        // A valid outer dictionary must not hide a malformed collection one layer deeper.
+        let mut nested = baseline.clone();
+        let function = &mut nested.functions[owner];
+        function.locals.push(plan::Local {
+            ty: plan::PlanType::List(plan::ListLeaf::Dict(vec![plan::ListLeaf::Str, leaf.clone()]), 1),
+            span: function.span.clone(),
+        });
+        record_collection_arity_refusal(&nested, &format!("{label}/nested"), &mut failures);
+        for side in ["left", "right"] {
+            for variant in ["owned", "shared", "exclusive"] {
+                let (mut left, mut right) = zip.clone();
+                let changed = match side {
+                    "left" => &mut left,
+                    "right" => &mut right,
+                    _ => return Err("invalid zip side".into()),
+                };
+                let plan::TupleElement::List(element, _) = changed else {
+                    return Err("genuine zip element did not retain its list shape".into());
+                };
+                *element = leaf.clone();
+                let ty = match variant {
+                    "owned" => plan::PlanType::ZipIterator(left, right),
+                    "shared" => plan::PlanType::ZipIteratorRef(left, right),
+                    "exclusive" => plan::PlanType::ZipIteratorMutRef(left, right),
+                    _ => return Err("invalid zip variant".into()),
+                };
+                let mut candidate = baseline.clone();
+                let function = &mut candidate.functions[owner];
+                function.locals.push(plan::Local { ty, span: function.span.clone() });
+                record_collection_arity_refusal(&candidate, &format!("{label}/zip-{variant}-{side}"), &mut failures);
+            }
+        }
+    }
+    if !failures.is_empty() {
+        return Err(failures.join("\n").into());
+    }
+    println!("nested collection arity: genuine source plan and 44 typed native refusals passed");
+    Ok(())
+}
+
+/// Identify the outer lowered collection carrier without assuming generated plan types implement Debug.
+fn collection_carrier_name(ty: &plan::PlanType) -> &'static str {
+    match ty {
+        plan::PlanType::Dict(..) => "Dict",
+        plan::PlanType::DictRef(..) => "DictRef",
+        plan::PlanType::DictMutRef(..) => "DictMutRef",
+        plan::PlanType::List(..) => "List",
+        plan::PlanType::ListRef(..) => "ListRef",
+        plan::PlanType::ListMutRef(..) => "ListMutRef",
+        _ => "noncollection",
+    }
+}
+
+/// Require the precise native arity refusal; panics and unrelated failures remain failed controls.
+fn record_collection_arity_refusal(plan: &plan::Plan, label: &str, failures: &mut Vec<String>) {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| validation::validate(plan)));
+    match outcome {
+        Ok(Err(crate::error::PlanError::Invalid { function, reason }))
+            if function == "collection leaf" && reason.contains("exactly one list child or two dictionary children") => {}
+        Ok(other) => failures.push(format!("{label}: expected typed leaf-arity refusal, got {other:?}")),
+        Err(_) => failures.push(format!("{label}: validator panicked before returning its typed error")),
+    }
 }

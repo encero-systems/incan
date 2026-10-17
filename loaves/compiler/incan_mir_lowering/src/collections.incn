@@ -15,7 +15,7 @@ from pub::incan_mir_plan import (
     SourceSpan,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, terminate_call, read_place, drop_owned, forget_owned, value_type
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, forget_owned, value_type, place_type
 from rust::incan_semantics_core::body_ir import (
     ArgumentElement as RustArgumentElement,
     Operand as RustOperand,
@@ -135,6 +135,9 @@ pub def collection_call(
     """Retain hashed runtime signatures with exactly their checked generic instantiation."""
     if len(parameters) != len(operands):
         return Err("unsupported Body IR collection runtime arity")
+    kind = undisplayed_key(ty, operation)
+    if kind != "":
+        return Err(f"unsupported Body IR keyed lookup in a dictionary with {kind} keys")
     for index in range(len(operands)):
         if value_type(builder, operands[index])? != parameters[index]:
             return Err("unsupported Body IR collection runtime argument coercion")
@@ -143,18 +146,35 @@ pub def collection_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=arguments, parameters=parameters, return_type=result, span=span),
     )
-    mut callee = CalleeKind.Instantiated(path, arguments[0])
-    if len(arguments) == 2:
-        callee = CalleeKind.InstantiatedPair(path, arguments[0], arguments[1])
-    terminate_call(builder, callee, operands, destination, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, arguments), operands, destination, span)
     if result == PlanType.String or is_owned_collection(result):
         builder.owned.append(destination.local)
     return Ok(None)
 
 
+def undisplayed_key(ty: PlanType, operation: str) -> str:
+    """
+    Name the key kind, `model` or `enum`, when a runtime dictionary operation renders its key with Display, which
+    neither implements; otherwise nothing.
+
+    Legacy's keyed lookups share that bound, so such a lookup on a model- or enum-keyed dictionary does not build there
+    either.
+    """
+    if operation not in ["get", "borrow_mut", "optional", "values", "default", "extend"]:
+        return ""
+    match collection_owned(ty):
+        PlanType.Dict(key, _value) =>
+            match key:
+                ListLeaf.Model(_owner, _name) => return "model"
+                ListLeaf.Enum(_owner, _name) => return "enum"
+                _ => pass
+        _ => pass
+    return ""
+
+
 pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
-    """Borrow owners and reborrow parameters, never copying an exclusive reference."""
-    ty = builder.locals[place.local].ty
+    """Borrow owners, a model's collection field among them, and reborrow parameters, never copying an exclusive reference."""
+    ty = place_type(builder.locals, place)
     mut source = place
     if collection_owned(ty) != ty:
         if mutable and ty != collection_reference(ty, true):
@@ -174,14 +194,14 @@ pub def insert_collection(
     values: list[Operand],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Insert already evaluated operands through a short exclusive borrow."""
-    types = collection_arguments(builder.locals[receiver.local].ty)
+    """Insert already evaluated operands through a short exclusive borrow of the selected collection storage."""
+    ty = place_type(builder.locals, receiver)
+    types = collection_arguments(ty)
     if len(values) != len(types):
         return Err("unsupported Body IR collection insert arity")
     for index in range(len(values)):
         if value_type(builder, values[index])? != types[index]:
             return Err("unsupported Body IR collection element coercion")
-    ty = builder.locals[receiver.local].ty
     reference = borrow_collection(builder, receiver, true, span)?
     mut parameters = [collection_reference(ty, true)]
     parameters.extend(collection_arguments(ty))

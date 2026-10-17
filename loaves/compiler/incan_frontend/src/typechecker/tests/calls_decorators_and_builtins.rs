@@ -1209,3 +1209,29 @@ def main(names: list[str], values: Dict[str, int]) -> None:
     );
     Ok(())
 }
+
+/// Scalar arguments have no length and must fail checking before either backend runs.
+#[test]
+fn builtin_len_rejects_scalar_arguments() -> Result<(), String> {
+    for expression in ["1", "1.0", "True"] {
+        for builtin in ["len", "std.builtins.len"] {
+            let source = format!("def observe() -> int:\n    return {builtin}({expression})\n");
+            let errors = check_str(&source).err().ok_or_else(|| format!("accepted {source}"))?;
+            assert!(
+                errors.iter().any(|error| error.message.contains("value with a length")),
+                "{errors:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Builtin length checking preserves collection operands and lexical shadowing.
+#[test]
+fn builtin_len_preserves_length_bearing_arguments() -> Result<(), String> {
+    for expression in ["\"abc\"", "b\"abc\"", "[1, 2]", "{1: 2}", "{1, 2}", "(1, 2)"] {
+        let source = format!("def observe() -> int:\n    return len({expression})\n");
+        check_str(&source).map_err(|errors| format!("{source}: {errors:?}"))?;
+    }
+    Ok(())
+}

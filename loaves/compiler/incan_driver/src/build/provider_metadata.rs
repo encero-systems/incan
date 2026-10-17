@@ -304,21 +304,50 @@ fn compiled_provider_dependencies(
                 metadata.crate_root.display()
             ))
         })?;
-        dependencies.push(ProviderDependencyMetadata {
-            kind: incan_frontend::library_manifest::ProviderDependencyKind::PrivateImplementation,
-            dependency_key: metadata.dependency_key.clone(),
-            provider_name: provider.identity.name.clone(),
-            provider_version: provider.identity.version.clone(),
-            artifact_digest,
-            relative_artifact_path: relative_provider_artifact_path(artifact_root, &metadata.crate_root)?,
-            requested_features: provider.identity.feature_projection.clone(),
-            default_features: false,
-            optional: false,
-        });
+        retain_private_provider_dependency(
+            &mut dependencies,
+            ProviderDependencyMetadata {
+                kind: incan_frontend::library_manifest::ProviderDependencyKind::PrivateImplementation,
+                dependency_key: metadata.dependency_key.clone(),
+                provider_name: provider.identity.name.clone(),
+                provider_version: provider.identity.version.clone(),
+                artifact_digest,
+                relative_artifact_path: relative_provider_artifact_path(artifact_root, &metadata.crate_root)?,
+                requested_features: provider.identity.feature_projection.clone(),
+                default_features: false,
+                optional: false,
+            },
+        )?;
     }
     dependencies.sort();
     dependencies.dedup();
     Ok(dependencies)
+}
+
+/// Keep a public edge when private implementation linkage selects the exact same physical owner and features.
+/// A shared dependency key with different identity, bytes, artifact coordinate, or features remains an error.
+fn retain_private_provider_dependency(
+    dependencies: &mut Vec<ProviderDependencyMetadata>,
+    private: ProviderDependencyMetadata,
+) -> CliResult<()> {
+    if let Some(public) = dependencies.iter().find(|edge| {
+        edge.kind == ProviderDependencyKind::PublicPackage && edge.dependency_key == private.dependency_key
+    }) {
+        if public.provider_name == private.provider_name
+            && public.provider_version == private.provider_version
+            && public.artifact_digest == private.artifact_digest
+            && public.relative_artifact_path == private.relative_artifact_path
+            && public.requested_features == private.requested_features
+        {
+            return Ok(());
+        }
+        return Err(CliError::failure(format!(
+            "private SDK dependency `{}` conflicts with its public artifact edge",
+            private.dependency_key
+        )));
+    }
+    dependencies.push(private);
+    Ok(())
 }
 
 /// Compute one normalized portable path between two existing provider artifact roots.
@@ -845,6 +874,71 @@ mod tests {
     use incan_frontend::{ParsedModule, lexer, parser};
     use incan_provider::FeatureSelection;
     use oven_model::manifest::{DependencySource, DependencySpec};
+
+    /// The genuine SDK Core owner appears once when a component also declares it as a public dependency.
+    #[test]
+    #[ignore = "requires an explicitly selected matching native SDK publication"]
+    fn sdk_publication_dependencies_share_one_exact_core_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let inventory =
+            incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?.ok_or("SDK required")?;
+        let stdlib = oven_model::toolchain_layout::find_stdlib_root().ok_or("stdlib source required")?;
+        let catalog =
+            incan_provider::SdkSourceCatalog::read_from_path(&stdlib.join(incan_provider::SDK_SOURCE_CATALOG_FILE))?;
+        let data = catalog.components.get("stdlib-data").ok_or("data component missing")?;
+        let session = crate::session::CompilationSession::discover_for_native_sdk_component(
+            &data.project_root.join("src/lib.incn"),
+            &inventory,
+            &data.namespace_roots,
+            &BTreeSet::new(),
+        )?;
+        let index = session.native_sdk_publication_dependency_index(&inventory, &catalog)?;
+        let plan = session.provider_plan().project_module_usage(BTreeSet::from([vec![
+            "std".to_string(),
+            "traits".to_string(),
+            "convert".to_string(),
+        ]]));
+        assert!(
+            plan.sdk_link_roots()
+                .iter()
+                .any(|record| record.identity.name == "incan_stdlib_core")
+        );
+        let output = tempfile::tempdir()?;
+        let edges = compiled_provider_dependencies(
+            session.package_feature_plan().as_ref().ok_or("features absent")?,
+            &index,
+            &plan,
+            output.path(),
+        )?;
+        let core = edges
+            .iter()
+            .filter(|edge| edge.dependency_key == "incan_stdlib_core")
+            .collect::<Vec<_>>();
+        assert_eq!(core.len(), 1);
+        assert_eq!(core[0].kind, ProviderDependencyKind::PublicPackage);
+        let public = core[0].clone();
+        let mut private = public.clone();
+        private.kind = ProviderDependencyKind::PrivateImplementation;
+        private.default_features = false;
+        private.optional = false;
+        let mut selected = vec![public.clone()];
+        retain_private_provider_dependency(&mut selected, private.clone())?;
+        assert_eq!(selected, vec![public.clone()]);
+        let mut changed_digest = private.clone();
+        changed_digest.artifact_digest.push_str("-foreign");
+        assert!(retain_private_provider_dependency(&mut selected, changed_digest).is_err());
+        let mut changed_owner = private.clone();
+        changed_owner.provider_name.push_str("-foreign");
+        assert!(retain_private_provider_dependency(&mut selected, changed_owner).is_err());
+        let mut changed_path = private.clone();
+        changed_path.relative_artifact_path.push_str("-foreign");
+        assert!(retain_private_provider_dependency(&mut selected, changed_path).is_err());
+        let mut changed_features = private;
+        changed_features.requested_features.insert("foreign".to_string());
+        assert!(retain_private_provider_dependency(&mut selected, changed_features).is_err());
+        assert_eq!(selected, vec![public]);
+
+        Ok(())
+    }
 
     #[test]
     fn provider_operation_metadata_is_projected_from_checked_declaration_facts()

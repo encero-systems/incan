@@ -1,0 +1,122 @@
+"""Native callable forwarding selected from complete checked standard adoptions."""
+
+from rust::incan_semantics_core import (
+    CanonicalSymbolId,
+    SymbolOrigin,
+    SymbolNamespace,
+    SemanticSourceTargetKind,
+    IncanType as RustType,
+)
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from pub::incan_mir_plan import PlanType, EnumDeclaration
+from classes import frame_type, function_name
+from unions import native_source_type, collect_unions
+from native_arguments import uses_native_argument
+from decls import library_item
+from trait_links import contains
+
+
+pub def callable_methods(
+    module: &BodyIrModule,
+    owner: int,
+    intrinsics: list[EnumDeclaration],
+) -> Result[tuple[str, list[PlanType]], str]:
+    """Require one actual Callable1 adoption, one complete checked slot, and its exact immutable source ABI."""
+    declaration = module.nominal_declarations[owner]
+    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+        return Ok(("", []))
+    mut selected: Option[CanonicalSymbolId] = None
+    mut arguments: list[RustType] = []
+    for adoption in declaration.trait_adoptions:
+        if not standard_callable(adoption.trait_identity):
+            continue
+        if selected != None or len(adoption.arguments) != 2:
+            return Err("unsupported Body IR ambiguous or nonbinary native Callable1 adoption")
+        match adoption.methods:
+            None => return Err("unsupported Body IR incomplete native Callable1 slots")
+            Some(methods) =>
+                if len(methods) != 1:
+                    return Err("unsupported Body IR native Callable1 slot count")
+                slot = methods[0]
+                if slot.kind != SemanticSourceTargetKind.Method or slot.namespace != SymbolNamespace.Member or slot.declaration_name != "__call__" or slot.origin != adoption.trait_identity.origin or not contains(
+                    adoption.trait_identity,
+                    slot,
+                ):
+                    return Err("unsupported Body IR native Callable1 slot identity")
+                selected = Some(slot.clone())
+        for argument in adoption.arguments:
+            if not owned_type(argument):
+                return Err("unsupported Body IR borrowed or open native Callable1 argument")
+            arguments.append(argument.clone())
+    match selected:
+        None => return Ok(("", []))
+        Some(slot) =>
+            mut signature: list[PlanType] = []
+            for argument in arguments:
+                signature.append(
+                    native_source_type(
+                        module.nominal_declarations,
+                        module.enum_declarations,
+                        collect_unions(module),
+                        argument,
+                        intrinsics,
+                    )?,
+                )
+            for implementation in module.trait_implementations:
+                if implementation.owner != declaration.canonical or implementation.method != slot or implementation.implementation == slot:
+                    continue
+                for body in module.bodies:
+                    if body.canonical != Some(implementation.implementation.clone()) or len(body.type_parameters) != 0 or len(
+                        body.params,
+                    ) != 2:
+                        continue
+                    receiver = body.locals[int(body.params[0].local.index())]
+                    value = body.locals[int(body.params[1].local.index())]
+                    if frame_type(module, receiver, intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                        continue
+                    result = native_source_type(
+                        module.nominal_declarations,
+                        module.enum_declarations,
+                        collect_unions(module),
+                        body.return_type,
+                        intrinsics,
+                    )?
+                    if frame_type(module, value, intrinsics)? != signature[0] or result != signature[1]:
+                        return Err("unsupported Body IR native Callable1 source signature")
+                    return Ok((function_name(module, body), signature))
+    return Err("unsupported Body IR unavailable native Callable1 source body")
+
+
+def standard_callable(identity: &CanonicalSymbolId) -> bool:
+    """Only the artifact-backed standard declaration grants this native protocol, including through aliases."""
+    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical or identity.declaration_name != "Callable1":
+        return false
+    return standard_callable_origin(identity.origin)
+
+
+def standard_callable_origin(origin: &SymbolOrigin) -> bool:
+    """Authenticate the provider path; the explicit origin type also retains its Rust struct-pattern import."""
+    match origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_core" and len(path) == 2 and path[0] == "traits" and path[1] == "callable"
+        _ => return false
+
+
+def owned_type(ty: &RustType) -> bool:
+    """Borrowed or open callback arguments need a separately represented lifetime contract and remain refused."""
+    match ty:
+        RustType.Ref(_inner) => return false
+        RustType.RefMut(_inner) => return false
+        RustType.TypeVar(_name) => return false
+        RustType.SelfType => return false
+        RustType.Unknown => return false
+        RustType.Generic(base=_base, args=arguments) =>
+            for argument in arguments:
+                if not owned_type(argument):
+                    return false
+        RustType.Tuple(elements) =>
+            for element in elements:
+                if not owned_type(element):
+                    return false
+        _ => pass
+    return true

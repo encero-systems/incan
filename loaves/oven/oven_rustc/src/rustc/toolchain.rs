@@ -596,25 +596,52 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
     let key = oven_store::digest_bytes(&[b"pinned-linker-v3\0", commit.as_bytes(), b"\0", &manifest].concat())
         .replace(':', "-");
     let root = env::temp_dir().join("incan-oven-std-sysroot").join(&key);
+    materialize_normalized_sysroot(&sysroot, &manifest, &root, &rustc_host_target(rustc)?)
+}
+
+/// Publish one normalized sysroot from attempt-private staging, retaining the existing completed-root policy.
+///
+/// Native workers share a process, so a PID is not a unique staging identity. Each attempt owns its temporary
+/// directory until atomic publication; a failed or concurrent attempt cannot overwrite or remove another's work.
+fn materialize_normalized_sysroot(
+    sysroot: &Path,
+    manifest: &[u8],
+    root: &Path,
+    host: &str,
+) -> Result<PathBuf, OvenRustcError> {
     if root.join(".complete").is_file() {
-        return Ok(root);
+        return Ok(root.to_path_buf());
     }
-    let staging = root.with_extension(format!("staging-{}", std::process::id()));
-    copy_listed_std_files(&sysroot, &manifest, &staging)?;
-    copy_compiler_runtime(&sysroot, &staging)?;
-    copy_pinned_linker(&sysroot, &staging, &rustc_host_target(rustc)?)?;
-    fs::write(staging.join(".complete"), b"").map_err(|source| OvenRustcError::Io {
-        path: staging.clone(),
+    let parent = root.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "normalized sysroot",
+        message: "has no parent directory".to_string(),
+    })?;
+    fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+        path: parent.to_path_buf(),
         source,
     })?;
-    match fs::rename(&staging, &root) {
-        Ok(()) => Ok(root),
-        // A concurrent build published the same content first; its copy is equivalent.
-        Err(_) if root.join(".complete").is_file() => {
-            let _ = fs::remove_dir_all(&staging);
-            Ok(root)
-        }
-        Err(source) => Err(OvenRustcError::Io { path: root, source }),
+    let staging = tempfile::Builder::new()
+        .prefix(".normalized-sysroot-")
+        .tempdir_in(parent)
+        .map_err(|source| OvenRustcError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    copy_listed_std_files(sysroot, manifest, staging.path())?;
+    copy_compiler_runtime(sysroot, staging.path())?;
+    copy_pinned_linker(sysroot, staging.path(), host)?;
+    fs::write(staging.path().join(".complete"), b"").map_err(|source| OvenRustcError::Io {
+        path: staging.path().to_path_buf(),
+        source,
+    })?;
+    match fs::rename(staging.path(), root) {
+        Ok(()) => Ok(root.to_path_buf()),
+        // Each contender populated a private tree for this exact key before publication. The winner is complete.
+        Err(_) if root.join(".complete").is_file() => Ok(root.to_path_buf()),
+        Err(source) => Err(OvenRustcError::Io {
+            path: root.to_path_buf(),
+            source,
+        }),
     }
 }
 
@@ -1156,6 +1183,82 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(arguments, ["--print", "cfg", "--target", "x86_64-unknown-linux-gnu"]);
         assert!(rustc_cfg_snapshot_command(Path::new("/sealed/rustc"), Some(" ")).is_err());
+        Ok(())
+    }
+
+    /// An interrupted same-process attempt cannot poison a later complete normalized sysroot.
+    #[test]
+    #[cfg(unix)]
+    fn normalized_sysroot_ignores_another_attempts_partial_staging() -> TestResult {
+        let temporary = tempfile::tempdir()?;
+        let installed = temporary.path().join("installed");
+        fs::create_dir_all(installed.join("bin"))?;
+        fs::create_dir_all(installed.join("lib"))?;
+        fs::write(installed.join("bin/rustc"), b"compiler")?;
+        fs::write(installed.join("lib/librustc_driver-fixture.dylib"), b"driver")?;
+        let runtime = installed.join("lib/librustc-stable_rt.rtsan.dylib");
+        fs::write(&runtime, b"sanitizer runtime")?;
+        let root = temporary.path().join("normalized/key");
+        let interrupted = root.with_extension(format!("staging-{}", std::process::id()));
+        fs::create_dir_all(&interrupted)?;
+        copy_compiler_runtime(&installed, &interrupted)?;
+        let result = materialize_normalized_sysroot(&installed, b"", &root, "fixture-host")?;
+        assert_eq!(result, root);
+        assert!(root.join(".complete").is_file());
+        assert_eq!(fs::read(root.join("bin/rustc"))?, b"compiler");
+        assert_eq!(fs::read(root.join("lib/librustc_driver-fixture.dylib"))?, b"driver");
+        assert_eq!(fs::read_link(root.join("lib/librustc-stable_rt.rtsan.dylib"))?, runtime);
+        assert!(interrupted.is_dir());
+        Ok(())
+    }
+
+    /// Concurrent workers publish identical complete bytes without sharing their mutable staging directory.
+    #[test]
+    #[cfg(unix)]
+    fn normalized_sysroot_concurrent_workers_keep_complete_runtime_bytes() -> TestResult {
+        let temporary = tempfile::tempdir()?;
+        let installed = temporary.path().join("installed");
+        fs::create_dir_all(installed.join("bin"))?;
+        fs::create_dir_all(installed.join("lib"))?;
+        fs::write(installed.join("bin/rustc"), b"compiler")?;
+        fs::write(installed.join("lib/librustc_driver-fixture.dylib"), b"driver")?;
+        fs::write(installed.join("lib/librustc-stable_rt.rtsan.dylib"), b"runtime")?;
+        let root = temporary.path().join("normalized/key");
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| -> TestResult {
+            let mut workers = Vec::new();
+            for _ in 0..8 {
+                workers.push(scope.spawn(|| {
+                    barrier.wait();
+                    materialize_normalized_sysroot(&installed, b"", &root, "fixture-host")
+                }));
+            }
+            for worker in workers {
+                let path = worker
+                    .join()
+                    .map_err(|_| std::io::Error::other("normalization worker panicked"))??;
+                assert_eq!(path, root);
+            }
+            Ok(())
+        })?;
+        assert_eq!(fs::read(root.join("bin/rustc"))?, b"compiler");
+        assert_eq!(fs::read(root.join("lib/librustc_driver-fixture.dylib"))?, b"driver");
+        assert_eq!(fs::read(root.join("lib/librustc-stable_rt.rtsan.dylib"))?, b"runtime");
+        assert!(root.join(".complete").is_file());
+        assert_eq!(fs::read_dir(temporary.path().join("normalized"))?.count(), 1);
+        Ok(())
+    }
+
+    /// A failed source copy leaves neither a completed root nor an abandoned private staging directory.
+    #[test]
+    fn normalized_sysroot_failed_copy_does_not_publish_or_leave_staging() -> TestResult {
+        let temporary = tempfile::tempdir()?;
+        let installed = temporary.path().join("installed");
+        fs::create_dir(&installed)?;
+        let root = temporary.path().join("normalized/key");
+        assert!(materialize_normalized_sysroot(&installed, b"file:lib/missing.rlib\n", &root, "fixture-host").is_err());
+        assert!(!root.exists());
+        assert_eq!(fs::read_dir(temporary.path().join("normalized"))?.count(), 0);
         Ok(())
     }
 }

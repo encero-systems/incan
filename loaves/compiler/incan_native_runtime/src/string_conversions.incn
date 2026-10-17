@@ -1,0 +1,11 @@
+"""Primitive leaves of the source SDK's fallible string conversion contract."""
+
+from rust::std::primitive import i64
+from rust::std::str import FromStr
+
+
+pub def parse_newtype_int(value: str) -> Result[int, str]:
+    """Use the SDK's i64 parser and preserve its actual displayed error, without trimming or validation changes."""
+    match i64.from_str(value):
+        Ok(parsed) => return Ok(parsed)
+        Err(error) => return Err(str(error))

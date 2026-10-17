@@ -8,4 +8,5 @@ rust-edition = "2024"
 # Planned model declarations use serde's derives at the native output boundary (#1337, #1698).
 # Retain their explicit extern in this runtime's receipt-selected closure.
 [dependencies]
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }

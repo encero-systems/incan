@@ -12,7 +12,7 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .values()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
-    let mut cache = StdlibAstCache::new();
+    let mut cache = type_info.body_ir_stdlib_cache();
     identities
         .iter()
         .filter_map(|identity| delegation(identity, &mut cache))
@@ -72,6 +72,7 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
         }
     }
     let mut checker = TypeChecker::new();
+    checker.stdlib_cache = cache.clone();
     checker.set_current_module_path(Some(path.clone()));
     checker.check_program(&program).ok()?;
     let target = checker.type_info().resolved_identity(callee.span)?.clone();
@@ -93,6 +94,10 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
         target,
         parameters,
         return_type,
+        type_parameters: Vec::new(),
+        native_type_arguments: Vec::new(),
+        // A transparent forwarder declares no defaults.
+        parameter_defaults: Vec::new(),
     };
     fact.rust_path()?;
     Some(fact)

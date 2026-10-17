@@ -42,6 +42,8 @@ const ABI_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_sysroot_abi_publication_replay_and_runtime";
 const DECLARED_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_declared_rust_abi_publication_replay_and_runtime";
+const REGISTRY_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_native_registry_abi_publication_replay_and_runtime";
 const SYSTEM_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_standard_system_publication_and_replay";
 const SYSTEM_DEBUG_SELECTOR: &str =
@@ -60,6 +62,7 @@ enum Publication {
     Plain,
     Sysroot,
     Declared,
+    Registry,
 }
 
 impl Publication {
@@ -69,6 +72,7 @@ impl Publication {
             Self::Plain => None,
             Self::Sysroot => Some("std::thread::panicking"),
             Self::Declared => Some("probe_leaf::ready"),
+            Self::Registry => Some("serde_json::de::from_slice"),
         }
     }
 
@@ -88,6 +92,12 @@ impl Publication {
             }
             (Self::Declared, true) => {
                 "from rust::probe_leaf import ready\npub def answer() -> bool:\n    return not ready()\n"
+            }
+            (Self::Registry, false) => {
+                "from rust::serde_json::de import from_slice\npub def answer() -> bool:\n    return from_slice(b\"false\").unwrap_or(False)\n"
+            }
+            (Self::Registry, true) => {
+                "from rust::serde_json::de import from_slice\npub def answer() -> bool:\n    return from_slice(b\"true\").unwrap_or(False)\n"
             }
         }
     }
@@ -168,7 +178,8 @@ fn child_profiles(selector: &str, profiles: &str) -> TestResult {
         .env("INCAN_SDK_NATIVE_BLOBS", &ambient)
         .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", ambient.join("sdk-store"))
         .current_dir(&ambient);
-    if selector == CORE_ADMISSION_SELECTOR {
+    // Normal consumer discovery needs genuine producer coordinates; the SDK inventory remains a poisoned decoy.
+    if selector == CORE_ADMISSION_SELECTOR || selector == REGISTRY_SELECTOR {
         command
             .env(
                 "INCAN_SDK_NATIVE_COMPILER_GRAPH",
@@ -176,6 +187,12 @@ fn child_profiles(selector: &str, profiles: &str) -> TestResult {
             )
             .env("INCAN_SDK_NATIVE_INDEX", required_path("INCAN_ORDINARY_LIBRARY_INDEX")?)
             .env("INCAN_SDK_NATIVE_BLOBS", required_path("INCAN_ORDINARY_LIBRARY_BLOBS")?);
+    }
+    #[cfg(feature = "rust_inspect")]
+    if selector == REGISTRY_SELECTOR {
+        command
+            .env("INCAN_ORDINARY_TYPECHECK_SDK", required_path("INCAN_SDK_INVENTORY")?)
+            .env("INCAN_ORDINARY_TYPECHECK_STDLIB", required_path("INCAN_STDLIB")?);
     }
     let output = command.output()?;
     assert!(
@@ -435,6 +452,12 @@ fn ordinary_core_checked_dependency_admission() -> TestResult {
         &toolchain,
         None,
     )?;
+    assert!(
+        checked
+            .iter()
+            .any(|profile| profile.package.receipt.project.name == "incan_stdlib_core"),
+        "ordinary standard packages must contribute their sealed native closure alongside public packages"
+    );
     let attachments =
         crate::build::caller_owned::oven_caller_owned_libraries(plan, "debug", &target, &toolchain, Some(&checked))?;
     let counts = attachments
@@ -631,12 +654,15 @@ fn outputs(
 fn original_requests(
     input: &AdmittedLibraryPreparation,
     original: &Arc<OrdinaryLibraryNativeProfiles>,
+    admitted: &Arc<OrdinaryLibraryNativeProfiles>,
     requests: &BTreeMap<String, NativeLoafRequestObservation>,
     digests: &BTreeMap<String, String>,
 ) -> TestResult {
     assert!(input.temporary_native_sdk_context().is_none());
     let retained = input.ordinary_native().ok_or("ordinary native admission lost")?;
-    assert!(Arc::ptr_eq(original, retained));
+    // Session binding can add its checked namespace facets to a new wrapper while retaining the original metadata
+    // and native owners. Publication must preserve that admitted wrapper, not replace it again.
+    assert!(Arc::ptr_eq(admitted, retained));
     assert!(Arc::ptr_eq(original.metadata(), retained.metadata()));
     #[cfg(feature = "rust_inspect")]
     assert!(Arc::ptr_eq(
@@ -694,15 +720,40 @@ fn ordinary_native_declared_rust_abi_publication_replay_and_runtime() -> TestRes
     publication(Publication::Declared)
 }
 
+/// Publish a registry-backed ABI without a generated Cargo lock, reuse both profiles and execute changed output.
+#[test]
+#[ignore = "requires coherent source compiler/engine and ordinary support graph with serde_json in both profiles"]
+fn ordinary_native_registry_abi_publication_replay_and_runtime() -> TestResult {
+    #[cfg(feature = "rust_inspect")]
+    if let Some(entry) = std::env::var_os("INCAN_ORDINARY_PUBLIC_CHECK_ENTRY") {
+        return verify_public_provider_typecheck(
+            &PathBuf::from(entry),
+            &required_path("INCAN_ORDINARY_PUBLIC_CHECK_LIBRARY")?,
+        );
+    }
+    if std::env::var_os(CHILD).is_none() {
+        return child(REGISTRY_SELECTOR);
+    }
+    publication(Publication::Registry)
+}
+
 /// Add a real source-owned Rust dependency to the complete support producer request without synthetic owners.
-fn declared_graph(root: &Path, graph: &Path) -> TestResult<PathBuf> {
+fn declared_graph(root: &Path, graph: &Path, registry: bool) -> TestResult<PathBuf> {
     let project = root.join("probe_leaf");
     fs::create_dir_all(project.join("src"))?;
-    fs::write(project.join("src/lib.rs"), "pub fn ready() -> bool { false }\n")?;
-    fs::write(
-        project.join("loaf.toml"),
-        "[project]\nname='probe_leaf'\nversion='1.0.0'\n[rust]\nname='probe_leaf'\ntype='lib'\nedition='2024'\n",
-    )?;
+    let source = if registry {
+        "pub use serde_json::Value;\n"
+    } else {
+        "pub fn ready() -> bool { false }\n"
+    };
+    fs::write(project.join("src/lib.rs"), source)?;
+    let mut manifest =
+        "[project]\nname='probe_leaf'\nversion='1.0.0'\n[rust]\nname='probe_leaf'\ntype='lib'\nedition='2024'\n"
+            .to_string();
+    if registry {
+        manifest.push_str("[dependencies]\nserde_json={loaf='crates-io/serde_json',version='1.0'}\n");
+    }
+    fs::write(project.join("loaf.toml"), manifest)?;
     let owner = graph.parent().ok_or("graph has no owner")?;
     let mut document: serde_json::Value = serde_json::from_slice(&fs::read(graph)?)?;
     let lock = document["registry_lock"].as_str().ok_or("graph lock missing")?;
@@ -726,8 +777,12 @@ fn publication(variant: Publication) -> TestResult {
     assert_eq!(crate::build::plan_authority::explicit_bake_profiles(), PROFILES);
     let original_graph = required_path("INCAN_ORDINARY_LIBRARY_GRAPH")?;
     let authored = tempfile::tempdir()?;
-    let graph = if matches!(variant, Publication::Declared) {
-        declared_graph(authored.path(), &original_graph)?
+    let graph = if matches!(variant, Publication::Declared | Publication::Registry) {
+        declared_graph(
+            authored.path(),
+            &original_graph,
+            matches!(variant, Publication::Registry),
+        )?
     } else {
         original_graph
     };
@@ -912,8 +967,11 @@ fn publication(variant: Publication) -> TestResult {
             authored.path().join("probe_leaf").display()
         ));
     }
+    if matches!(variant, Publication::Registry) {
+        manifest.push_str("[dependencies]\nserde_json={loaf='crates-io/serde_json',version='1.0'}\n");
+    }
     fs::write(root.path().join("loaf.toml"), manifest)?;
-    if matches!(variant, Publication::Declared) {
+    if matches!(variant, Publication::Declared | Publication::Registry) {
         let project = oven_model::manifest::ProjectManifest::load(&root.path().join("loaf.toml"))?;
         let declared = project.rust_dependency_values();
         native.verify_dependencies(&declared, root.path())?;
@@ -933,8 +991,22 @@ fn publication(variant: Publication) -> TestResult {
     }
     let entry = root.path().join("src/lib.incn");
     fs::write(&entry, variant.source(false))?;
+    let namespace_inputs = if matches!(variant, Publication::Registry) {
+        let source = Arc::new(
+            TrustedStandardSourcePublication::discover("incan_stdlib_core")?
+                .ok_or("compiler-bound core publication source unavailable")?,
+        );
+        vec![crate::build::library_project::prepare_core_checked_dependency(
+            source,
+            Arc::clone(&native),
+            &target,
+            &toolchain,
+        )?]
+    } else {
+        Vec::new()
+    };
     let dependencies = Arc::new(PreparedLibraryDependencies::admit(
-        &[],
+        &namespace_inputs,
         &target,
         &toolchain,
         *open_default_oven_store()?.limits(),
@@ -942,20 +1014,28 @@ fn publication(variant: Publication) -> TestResult {
     let features = FeatureSelection::default();
     let session =
         CompilationSession::discover_with_admitted_library_dependencies(&entry, &features, Arc::clone(&dependencies))?;
-    let empty_plan = session.provider_plan_for_used_module_paths(BTreeSet::new())?;
-    let mut provider_requirements = incan_provider::requirements::ProjectRequirements::default();
+    let provider_plan = session.provider_plan_for_used_module_paths(BTreeSet::new())?;
+    let mut provider_requirements = dependencies.projected_requirements(&provider_plan)?;
     assert!(
         native
-            .provider_semantic_dependencies(&empty_plan, &provider_requirements, None)?
+            .provider_semantic_dependencies(&provider_plan, &provider_requirements, Some(&dependencies))?
             .is_empty()
     );
+    if provider_plan.records().next().is_some() {
+        assert!(
+            native
+                .provider_semantic_dependencies(&provider_plan, &provider_requirements, None)
+                .is_err()
+        );
+    }
     provider_requirements.stdlib_facets.push("unadmitted_facet".to_string());
     assert!(
         native
-            .provider_semantic_dependencies(&empty_plan, &provider_requirements, None)
+            .provider_semantic_dependencies(&provider_plan, &provider_requirements, Some(&dependencies))
             .is_err()
     );
     let input = AdmittedLibraryPreparation::with_ordinary_native(session, Arc::clone(&native))?;
+    let admitted_native = Arc::clone(input.ordinary_native().ok_or("session native admission missing")?);
     reset_ordinary_library_preparation_branches();
     let mut first: Option<Arc<SelectedLibraryMetadata>> = None;
     let mut first_outputs = None;
@@ -987,13 +1067,17 @@ fn publication(variant: Publication) -> TestResult {
                 metadata.manifest(),
                 &[query.to_string()].into(),
             )?;
-            run_consumer(root.path(), &report, &native, false)?;
+            run_consumer(root.path(), &report, &native, &dependencies, false)?;
         }
         let actual_outputs = outputs(root.path(), &report, &native)?;
         assert_eq!(project_lock_collection_counts(), (1, 0));
         assert!(root.path().join(LOCK_FILENAME).is_file());
         assert_eq!(ordinary_library_preparation_branches(), (1, iteration));
-        original_requests(&input, &native, &requests, &digests)?;
+        original_requests(&input, &native, &admitted_native, &requests, &digests)?;
+        #[cfg(feature = "rust_inspect")]
+        if matches!(variant, Publication::Registry) {
+            verify_native_test_envelope(root.path())?;
+        }
         assert!(Arc::ptr_eq(
             &dependencies,
             input
@@ -1027,7 +1111,10 @@ fn publication(variant: Publication) -> TestResult {
     assert_eq!((compiled, reused), (2, 0));
     let edited_metadata = published_metadata(root.path(), &edited)?;
     if variant.abi_query().is_some() {
-        run_consumer(root.path(), &edited, &native, true)?;
+        run_consumer(root.path(), &edited, &native, &dependencies, true)?;
+    }
+    if matches!(variant, Publication::Registry) {
+        run_ordinary_incan_consumer(root.path())?;
     }
     let original = first.ok_or("original checked metadata missing")?;
     assert_ne!(
@@ -1050,7 +1137,10 @@ fn publication(variant: Publication) -> TestResult {
     assert_eq!(project_lock_collection_counts(), (1, 0));
     original.verify()?;
     edited_metadata.verify()?;
-    original_requests(&input, &native, &requests, &digests)?;
+    original_requests(&input, &native, &admitted_native, &requests, &digests)?;
+    if matches!(variant, Publication::Registry) {
+        run_ordinary_incan_library_consumer(root.path())?;
+    }
     if matches!(variant, Publication::Declared) {
         // A native source edit makes the retained producer request stale. Reprepare only the changed leaf,
         // then prove that an unchanged Incan consumer observes the new dependency body in both profiles.
@@ -1124,7 +1214,7 @@ fn publication(variant: Publication) -> TestResult {
             edited_metadata.recipe().source_digest,
             changed_metadata.recipe().source_digest
         );
-        run_consumer(root.path(), &changed, &refreshed, false)?;
+        run_consumer(root.path(), &changed, &refreshed, &dependencies, false)?;
         super::take_library_native_output_work();
         let repeated = bake_admitted_library(&refreshed_input, &features, None)?;
         assert_eq!(super::take_library_native_output_work(), (0, 2));
@@ -1132,7 +1222,7 @@ fn publication(variant: Publication) -> TestResult {
             outputs(root.path(), &changed, &refreshed)?,
             outputs(root.path(), &repeated, &refreshed)?
         );
-        run_consumer(root.path(), &repeated, &refreshed, false)?;
+        run_consumer(root.path(), &repeated, &refreshed, &dependencies, false)?;
         changed_metadata.verify()?;
         refreshed.verify()?;
     }
@@ -1186,6 +1276,7 @@ fn run_consumer(
     root: &Path,
     report: &OvenProjectBakeReport,
     native: &OrdinaryLibraryNativeProfiles,
+    dependencies: &PreparedLibraryDependencies,
     expected: bool,
 ) -> TestResult {
     let artifact = root.join("target/lib");
@@ -1226,6 +1317,21 @@ fn run_consumer(
             let path = unit.output()?;
             paths.insert(path.parent().ok_or("native output has no parent")?.to_path_buf());
         }
+        let checked_dependencies = dependencies.execution_profiles(&[&output.profile])?;
+        for profiles in checked_dependencies.values() {
+            for checked in profiles {
+                let path = checked.artifact_root.join(&checked.package.library_relative_path);
+                assert_eq!(
+                    oven_store::digest_bytes(&fs::read(&path)?),
+                    checked.package.library_digest
+                );
+                paths.insert(
+                    path.parent()
+                        .ok_or("checked library output has no parent")?
+                        .to_path_buf(),
+                );
+            }
+        }
         for path in paths {
             command.arg("-L").arg(format!("dependency={}", path.display()));
         }
@@ -1256,3 +1362,243 @@ fn run_consumer(
     );
     Ok(())
 }
+
+/// A library consumer retains its dependency's sealed native closure through publication and checked replay.
+/// Its own source has no Rust imports: the registry artifacts belong only to the upstream package and must flow
+/// through the original package profile rather than being rediscovered or declared again by the consumer.
+fn run_ordinary_incan_library_consumer(library: &Path) -> TestResult {
+    let upstream_handoff = library.join("target/lib/oven/package-loafs.json");
+    let original_handoff = fs::read(&upstream_handoff)?;
+    let bridge = tempfile::tempdir()?;
+    fs::create_dir_all(bridge.path().join("src"))?;
+    fs::write(
+        bridge.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='ordinary_native_bridge'\nversion='1.0.0'\n[dependencies]\nupstream={{path={:?}}}\n",
+            library.to_string_lossy(),
+        ),
+    )?;
+    fs::write(
+        bridge.path().join("src/lib.incn"),
+        "from pub::upstream import answer as upstream_answer\npub def answer() -> bool:\n    return upstream_answer()\n",
+    )?;
+    let manifest = oven_model::manifest::ProjectManifest::load(&bridge.path().join("loaf.toml"))?;
+    let features = FeatureSelection::default();
+    let input = AdmittedLibraryPreparation::discover_ordinary_native(&manifest, &features, None)?
+        .ok_or("ordinary library bridge preparation absent")?;
+    assert!(input.session().sdk_inventory().is_none());
+    let first = bake_admitted_library(&input, &features, None)?;
+    published_metadata(bridge.path(), &first)?.verify()?;
+    let handoff_path = bridge.path().join("target/lib/oven/package-loafs.json");
+    let handoff = fs::read(&handoff_path)?;
+    super::take_library_native_output_work();
+    let repeated = bake_admitted_library(&input, &features, None)?;
+    assert_eq!(super::take_library_native_output_work(), (0, 2));
+    published_metadata(bridge.path(), &repeated)?.verify()?;
+    assert_eq!(fs::read(handoff_path)?, handoff);
+    assert_eq!(fs::read(upstream_handoff)?, original_handoff);
+    run_ordinary_incan_consumer(bridge.path())
+}
+
+/// Query the public check boundary against a genuinely published provider under the existing runtime SDK prerequisite.
+/// Native source admission still receives the original graph; the SDK cannot replace that graph's authority.
+#[cfg(feature = "rust_inspect")]
+fn verify_public_provider_typecheck(entry: &Path, library: &Path) -> TestResult {
+    // ---- Real source requirements include the published provider artifact ----
+    let session = crate::session::CompilationSession::discover_for_oven(entry, &FeatureSelection::default(), None)?;
+    let modules = crate::modules::collect_modules_detailed_with_session(entry.to_path_buf(), &session)
+        .map_err(|failure| failure.render_human())?;
+    let requirements =
+        incan_provider::requirements::collect_project_requirements(&modules, &session.library_manifest_index)?;
+    let published_root = library.join("target/lib").canonicalize()?;
+    let has_published_provider = requirements.dependencies.iter().any(|dependency| {
+        matches!(&dependency.source, oven_model::manifest::DependencySource::Path { path } if path == &published_root)
+    });
+    assert!(
+        has_published_provider,
+        "actual published provider is absent from the typecheck requirement surface"
+    );
+
+    // ---- Public preparation must retain original native owners and return the actual Rust signature ----
+    let inspection = session
+        .prepare_check_rust_inspection(entry, &modules)?
+        .ok_or("public check dropped its Rust metadata query")?;
+    inspection.verify_ordinary_native()?;
+    let cache = rust_inspect::RustMetadataCache::new();
+    let metadata = cache.get_or_extract_complete(inspection.manifest_dir(), "std::thread::panicking", &|_| {})?;
+    assert!(
+        matches!(&metadata.kind, incan_lang::interop::metadata::RustItemKind::Function(signature) if signature.return_type == "bool")
+    );
+    inspection.verify_ordinary_native()?;
+    cache.invalidate_manifest_dir(inspection.manifest_dir())?;
+    drop(inspection);
+    Ok(())
+}
+
+/// Exercise the ordinary executable lifecycle against the actual registry-backed publication, with hostile SDK inputs.
+/// Both profiles must use the original checked package owners; compilation and execution remain canonical.
+fn run_ordinary_incan_consumer(library: &Path) -> TestResult {
+    let consumer = tempfile::tempdir()?;
+    fs::create_dir_all(consumer.path().join("src"))?;
+    fs::write(
+        consumer.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='ordinary_incan_consumer'\nversion='1.0.0'\n[dependencies]\nordinary_native_publication={{path='{}'}}\n",
+            library.display(),
+        ),
+    )?;
+    let entry = consumer.path().join("src/main.incn");
+    fs::write(
+        &entry,
+        "from pub::ordinary_native_publication import answer\nfrom rust::std::thread import panicking\ndef main() -> None:\n    println(answer())\n",
+    )?;
+
+    // ---- Public check keeps its runtime SDK and compiler-source layout prerequisites in a separate process ----
+    #[cfg(feature = "rust_inspect")]
+    {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                REGISTRY_SELECTOR,
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("INCAN_ORDINARY_PUBLIC_CHECK_ENTRY", &entry)
+            .env("INCAN_ORDINARY_PUBLIC_CHECK_LIBRARY", library)
+            .env("INCAN_SDK_INVENTORY", required_path("INCAN_ORDINARY_TYPECHECK_SDK")?)
+            .env("INCAN_STDLIB", required_path("INCAN_ORDINARY_TYPECHECK_STDLIB")?)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "public check stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // ---- Existing ordinary runtime keeps its original source and hostile SDK environment ----
+    fs::write(
+        &entry,
+        "from pub::ordinary_native_publication import answer\ndef main() -> None:\n    println(answer())\n",
+    )?;
+    let entry_text = entry.to_str().ok_or("consumer entry is not UTF-8")?;
+    for profile in PROFILES {
+        let prepared = crate::build::oven_project::prepare_oven_project(
+            entry_text,
+            None,
+            &crate::cargo_policy::CargoPolicy::default(),
+            &FeatureSelection::default(),
+            None,
+            Vec::new(),
+            false,
+            false,
+            profile,
+            crate::build::OvenProjectPlanMode::ConsumeOnly,
+            None,
+        )?;
+        assert!(prepared.native_sdk_context.is_none());
+        assert!(
+            prepared
+                .ordinary_session
+                .as_ref()
+                .is_some_and(|session| session.has_admitted_library_dependencies())
+        );
+        assert_eq!(
+            prepared
+                .ordinary_native
+                .as_ref()
+                .ok_or("native owner missing")?
+                .metadata()
+                .observations()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![profile]
+        );
+        let baked = super::bake_oven_project(&prepared, profile, None)?;
+        assert!(!baked.cargo_process_started);
+        let output = std::process::Command::new(&baked.output).output()?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8(output.stdout)?.trim(), "true");
+        println!(
+            "ordinary-incan-consumer-evidence {}",
+            serde_json::json!({
+                "profile": profile, "success": true, "sdk_discovered": false,
+                "output_digest": baked.output_digest,
+            })
+        );
+    }
+    Ok(())
+}
+
+/// Consume a genuinely published ordinary registry root as a test plan without granting legacy source inspection.
+/// Changed declarations must still fail exact native-envelope matching.
+#[cfg(feature = "rust_inspect")]
+fn verify_native_test_envelope(root: &Path) -> TestResult {
+    let project = oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))?;
+    let dependencies = project.rust_dependency_values();
+    let declared = dependencies
+        .iter()
+        .find(|dependency| dependency.crate_name == "serde_json")
+        .ok_or("ordinary registry declaration missing")?;
+    let store = open_default_oven_store()?;
+    let authority = crate::build::output_selection::load_current_project_registry_source_authorities(&store, root)?
+        .ok_or("ordinary completed output has no inspection authority")?;
+    let native = authority
+        .payload
+        .native_roots
+        .as_ref()
+        .ok_or("ordinary native roots missing")?;
+    assert!(native.roots.contains_key("serde_json"));
+    assert!(authority.payload.registry_sources.is_empty());
+    assert!(!oven_rustc::rustc::project_inspection_authority_supports_dependencies(
+        &authority.payload,
+        &dependencies,
+    ));
+    let expected_plan = match authority.payload.constituents.get(native.constituent_index) {
+        Some(oven_rustc::rustc::OvenProjectInspectionConstituent::Stored { identity, .. }) => identity.clone(),
+        _ => return Err("native test roots lack their original stored constituent".into()),
+    };
+    let prepared =
+        crate::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(authority, None)?;
+    let selected = prepared
+        .test_dependency_plan(&dependencies)?
+        .ok_or("ordinary native test plan was not retained")?;
+    assert!(selected.seals_current_project_paths());
+    assert_eq!(selected.selection().report_identity(), expected_plan);
+    for field in ["features", "defaults", "version", "package", "alias"] {
+        let mut changed = declared.clone();
+        match field {
+            "features" => changed.features.push("unprepared".to_string()),
+            "defaults" => changed.default_features = !changed.default_features,
+            "version" => changed.version = Some("99".to_string()),
+            "package" => changed.package = Some("unrelated".to_string()),
+            _ => changed.crate_name = "unrelated".to_string(),
+        }
+        assert!(
+            prepared.test_dependency_plan(&[changed]).is_err(),
+            "changed {field} admitted"
+        );
+    }
+    let inspection = tempfile::tempdir()?;
+    let error = prepared
+        .install_for_dependencies(inspection.path(), &dependencies)
+        .err()
+        .ok_or("native execution roots granted legacy source-inspection authority")?;
+    assert!(
+        error
+            .message
+            .contains("does not cover the requested normal and dev registry dependencies")
+    );
+    println!(
+        "ordinary-native-test-envelope-evidence {}",
+        serde_json::json!({
+            "selected_plan": expected_plan, "registry_root": "serde_json", "declaration_mutations_refused": 5,
+            "legacy_source_inspection_refused": true,
+        })
+    );
+    Ok(())
+}
+
+mod web;

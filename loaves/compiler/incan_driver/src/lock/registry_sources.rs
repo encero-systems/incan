@@ -74,11 +74,10 @@ fn prepare_project_registry_source_authorities_inner(
     native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
     optional: bool,
 ) -> CliResult<ProjectRegistrySourceAuthoritySelection> {
-    if optional {
-        authority
-            .verify()
-            .map_err(|error| CliError::failure(error.to_string()))?;
-    }
+    // Bind public decoded fields to their original payload before moving any retained constituent owners.
+    authority
+        .verify()
+        .map_err(|error| CliError::failure(error.to_string()))?;
     struct ResolvedSourceCatalog {
         root: PathBuf,
         packages: Vec<oven_rustc::rustc::OvenRustcRegistrySourcePackage>,
@@ -454,6 +453,27 @@ fn prepare_project_test_dependency_plan(
     Ok(Some(OvenDirectRustcPlanSelection::PackagedProvider(Box::new(composed))))
 }
 
+/// Borrowed execution projection of one verified project test dependency envelope.
+/// The original prepared authority retains all leases. Ordinary path ownership is exposed only together with the
+/// exact plan after this generated batch's complete dependency surface has passed envelope validation.
+pub struct PreparedOvenTestDependencyPlan<'a> {
+    selection: &'a OvenDirectRustcPlanSelection,
+    ordinary_paths: bool,
+}
+
+impl<'a> PreparedOvenTestDependencyPlan<'a> {
+    /// Borrow the exact selected plan while its original prepared project authority remains live.
+    pub fn selection(&self) -> &'a OvenDirectRustcPlanSelection {
+        self.selection
+    }
+
+    /// Whether original ordinary native roots already supply every validated caller path for this batch.
+    /// A legacy SDK or imported package plan alone grants no such ownership, even with matching extern names.
+    pub fn seals_current_project_paths(&self) -> bool {
+        self.ordinary_paths
+    }
+}
+
 impl PreparedOvenProjectRegistrySourceAuthorities {
     /// Return the exact dependency constituent whose native SDK catalog authorizes separately owned SDK inputs.
     fn native_sdk_dependency_receipt(&self) -> Option<&oven_store::OvenReceipt> {
@@ -466,11 +486,12 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 
     /// Return the exact role-bearing dependency envelope after validating this generated batch's complete surface.
     /// SDK registry inputs require the constituent's exact native catalog before their separately owned roots are
-    /// excluded.
+    /// excluded. Ordinary native roots authorize execution through their receipt-bound test envelope, not the legacy
+    /// source catalog; source inspection keeps its independent catalog requirement.
     pub fn test_dependency_plan(
         &self,
         dependencies: &[DependencySpec],
-    ) -> CliResult<Option<&oven_rustc::plan::OvenDirectRustcPlanSelection>> {
+    ) -> CliResult<Option<PreparedOvenTestDependencyPlan<'_>>> {
         if self.authority.payload.test_dependency_envelope.is_none() {
             return Ok(None);
         }
@@ -491,7 +512,9 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
                 self.native_sdk_dependency_receipt(),
             )?,
         };
-        if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
+        if self.authority.payload.native_roots.is_none()
+            && !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted)
+        {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
         if let Some(mismatch) = project_inspection_test_dependency_envelope_mismatch(
@@ -517,11 +540,21 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
                 "Oven Alpha project inspection authority has a missing, stale, or incompatible test dependency root: {mismatch} (sealed aliases: [{expected}]; requested aliases: [{actual}]); rerun `incan oven bake --project .`"
             )));
         }
-        self.test_dependency_plan.as_ref().map(Some).ok_or_else(|| {
+        let selection = self.test_dependency_plan.as_ref().ok_or_else(|| {
             CliError::failure(
                 "project inspection authority lost its exact test dependency plan while retaining its role",
             )
-        })
+        })?;
+        Ok(Some(PreparedOvenTestDependencyPlan {
+            selection,
+            ordinary_paths: self.authority.payload.native_roots.as_ref().is_some_and(|native| {
+                self.authority
+                    .payload
+                    .test_dependency_envelope
+                    .as_ref()
+                    .is_some_and(|envelope| native.constituent_index == envelope.constituent_index)
+            }),
+        }))
     }
 
     /// Bind generated test receipts to the exact project authority selected once for this command.

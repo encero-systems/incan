@@ -171,3 +171,66 @@ fn native_dependency_cycles_fail_before_execution() -> Result<(), Error> {
     assert!(!root.path().join("store").exists());
     Ok(())
 }
+
+/// Genuine native and auxiliary leases reject changed output bytes while preserving unchanged producer reuse.
+#[test]
+fn retained_native_and_auxiliary_outputs_refuse_corruption() -> Result<(), Error> {
+    let root = tempfile::tempdir()?;
+    let host_units = vec![fixture(root.path(), "host", "pub fn value() -> u8 { 7 }", &[])?];
+    let auxiliary_units = vec![fixture(root.path(), "auxiliary", "pub fn value() -> u8 { 9 }", &[])?];
+    let mut closure = execute(&root.path().join("host-output"), &host_units, 1)?;
+    let auxiliary = execute(&root.path().join("auxiliary-output"), &auxiliary_units, 1)?;
+    let target = crate::rustc::rustc_host_target(&crate::rustc::resolve_active_rustc()?)?;
+    closure.attach_auxiliary_target(&target, auxiliary)?;
+    closure.verify_retained_outputs()?;
+    let paths = [
+        closure
+            .units()
+            .first()
+            .ok_or("host unit missing")?
+            .output()
+            .to_path_buf(),
+        closure
+            .auxiliary_targets()
+            .get(&target)
+            .ok_or("auxiliary closure missing")?
+            .units()
+            .first()
+            .ok_or("auxiliary unit missing")?
+            .output()
+            .to_path_buf(),
+    ];
+    for path in paths {
+        let original = std::fs::read(&path)?;
+        replace_retained_fixture(&path, b"corrupted native payload")?;
+        let refused = closure.verify_retained_outputs().is_err();
+        replace_retained_fixture(&path, &original)?;
+        assert!(refused, "changed retained output accepted: {}", path.display());
+        closure.verify_retained_outputs()?;
+    }
+    let repeat = execute(&root.path().join("host-output"), &host_units, 1)?;
+    repeat.verify_retained_outputs()?;
+    assert!(repeat.report().compiled.is_empty());
+    assert_eq!(repeat.report().reused.len(), 1);
+    Ok(())
+}
+
+/// Edit only an isolated immutable fixture and restore its permissions, preserving the production read-only policy.
+fn replace_retained_fixture(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let original = std::fs::metadata(path)?.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(original.mode() | 0o200))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut writable = original.clone();
+        writable.set_readonly(false);
+        std::fs::set_permissions(path, writable)?;
+    }
+    let result = std::fs::write(path, bytes);
+    std::fs::set_permissions(path, original)?;
+    result?;
+    Ok(())
+}

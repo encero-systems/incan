@@ -730,3 +730,39 @@ fn manifest_writer_rejects_non_hex_desugarer_sha256() -> Result<(), Box<dyn std:
     assert!(matches!(err, Err(LibraryManifestError::Invalid(msg)) if msg.contains("must be 64 hex characters")));
     Ok(())
 }
+
+/// Retained vocabulary identities use the publication wire format and change when extracted metadata changes.
+#[test]
+fn vocabulary_identity_encoding_matches_manifest_wire() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let mut vocab = VocabExports {
+        crate_path: "vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: Vec::new(),
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    };
+    manifest.vocab = Some(vocab.clone());
+    let before = vocab.to_json_string()?;
+    let published: serde_json::Value = serde_json::from_str(&manifest.to_json_string()?)?;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&before)?, published["vocab"]);
+    vocab.keyword_registrations.push(incan_vocab::KeywordRegistration {
+        activation: incan_vocab::KeywordActivation::OnImport {
+            namespace: "mylib.dsl".to_string(),
+        },
+        keywords: vec![incan_vocab::KeywordSpec::new(
+            "await",
+            incan_vocab::KeywordSurfaceKind::ControlFlow,
+        )],
+        valid_decorators: Vec::new(),
+    });
+    assert_ne!(vocab.to_json_string()?, before);
+    manifest.vocab = Some(vocab.clone());
+    let published: serde_json::Value = serde_json::from_str(&manifest.to_json_string()?)?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&vocab.to_json_string()?)?,
+        published["vocab"]
+    );
+    Ok(())
+}

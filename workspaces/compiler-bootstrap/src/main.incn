@@ -71,8 +71,10 @@ def inspect_authority(root_text: str) -> Result[None, str]:
     return Ok(None)
 
 
-def build(arguments: list[str]) -> Result[None, str]:
-    """Bind the CLI source, select its declared prepared inputs, and retain all owners through execution."""
+pub def build(arguments: list[str], profile: str = "debug") -> Result[None, str]:
+    """Build the compiler and native dependencies under one profile; independently bound support engines retain their own profiles."""
+    if profile != "debug" and profile != "release":
+        return Err("compiler profile must be debug or release")
     started = Instant.now()
     checkout = Path(arguments[1]).resolve().map_err((error) => error.message())?
     cli = checkout.joinpath("loaves/toolchain/incan-cli")
@@ -99,7 +101,7 @@ def build(arguments: list[str]) -> Result[None, str]:
     toolchain = rustc_identity(rustc).map_err((error) => str(error))?
     target = rustc_host_target(rustc).map_err((error) => str(error))?
     mut features: list[str] = []
-    request = OvenGeneratedProjectRequest.new(cli.0, name, version, target, toolchain, "debug", features)
+    request = OvenGeneratedProjectRequest.new(cli.0, name, version, target, toolchain, profile, features)
     source_path = RustPath.new(source.0)
     root_request = request.with_generated_source("compiler-main", source_path)
     tree_request = root_request.with_generated_source_tree("compiler-cli-tree", cli.joinpath("src").0)
@@ -325,11 +327,14 @@ def main() -> None:
             Err(error) =>
                 println(error)
                 exit(1)
-    if len(arguments) != 5:
-        println("usage: compiler_bootstrap SOURCE_ROOT OUTPUT RUSTC STORE")
+    if len(arguments) != 5 and len(arguments) != 6:
+        println("usage: compiler_bootstrap SOURCE_ROOT OUTPUT RUSTC STORE [debug|release]")
         println("       compiler_bootstrap --inspect-authority FIXTURE_ROOT")
         exit(2)
-    match build(arguments):
+    mut profile = "debug"
+    if len(arguments) == 6:
+        profile = arguments[5]
+    match build(arguments, profile):
         Ok(_) => return
         Err(error) =>
             println(error)

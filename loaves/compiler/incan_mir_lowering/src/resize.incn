@@ -53,5 +53,5 @@ pub def emit_resize(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[source, target], parameters=[source], return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.InstantiatedPair(path, source, target), [operand], output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [source, target]), [operand], output, span)
     return Ok(None)

@@ -1,17 +1,20 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
 from symbols import type_component
 from type_parameters import substitute
+from class_inheritance import specialize_classes
+from nominal_frames import nominal_frames, closed_arguments
+from decls import library_item
 
 
-model NominalInstance:
+pub model NominalInstance:
     """A source nominal and one closed argument list occurring in checked frame or field types."""
 
-    declaration: NominalDeclaration
-    arguments: list[RustType]
-    ancestors: list[str]
+    pub declaration: NominalDeclaration
+    pub arguments: list[RustType]
+    pub ancestors: list[str]
 
 
 pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
@@ -22,10 +25,62 @@ pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
     return name
 
 
+pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclaration) -> Result[list[RustType], str]:
+    """Recover a closed layout's arguments from the checked types that scheduled its specialization."""
+    if declaration.type_parameter_count == 0:
+        return Ok([])
+    base = str(declaration.canonical.declaration_name)
+    name = str(declaration.name)
+    for body in nominal_frames(module)?:
+        match find_instance_arguments(body.return_type, base, name):
+            Some(arguments) => return Ok(arguments)
+            None => pass
+        for local in body.locals:
+            match find_instance_arguments(local.ty, base, name):
+                Some(arguments) => return Ok(arguments)
+                None => pass
+    for owner in module.nominal_declarations:
+        for field in owner.field_types:
+            match find_instance_arguments(field, base, name):
+                Some(arguments) => return Ok(arguments)
+                None => pass
+    return Err(f"unsupported Body IR unretained SDK type arguments on {name}")
+
+
+def find_instance_arguments(ty: &RustType, base: str, name: str) -> Option[list[RustType]]:
+    """Match the exact closed specialization key and recurse through retained enclosing types."""
+    match ty:
+        RustType.Generic(base=owner, args=arguments) =>
+            if str(owner) == base and nominal_symbol(base, arguments.clone()) == name:
+                return Some(arguments.clone())
+            for argument in arguments:
+                match find_instance_arguments(argument, base, name):
+                    Some(found) => return Some(found)
+                    None => pass
+        RustType.Tuple(elements) =>
+            for element in elements:
+                match find_instance_arguments(element, base, name):
+                    Some(found) => return Some(found)
+                    None => pass
+        RustType.Ref(inner) => return find_instance_arguments(inner, base, name)
+        RustType.RefMut(inner) => return find_instance_arguments(inner, base, name)
+        _ => pass
+    return None
+
+
 pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Build a derived lowering context; validate the original module before calling this boundary."""
+    context, _instances = specialize_nominals_with_instances(module)?
+    return Ok(context)
+
+
+pub def specialize_nominals_with_instances(
+    module: &BodyIrModule,
+) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
+    """Retain inherited receiver frames and exact discovered arguments beside concrete layouts for validated ingress scheduling."""
+    inherited = specialize_classes(module)?
     mut instances: list[NominalInstance] = []
-    for body in module.bodies:
+    for body in nominal_frames(module)?:
         for local in body.locals:
             _ = collect_nominal_type(module, local.ty, instances, [])?
         _ = collect_nominal_type(module, body.return_type, instances, [])?
@@ -34,6 +89,8 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     for declaration in module.nominal_declarations:
         if len(declaration.type_parameters) == 0:
             result.nominal_declarations.push(declaration.clone())
+            for field in declaration.field_types:
+                _ = collect_nominal_type(module, field, instances, [declaration.canonical.render_compact()])?
     mut cursor = 0
     while cursor < len(instances):
         instance = instances[cursor]
@@ -47,6 +104,8 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
             _ = collect_nominal_type(module, field, instances, lineage)?
         result.nominal_declarations.push(declaration.clone())
     result.bodies.clear()
+    for body in inherited:
+        result.bodies.push(body.clone())
     for body in module.bodies:
         match owner_template(module, body):
             None => result.bodies.push(body.clone())
@@ -55,7 +114,7 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
                     if instance.declaration.canonical == module.nominal_declarations[owner].canonical:
                         closed: Body = close_owner_body(body, instance)?
                         result.bodies.push(closed.clone())
-    return Ok(result)
+    return Ok((result, instances))
 
 
 def collect_nominal_type(
@@ -93,10 +152,29 @@ def collect_generic_nominal_type(
             continue
         if len(declaration.type_parameters) != len(arguments):
             return Err(f"unsupported Body IR nominal type argument arity on {base}")
-        # Recursive nominal carrier dependencies remain outside this concrete-layout admission profile.
-        if declaration.canonical.render_compact() in ancestors:
-            return Err(f"unsupported Body IR recursive nominal field instantiation on {base}")
+        require_newtype_arguments(declaration, arguments)?
         return retain_nominal_instance(declaration, arguments, instances, ancestors)
+    return Ok(None)
+
+
+def require_newtype_arguments(declaration: &NominalDeclaration, arguments: list[RustType]) -> Result[None, str]:
+    """Restrict authored newtype payloads to proved conditional derives; native carriers keep their SDK-owned layout and derives."""
+    if library_item(declaration) != "" or declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
+        return Ok(None)
+    if len(declaration.type_parameters) != 1 or len(declaration.field_types) != 1:
+        return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
+    match declaration.field_types[0]:
+        RustType.TypeVar(name) =>
+            if str(name) != str(declaration.type_parameters[0]):
+                return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
+        _ => return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
+    for argument in arguments:
+        match argument:
+            RustType.Primitive(Primitive.Int) => pass
+            RustType.Primitive(Primitive.Str) =>
+                if "Copy" in declaration.derives:
+                    return Err("unsupported Body IR generic Newtype Copy payload str")
+            _ => return Err("unsupported Body IR generic Newtype argument outside int or str")
     return Ok(None)
 
 
@@ -106,30 +184,14 @@ def retain_nominal_instance(
     mut instances: list[NominalInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Deduplicate by canonical owner and checked arguments before scheduling a concrete nominal layout."""
+    """Reuse exact checked instances before rejecting a new recursive field expansion of their canonical owner."""
     for retained in instances:
         if retained.declaration.canonical == declaration.canonical and retained.arguments == arguments:
             return Ok(None)
+    if declaration.canonical.render_compact() in ancestors:
+        return Err(f"unsupported Body IR recursive nominal field instantiation on {declaration.name}")
     instances.append(NominalInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
     return Ok(None)
-
-
-def closed_arguments(arguments: list[RustType]) -> bool:
-    """Reject unresolved type variables recursively before retaining an executable layout instance."""
-    for argument in arguments:
-        match argument:
-            RustType.TypeVar(_name) => return false
-            RustType.Generic(base=_base, args=elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.Tuple(elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.SelfType => return false
-            RustType.Infer => return false
-            RustType.Unknown => return false
-            _ => pass
-    return true
 
 
 def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
@@ -140,11 +202,22 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
     for ty in instance.declaration.field_types:
         concrete: RustType = substitute(ty, instance.declaration.type_parameters, instance.arguments)?
         result.field_types.push(concrete.clone())
+    result.trait_adoptions.clear()
+    for adoption in instance.declaration.trait_adoptions:
+        mut closed = adoption.clone()
+        closed.arguments.clear()
+        for argument in adoption.arguments:
+            concrete: RustType = substitute(argument, instance.declaration.type_parameters, instance.arguments)?
+            closed.arguments.push(concrete.clone())
+        result.trait_adoptions.push(closed)
     match instance.declaration.field_default_body:
         Some(body) =>
             closed: Body = close_owner_body(body, instance)?
             result.field_default_body = Some(closed.into_box())
         None => pass
+    for index in range(len(result.method_partial_defaults)):
+        closed: Body = close_owner_body(instance.declaration.method_partial_defaults[index].frame, instance)?
+        result.method_partial_defaults[index].frame = closed.into_box()
     return Ok(result)
 
 
@@ -172,8 +245,8 @@ def is_receiver(origin: &LocalOrigin) -> bool:
 
 
 def admitted_owner(declaration: &NominalDeclaration) -> bool:
-    """Restrict concrete layouts to the source declaration kinds whose canonical field facts are retained."""
-    return declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model
+    """Admit retained source owners and exact native carriers after the original module's layout validation."""
+    return declaration.native_item != "" or declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model or declaration.canonical.kind == SemanticSourceTargetKind.Newtype
 
 
 def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str]:

@@ -103,6 +103,16 @@ pub enum SdkInventorySource {
     DiscoverOnly,
 }
 
+/// Select the semantic source of a local dependency without changing compiled publication authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceLibraryManifestPreference {
+    /// Preserve a prepared artifact when it exists, as ordinary collection and checking do.
+    PublishedArtifacts,
+    /// Read available source declarations while a publisher selects compiled owners from its explicit inventory.
+    /// Artifact-only dependencies still use their published manifests.
+    SourceDeclarations,
+}
+
 /// Build a parser-only dependency manifest index for formatting and other collection-only entrypoints.
 ///
 /// This deliberately does not write `.incnlib` artifacts. A source-derived parser manifest contains vocab registrations
@@ -111,12 +121,14 @@ pub enum SdkInventorySource {
 /// their legacy library artifacts.
 ///
 /// This is intentionally available to Oven's lock validator so `--locked` and `--frozen` can retain canonical
-/// freshness semantics without starting Cargo merely to inspect dependency metadata.
+/// freshness semantics without starting Cargo merely to inspect dependency metadata. A native publisher explicitly
+/// prefers source declarations so unrelated ordinary build products cannot replace its inventory-selected owners.
 pub fn parser_only_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
+    preference: SourceLibraryManifestPreference,
 ) -> ProviderResult<LibraryManifestIndex> {
-    source_library_manifest_index(manifest, active_dependencies, false)
+    source_library_manifest_index(manifest, active_dependencies, false, preference)
 }
 
 /// Load source parser context for check using only compatible already-prepared vocabulary metadata.
@@ -124,7 +136,12 @@ pub fn checked_source_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
 ) -> ProviderResult<LibraryManifestIndex> {
-    source_library_manifest_index(manifest, active_dependencies, true)
+    source_library_manifest_index(
+        manifest,
+        active_dependencies,
+        true,
+        SourceLibraryManifestPreference::PublishedArtifacts,
+    )
 }
 
 /// Share dependency authority selection while distinguishing parser preparation from cache-only checking.
@@ -132,6 +149,7 @@ fn source_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
     cache_only: bool,
+    preference: SourceLibraryManifestPreference,
 ) -> ProviderResult<LibraryManifestIndex> {
     let existing_index = LibraryManifestIndex::from_project_manifest_dependencies(
         manifest,
@@ -143,6 +161,15 @@ fn source_library_manifest_index(
         let Some(dependency) = manifest.library_dependencies().get(dependency_key) else {
             continue;
         };
+        if preference == SourceLibraryManifestPreference::SourceDeclarations
+            && dependency.path.join(LOAF_MANIFEST_FILENAME).is_file()
+        {
+            entries.insert(
+                dependency_key.clone(),
+                parser_only_library_manifest_entry(dependency_key, &dependency.path, cache_only)?,
+            );
+            continue;
+        }
         match existing_index.get(dependency_key) {
             Some(LibraryManifestIndexEntry::Loaded { .. }) => {
                 let Some(entry) = existing_index.get(dependency_key) else {

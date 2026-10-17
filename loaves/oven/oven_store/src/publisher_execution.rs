@@ -1,17 +1,35 @@
 //! Receipt-bound, hermetic publisher execution for native-link and generator work.
 
+#[cfg(not(target_os = "linux"))]
 use std::collections::BTreeMap;
 #[cfg(target_os = "macos")]
 use std::collections::BTreeSet;
+#[cfg(not(target_os = "linux"))]
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "linux"))]
+use std::path::Path;
+use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
+#[cfg(not(target_os = "linux"))]
 use crate::process::BoundedProcessLimits;
 #[cfg(target_os = "macos")]
 use crate::process::{BoundedProcessTermination, run_bounded_process};
 use crate::publisher_owner::PublisherOwnerClosurePath;
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::run_hermetic_process;
+
+/// Borrow the already checked read and loader authority without creating another cache or owner.
+struct PublisherReadClosure<'a> {
+    /// Exact executable-owner paths admitted by the existing identity boundary.
+    owner: &'a [PublisherOwnerClosurePath],
+    /// Exact regular runtime files already checked against the recorded member digests.
+    runtime: &'a [PathBuf],
+}
 
 /// Launch one exact executable with a cleared environment under the host confinement primitive.
 ///
@@ -23,7 +41,7 @@ use crate::publisher_owner::PublisherOwnerClosurePath;
 #[cfg(target_os = "macos")]
 fn run_hermetic_process(
     executable: &Path,
-    owner_closure: &[PublisherOwnerClosurePath],
+    closure: PublisherReadClosure<'_>,
     arguments: &[OsString],
     environment: &BTreeMap<String, OsString>,
     inputs: &[PathBuf],
@@ -34,7 +52,8 @@ fn run_hermetic_process(
     // spelled canonically or every write below it is refused.
     let product_root = std::fs::canonicalize(product_root)
         .map_err(|error| format!("could not resolve product root {}: {error}", product_root.display()))?;
-    let profile = macos_sandbox_profile(owner_closure, &product_root, inputs);
+    let profile = macos_sandbox_profile(closure.owner, &product_root, inputs);
+    let _runtime = closure.runtime;
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command
         .arg("-p")
@@ -58,10 +77,10 @@ fn run_hermetic_process(
 }
 
 /// Refuse publisher execution when no process-tree filesystem confinement primitive is implemented.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn run_hermetic_process(
     _executable: &Path,
-    _owner_closure: &[PublisherOwnerClosurePath],
+    _closure: PublisherReadClosure<'_>,
     _arguments: &[OsString],
     _environment: &BTreeMap<String, OsString>,
     _inputs: &[PathBuf],
@@ -276,6 +295,8 @@ mod tool_execution {
 
     /// Refuse noncanonical or malformed receipt fields even when an attacker can recompute the outer digest.
     fn validate_receipt_shape(receipt: &OvenPublisherToolReceipt) -> Result<(), OvenPublisherToolError> {
+        crate::publisher_owner::validate_publisher_runtime_coordinates(&receipt.executable.runtime_files)
+            .map_err(|error| invalid_error(&receipt.producer, &error.to_string()))?;
         if receipt.producer.is_empty()
             || receipt.host.is_empty()
             || receipt.target.is_empty()
@@ -376,8 +397,9 @@ mod tool_execution {
     /// Execute one exact declared generator in a publisher-only filesystem sandbox and receipt its products.
     ///
     /// Inputs remain under their immutable admitted owner and are mounted read-only by the sandbox. Only the declared
-    /// product root is writable. On macOS, `sandbox-exec` enforces the read/write boundary; other hosts fail closed
-    /// until they provide an equivalent process-tree filesystem confinement primitive.
+    /// product root is writable. On macOS, `sandbox-exec` enforces the read/write boundary; on Linux, bubblewrap uses
+    /// the exact declared runtime and read closure. Other hosts fail closed until they provide an equivalent
+    /// process-tree filesystem confinement primitive.
     pub fn execute_publisher_tool(
         request: &OvenPublisherToolRequest<'_>,
     ) -> Result<OvenPublisherToolReceipt, OvenPublisherToolError> {
@@ -699,7 +721,20 @@ mod tool_execution {
             .map(|(name, value)| (name.clone(), OsString::from(value)))
             .collect::<BTreeMap<_, _>>();
         let inputs = inputs.values().cloned().collect::<Vec<_>>();
+        let runtime_files = crate::publisher_owner::publisher_runtime_files(
+            request.executable_owner.root,
+            &request.tool.executable.runtime_files,
+        )
+        .map_err(|error| invalid_error(&request.tool.name, &error.to_string()))?;
         let owner_paths = std::iter::once(request.tool.executable.path.as_str())
+            .chain(
+                request
+                    .tool
+                    .executable
+                    .runtime_files
+                    .iter()
+                    .map(|member| member.path.as_str()),
+            )
             .chain(request.tool.arguments.iter().filter_map(|argument| match argument {
                 RustFactArgument::Owner { owner } => Some(owner.as_str()),
                 _ => None,
@@ -727,7 +762,10 @@ mod tool_execution {
                 })?;
         super::run_hermetic_process(
             executable,
-            &owner_closure,
+            super::PublisherReadClosure {
+                owner: &owner_closure,
+                runtime: &runtime_files,
+            },
             &arguments,
             &environment,
             &inputs,
@@ -1126,6 +1164,7 @@ mod tool_execution {
                 name: "tree-writer".to_string(),
                 target: "aarch64-apple-darwin".to_string(),
                 executable: RustFactExecutable {
+                    runtime_files: Vec::new(),
                     name: "tree-writer".to_string(),
                     owner: executable_owner_identity.clone(),
                     path: "tree-writer".to_string(),
@@ -1263,6 +1302,8 @@ mod link_execution {
         pub executable_owner: String,
         /// Executable path followed by every owner-relative path referenced by an object argument.
         pub executable_owner_paths: Vec<&'a str>,
+        /// Sorted exact owner-relative runtime files; no loader dependency discovery is performed.
+        pub executable_runtime_files: &'a [RustFactArtifactMember],
         /// Expected executable byte identity.
         pub executable_digest: &'a str,
         /// Sorted explicit object compilations.
@@ -1321,6 +1362,9 @@ mod link_execution {
         pub executable_owner: String,
         /// Executable byte identity.
         pub executable_digest: String,
+        /// Runtime files whose owner-bound parents define the deterministic loader search path.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub executable_runtime_files: Vec<RustFactArtifactMember>,
         /// Version-based system installation evidence; absent for legacy byte-owned publishers.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub virtual_toolchain: Option<crate::publisher_owner::VirtualToolchainLoaf>,
@@ -1407,6 +1451,8 @@ mod link_execution {
                     "virtual toolchain evidence does not match executable authority".to_string(),
                 ));
             }
+            crate::publisher_owner::validate_publisher_runtime_coordinates(&self.executable_runtime_files)
+                .map_err(|error| PublisherExecutionError::InvalidReceipt(error.to_string()))?;
             let actual = publisher_execution_receipt_identity(self)?;
             if actual != self.identity {
                 return Err(PublisherExecutionError::InvalidReceipt(format!(
@@ -1460,6 +1506,10 @@ mod link_execution {
     }
 
     /// Execute one exact publisher work record with no ambient environment or output discovery.
+    ///
+    /// A record without an explicit `TMPDIR` uses the canonical writable product root for compiler scratch files.
+    /// The receipt records this as a logical output-root coordinate, so relocation does not change its identity.
+    /// Explicit environment selections remain unchanged and never enlarge the sandbox's writable closure.
     pub fn execute_publisher_work(
         request: &PublisherExecutionRequest<'_>,
     ) -> Result<PublisherExecutionResult, PublisherExecutionError> {
@@ -1471,6 +1521,22 @@ mod link_execution {
             ));
         }
         let executable = verified_file(request.executable, request.executable_digest, "executable")?;
+        let runtime_files = crate::publisher_owner::publisher_runtime_files(
+            request.executable_owner_root,
+            request.executable_runtime_files,
+        )
+        .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?;
+        let owner_paths = request
+            .executable_owner_paths
+            .iter()
+            .copied()
+            .chain(
+                request
+                    .executable_runtime_files
+                    .iter()
+                    .map(|member| member.path.as_str()),
+            )
+            .collect::<BTreeSet<_>>();
         let virtual_toolchain =
             if crate::publisher_owner::VirtualToolchainLoaf::owns_identity(&request.executable_owner) {
                 let root =
@@ -1488,7 +1554,7 @@ mod link_execution {
                     crate::publisher_owner::VirtualToolchainLoaf::read(
                         request.executable_owner_root,
                         relative,
-                        request.executable_owner_paths.iter().copied(),
+                        owner_paths.iter().copied(),
                     )
                     .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?,
                 )
@@ -1500,11 +1566,8 @@ mod link_execution {
                 .identity()
                 .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?
         } else {
-            crate::publisher_owner::publisher_owner_identity(
-                request.executable_owner_root,
-                request.executable_owner_paths.iter().copied(),
-            )
-            .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?
+            crate::publisher_owner::publisher_owner_identity(request.executable_owner_root, owner_paths.iter().copied())
+                .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?
         };
         if actual_owner != request.executable_owner {
             return Err(PublisherExecutionError::Invalid(format!(
@@ -1512,11 +1575,9 @@ mod link_execution {
                 request.executable_owner
             )));
         }
-        let owner_closure = crate::publisher_owner::publisher_owner_closure(
-            request.executable_owner_root,
-            request.executable_owner_paths.iter().copied(),
-        )
-        .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?;
+        let owner_closure =
+            crate::publisher_owner::publisher_owner_closure(request.executable_owner_root, owner_paths.iter().copied())
+                .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?;
         let inputs = verified_inputs(&request.inputs)?;
         prepare_output_root(request.output_root)?;
         // Outputs are named to the child by the root's resolved spelling, which is the only one confinement admits.
@@ -1534,8 +1595,12 @@ mod link_execution {
             })?;
         let object_paths = declared_objects(&output_root, &request.objects)?;
         validate_object_arguments(&request.objects, &inputs, &object_paths)?;
-        let (mut environment, logical_environment) = materialize_environment(&request.environment, &inputs)?;
+        let (mut environment, mut logical_environment) = materialize_environment(&request.environment, &inputs)?;
         environment.insert("SOURCE_DATE_EPOCH".to_string(), "0".into());
+        if !environment.contains_key("TMPDIR") {
+            environment.insert("TMPDIR".to_string(), output_root.as_os_str().to_owned());
+            logical_environment.insert("TMPDIR".to_string(), "output-root".to_string());
+        }
         let mut logical_arguments = BTreeMap::new();
         for object in &request.objects {
             let object_path = object_paths.get(object.name).ok_or_else(|| {
@@ -1548,7 +1613,10 @@ mod link_execution {
             append_native_prefix_maps(&mut arguments, &inputs, &owner_root, &output_root);
             super::run_hermetic_process(
                 &executable,
-                &owner_closure,
+                super::PublisherReadClosure {
+                    owner: &owner_closure,
+                    runtime: &runtime_files,
+                },
                 &arguments,
                 &environment,
                 &input_paths,
@@ -1573,6 +1641,7 @@ mod link_execution {
             toolchain: request.toolchain.to_string(),
             executable_owner: request.executable_owner.to_string(),
             executable_digest: request.executable_digest.to_string(),
+            executable_runtime_files: request.executable_runtime_files.to_vec(),
             virtual_toolchain,
             objects,
             logical_environment,
@@ -1605,6 +1674,8 @@ mod link_execution {
             toolchain: &'a str,
             executable_owner: &'a str,
             executable_digest: &'a str,
+            #[serde(skip_serializing_if = "<[RustFactArtifactMember]>::is_empty")]
+            executable_runtime_files: &'a [RustFactArtifactMember],
             #[serde(skip_serializing_if = "Option::is_none")]
             virtual_toolchain: &'a Option<crate::publisher_owner::VirtualToolchainLoaf>,
             objects: &'a [PublisherExecutionObjectReceipt],
@@ -1622,6 +1693,7 @@ mod link_execution {
             toolchain: &receipt.toolchain,
             executable_owner: &receipt.executable_owner,
             executable_digest: &receipt.executable_digest,
+            executable_runtime_files: &receipt.executable_runtime_files,
             virtual_toolchain: &receipt.virtual_toolchain,
             objects: &receipt.objects,
             logical_environment: &receipt.logical_environment,
@@ -2434,6 +2506,7 @@ mod link_execution {
             output_root: &'a std::path::Path,
         ) -> PublisherExecutionRequest<'a> {
             PublisherExecutionRequest {
+                executable_runtime_files: &[],
                 role: "link",
                 name: "fixture-native",
                 consuming_unit_identity: "sha256:consumer",
@@ -2555,6 +2628,50 @@ mod link_execution {
                 ["input:source", "output:fixture.o"]
             );
             product.receipt.verify_identity()?;
+            Ok(())
+        }
+
+        /// Native scratch writes stay inside the product root and preserve receipt identity after relocation.
+        #[test]
+        fn publisher_execution_defaults_tmpdir_to_confined_output_root() -> Result<(), Box<dyn Error>> {
+            let root = tempdir()?;
+            let compiler = root.path().join("temporary-compiler");
+            let source = root.path().join("source.c");
+            fs::write(&source, b"source")?;
+            let compiler_digest = executable(
+                &compiler,
+                "IFS= read -r content < \"$1\" || true\nprintf '%s' \"$content\" > \"$TMPDIR/fixture.o\"",
+            )?;
+            let mut original = None;
+            for name in ["first-products", "relocated-products"] {
+                let product =
+                    execute_publisher_work(&request(&compiler, &compiler_digest, &source, &root.path().join(name)))?;
+                product.receipt.verify_identity()?;
+                assert_eq!(product.receipt.objects[0].digest, digest_bytes(b"source"));
+                assert_eq!(
+                    product.receipt.logical_environment.get("TMPDIR").map(String::as_str),
+                    Some("output-root")
+                );
+                if let Some(identity) = &original {
+                    assert_eq!(&product.receipt.identity, identity);
+                } else {
+                    original = Some(product.receipt.identity);
+                }
+            }
+            let outside = root.path().join("outside-products");
+            fs::create_dir(&outside)?;
+            let outside_text = outside.to_str().ok_or("temporary directory is not UTF-8")?;
+            let products = root.path().join("explicit-products");
+            let mut explicit = request(&compiler, &compiler_digest, &source, &products);
+            explicit.environment.insert(
+                "TMPDIR",
+                super::PublisherExecutionEnvironmentValue::Literal(outside_text),
+            );
+            let failure = execute_publisher_work(&explicit)
+                .err()
+                .ok_or("explicit outside scratch write was accepted")?;
+            assert!(matches!(&failure, PublisherExecutionError::Execution(_)), "{failure}");
+            assert!(!outside.join("fixture.o").exists());
             Ok(())
         }
 

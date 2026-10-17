@@ -678,6 +678,40 @@ pub fn collect_rust_dependency_uses(module: &ParsedModule, is_test_context: bool
     imports
 }
 
+/// Select derive-only dependency demands from the original manifest, without granting roots from quoted names.
+/// Existing imports already carry their own resolver inputs. Undeclared quotes stay outside the declared roots and
+/// are refused by ordinary macro admission; the resolver still validates versions, features and conditional edges.
+#[cfg(feature = "rust_inspect")]
+pub fn collect_declared_rust_derive_dependency_uses(
+    module: &ParsedModule,
+    manifest: Option<&oven_model::manifest::ProjectManifest>,
+    is_test_context: bool,
+) -> Vec<InlineRustImport> {
+    let Some(manifest) = manifest else {
+        return Vec::new();
+    };
+    crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_uses(std::slice::from_ref(module))
+        .into_iter()
+        .filter_map(|(path, span)| {
+            let root = path.split("::").next()?;
+            let (alias, _) = manifest
+                .rust_dependencies()
+                .iter()
+                .chain(manifest.rust_dev_dependencies().iter())
+                .find(|(alias, _)| alias.replace('-', "_") == root)?;
+            Some(build_inline_rust_import(
+                alias,
+                format!("rust.derive(\"{path}\")"),
+                &None,
+                &[],
+                span,
+                &module.file_path,
+                is_test_context,
+            ))
+        })
+        .collect()
+}
+
 /// Build a map of file paths to source contents for error reporting.
 pub fn build_source_map(modules: &[ParsedModule]) -> HashMap<PathBuf, String> {
     let mut sources = HashMap::new();

@@ -66,6 +66,47 @@ pub fn prepare_rust_inspect_workspace_with_native_sdk(
     prepare_workspace_with_native_authority(request, native_sdk.map(InspectionNativeAuthority::Sdk))
 }
 
+/// Select the command's configured original producer before transitional SDK inspection.
+/// The existing producer owns graph, profile and source admission. Configured failures propagate; the returned
+/// workspace retains all original owners through semantic consumption, including derive-only requests.
+#[cfg(feature = "cli")]
+pub fn prepare_rust_inspect_workspace_for_command(
+    request: RustInspectWorkspaceRequest<'_>,
+    configured: Option<&crate::build::native_loaf_plan::ConfiguredNativeLoafInputs>,
+    native_sdk: Option<&crate::build::NativeSdkCommandContext>,
+    rustc: &Path,
+) -> CliResult<Option<PreparedRustInspectWorkspace>> {
+    if request.rust_inspect_query_paths.is_empty()
+        && request.rust_derive_probe_paths.is_empty()
+        && !request.prepare_when_empty
+    {
+        return Ok(None);
+    }
+    // ---- Choose the command's original native authority family ----
+    let Some(configured) = configured else {
+        return prepare_rust_inspect_workspace_with_native_sdk(request, native_sdk);
+    };
+    let intent = request
+        .oven_source_authority
+        .as_ref()
+        .ok_or_else(|| CliError::failure("configured native inspection lacks the requested compiler intent"))?;
+    // Rust's own namespace needs no external producer. A derive demand still enters ordinary admission and must
+    // resolve its root from the declared dependencies; a quoted name alone never grants native macro authority.
+    if intent.registry_dependencies.is_empty() && request.rust_derive_probe_paths.is_empty() {
+        return prepare_rust_inspect_workspace_with_native_sdk(request, native_sdk);
+    }
+
+    // ---- Retain the complete producer request through semantic inspection ----
+    let observation = configured.prepare_inspection(
+        &open_default_oven_store()?,
+        rustc,
+        intent.target,
+        intent.profile,
+        &request.cargo_target_dir.join("native-inspection"),
+    )?;
+    prepare_rust_inspect_workspace_with_ordinary_native(request, observation, rustc, None)
+}
+
 /// Prepare Rust metadata from the command's complete original ordinary producer request, with no SDK fallback.
 /// A metadata publisher supplies its recipe-bound source owner; independent inspection may acquire its own owner.
 pub fn prepare_rust_inspect_workspace_with_ordinary_native(
@@ -464,6 +505,8 @@ pub fn registry_source_is_owned_by_catalog(
 }
 
 /// Prepare the rust-inspect workspace needed before metadata-backed typechecking.
+/// Ordinary native source admission uses the authored Rust dependency surface before generated provider requirements
+/// are merged. The full requirements still govern locks, build identity and the managed inspection workspace.
 pub fn prepare_rust_inspect_typecheck_workspace(
     request: RustInspectTypecheckRequest<'_>,
 ) -> CliResult<Option<PreparedRustInspectTypecheckWorkspace>> {
@@ -489,7 +532,11 @@ pub fn prepare_rust_inspect_typecheck_workspace(
     let project_requirements = collect_project_requirements(modules, library_manifest_index)?;
     let inline_imports = modules
         .iter()
-        .flat_map(|module| collect_rust_dependency_uses(module, false))
+        .flat_map(|module| {
+            collect_rust_dependency_uses(module, false).into_iter().chain(
+                crate::modules::collect_declared_rust_derive_dependency_uses(module, manifest, false),
+            )
+        })
         .collect::<Vec<_>>();
     let mut resolved = match resolve_reachable_dependencies(manifest, &inline_imports, true, cargo_features) {
         Ok(resolved) => resolved,
@@ -502,6 +549,9 @@ pub fn prepare_rust_inspect_typecheck_workspace(
             return Err(CliError::failure(msg.trim_end()));
         }
     };
+    // Ordinary source inspection owns authored Rust declarations. Generated Incan provider artifacts remain in
+    // the complete lock and workspace requirements but cannot become local native source roots.
+    let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root,
@@ -542,14 +592,20 @@ pub fn prepare_rust_inspect_typecheck_workspace(
         .and_then(|manifest| manifest.project.as_ref())
         .and_then(|project| project.version.as_deref())
         .unwrap_or("0.1.0");
-    let prepared_project_source_authorities = if manifest.is_some() {
+    #[cfg(feature = "cli")]
+    let configured = crate::build::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?;
+    #[cfg(feature = "cli")]
+    let use_project_authority = configured.is_none();
+    #[cfg(not(feature = "cli"))]
+    let use_project_authority = true;
+    let prepared_project_source_authorities = if manifest.is_some() && use_project_authority {
         load_current_project_registry_source_authorities(&open_default_oven_store()?, project_root)?
             .map(prepare_project_registry_source_authorities)
             .transpose()?
     } else {
         None
     };
-    let manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+    let workspace_request = RustInspectWorkspaceRequest {
         project_root,
         project_name,
         cargo_package_name: &lock_resolution.cargo_package_name,
@@ -577,15 +633,22 @@ pub fn prepare_rust_inspect_typecheck_workspace(
             profile: "debug",
             features: &cargo_features.cargo_features,
             build_unit_inputs: &oven_build_inputs,
-            registry_dependencies: &lock_resolution.resolved.dependencies,
+            registry_dependencies: if use_project_authority {
+                &lock_resolution.resolved.dependencies
+            } else {
+                &inspection_dependencies
+            },
         }),
         prepared_project_source_authorities,
         explicit_oven_bake: false,
-    })?;
-    Ok(manifest_dir.map(|workspace| PreparedRustInspectTypecheckWorkspace {
-        manifest_dir: workspace.manifest_dir,
+    };
+    #[cfg(feature = "cli")]
+    let workspace = prepare_rust_inspect_workspace_for_command(workspace_request, configured.as_ref(), None, &rustc)?;
+    #[cfg(not(feature = "cli"))]
+    let workspace = prepare_rust_inspect_workspace(workspace_request)?;
+    Ok(workspace.map(|workspace| PreparedRustInspectTypecheckWorkspace {
+        workspace,
         _cache_lease: cache_lease,
-        _source_loaf: workspace._source_loaf,
     }))
 }
 

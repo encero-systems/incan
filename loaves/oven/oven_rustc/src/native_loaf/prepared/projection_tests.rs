@@ -254,3 +254,158 @@ pub(super) fn run_consumer(root: &Path, rustc: &Path, closure: &NativeLoafClosur
     }
     String::from_utf8(execution.stdout).map_err(Into::into)
 }
+
+/// An explicit projected document is a genuine complete request only after ordinary native production succeeds.
+#[test]
+fn explicit_native_projection_preserves_complete_production_and_reuse() -> TestResult {
+    with_fixture(|root, request, store| {
+        let output = root.join("standard/graph.json");
+        let mut projection = super::project_declared_native_loaf_request(request, &output)?;
+        for expected_compilations in [2, 0] {
+            let prepared = crate::native_loaf::prepare_resolved_native_loafs_in_store(
+                projection.graph(),
+                request.index,
+                request.blobs,
+                request.output,
+                request.rustc,
+                request.target,
+                request.profile,
+                store,
+            )?;
+            assert_eq!(prepared.graph().units().len(), 2);
+            assert_eq!(prepared.report().compiled.len(), expected_compilations);
+            prepared.request_observation()?.verify()?;
+            projection.verify(request)?;
+            let roots = prepared.graph().select_dependency_roots(
+                request.dependencies,
+                request.declaration_owner,
+                request.domain,
+            )?;
+            assert_eq!(
+                run_consumer(root, request.rustc, &prepared.graph().select(&roots)?)?,
+                "7"
+            );
+        }
+        assert_eq!(projection.graph(), output);
+        let graph_before = std::fs::read(request.graph)?;
+        let lock_before = std::fs::read(root.join("lock.json"))?;
+        assert!(super::project_declared_native_loaf_request(request, request.graph).is_err());
+        assert!(super::project_declared_native_loaf_request(request, &root.join("lock.json")).is_err());
+        assert_eq!(std::fs::read(request.graph)?, graph_before);
+        assert_eq!(std::fs::read(root.join("lock.json"))?, lock_before);
+        Ok(())
+    })
+}
+
+/// Original documents, selected source generations and generated producer documents are all checked boundaries.
+#[test]
+fn explicit_native_projection_refuses_changed_original_and_generated_inputs() -> TestResult {
+    for subject in [
+        "graph",
+        "lock",
+        "source",
+        "manifest",
+        "generated-graph",
+        "generated-lock",
+    ] {
+        with_fixture(|root, request, _| {
+            let mut projection =
+                super::project_declared_native_loaf_request(request, &root.join("standard/graph.json"))?;
+            let generated: serde_json::Value = serde_json::from_slice(&std::fs::read(projection.graph())?)?;
+            let path = match subject {
+                "graph" => request.graph.to_path_buf(),
+                "lock" => root.join("lock.json"),
+                "source" => root.join("child/src/lib.rs"),
+                "manifest" => root.join("child/loaf.toml"),
+                "generated-graph" => projection.graph().to_path_buf(),
+                "generated-lock" => {
+                    std::path::PathBuf::from(generated["registry_lock"].as_str().ok_or("generated lock absent")?)
+                }
+                _ => return Err("unexpected mutation subject".into()),
+            };
+            let original = std::fs::read(&path)?;
+            let mut history = oven_model::observed_inputs::InputObservations::default();
+            history.observe(&path);
+            std::fs::write(&path, b"corrupted")?;
+            assert!(projection.verify(request).is_err(), "{subject}");
+            std::fs::write(&path, &original)?;
+            if history.supports_retention() && matches!(subject, "graph" | "lock" | "source" | "manifest") {
+                assert!(
+                    projection.verify(request).is_err(),
+                    "restored original {subject} refreshed held authority"
+                );
+            }
+            // A new explicit request may reconcile restored content; the held generation may never silently refresh.
+            let mut restored = super::project_declared_native_loaf_request(request, &root.join("restored/graph.json"))?;
+            restored.verify(request)?;
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// Added dependencies change the real selected closure; a narrow graph never falls back to omitted candidates.
+#[test]
+fn explicit_native_projection_refuses_added_missing_and_uncovered_dependencies() -> TestResult {
+    with_fixture(|root, request, store| {
+        let mut projection = super::project_declared_native_loaf_request(request, &root.join("standard/graph.json"))?;
+        let parent = root.join("parent/loaf.toml");
+        let original = std::fs::read_to_string(&parent)?;
+        std::fs::write(
+            &parent,
+            format!("{original}unused={{loaf='unused',path='../unused'}}\n"),
+        )?;
+        assert!(projection.verify(request).is_err());
+        let expanded = super::project_declared_native_loaf_request(request, &root.join("expanded/graph.json"))?;
+        let graph: serde_json::Value = serde_json::from_slice(&std::fs::read(expanded.graph())?)?;
+        assert_eq!(graph["facets"].as_array().ok_or("facets absent")?.len(), 3);
+        let error = crate::native_loaf::prepare_resolved_native_loafs_in_store(
+            expanded.graph(),
+            request.index,
+            request.blobs,
+            request.output,
+            request.rustc,
+            request.target,
+            request.profile,
+            store,
+        )
+        .err()
+        .ok_or("genuine added dependency was skipped")?;
+        assert!(error.to_string().contains("unrelated native facet compiled"), "{error}");
+        std::fs::write(&parent, original)?;
+        let manifest = ProjectManifest::load(&root.join("loaf.toml"))?;
+        let mut dependencies = manifest.rust_dependency_values();
+        dependencies.push(oven_model::manifest::DependencySpec {
+            crate_name: "outside".into(),
+            package: Some("unused".into()),
+            version: Some("=1.0.0".into()),
+            features: Vec::new(),
+            default_features: true,
+            optional: false,
+            source: oven_model::manifest::DependencySource::Path {
+                path: root.join("unused"),
+            },
+        });
+        let narrowed = NativeLoafConsumerRequest {
+            graph: projection.graph(),
+            dependencies: &dependencies,
+            index: request.index,
+            blobs: request.blobs,
+            output: request.output,
+            rustc: request.rustc,
+            target: request.target,
+            profile: request.profile,
+            declaration_owner: request.declaration_owner,
+            domain: request.domain,
+        };
+        let error = super::project_declared_native_loaf_request(&narrowed, &root.join("refused/graph.json"))
+            .err()
+            .ok_or("outside root was silently omitted")?;
+        assert!(
+            error.to_string().contains("no current declared source binding"),
+            "{error}"
+        );
+        assert!(!root.join("refused/graph.json").exists());
+        Ok(())
+    })
+}

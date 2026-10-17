@@ -299,6 +299,10 @@ fn check_collected_report(
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = compilation_session.prepare_check_rust_inspection(normalized_path, &modules)?;
 
+    #[cfg(feature = "rust_inspect")]
+    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+        workspace.verify_ordinary_native()?;
+    }
     let typecheck = typecheck_modules_with_import_graph_artifacts(
         &modules,
         manifest.as_ref(),
@@ -309,6 +313,11 @@ fn check_collected_report(
             .as_ref()
             .map(|workspace| workspace.manifest_dir()),
     );
+
+    #[cfg(feature = "rust_inspect")]
+    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+        workspace.verify_ordinary_native()?;
+    }
 
     match typecheck {
         Ok(artifacts) => {

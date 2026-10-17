@@ -513,7 +513,7 @@ impl TypeChecker {
     }
 
     /// Return whether a type argument is fully known: no open, inferred-later or unknown part anywhere inside it.
-    fn is_settled_type_argument(ty: &ResolvedType) -> bool {
+    pub(in crate::typechecker) fn is_settled_type_argument(ty: &ResolvedType) -> bool {
         match ty {
             ResolvedType::Unknown
             | ResolvedType::CallSiteInfer
@@ -541,7 +541,7 @@ impl TypeChecker {
 
     /// Return the declared bounds recorded for the declaration a nominal spelling names; an import alias carries the
     /// identity of the declaration it imports.
-    fn declared_nominal_bounds(&self, type_name: &str) -> Option<&NominalTypeParamBounds> {
+    pub(in crate::typechecker) fn declared_nominal_bounds(&self, type_name: &str) -> Option<&NominalTypeParamBounds> {
         self.nominal_type_param_bounds
             .get(&self.nominal_declaration_key(type_name))
     }

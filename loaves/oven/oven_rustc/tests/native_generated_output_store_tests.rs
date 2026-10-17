@@ -60,6 +60,13 @@ fn generated_binary_store_reuses_executable_bytes_across_outputs() -> Result<(),
     generated_output_store_cases::generated_binary_store_reuses_executable_bytes_across_outputs()
 }
 
+/// Generated sibling mutations during compilation cannot publish under an earlier admitted source generation.
+#[cfg(unix)]
+#[test]
+fn generated_binary_store_refuses_sibling_edits_before_publication() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_binary_store_refuses_sibling_edits_before_publication()
+}
+
 /// Shared plans retain every native owner across stores and refuse substituted coordinates or member digests.
 #[test]
 fn shared_native_plan_retains_multi_store_owners_and_refuses_substitution() -> Result<(), Box<dyn std::error::Error>> {

@@ -71,6 +71,22 @@ incan test
 
 `loaf.toml` marks the project root. Project-aware commands discover it by walking upward from your current directory. File and directory arguments are still shell paths, so write them relative to the directory you are running the command from.
 
+## Choose a source layout
+
+Keep the scaffold's `src/` layout unless your project needs another directory. Incan discovers `src/` automatically, so the conventional layout needs no explicit `source-root` setting.
+
+For a project that keeps Incan modules in `lib/`, add this to `loaf.toml` and keep script paths consistent with the new layout:
+
+```toml
+[build]
+source-root = "lib"
+
+[project.scripts]
+main = "lib/main.incn"
+```
+
+A flat project with no `src/` directory and no explicit setting uses the project root. See the [source-root reference](../../tooling/reference/project_configuration.md#source-root) for the resolution order.
+
 ## Fill in project metadata
 
 Open `loaf.toml` and treat `[project]` as the user-facing metadata for the project:

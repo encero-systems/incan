@@ -4,7 +4,7 @@ pub(super) mod consumed_inputs;
 mod library_store;
 pub use library_store::{
     bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_run_in_store,
-    bake_trusted_direct_rustc_test_in_store,
+    bake_trusted_direct_rustc_run_in_store_with_generated_sources, bake_trusted_direct_rustc_test_in_store,
 };
 
 use super::{

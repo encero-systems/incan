@@ -17,8 +17,9 @@ use super::decorated_method_receivers::DecoratedMethodReceiver;
 use super::derive_contract::DerivedKind;
 use super::trait_bound_relations::CallableMarkerOwner;
 use super::type_info::{
-    CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo,
-    RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
+    BodyIrDecoratorApplication, BodyIrDecoratorStaticReceiver, CapabilityDeclarationInfo,
+    ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo, RegistryDescriptionRegistry,
+    RegistryExplicitEntryInfo,
 };
 use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
@@ -1080,6 +1081,139 @@ impl TypeChecker {
             module_path: adoption.module_path.clone(),
             span: adoption_span,
         })
+    }
+
+    /// Snapshot resolved derive slots for Body IR without modifying legacy method or adoption tables.
+    fn record_body_ir_derived_methods(&mut self, owner: &str, adoption: &ResolvedTraitAdoption) {
+        let arguments: Vec<_> = adoption
+            .info
+            .type_params
+            .iter()
+            .cloned()
+            .zip(adoption.args.iter().cloned())
+            .collect();
+        let methods = self
+            .type_info
+            .declarations
+            .body_ir_derived_methods
+            .entry(owner.to_string())
+            .or_default();
+        for method in adoption.info.methods.values() {
+            let Some(identity) = &method.identity else {
+                continue;
+            };
+            if methods.iter().any(|retained| &retained.method == identity) {
+                continue;
+            }
+            methods.push(crate::typechecker::type_info::BodyIrDerivedMethod {
+                method: identity.clone(),
+                has_default: method.has_body,
+                type_arguments: arguments.clone(),
+            });
+        }
+        methods.sort_by(|left, right| left.method.cmp(&right.method));
+    }
+
+    /// Snapshot checked nominal adoptions independently of method slots, preserving empty marker protocols.
+    ///
+    /// Only already proven symbol or provider-member identities are retained. Missing identity metadata grants no
+    /// adoption fact; legacy conformance and derive tables remain unchanged.
+    fn record_body_ir_trait_adoptions(&mut self, owner: &str, adoptions: &[ResolvedTraitAdoption]) {
+        let mut retained = Vec::new();
+        for adoption in adoptions {
+            let Some(trait_identity) = self.body_ir_trait_adoption_identity(adoption) else {
+                continue;
+            };
+            let fact = super::type_info::BodyIrCheckedTraitAdoption {
+                trait_identity,
+                arguments: adoption.args.clone(),
+                methods: self.body_ir_adoption_method_identities(adoption),
+                span: adoption.span,
+            };
+            if !retained.contains(&fact) {
+                retained.push(fact);
+            }
+        }
+        self.type_info
+            .declarations
+            .body_ir_trait_adoptions
+            .insert(owner.to_owned(), retained);
+    }
+
+    /// Retain the complete checked slot set, distinguishing a real marker from incomplete imported metadata.
+    fn body_ir_adoption_method_identities(&self, adoption: &ResolvedTraitAdoption) -> Option<Vec<CanonicalSymbolId>> {
+        let mut identities = adoption
+            .info
+            .methods
+            .iter()
+            .map(|(name, method)| {
+                self.type_info
+                    .traits
+                    .method_identities
+                    .get(&(adoption.name.clone(), name.clone()))
+                    .cloned()
+                    .or_else(|| method.identity.clone())
+            })
+            .collect::<Option<Vec<_>>>()?;
+        identities.sort();
+        identities.dedup();
+        Some(identities)
+    }
+
+    /// Read the selected declaration identity through the same checked binding that supplied trait metadata.
+    /// Hidden derive-bundle bindings resolve through their authenticated provider member rather than their alias.
+    fn body_ir_trait_adoption_identity(&mut self, adoption: &ResolvedTraitAdoption) -> Option<CanonicalSymbolId> {
+        let identity = self
+            .symbols
+            .lookup(&adoption.name)
+            .and_then(|symbol| self.symbols.identity_of(symbol));
+        if let Some(identity) = identity.filter(|identity| identity.kind == SemanticSourceTargetKind::Trait) {
+            return Some(identity.clone());
+        }
+        let path = self.derive_trait_path(&adoption.name);
+        let (name, module) = path.split_last()?;
+        if module.is_empty() {
+            return None;
+        }
+        let identity = self.dependency_member_identity(&ImportPath::simple(module.to_vec()), name);
+        if identity.is_some() || self.checked_sdk_provider_owns_module(module) {
+            return identity.filter(|identity| identity.kind == SemanticSourceTargetKind::Trait);
+        }
+        self.stdlib_cache
+            .lookup_identity(module, name)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+    }
+
+    /// Expand checked source derive bundles in the Body IR record; the legacy native selection is left intact.
+    /// Canonical builtin markers remain selected, and later JSON protocol additions update this same record.
+    fn expand_body_ir_model_derives(&mut self, owner: &str, derives: &[String]) {
+        let Some(original) = self.type_info.declarations.body_ir_model_derives.get(owner) else {
+            return;
+        };
+        let mut expanded = original.clone();
+        for derive in derives {
+            let path = self.derive_trait_path(derive);
+            let module = path.join(".");
+            let keys = if let Some(traits) = self.dependency_derivable_modules.get(&module) {
+                traits.iter().map(|name| format!("{module}.{name}")).collect::<Vec<_>>()
+            } else if self.dependency_trait_rust_derive_paths.contains_key(&module) {
+                vec![module]
+            } else {
+                continue;
+            };
+            expanded.retain(|name| name != derive || derives::from_str(name).is_some());
+            for key in keys {
+                for path in self.dependency_trait_rust_derive_paths.get(&key).into_iter().flatten() {
+                    if !expanded.contains(path) {
+                        expanded.push(path.clone());
+                    }
+                }
+            }
+        }
+        self.type_info
+            .declarations
+            .body_ir_model_derives
+            .insert(owner.to_string(), expanded);
     }
 
     /// Return the first `@derive` span for diagnostics tied to synthetic derive adoptions.
@@ -3432,19 +3566,35 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
-    fn check_model(&mut self, model: &ModelDecl) {
-        self.symbols.enter_scope(ScopeKind::Model);
-        self.refuse_unbounded_model_members(model);
+    /// Select the native derives of a model or class from its explicit derive names, in legacy emission order.
+    ///
+    /// Stdlib JSON protocol selections map to their canonical serde paths, then `declared` adds the derives the
+    /// declaration itself implies, such as a model's adopted serde derives. The derives those selections imply follow,
+    /// and the automatic Debug, Clone, FieldInfo and IncanClass derives every model and class receives come last.
+    /// Derived Display stays a semantic selection that consumers must not emit as a Rust macro.
+    fn native_derive_selection(&self, derives: &[String], declared: Vec<String>) -> Vec<String> {
+        let mut native_derives = self.json_derive_selections(derives);
+        for name in declared {
+            if !native_derives.contains(&name) {
+                native_derives.push(name);
+            }
+        }
+        Self::append_implied_derives(&mut native_derives);
+        for derive in derives::plain_model_derives() {
+            if !native_derives.iter().any(|name| name == derive) {
+                native_derives.push(derive.to_owned());
+            }
+        }
+        native_derives
+    }
 
-        self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
-        self.reject_registry_description_decorators(&model.decorators, "model");
-        // Validate @derive decorators
-        self.validate_derives(&model.decorators);
-        self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
-        let derives = self.extract_derive_names(&model.decorators);
+    /// Select the native derives a type's `@derive(...)` names stand for, in order and without repeats.
+    ///
+    /// A std.serde.json protocol, named by its trait or through the module, selects serde's own derive path, as legacy
+    /// derive emission does; every other selection keeps its name.
+    fn json_derive_selections(&self, derives: &[String]) -> Vec<String> {
         let mut native_derives = Vec::new();
-        for derive in &derives {
+        for derive in derives {
             let selected = if self
                 .module_path_for_imported_name(derive)
                 .is_some_and(|path| incan_lang::lang::stdlib::is_stdlib_json_trait_module_path(&path))
@@ -3469,12 +3619,83 @@ impl TypeChecker {
                 }
             }
         }
-        Self::append_implied_derives(&mut native_derives);
-        for derive in derives::plain_model_derives() {
-            if !native_derives.iter().any(|name| name == derive) {
-                native_derives.push(derive.to_owned());
+        native_derives
+    }
+
+    /// Expand checked module and trait derive selections for Body IR without altering legacy's selection table.
+    ///
+    /// The checker owns import resolution and RFC 024 metadata. Body IR must retain the selected Rust paths here,
+    /// including TOML bundles and aliases, instead of compensating for their source spellings in plan lowering.
+    /// Descriptor checks structural snapshots but emits no Rust macro. A derive with no expansion stays named so
+    /// the direct admission predicate refuses it rather than silently discarding behavior.
+    fn body_ir_model_derive_selection(&mut self, selection: &[String]) -> Vec<String> {
+        let mut result = Vec::new();
+        for name in selection {
+            if name == "Descriptor" {
+                continue;
+            }
+            let mut paths = Vec::new();
+            if let Some(module) = self.module_path_for_imported_name(name)
+                && let Some(traits) = self.lookup_derivable_traits(&module)
+            {
+                for trait_name in traits {
+                    paths.extend(self.body_ir_trait_derive_paths(&module, &trait_name));
+                }
+            } else {
+                let path = self.derive_trait_path(name);
+                if let Some((trait_name, module)) = path.split_last() {
+                    paths = self.body_ir_trait_derive_paths(module, trait_name);
+                }
+            }
+            if paths.is_empty() {
+                paths.push(name.clone());
+            }
+            for path in paths {
+                if !result.contains(&path) {
+                    result.push(path);
+                }
             }
         }
+        result
+    }
+
+    /// Return imported or stdlib Rust derive metadata for one checked trait identity, in declaration order.
+    fn body_ir_trait_derive_paths(&mut self, module: &[String], trait_name: &str) -> Vec<String> {
+        let key = format!("{}.{}", module.join("."), trait_name);
+        if let Some(paths) = self.dependency_trait_rust_derive_paths.get(&key) {
+            return paths.clone();
+        }
+        self.stdlib_cache
+            .lookup_trait_meta(module, trait_name)
+            .map(|meta| meta.rust_derive_paths)
+            .unwrap_or_default()
+    }
+
+    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
+    fn check_model(&mut self, model: &ModelDecl) {
+        self.symbols.enter_scope(ScopeKind::Model);
+        self.refuse_unbounded_model_members(model);
+
+        self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
+        self.reject_registry_description_decorators(&model.decorators, "model");
+        // Validate @derive decorators
+        self.validate_derives(&model.decorators);
+        self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
+        let derives = self.extract_derive_names(&model.decorators);
+        // The model's adopted serde derives and its `@rust.derive(...)` builtins join its explicit selection.
+        let mut declared = self.adopted_serde_derives(&model.traits);
+        if self.append_rust_builtin_derives(&model.name, &mut declared) {
+            self.type_info
+                .declarations
+                .rust_builtin_derive_models
+                .insert(model.name.clone());
+        }
+        let native_derives = self.native_derive_selection(&derives, declared);
+        let body_ir_derives = self.body_ir_model_derive_selection(&native_derives);
+        self.type_info
+            .declarations
+            .body_ir_model_derives
+            .insert(model.name.clone(), body_ir_derives);
         self.type_info
             .declarations
             .model_derives
@@ -3541,8 +3762,11 @@ impl TypeChecker {
             let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
                 continue;
             };
+            self.record_body_ir_derived_methods(&model.name, &resolved);
             resolved_trait_adoptions.push(resolved);
         }
+        self.expand_body_ir_model_derives(&model.name, &derives);
+        self.record_body_ir_trait_adoptions(&model.name, &resolved_trait_adoptions);
         let active_model_fields = model
             .fields
             .iter()
@@ -3621,6 +3845,7 @@ impl TypeChecker {
         }
         let adoptions = self.nominal_trait_adoptions(&model.name);
         self.refuse_members_without_json_form("model", &model.name, &adoptions, &json_members);
+        self.record_adopted_json_derives(&model.name, &adoptions);
 
         // Check methods
         let active_model_methods = model
@@ -3955,6 +4180,12 @@ impl TypeChecker {
         self.validate_descriptor_derive_attachment(&class.decorators, "class");
         self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
         let derives = self.extract_derive_names(&class.decorators);
+        // A class's adoption-implied serde derives are recorded separately, in `class_adoption_derives`.
+        let native_derives = self.native_derive_selection(&derives, Vec::new());
+        self.type_info
+            .declarations
+            .class_derives
+            .insert(class.name.clone(), native_derives);
 
         // Check base class exists
         if let Some(base) = &class.extends
@@ -4000,6 +4231,14 @@ impl TypeChecker {
                 continue;
             };
             resolved_trait_adoptions.push(resolved);
+        }
+        let adoption_derives = self.adopted_serde_derives(&class.traits);
+        self.record_body_ir_trait_adoptions(&class.name, &resolved_trait_adoptions);
+        if !adoption_derives.is_empty() {
+            self.type_info
+                .declarations
+                .class_adoption_derives
+                .insert(class.name.clone(), adoption_derives);
         }
         let active_class_fields = class
             .fields
@@ -4623,6 +4862,7 @@ impl TypeChecker {
             };
             resolved_trait_adoptions.push(resolved);
         }
+        self.record_body_ir_trait_adoptions(&nt.name, &resolved_trait_adoptions);
         // A rusttype's `Awaitable` adoption was refused above and never reached the list; a newtype's is refused here
         // like a model's, since it would lower to the same impossible trait impl (#1711).
         self.refuse_awaitable_adoptions(&nt.name, &resolved_trait_adoptions);
@@ -4989,7 +5229,9 @@ impl TypeChecker {
             self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
-            let mut native_derives = derives.clone();
+            let mut native_derives = self.json_derive_selections(&derives);
+            // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
+            Self::append_implied_derives(&mut native_derives);
             for automatic in ["Debug", "Clone"] {
                 if !native_derives.iter().any(|name| name == automatic) {
                     native_derives.push(automatic.to_owned());
@@ -5391,6 +5633,16 @@ impl TypeChecker {
 
     /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
     fn check_decorator_factory_expr(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        let key = (decorator.span.start, decorator.span.end);
+        self.type_info
+            .declarations
+            .body_ir_decorator_static_receivers
+            .remove(&key);
+        let static_receiver = self.body_ir_static_decorator_receiver(decorator);
+        self.type_info
+            .declarations
+            .body_ir_decorator_applications
+            .remove(&(decorator.span.start, decorator.span.end));
         let Some(args) = self.decorator_call_args(decorator, display) else {
             return ResolvedType::Unknown;
         };
@@ -5414,7 +5666,105 @@ impl TypeChecker {
                 decorator.span,
             )
         };
-        self.check_expr(&factory_expr)
+        let previous = self.body_ir_decorator_factory_span.replace(decorator.span);
+        let result = self.check_expr(&factory_expr);
+        self.body_ir_decorator_factory_span = previous;
+        if matches!(result, ResolvedType::Function(_, _))
+            && self
+                .type_info
+                .resolved_identity(decorator.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Method)
+            && let Some(receiver) = static_receiver
+        {
+            self.type_info
+                .declarations
+                .body_ir_decorator_static_receivers
+                .insert(key, receiver);
+        }
+        self.retain_body_ir_decorator_factory(decorator, &result);
+        result
+    }
+
+    /// Snapshot only a checked static symbol used as a two-segment factory receiver. Namespace paths and local callable
+    /// values do not acquire a storage identity through source spelling.
+    fn body_ir_static_decorator_receiver(
+        &self,
+        decorator: &Spanned<Decorator>,
+    ) -> Option<BodyIrDecoratorStaticReceiver> {
+        let [name, _] = decorator.node.path.segments.as_slice() else {
+            return None;
+        };
+        let symbol = self.symbols.lookup(name)?;
+        let Symbol {
+            kind: SymbolKind::Static(storage),
+            ..
+        } = self.symbols.get(symbol)?
+        else {
+            return None;
+        };
+        Some(BodyIrDecoratorStaticReceiver {
+            binding_name: name.clone(),
+            identity: self.symbols.identity_of(symbol)?.clone(),
+            ty: storage.ty.clone(),
+        })
+    }
+
+    /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
+    /// legacy call-site facts. Unbound declaration parameters remain placeholders until decorator validation.
+    fn retain_body_ir_decorator_factory(&mut self, decorator: &Spanned<Decorator>, result: &ResolvedType) {
+        let key = (decorator.span.start, decorator.span.end);
+        let partial_arguments = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .remove(&key)
+            .map(|application| application.factory_type_args);
+        if self
+            .type_info
+            .declarations
+            .body_ir_decorator_static_receivers
+            .contains_key(&key)
+        {
+            self.type_info.declarations.body_ir_decorator_applications.insert(
+                key,
+                BodyIrDecoratorApplication {
+                    callable_type: result.clone(),
+                    type_bindings: HashMap::new(),
+                    factory_type_args: partial_arguments.unwrap_or_default(),
+                },
+            );
+            return;
+        }
+        let [name] = decorator.node.path.segments.as_slice() else {
+            return;
+        };
+        let Some(symbol_id) = self.symbols.lookup(name) else {
+            return;
+        };
+        let Some(identity) = self.symbols.identity_of(symbol_id) else {
+            return;
+        };
+        if Some(identity) != self.type_info.resolved_identity(decorator.span) {
+            return;
+        }
+        let Some(Symbol {
+            kind: SymbolKind::Function(info),
+            ..
+        }) = self.symbols.get(symbol_id)
+        else {
+            return;
+        };
+        let arguments = partial_arguments
+            .or_else(|| self.type_info.calls.call_site_monomorph_type_args.get(&key).cloned())
+            .unwrap_or_else(|| info.type_params.iter().cloned().map(ResolvedType::TypeVar).collect());
+        self.type_info.declarations.body_ir_decorator_applications.insert(
+            key,
+            BodyIrDecoratorApplication {
+                callable_type: result.clone(),
+                type_bindings: HashMap::new(),
+                factory_type_args: arguments,
+            },
+        );
     }
 
     /// Apply a callable decorator value to the decorated binding type and return the post-decoration callable type.
@@ -5426,6 +5776,14 @@ impl TypeChecker {
         binding_name: &str,
         span: Span,
     ) -> ResolvedType {
+        let key = (span.start, span.end);
+        let factory_type_args = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .remove(&key)
+            .map(|application| application.factory_type_args)
+            .unwrap_or_default();
         self.type_info
             .declarations
             .generic_identity_decorator_applications
@@ -5464,6 +5822,14 @@ impl TypeChecker {
             self.errors.push(errors::decorator_result_not_callable(display, span));
             return ResolvedType::Unknown;
         }
+        self.type_info.declarations.body_ir_decorator_applications.insert(
+            key,
+            BodyIrDecoratorApplication {
+                callable_type: ResolvedType::Function(params, ret),
+                type_bindings,
+                factory_type_args,
+            },
+        );
         result_ty
     }
 
@@ -6450,7 +6816,23 @@ impl TypeChecker {
             },
             SemanticSourceTargetKind::Receiver,
         );
+        // As for a method's receiver, Body IR binds the getter's `self` local to this identity, so the body's reads of
+        // `self` resolve to it.
+        self.record_write_target_identity(property_span, "self");
 
+        let receiver_identity = self
+            .symbols
+            .lookup("self")
+            .and_then(|id| self.symbols.identity_of(id))
+            .cloned();
+        if let Some(binding) = self
+            .type_info
+            .declarations
+            .body_ir_property_bindings
+            .get_mut(&(property_span.start, property_span.end))
+        {
+            binding.receiver_identity = receiver_identity;
+        }
         let return_type = self.resolve_type_checked(&property.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
         self.symbols.set_return_type(effective_return_type);

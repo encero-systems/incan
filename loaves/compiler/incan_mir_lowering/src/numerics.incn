@@ -56,6 +56,17 @@ pub def numeric_constant(value: &TypedNumericConstant) -> Result[Constant, str]:
         _ => return Err("unsupported Body IR decimal constant")
 
 
+pub def numeric_zero(ty: PlanType) -> Result[Constant, str]:
+    """Keep a numeric default's exact carrier; zero is also the positive-zero IEEE bit pattern for sized floats."""
+    match ty:
+        PlanType.Int => return Ok(Constant.Int(0))
+        PlanType.Float => return Ok(Constant.Float(0.0))
+        _ => pass
+    if has_sized_numeric(ty):
+        return Ok(Constant.Numeric("0", ty))
+    return Err("unsupported Body IR nonnumeric default")
+
+
 pub def sized_numeric(ty: PlanType) -> Option[SizedNumeric]:
     """Retain the named carrier when a scalar has a sized numeric representation."""
     match ty:

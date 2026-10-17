@@ -71,7 +71,7 @@ fn collect_and_publish_project_lock_with_evidence(
 }
 
 /// Use an original admitted command session in the canonical collector without discovering another session.
-fn collect_and_publish_project_lock_with_session(
+pub(crate) fn collect_and_publish_project_lock_with_session(
     manifest: &ProjectManifest,
     entry_file: Option<&Path>,
     cargo_features: &CargoFeatureSelection,
@@ -87,27 +87,14 @@ fn collect_and_publish_project_lock_with_session(
                 "admitted ordinary lock publication requires standalone project authority",
             ));
         }
-        let lock_path = workspace.root().join(LOCK_FILENAME);
-        let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path).map_err(|error| {
-            CliError::failure(format!("failed to acquire workspace lock publication guard: {error}"))
-        })?;
-        let context = collect_workspace_lock_context(
+        return collect_and_publish_workspace_lock_with_sessions(
             &workspace,
             manifest.project_root(),
             entry_file,
             cargo_features,
             sdk_profile_override,
-            None,
-        )?;
-        let (_, publication) = generate_oven_lockfile_with_evidence(
-            workspace.root(),
-            &context.resolved,
-            &context.project_requirements,
-            cargo_features,
-            &context.semantic,
-            Some(&publication_lock),
-        )?;
-        return Ok((context, publication));
+            &[],
+        );
     }
 
     let context = collect_project_lock_context(
@@ -127,6 +114,37 @@ fn collect_and_publish_project_lock_with_session(
         cargo_features,
         &context.semantic,
         None,
+    )?;
+    Ok((context, publication))
+}
+
+/// Publish through the existing workspace guard and collector using the original admitted member sessions.
+pub(crate) fn collect_and_publish_workspace_lock_with_sessions(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    sessions: &[(PathBuf, std::sync::Arc<CompilationSession>)],
+) -> CliResult<(ProjectLockContext, PublishedLockFile)> {
+    let lock_path = workspace.root().join(LOCK_FILENAME);
+    let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path)
+        .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
+    let context = crate::lock::workspace::collect_workspace_lock_context_with_sessions(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        sessions,
+    )?;
+    let (_, publication) = generate_oven_lockfile_with_evidence(
+        workspace.root(),
+        &context.resolved,
+        &context.project_requirements,
+        cargo_features,
+        &context.semantic,
+        Some(&publication_lock),
     )?;
     Ok((context, publication))
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oven_rustc::rustc::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 
-use oven_rustc::native_loaf::{NativeLoafInspectionInputs, NativeLoafRequestObservation};
+use oven_rustc::native_loaf::{NativeLoafInspectionInputs, NativeLoafRequestObservation, NativeLoafRoot};
 use oven_store::OvenBuildIntent;
 use rust_inspect::{RetainedInspectionProject, RustMetadataError, RustWorkspace};
 
@@ -17,9 +17,14 @@ struct OrdinaryInspectionProject {
     observation: NativeLoafRequestObservation,
     toolchain: Arc<OvenRustInspectionToolchain>,
     inputs: NativeLoafInspectionInputs,
+    roots: Vec<NativeLoafRoot>,
     rustc: PathBuf,
     intent: OvenBuildIntent,
     manifest_dir: PathBuf,
+    /// Expected generated root from the admitted derive request, independent of mutable on-disk bytes.
+    consumer_source: String,
+    /// Exact macro coordinates derived from the retained native units, never from a caller's sidecar.
+    native_macros: Vec<rust_inspect::OvenInspectionProcMacro>,
 }
 
 impl RetainedInspectionProject for OrdinaryInspectionProject {
@@ -28,10 +33,47 @@ impl RetainedInspectionProject for OrdinaryInspectionProject {
         self.observation
             .verify_intent(&self.rustc, &self.intent)
             .map_err(|error| invalid(&self.manifest_dir, error))?;
-        let graph = self
+        let mut graph = self
             .inputs
             .inspection_project()
             .map_err(|error| invalid(&self.manifest_dir, error))?;
+        // Bind the consumer's namespace to exact records, even when host or transitive crates share names.
+        let consumer_source = self.manifest_dir.join("src/main.rs");
+        if std::fs::read(&consumer_source).map_err(|error| invalid(&self.manifest_dir, error))?
+            != self.consumer_source.as_bytes()
+        {
+            return Err(invalid(
+                &self.manifest_dir,
+                "ordinary inspection consumer source changed",
+            ));
+        }
+        let dependencies = self
+            .roots
+            .iter()
+            .map(|root| {
+                let index = self
+                    .inputs
+                    .units()
+                    .keys()
+                    .position(|identity| identity == &root.record_identity)
+                    .ok_or_else(|| {
+                        invalid(
+                            &self.manifest_dir,
+                            "ordinary inspection root is outside its retained closure",
+                        )
+                    })?;
+                Ok(serde_json::json!({"crate": index, "name": root.alias.replace('-', "_")}))
+            })
+            .collect::<Result<Vec<_>, RustMetadataError>>()?;
+        let crates = graph
+            .get_mut("crates")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| invalid(&self.manifest_dir, "ordinary inspection graph has no crate array"))?;
+        // No display name: this generated root contributes dependency aliases, not a new public crate namespace.
+        crates.push(serde_json::json!({
+            "root_module": consumer_source, "edition": "2024", "deps": dependencies,
+            "cfg": [], "env": {}, "is_workspace_member": true, "is_proc_macro": false,
+        }));
         self.toolchain
             .verify_compiler(&self.rustc, &self.intent.target)
             .map_err(|error| invalid(&self.manifest_dir, error))?;
@@ -42,10 +84,18 @@ impl RetainedInspectionProject for OrdinaryInspectionProject {
             self.toolchain.cfg(),
         )
     }
+
+    /// Supply the exact original native macro requests only after full producer and compiler revalidation.
+    fn verified_native_macros(&self) -> Result<Vec<rust_inspect::OvenInspectionProcMacro>, RustMetadataError> {
+        self.verified_project()?;
+        Ok(self.native_macros.clone())
+    }
 }
 
 /// Prepare a source-only inspection database from one complete native request and exact declared query roots.
-/// Macro execution remains unsupported here; source presence never becomes a grant to run a dynamic library.
+/// Macro queries and derive expansion consume only original host macro outputs from those roots' actual forward native
+/// closure. The existing macro loader independently verifies their source, receipt, bytes, host and compiler before
+/// use; a query spelling grants no execution authority.
 #[allow(
     clippy::too_many_arguments,
     reason = "Retains explicit original native, compiler and source-owner inputs at one semantic boundary"
@@ -61,11 +111,6 @@ pub(super) fn prepare(
     derives: &[String],
     retained_toolchain: Option<&Arc<OvenRustInspectionToolchain>>,
 ) -> CliResult<Arc<OvenRustInspectionToolchain>> {
-    if !derives.is_empty() {
-        return Err(CliError::failure(
-            "ordinary source inspection requires separate native macro authority",
-        ));
-    }
     let intent = OvenBuildIntent {
         target: authority.target.to_string(),
         toolchain: authority.toolchain.to_string(),
@@ -73,11 +118,40 @@ pub(super) fn prepare(
         features: authority.features.to_vec(),
     };
     let digest = observation.verify_intent(rustc, &intent).map_err(failure)?.to_string();
-    let inputs = observation.graph().inspection_inputs().map_err(failure)?;
     let roots = observation
         .graph()
         .select_dependency_roots(authority.registry_dependencies, project_root, "target")
         .map_err(failure)?;
+    // The original request remains complete and retained below; the query database follows only actual declared
+    // roots and their exact forward edges, so unrelated versions cannot compete for a caller's crate spelling.
+    let inputs = observation
+        .graph()
+        .select(&roots)
+        .map_err(failure)?
+        .inspection_inputs()
+        .map_err(failure)?;
+    for derive in derives {
+        let name = derive.split("::").next().unwrap_or_default();
+        let root = roots
+            .iter()
+            .find(|root| root.alias.replace('-', "_") == name)
+            .ok_or_else(|| failure(format!("ordinary derive `{derive}` has no declared native root")))?;
+        let forward = observation
+            .graph()
+            .select(std::slice::from_ref(root))
+            .map_err(failure)?;
+        if !forward
+            .inspection_inputs()
+            .map_err(failure)?
+            .units()
+            .values()
+            .any(|unit| unit.is_proc_macro())
+        {
+            return Err(failure(format!(
+                "ordinary derive `{derive}` has no original host macro output"
+            )));
+        }
+    }
     for query in queries {
         let name = query.split("::").next().unwrap_or_default();
         if matches!(name, "std" | "core" | "alloc") {
@@ -91,14 +165,9 @@ pub(super) fn prepare(
                     "ordinary inspection query `{query}` has no declared native root"
                 ))
             })?;
-        let candidates = inputs
-            .units()
-            .iter()
-            .filter(|(_, unit)| unit.crate_name() == name)
-            .collect::<Vec<_>>();
-        if candidates.len() != 1 || candidates[0].0 != &root.record_identity || candidates[0].1.is_proc_macro() {
+        if !inputs.units().contains_key(&root.record_identity) {
             return Err(failure(format!(
-                "ordinary inspection query `{query}` has an ambiguous, renamed or macro source binding"
+                "ordinary inspection query `{query}` has no retained declared root"
             )));
         }
     }
@@ -110,13 +179,40 @@ pub(super) fn prepare(
         ),
     };
     toolchain.verify_compiler(rustc, authority.target).map_err(failure)?;
+    let mut macros = inputs
+        .units()
+        .values()
+        .filter(|unit| unit.is_proc_macro())
+        .map(|unit| {
+            let selected = unit.selected();
+            let record = selected.record();
+            if record.source.domain != "host" {
+                return Err(failure("ordinary native macro belongs to a non-host domain"));
+            }
+            let (owner, _) = selected.plan_members("macro").map_err(failure)?;
+            Ok(rust_inspect::OvenInspectionProcMacro {
+                root_module: unit.root_module().to_path_buf(),
+                store: owner.store,
+                identity: record.native.identity.clone(),
+                receipt_identity: record.native.receipt_identity.clone(),
+                relative_path: record.native.relative_path.clone(),
+                digest: record.native.digest.clone(),
+            })
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+    macros.sort_by(|left, right| left.root_module.cmp(&right.root_module));
+    // This sidecar is diagnostic only for retained loading; the original capability supplies execution requests.
+    rust_inspect::write_oven_inspection_proc_macro_authority(manifest_dir, macros.clone()).map_err(failure)?;
     let project = OrdinaryInspectionProject {
         toolchain: Arc::clone(&toolchain),
         observation: observation.clone(),
         inputs,
+        roots,
         rustc: rustc.to_path_buf(),
         intent,
         manifest_dir: manifest_dir.to_path_buf(),
+        consumer_source: crate::rust_inspect_workspace::direct_rust_inspect_probe_source(derives),
+        native_macros: macros,
     };
     let graph = project.verified_project().map_err(failure)?;
     let sources = project
@@ -155,8 +251,7 @@ pub(super) fn prepare(
     )
     .map_err(failure)?;
     std::fs::write(manifest_dir.join(rust_inspect::OVEN_RETAINED_INSPECTION_MARKER), digest).map_err(failure)?;
-    // Clear a prior projection's serialized grants; only the retained source-only loader can load this root.
-    rust_inspect::write_oven_inspection_proc_macro_authority(manifest_dir, Vec::new()).map_err(failure)?;
+    // Only the retained loader can load this root; its original producer and macro coordinates remain verified.
     rust_inspect::RustMetadataCache::new()
         .prepare_retained_project(manifest_dir, target_dir, Box::new(project), &|_| {})
         .map(|_| toolchain)

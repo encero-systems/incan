@@ -875,10 +875,12 @@ impl AstLowering {
 
     /// Provide a warmed stdlib metadata cache for lowering stages that need stdlib-backed decorator or helper
     /// metadata. An already selected provider plan binds this cache's source policy regardless of setter order.
+    /// Lowering binds the emission view: it expands inherited standard trait defaults and constructor hooks into
+    /// adopters, so an ordinary admitted consumer reads its admitted standard dependencies' sources here.
     pub fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
         self.stdlib_cache = cache;
         if let Some(plan) = &self.provider_plan {
-            self.stdlib_cache.bind_provider_plan(plan);
+            self.stdlib_cache.bind_provider_plan_for_emission(plan);
         }
     }
 
@@ -887,7 +889,7 @@ impl AstLowering {
     /// Source refusals are retained and propagated at the next `lower_program` handoff.
     pub fn set_provider_plan(&mut self, plan: Option<Arc<ProviderPlan>>) {
         if let Some(plan) = &plan {
-            self.stdlib_cache.bind_provider_plan(plan);
+            self.stdlib_cache.bind_provider_plan_for_emission(plan);
         } else {
             self.stdlib_cache.bind_provider_plan(&ProviderPlan::default());
         }

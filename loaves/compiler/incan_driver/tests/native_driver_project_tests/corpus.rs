@@ -134,23 +134,29 @@ pub(super) fn check_declarations(
         "declaration output must be byte-identical"
     );
     assert_eq!(actual.stdout, b"84\n1.5\n2.0\ntrue\n9\nwrapped\n6\n3.5\ntrue\n");
-    let unsupported = project.join("effectful_static.incn");
+    let effectful = project.join("effectful_static.incn");
     fs::write(
-        &unsupported,
+        &effectful,
         "def initial() -> int:\n    println(99)\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> None:\n    println(COUNT)\n",
     )?;
-    let refused = compile_source(
-        driver,
-        &unsupported,
-        &project.join("effectful"),
-        sysroot,
-        &runtime_closure(runtime)?,
-    )?;
-    assert!(!refused.status.success());
+    let effectful_binary = project.join("effectful");
+    success(
+        &compile_source(
+            driver,
+            &effectful,
+            &effectful_binary,
+            sysroot,
+            &runtime_closure(runtime)?,
+        )?,
+        "effectful static native compilation",
+    );
+    let initialized = Command::new(effectful_binary).output()?;
+    success(&initialized, "effectful static native execution");
+    assert_eq!(initialized.stdout, b"99\n4\n");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("unsupported source Static initializer or carrier"),
+        initialized.stderr.is_empty(),
         "{}",
-        String::from_utf8_lossy(&refused.stderr)
+        String::from_utf8_lossy(&initialized.stderr)
     );
     Ok(())
 }
@@ -178,6 +184,7 @@ pub(super) fn check_strings(
     success(
         &support::repo_command()
             .current_dir(&project)
+            .env("INCAN_HOME", support::oven_fixture_home()?)
             .arg("build")
             .arg(&source)
             .arg(&legacy_output)
@@ -226,7 +233,83 @@ pub(super) fn check_string_methods(
 }
 
 /// Compare a focused builtin program with legacy without normalizing its output.
+///
+/// The entry is named `main`, matching the canonical module legacy records for source-local trait dispatch.
+///
+/// The reference compiler uses the explicit fixture home so a published dependency baked there is available under
+/// the same receipt-selected package identity. An ambient home can lack that Loaf even after native compilation
+/// succeeds. A manifest-backed fixture uses project name `main` and declares the `main` script at `main.incn`, matching
+/// the reference executable name. Its explicit consumer bake imports the provider's portable debug and release closures
+/// before either route runs.
 pub(super) fn check_builtin_source(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    program: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_builtin_source_with_closure(driver, root, sysroot, &runtime_closure(runtime)?, program)
+}
+
+/// Compare stdout, stderr and exit status with live legacy execution against an explicitly selected native dependency
+/// closure. A web carrier needs the SDK component's public re-exports, so its caller extends the runtime closure from
+/// that exact baked SDK receipt.
+pub(super) fn check_builtin_source_with_closure(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    closure: &NativeClosure,
+    program: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("builtin-parity");
+    fs::create_dir_all(&project)?;
+    let source = project.join("main.incn");
+    fs::write(&source, program)?;
+    if project.join("loaf.toml").is_file() {
+        // Provider publication exports a portable Loaf; the consumer's explicit bake imports its sealed closure.
+        let mut prepare = support::cli_project::configured_incan_command(&project, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut prepare)?;
+        prepare.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+        success(&prepare.output()?, "builtin package consumer preparation");
+    }
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, closure)?,
+        "native builtin compilation",
+    );
+    let legacy_output = project.join("legacy");
+    let mut legacy_build = support::repo_command();
+    legacy_build
+        .current_dir(&project)
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .arg("build")
+        .arg(&source)
+        .arg(&legacy_output);
+    success(&legacy_build.output()?, "legacy builtin compilation");
+    let expected = Command::new(legacy_output.join("oven/release/main"))
+        .current_dir(&project)
+        .output()?;
+    let actual = Command::new(native).current_dir(&project).output()?;
+    success(&expected, "legacy builtin execution");
+    success(&actual, "native builtin execution");
+    assert_eq!(actual.stdout, expected.stdout, "builtin output must be byte-identical");
+    assert_eq!(actual.stderr, expected.stderr, "builtin stderr must be byte-identical");
+    assert_eq!(
+        actual.status.code(),
+        expected.status.code(),
+        "builtin exit status must match legacy"
+    );
+    Ok(())
+}
+
+/// Compare checked serde with unchanged legacy emission, explicitly recording the current reference route’s
+/// missing-serde failure.
+///
+/// Only this bounded reference may add serde from the runtime's receipt-selected closure. It preserves the failed
+/// reference invocation and generated source bytes; normal legacy compilation is never relabeled as successful.
+/// The deliberately failing normal reference is remeasured because it cannot publish a successful stored output; the
+/// suite and native compilation retain their own stored-reuse requirement.
+pub(super) fn check_checked_json_source(
     driver: &Path,
     root: &Path,
     sysroot: &Path,
@@ -235,29 +318,166 @@ pub(super) fn check_builtin_source(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let project = root.join("builtin-parity");
     fs::create_dir_all(&project)?;
-    let source = project.join("probe.incn");
+    let source = project.join("main.incn");
     fs::write(&source, program)?;
+    let closure = runtime_closure(runtime)?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
-        "native builtin compilation",
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "checked JSON native compilation",
     );
-    let legacy_output = project.join("legacy");
-    success(
-        &support::repo_command()
-            .current_dir(&project)
-            .arg("build")
-            .arg(&source)
-            .arg(&legacy_output)
-            .output()?,
-        "legacy builtin compilation",
-    );
-    let expected = Command::new(legacy_output.join("oven/release/probe")).output()?;
+    let legacy = project.join("legacy");
+    let normal = support::repo_command()
+        .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
+        .current_dir(&project)
+        .arg("build")
+        .arg(&source)
+        .arg(&legacy)
+        .output()?;
+    fs::write(project.join("normal-legacy.stdout"), &normal.stdout)?;
+    fs::write(project.join("normal-legacy.stderr"), &normal.stderr)?;
+    fs::write(project.join("normal-legacy.status"), normal.status.to_string())?;
+    let reference = if normal.status.success() {
+        legacy.join("oven/release/main")
+    } else {
+        explicit_checked_json_reference(&project, &legacy, &normal, &closure)?
+    };
+    let expected = Command::new(reference).output()?;
     let actual = Command::new(native).output()?;
-    success(&expected, "legacy builtin execution");
-    success(&actual, "native builtin execution");
-    assert_eq!(actual.stdout, expected.stdout, "builtin output must be byte-identical");
+    for (label, result) in [("legacy", &expected), ("native", &actual)] {
+        fs::write(project.join(format!("{label}-execution.stdout")), &result.stdout)?;
+        fs::write(project.join(format!("{label}-execution.stderr")), &result.stderr)?;
+        fs::write(
+            project.join(format!("{label}-execution.status")),
+            result.status.to_string(),
+        )?;
+        success(result, &format!("checked JSON {label} execution"));
+    }
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "checked JSON live reference output must be byte-identical"
+    );
+    assert_eq!(
+        actual.stderr, expected.stderr,
+        "checked JSON live reference diagnostics must be byte-identical"
+    );
     Ok(())
+}
+
+/// Replay the failed compiler's exact arguments and pinned link environment, adding only receipt-selected serde.
+fn explicit_checked_json_reference(
+    project: &Path,
+    legacy: &Path,
+    normal: &Output,
+    closure: &NativeClosure,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let errors = String::from_utf8_lossy(&normal.stderr);
+    if !errors.contains("E0433") || !errors.contains("serde") {
+        return Err(format!("normal legacy failed outside the missing serde reference contract: {errors}").into());
+    }
+    let text = errors
+        .lines()
+        .find_map(|line| line.strip_prefix("direct rustc invocation: "))
+        .ok_or("failed reference has no retained rustc invocation")?;
+    let mut arguments = serde_json::Deserializer::from_str(text)
+        .into_iter::<String>()
+        .collect::<Result<Vec<_>, _>>()?;
+    let compiler = arguments.first().ok_or("reference compiler absent")?.clone();
+    let source = legacy.join("src/main.rs");
+    if !arguments.iter().any(|value| Path::new(value) == source)
+        || arguments.iter().any(|value| value.starts_with("serde="))
+    {
+        return Err("reference entry or missing serde binding does not match".into());
+    }
+    let serde = closure
+        .externs
+        .iter()
+        .filter(|(name, _)| name == "serde")
+        .collect::<Vec<_>>();
+    let [(_, artifact)] = serde.as_slice() else {
+        return Err("runtime receipt does not select exactly one serde artifact".into());
+    };
+    let before = checked_json_source_bytes(&legacy.join("src"))?;
+    fs::write(project.join("legacy-source-before.json"), serde_json::to_vec(&before)?)?;
+    fs::write(
+        project.join("normal-rustc-arguments.json"),
+        serde_json::to_vec(&arguments)?,
+    )?;
+    let output = project.join("legacy-explicit-serde");
+    let position = arguments
+        .iter()
+        .position(|value| value == "-o")
+        .ok_or("reference output flag absent")?;
+    *arguments.get_mut(position + 1).ok_or("reference output value absent")? = output.to_string_lossy().into_owned();
+    let target = arguments
+        .iter()
+        .position(|value| value == "--target")
+        .ok_or("reference target absent")?;
+    let target = arguments.get(target + 1).ok_or("reference target value absent")?;
+    let mut environment = std::collections::BTreeMap::new();
+    if target.ends_with("-apple-darwin") {
+        let link = arguments
+            .iter()
+            .position(|value| value == "link-arg=-syslibroot")
+            .ok_or("pinned SDK flag absent")?;
+        if arguments.get(link + 1).map(String::as_str) != Some("-C") {
+            return Err("pinned SDK argument order changed".into());
+        }
+        let sdk = arguments
+            .get(link + 2)
+            .and_then(|value| value.strip_prefix("link-arg="))
+            .ok_or("pinned SDK value absent")?;
+        environment.insert("SDKROOT", sdk.to_owned());
+        environment.insert("MACOSX_DEPLOYMENT_TARGET", "11.0".to_owned());
+    }
+    arguments.extend(["--extern".to_owned(), format!("serde={}", artifact.display())]);
+    fs::write(
+        project.join("explicit-rustc-arguments.json"),
+        serde_json::to_vec(&arguments)?,
+    )?;
+    fs::write(
+        project.join("explicit-rustc-environment.json"),
+        serde_json::to_vec(&serde_json::json!({
+                "environment": environment, "receipt_selected_serde": artifact,
+        }))?,
+    )?;
+    let compiled = Command::new(compiler)
+        .args(&arguments[1..])
+        .current_dir(project)
+        .envs(&environment)
+        .output()?;
+    fs::write(project.join("explicit-legacy.stdout"), &compiled.stdout)?;
+    fs::write(project.join("explicit-legacy.stderr"), &compiled.stderr)?;
+    fs::write(project.join("explicit-legacy.status"), compiled.status.to_string())?;
+    let after = checked_json_source_bytes(&legacy.join("src"))?;
+    fs::write(project.join("legacy-source-after.json"), serde_json::to_vec(&after)?)?;
+    assert_eq!(
+        before, after,
+        "reference compilation must preserve every generated source byte"
+    );
+    success(
+        &compiled,
+        "unchanged legacy emission with receipt-selected explicit serde",
+    );
+    Ok(output)
+}
+
+/// Retain the complete relative generated Rust tree for byte identity before and after reference compilation.
+fn checked_json_source_bytes(
+    root: &Path,
+) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>, Box<dyn std::error::Error>> {
+    let mut files = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            for (path, bytes) in checked_json_source_bytes(&entry.path())? {
+                files.insert(PathBuf::from(entry.file_name()).join(path), bytes);
+            }
+        } else if entry.path().extension().is_some_and(|value| value == "rs") {
+            files.insert(PathBuf::from(entry.file_name()), fs::read(entry.path())?);
+        }
+    }
+    Ok(files)
 }
 
 /// Explicit runtime artifacts and metadata search paths retained by its publisher receipt.
@@ -265,6 +485,77 @@ pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,
     directories: Vec<PathBuf>,
     _plan: oven_rustc::plan::OvenDirectRustcPlanSelection,
+    _extensions: Vec<oven_rustc::plan::OvenDirectRustcPlanSelection>,
+}
+
+impl NativeClosure {
+    /// Bind a parity reference to exact source bytes, compiler bytes, and the receipt-selected dependency closure.
+    pub(super) fn reference_key(
+        &self,
+        source: &Path,
+        modules: &[(&str, &str)],
+        sysroot: &Path,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let compiler = super::support::repo_command();
+        let (_, compiler_digest) = oven_store::store::digest_regular_file(Path::new(compiler.get_program()))?;
+        let (_, rustc_digest) = oven_store::store::digest_regular_file(&super::pinned_driver_rustc()?)?;
+        let mut artifacts = Vec::new();
+        for (name, path) in &self.externs {
+            let (_, digest) = oven_store::store::digest_regular_file(path)?;
+            artifacts.push((name, path, digest));
+        }
+        Ok(oven_model::digest::digest_content(&format!(
+            "{:?}{source:?}{modules:?}{sysroot:?}{compiler_digest}{rustc_digest}{artifacts:?}{:?}",
+            fs::read(source)?,
+            self.directories,
+        )))
+    }
+
+    /// Compile unedited legacy emission with this same sealed closure, including derives the legacy planner omits.
+    pub(super) fn reference_command(
+        &self,
+        source: &Path,
+        output: &Path,
+        sysroot: &Path,
+    ) -> Result<Command, Box<dyn std::error::Error>> {
+        let mut command = Command::new(super::pinned_driver_rustc()?);
+        command
+            .arg("--edition=2024")
+            .arg("--crate-name")
+            .arg("legacy_reference")
+            .arg("--sysroot")
+            .arg(sysroot)
+            .arg(source)
+            .arg("-o")
+            .arg(output);
+        for (name, artifact) in &self.externs {
+            command.arg("--extern").arg(format!("{name}={}", artifact.display()));
+        }
+        for directory in &self.directories {
+            command.arg("-L").arg(format!("dependency={}", directory.display()));
+        }
+        Ok(command)
+    }
+
+    /// Add every crate another baked Loaf's receipt selects that this closure does not already name.
+    ///
+    /// Both receipts select from the one fixture Store, so a crate both name is the same artifact; the runtime's
+    /// binding is kept.
+    pub(super) fn extend_with(&mut self, project: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let plan = runtime_plan(project)?;
+        for (name, artifact) in &plan.artifact_plan().externs {
+            if !self.externs.iter().any(|(known, _)| known == name) {
+                self.externs.push((name.clone(), artifact.clone()));
+            }
+        }
+        for directory in &plan.artifact_plan().dependency_search_paths {
+            if !self.directories.contains(directory) {
+                self.directories.push(directory.clone());
+            }
+        }
+        self._extensions.push(plan);
+        Ok(())
+    }
 }
 
 /// Select exactly one published profile, without discovering similarly named ambient rlibs.
@@ -282,6 +573,7 @@ pub(super) fn runtime_closure(runtime: &Path) -> Result<NativeClosure, Box<dyn s
         externs,
         directories: closure.artifact_plan().dependency_search_paths.clone(),
         _plan: closure,
+        _extensions: Vec::new(),
     })
 }
 
@@ -440,18 +732,24 @@ pub(super) fn check_plain_model(
     );
     assert_eq!(actual.stdout, b"7\n9\n7\nupdated\n");
 
-    // A newly admitted model must not let an unadmitted numeric coercion escape as an invalid plan.
+    // Model field reads use the same integer true-division promotion as other integer operands.
     let division = project.join("integer_division.incn");
     fs::write(
         &division,
         "model Reading:\n  value: int\n\ndef main() -> None:\n  reading = Reading(value=10)\n  println(str(reading.value / 2))\n",
     )?;
-    let refused = compile_source(driver, &division, &project.join("division"), sysroot, &closure)?;
-    assert!(!refused.status.success());
+    let division_binary = project.join("division");
+    success(
+        &compile_source(driver, &division, &division_binary, sysroot, &closure)?,
+        "model integer division native compilation",
+    );
+    let quotient = Command::new(division_binary).output()?;
+    success(&quotient, "model integer division native execution");
+    assert_eq!(quotient.stdout, b"5.0\n");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR non-float true division operands"),
+        quotient.stderr.is_empty(),
         "{}",
-        String::from_utf8_lossy(&refused.stderr)
+        String::from_utf8_lossy(&quotient.stderr)
     );
     Ok(())
 }
@@ -617,6 +915,31 @@ def main() -> None:
     );
     assert_eq!(actual.stdout, b"7\n14\n9\nrenamed\n");
 
+    Ok(())
+}
+
+/// Concrete f32 display keeps its own digits and signed zero while adding the floating marker legacy omitted.
+#[test]
+fn exact_f32_display_keeps_decimal_point_without_widening() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("exact-f32-display")?;
+    let source = root.join("main.incn");
+    fs::write(&source, include_str!("fixtures/exact_f32_display.incn"))?;
+    let native = root.join("native");
+    success(
+        &compile_source(
+            &graph.driver_binary("debug"),
+            &source,
+            &native,
+            &graph.sysroot,
+            &runtime_closure(&graph.formatting)?,
+        )?,
+        "exact f32 native compilation",
+    );
+    let output = Command::new(native).output()?;
+    success(&output, "exact f32 native execution");
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"-1.0\n-1.0\n-1.0\n0.0\n0.0\n0.0\n-0.0\n-0.0\n-0.0\n1.25\n1.25\n1.25\n1.2345679\n1.2345679\n1.2345679\n0.0000001\n0.0000001\n0.0000001\n10000000000.0\n10000000000.0\n10000000000.0\n");
     Ok(())
 }
 
@@ -932,6 +1255,62 @@ def main() -> None:
     assert_eq!(
         actual.stdout,
         b"2\ntrue\ntrue\ntrue\n8\n3\ntrue\ntrue\n3\n3\ntrue\n2\n2.5\n0\n0\n11\n3\n3\n3\n10\n15\n3\n2\n2\n19\n8\nsingle\n"
+    );
+    Ok(())
+}
+/// Compare aggregate validation failure after both routes compile, retaining complete outputs and panic status.
+pub(super) fn check_validation_failure(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    program: &str,
+    payload: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("aggregate-validation-parity");
+    fs::create_dir_all(&project)?;
+    let source = project.join("main.incn");
+    fs::write(&source, program)?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
+        "aggregate validation native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "aggregate validation legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/main")).output()?;
+    let actual = Command::new(native).output()?;
+    for (label, output) in [("legacy", &expected), ("native", &actual)] {
+        fs::write(project.join(format!("{label}.stdout")), &output.stdout)?;
+        fs::write(project.join(format!("{label}.stderr")), &output.stderr)?;
+        fs::write(project.join(format!("{label}.status")), output.status.to_string())?;
+        assert!(
+            !output.status.success(),
+            "{label} unexpectedly accepted aggregate validation"
+        );
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(error.matches(payload).count(), 1, "{label}: {error}");
+    }
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "supplied-field effects must be byte-identical"
+    );
+    assert_eq!(
+        actual.status.code(),
+        expected.status.code(),
+        "failure exit codes must match"
+    );
+    assert_eq!(
+        actual.stderr, expected.stderr,
+        "failure diagnostics must be byte-identical"
     );
     Ok(())
 }

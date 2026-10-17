@@ -175,9 +175,9 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-// 42: traits are acquired only from the queried surface's dependency closure; concrete re-exports are solved in
-// that surface. Older records could retain ambient downstream candidates or omit surface-local implementations.
-const DISK_CACHE_FORMAT: u32 = 42;
+// 43: terminal public functions retain their value namespace beside same-named modules. Older complete records
+// could publish module metadata for a function and cannot safely answer callable queries.
+const DISK_CACHE_FORMAT: u32 = 43;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -4803,6 +4803,7 @@ impl RustMetadataCache {
             });
         }
         let graph = project.verified_project()?;
+        let native_macros = project.verified_native_macros()?;
         let fingerprint = workspace_fingerprint(&root)?;
         {
             let mut inner = self.inner.lock().map_err(|error| RustMetadataError::LoadWorkspace {
@@ -4811,7 +4812,7 @@ impl RustMetadataCache {
             })?;
             ensure_disk_cache_loaded_for_admission(&mut inner, &root)?;
             if let Some(workspace) = inner.workspaces.get(&(root.clone(), false))
-                && workspace.matches_retained_project(&graph)?
+                && workspace.matches_retained_project(&graph, &native_macros)?
             {
                 return Ok(true);
             }

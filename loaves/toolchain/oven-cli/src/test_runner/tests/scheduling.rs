@@ -1,6 +1,9 @@
 //! Prepared Rust cases share immutable executables, while generated Incan batches retain source exclusion.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier, mpsc};
+use std::time::Duration;
 
 use super::{ActiveUnit, TestMarker, active_units_allow, build_execution_units, make_test};
 
@@ -134,4 +137,96 @@ fn shared_native_groups_preserve_deadlines_and_incan_units() {
     let shared = super::super::share_native_execution_units(units, 18, false);
     assert_eq!(shared.len(), 5);
     assert!(shared.iter().all(|unit| unit.shared_threads.is_none()));
+}
+
+/// A supervisor unwind reaches the caller after active peers finish, without launching pending exclusive work.
+/// The injected callback needs no compiler or Store; the bounded completion wait detects the old lost-event hang.
+#[test]
+fn worker_unwind_drains_active_units_and_reaches_the_caller() -> Result<(), Box<dyn std::error::Error>> {
+    let tests = (0..3)
+        .map(|index| {
+            let mut test = make_test(&format!("worker_{index}"), Vec::new());
+            test.file_path = PathBuf::from("src/lib.rs");
+            test
+        })
+        .collect::<Vec<_>>();
+    let mut units = build_execution_units(&tests, Path::new("."), None, false, 2);
+    units.get_mut(2).ok_or("missing pending unit")?.serial = true;
+    let peer_drained = Arc::new(AtomicBool::new(false));
+    let pending_started = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(Barrier::new(2));
+    let release_peer = Arc::new(Barrier::new(2));
+    let (peer_sender, peer_receiver) = mpsc::channel();
+    let (done_sender, done_receiver) = mpsc::channel();
+    let worker_drained = Arc::clone(&peer_drained);
+    let worker_pending = Arc::clone(&pending_started);
+    let worker_release = Arc::clone(&release_peer);
+    let supervisor = std::thread::spawn(move || {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::super::schedule_execution_units(units, 2, false, move |unit| {
+                if unit.index == 0 {
+                    started.wait();
+                    std::panic::resume_unwind(Box::new("injected scheduler unwind"));
+                }
+                if unit.index == 1 {
+                    started.wait();
+                    let _ = peer_sender.send(());
+                    worker_release.wait();
+                    worker_drained.store(true, Ordering::SeqCst);
+                } else {
+                    worker_pending.store(true, Ordering::SeqCst);
+                }
+                Vec::new()
+            })
+        }));
+        let observed = match outcome {
+            Err(payload) => payload
+                .downcast_ref::<&str>()
+                .copied()
+                .unwrap_or("unexpected panic payload"),
+            Ok(_) => "scheduler returned without propagating the worker panic",
+        };
+        let _ = done_sender.send(observed);
+    });
+    peer_receiver.recv_timeout(Duration::from_secs(5))?;
+    assert!(matches!(done_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    release_peer.wait();
+    assert_eq!(
+        done_receiver.recv_timeout(Duration::from_secs(5))?,
+        "injected scheduler unwind"
+    );
+    supervisor
+        .join()
+        .map_err(|_| "supervisor control panicked outside its capture")?;
+    assert!(peer_drained.load(Ordering::SeqCst));
+    assert!(!pending_started.load(Ordering::SeqCst));
+    Ok(())
+}
+
+/// The injectable boundary preserves ordinary parallel results and each unit's original report index.
+#[test]
+fn scheduled_callbacks_preserve_successful_results() -> Result<(), Box<dyn std::error::Error>> {
+    let tests = (0..4)
+        .map(|index| {
+            let mut test = make_test(&format!("success_{index}"), Vec::new());
+            test.file_path = PathBuf::from("src/lib.rs");
+            test
+        })
+        .collect::<Vec<_>>();
+    let units = build_execution_units(&tests, Path::new("."), None, false, 2);
+    let mut completed = super::super::schedule_execution_units(units, 2, false, |unit| {
+        unit.tests
+            .iter()
+            .cloned()
+            .map(|test| (test, super::super::TestResult::Passed(Duration::ZERO)))
+            .collect()
+    })?;
+    completed.sort_by_key(|(index, _)| *index);
+    assert_eq!(completed.len(), tests.len());
+    for (expected_index, (index, results)) in completed.into_iter().enumerate() {
+        assert_eq!(index, expected_index);
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0].1, super::super::TestResult::Passed(_)));
+    }
+    Ok(())
 }

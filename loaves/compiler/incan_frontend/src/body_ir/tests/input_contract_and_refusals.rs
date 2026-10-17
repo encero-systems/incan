@@ -1,7 +1,7 @@
 //! The Body IR input contract (#1166) and explicit refusals: unsupported constructs lower to a placeholder rather than
-//! panicking, undesugared vocab items and scoped-DSL symbols are caller contract violations, the `unsafe:` boundary
-//! refuses by name, soft-keyword surface statements stay unmodeled constructs, and feature-gated bodies lower only when
-//! their feature is active.
+//! panicking, undesugared vocab items and scoped-DSL symbols are caller contract violations, source `unsafe:` regions
+//! retain acknowledgment receipts, soft-keyword surface statements stay unmodeled constructs, and feature-gated bodies
+//! lower only when their feature is active.
 
 use super::*;
 
@@ -184,11 +184,9 @@ fn an_undesugared_scoped_dsl_symbol_call_is_refused_as_a_caller_contract_violati
     Ok(())
 }
 
+/// Retained acknowledged operations remain nested until a consumer explicitly admits their source receipt.
 #[test]
-fn an_unsafe_region_refuses_under_a_named_permanent_boundary() -> Result<(), Box<dyn std::error::Error>> {
-    // #1162's second half. The refusal is a decided disposition, not a missing dispatch arm: an `unsafe:` region
-    // introduces no Incan scope, so inlining its statements would be trivial -- and would erase the
-    // acknowledgment the region exists to record.
+fn an_unsafe_region_keeps_its_acknowledgment_boundary() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
         "def probe(x: int) -> int:\n",
         "  return x\n",
@@ -203,19 +201,73 @@ fn an_unsafe_region_refuses_under_a_named_permanent_boundary() -> Result<(), Box
     let snapshot = body_named(&module, "touch")?.render_snapshot();
 
     assert!(
-        snapshot.contains("unsupported(`unsafe:` acknowledgment region:"),
-        "the refusal must name the construct rather than reading as a generic placeholder: {snapshot}"
+        snapshot.contains("unsafe acknowledgment="),
+        "the region must retain its receipt rather than being silently flattened: {snapshot}"
     );
     assert!(
-        snapshot.contains("refused by design") && snapshot.contains("#1162"),
-        "the refusal must state that it is a decided boundary and name its owner: {snapshot}"
+        !snapshot.contains("unsupported("),
+        "the acknowledged region has no unsupported operations: {snapshot}"
     );
-    // The region's own statements must not quietly become statements of the enclosing block, which is the
-    // silent-execution outcome the refusal exists to prevent.
+    // Nested operations remain under the acknowledgment boundary until a consumer deliberately admits them.
     assert!(
-        !snapshot.contains("probe"),
-        "an acknowledged region's statements must not be inlined into the enclosing block: {snapshot}"
+        snapshot
+            .lines()
+            .any(|line| line.starts_with("    ") && line.contains("probe")),
+        "acknowledged calls must remain nested under their region: {snapshot}"
     );
+    Ok(())
+}
+
+/// A receipt from another module, span, or enclosing scope cannot admit operations at this source boundary.
+#[test]
+fn tampered_unsafe_acknowledgments_do_not_admit_their_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("def main() -> None:\n  unsafe:\n    pass\n", &["m", "unsafe_integrity"])?;
+    let block = &body_named(&module, "main")?.block;
+    assert!(block.unsafe_acknowledgments_valid(&module.module_id));
+    for mutation in 0..4 {
+        let mut tampered = block.clone();
+        let statement = tampered
+            .stmts
+            .iter_mut()
+            .find(|statement| matches!(statement.kind, bir::StatementKind::UnsafeRegion { .. }))
+            .ok_or("missing acknowledgment region")?;
+        let bir::StatementKind::UnsafeRegion { acknowledgment, body } = &mut statement.kind else {
+            return Err("expected acknowledgment region".into());
+        };
+        match mutation {
+            0 => {
+                acknowledgment.receipt =
+                    CompilerNodeId::statement_span("m::other", statement.span.start, statement.span.end)
+            }
+            1 => acknowledgment.span.end += 1,
+            2 => acknowledgment.scope = bir::ScopeId(99),
+            _ => body.scope = bir::ScopeId(99),
+        }
+        assert!(
+            !tampered.unsafe_acknowledgments_valid(&module.module_id),
+            "mutation {mutation} was admitted"
+        );
+    }
+    Ok(())
+}
+
+/// Acknowledgment does not bypass a nested input-contract violation or conceal its original source location.
+#[test]
+fn acknowledged_regions_keep_nested_unsupported_operations() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def main() -> None:\n  unsafe:\n    ...\n";
+    let module = build_with_stand_in_refusal(source, &["m", "unsafe_gap"])?;
+    let body = body_named(&module, "main")?;
+    assert!(body.block.unsafe_acknowledgments_valid(&module.module_id));
+    assert!(body.first_representation_gap().is_some());
+    let bir::StatementKind::UnsafeRegion { body: operations, .. } = &body.block.stmts[0].kind else {
+        return Err("missing acknowledgment region".into());
+    };
+    let unsupported = operations
+        .stmts
+        .iter()
+        .find(|statement| matches!(statement.kind, bir::StatementKind::Unsupported { .. }))
+        .ok_or("missing nested unsupported operation")?;
+    assert_eq!(source.get(unsupported.span.start..unsupported.span.end), Some("..."));
     Ok(())
 }
 
@@ -331,20 +383,15 @@ fn a_rust_extern_body_records_its_delegation_and_no_placeholder_statements_issue
 
 // ---- User-defined decorator rebinding (RFC 036) ----
 
+/// A decorated declaration resolves to its replacement wrapper while retaining the original body as a distinct callable
+/// item.
 #[test]
-fn a_declaration_rebound_by_a_user_defined_decorator_is_a_representation_gap() -> Result<(), Box<dyn std::error::Error>>
-{
-    // `run` calls the binding `as_int` returns, but its call target still names `label`'s own body, so a lowered
-    // `label` would run undecorated. The decorator and its replacement stay ordinary bodies.
+fn a_declaration_rebound_by_a_user_defined_decorator_retains_the_binding() -> Result<(), Box<dyn std::error::Error>> {
+    // The canonical name selects the replacement wrapper; the original body remains a distinct callable item.
     let source = "def parse(value: int) -> int:\n    return value\n\ndef as_int(func: (int) -> str) -> (int) -> int:\n    println(\"decorating label\")\n    return parse\n\n@as_int\ndef label(value: int) -> str:\n    return \"value\"\n\ndef run(value: int) -> int:\n    return label(value)\n";
     let module = build(source, &["m", "decorator_rebinding"])?;
     let label = body_named(&module, "label")?;
-    assert_eq!(
-        label.first_representation_gap(),
-        Some("declaration `label` rebound by a user-defined decorator"),
-        "{}",
-        label.render_snapshot()
-    );
+    assert_eq!(label.first_representation_gap(), None, "{}", label.render_snapshot());
     for name in ["parse", "as_int", "run"] {
         let body = body_named(&module, name)?;
         assert_eq!(body.first_representation_gap(), None, "{}", body.render_snapshot());
@@ -352,17 +399,13 @@ fn a_declaration_rebound_by_a_user_defined_decorator_is_a_representation_gap() -
     Ok(())
 }
 
+/// A checked identity method decorator keeps the mutable receiver and initialized callable binding executable.
 #[test]
-fn a_method_rebound_by_a_user_defined_decorator_is_a_representation_gap() -> Result<(), Box<dyn std::error::Error>> {
+fn a_method_rebound_by_a_user_defined_decorator_retains_the_binding() -> Result<(), Box<dyn std::error::Error>> {
     let source = "class Counter:\n    value: int\n\n    @keep\n    def bump(mut self, by: int) -> int:\n        self.value += by\n        return self.value\n\n    def peek(self) -> int:\n        return self.value\n\ndef keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:\n    return func\n";
     let module = build(source, &["m", "method_decorator_rebinding"])?;
     let bump = body_named(&module, "bump")?;
-    assert_eq!(
-        bump.first_representation_gap(),
-        Some("declaration `bump` rebound by a user-defined decorator"),
-        "{}",
-        bump.render_snapshot()
-    );
+    assert_eq!(bump.first_representation_gap(), None, "{}", bump.render_snapshot());
     let peek = body_named(&module, "peek")?;
     assert_eq!(peek.first_representation_gap(), None, "{}", peek.render_snapshot());
     Ok(())
@@ -377,7 +420,7 @@ fn a_body_reports_a_representation_gap_nested_anywhere_in_it() -> Result<(), Box
         "def run(n: int) -> int:\n  match n:\n    1 => return 1\n    _ =>\n      if n > 2:\n{}      return 0\n\ndef clean(n: int) -> int:\n  return n + 1\n",
         stand_in_refusal_stmt("        ")
     );
-    let module = build(&source, &["m", "representation_gaps"])?;
+    let module = build_with_stand_in_refusal(&source, &["m", "representation_gaps"])?;
     let run = body_named(&module, "run")?;
     assert!(
         run.first_representation_gap().is_some(),

@@ -13,7 +13,8 @@ use incan_frontend::{ParsedModule, diagnostics, lexer, parser};
 use incan_provider::ProviderPlan;
 use oven_model::workspace::WorkspaceGraph;
 
-/// Collect inline Rust crate imports and stdlib/provider requirements from test files owned by this project.
+/// Collect Rust imports, originally declared derive demands and stdlib/provider requirements from project tests.
+/// Test files retain test-import context; their imported source modules retain normal dependency context.
 pub fn collect_test_lock_inputs(
     project_root: &Path,
     workspace: Option<&WorkspaceGraph>,
@@ -25,7 +26,13 @@ pub fn collect_test_lock_inputs(
 ) -> CliResult<TestLockInputs> {
     let mut inline_imports = Vec::new();
     let mut project_requirement_modules = Vec::new();
-    let test_files = discover_project_test_files(project_root, workspace, session);
+    #[cfg(feature = "cli")]
+    let mut discovery_inputs = oven_model::observed_inputs::InputObservations::default();
+    #[cfg(feature = "cli")]
+    let observations = Some(&mut discovery_inputs);
+    #[cfg(not(feature = "cli"))]
+    let observations = None;
+    let test_files = discover_project_test_files_observed(project_root, workspace, session, observations);
     let source_root = project_root.join("src");
 
     for file_path in test_files {
@@ -65,6 +72,12 @@ pub fn collect_test_lock_inputs(
             ast: ast.clone(),
         };
         inline_imports.extend(collect_rust_dependency_uses(&test_module, true));
+        #[cfg(feature = "rust_inspect")]
+        inline_imports.extend(crate::modules::collect_declared_rust_derive_dependency_uses(
+            &test_module,
+            session.manifest.as_ref(),
+            true,
+        ));
 
         let source_modules = crate::testing::module_graph::collect_source_modules_for_test(
             &ast,
@@ -77,24 +90,43 @@ pub fn collect_test_lock_inputs(
         .map_err(CliError::failure)?;
         for module in &source_modules {
             inline_imports.extend(collect_rust_dependency_uses(module, false));
+            #[cfg(feature = "rust_inspect")]
+            inline_imports.extend(crate::modules::collect_declared_rust_derive_dependency_uses(
+                module,
+                session.manifest.as_ref(),
+                false,
+            ));
         }
         project_requirement_modules.push(test_module);
         project_requirement_modules.extend(source_modules);
     }
 
     Ok(TestLockInputs {
+        #[cfg(feature = "cli")]
+        discovery_inputs,
         inline_imports,
         project_requirement_modules,
     })
 }
 
 /// Discover test files owned by one project, excluding descendant workspace members in rooted workspaces.
+#[cfg(test)]
 fn discover_project_test_files(
     project_root: &Path,
     workspace: Option<&WorkspaceGraph>,
     session: &CompilationSession,
 ) -> Vec<PathBuf> {
-    crate::testing::discover_test_files_with_compilation_session(project_root, session)
+    discover_project_test_files_observed(project_root, workspace, session, None)
+}
+
+/// Preserve the canonical test walk's inputs, including files that may gain inline tests and nested-project boundaries.
+fn discover_project_test_files_observed(
+    project_root: &Path,
+    workspace: Option<&WorkspaceGraph>,
+    session: &CompilationSession,
+    observations: Option<&mut oven_model::observed_inputs::InputObservations>,
+) -> Vec<PathBuf> {
+    crate::testing::discover_test_files_with_observations(project_root, session, observations)
         .into_iter()
         .filter(|path| {
             workspace.is_none_or(|graph| {
@@ -194,6 +226,54 @@ name = "consumer"
 
         assert_eq!(root_files, expected_root_files);
         assert_eq!(consumer_files, [fs::canonicalize(consumer_test)?]);
+        Ok(())
+    }
+
+    /// Quoted derives retain declared aliases and the source/test boundary without inventing undeclared roots.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn lock_collects_declared_test_and_source_derives() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Original declarations and source-only derive demands ----
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        fs::create_dir_all(root.join("src"))?;
+        fs::create_dir_all(root.join("tests"))?;
+        fs::write(
+            root.join("loaf.toml"),
+            r#"[project]
+name = "derive_lock"
+version = "1.0.0"
+[dependencies]
+source_derive = { loaf = "crates-io/source_derive", version = "1" }
+test_derive = { loaf = "crates-io/test_derive", version = "2" }
+"#,
+        )?;
+        fs::write(
+            root.join("src/internal.incn"),
+            "@rust.derive(\"source_derive::Generated\")\nmodel Item:\n    value: int\n",
+        )?;
+        let entry = root.join("tests/test_internal.incn");
+        fs::write(
+            &entry,
+            "from internal import Item\n@rust.derive(\"test_derive::Generated\", \"undeclared::Generated\")\nmodel TestItem:\n    value: int\n\ndef test_item() -> None:\n    pass\n",
+        )?;
+
+        // ---- Canonical test collection keeps original dependency context ----
+        let session = CompilationSession::discover_for_collection(&entry)?;
+        let inputs = collect_test_lock_inputs(root, None, None, None, None, &ProviderPlan::default(), &session)?;
+        let source = inputs
+            .inline_imports
+            .iter()
+            .find(|item| item.crate_name == "source_derive")
+            .ok_or("source derive disappeared from lock inputs")?;
+        let test = inputs
+            .inline_imports
+            .iter()
+            .find(|item| item.crate_name == "test_derive")
+            .ok_or("test derive disappeared from lock inputs")?;
+        assert!(!source.is_test_context);
+        assert!(test.is_test_context);
+        assert!(!inputs.inline_imports.iter().any(|item| item.crate_name == "undeclared"));
         Ok(())
     }
 }

@@ -72,13 +72,11 @@ pub fn executable_surface_path(manifest_path: &Path, manifest: &LibraryManifest)
     )
 }
 
-/// Canonical membership of the manifest's public surface: the exported types themselves, plus the public fields,
-/// variants, methods and properties of models, classes, enums and traits.
+/// Canonical membership of the manifest's public surface: exported types plus their published public members.
 ///
-/// Newtypes are deliberately not walked for members. `NewtypeExport` and `ApiNewtype` both carry `methods`, but
-/// RFC 123 does not say whether a newtype's methods belong to the executable surface, so admitting them here would
-/// widen it on an assumption. The consequence of leaving them out is a refusal rather than wrong output, which is
-/// the direction RFC 123 asks for. See #1339.
+/// Newtype methods use the same finalized canonical records as model, class, enum and trait methods. The public
+/// API already exposes these members; RFC 123 executable membership must retain them without admitting private
+/// declarations or inventing identities from producer source.
 ///
 /// Top-level and facade targets come from the finalized identity graph. Member visibility comes from the published
 /// export records, rather than declaration spans or names in producer source.
@@ -119,6 +117,9 @@ fn add_export_record_members(manifest: &LibraryManifest, identities: &mut BTreeS
     for value in &manifest.exports.traits {
         add_each(value.methods.iter().map(|method| &method.canonical), identities);
     }
+    for value in &manifest.exports.newtypes {
+        add_each(value.methods.iter().map(|method| &method.canonical), identities);
+    }
 }
 
 /// Admit the public members of API-described declarations whose owning type the identity graph already proves public.
@@ -157,6 +158,9 @@ fn add_api_declaration_members(
                 ApiDeclaration::Trait(value) => {
                     add_each(value.methods.iter().map(|method| &method.canonical), identities);
                 }
+                ApiDeclaration::Newtype(value) => {
+                    add_each(value.methods.iter().map(|method| &method.canonical), identities);
+                }
                 ApiDeclaration::Enum(value) => {
                     add_each(value.variants.iter().map(|variant| &variant.canonical), identities);
                     add_each(value.methods.iter().map(|method| &method.canonical), identities);
@@ -184,6 +188,14 @@ fn api_declaration_anchor(
         ApiDeclaration::Class(value) => Some((&value.anchor, Kind::Class)),
         ApiDeclaration::Trait(value) => Some((&value.anchor, Kind::Trait)),
         ApiDeclaration::Enum(value) => Some((&value.anchor, Kind::Enum)),
+        ApiDeclaration::Newtype(value) => Some((
+            &value.anchor,
+            if value.is_rusttype {
+                Kind::Rusttype
+            } else {
+                Kind::Newtype
+            },
+        )),
         _ => None,
     }
 }

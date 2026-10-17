@@ -139,28 +139,9 @@ impl OrdinaryNativeMetadataAuthority {
         }))
     }
 
-    /// Observe the complete standard tree, keeping an own-package lock in its independent full source recipe.
-    ///
-    /// Only genuine source publication can identify that exact canonical lock. Other source, native and macro
-    /// inputs remain covered here; the metadata lock transition still proves the actual writer and complete tree.
-    pub(super) fn standard_source_digest(
-        &self,
-        own_source: Option<&Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>>,
-    ) -> CliResult<String> {
-        let standard_root = self.support.verified_standard_source_root()?;
-        let tree = project_source_tree_evidence(standard_root).map_err(|error| invalid(error.to_string()))?;
-        if let Some(source) = own_source {
-            let package_root = source
-                .verified_package_root()
-                .map_err(|error| invalid(error.to_string()))?;
-            let lock = super::lock_transition::canonical_lock_coordinate(package_root)?;
-            if let Ok(relative) = lock.strip_prefix(standard_root) {
-                return tree
-                    .digest_except_exact_file(relative)
-                    .map_err(|error| invalid(error.to_string()));
-            }
-        }
-        tree.digest().map_err(|error| invalid(error.to_string()))
+    /// Bind compiler-owned source while each selected package's full recipe independently owns its canonical lock.
+    pub(super) fn standard_source_digest(&self) -> CliResult<String> {
+        shared_standard_source_digest(self.support.verified_standard_source_root()?)
     }
 
     /// Verify the requested full producer observation at a physical profile handoff, retaining its original owners.
@@ -267,6 +248,41 @@ impl OrdinaryNativeMetadataAuthority {
         }
         Ok(digest)
     }
+}
+
+/// Bind the shared compiler source family while canonical registered locks remain in their owners' full recipes.
+///
+/// Callers retain genuine compiler-owned source authority. Exact embedded declarations identify the only package
+/// coordinates eligible for projection; unknown and nested lock files remain authored input. Full observation still
+/// rejects symlinks. This digest neither admits dependencies nor authorizes any package lock writer or transition.
+pub(in crate::build::library_project) fn shared_standard_source_digest(standard_root: &Path) -> CliResult<String> {
+    // ---- Complete source evidence, including every file before projection ----
+    let standard_root = standard_root
+        .canonicalize()
+        .map_err(|error| invalid(error.to_string()))?;
+    let tree = project_source_tree_evidence(&standard_root).map_err(|error| invalid(error.to_string()))?;
+    let mut locks = Vec::new();
+
+    // ---- Only compiler-registered declarations identify canonical package locks ----
+    for policy in incan_lang::lang::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES {
+        let declaration = Path::new(policy.source_directory).join("loaf.toml");
+        let expected = oven_store::digest_bytes(policy.declaration.as_bytes());
+        if tree
+            .file_digest(&declaration)
+            .map_err(|error| invalid(error.to_string()))?
+            != Some(expected.as_str())
+        {
+            return Err(invalid(
+                "standard source declaration differs from compiler-pinned policy",
+            ));
+        }
+        let lock = super::lock_transition::canonical_lock_coordinate(&standard_root.join(policy.source_directory))?;
+        if let Ok(relative) = lock.strip_prefix(&standard_root) {
+            locks.push(relative.to_path_buf());
+        }
+    }
+    tree.digest_except_exact_files(&locks)
+        .map_err(|error| invalid(error.to_string()))
 }
 
 #[cfg(test)]

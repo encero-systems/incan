@@ -5,6 +5,898 @@
 
 use super::*;
 
+/// Fixed literal and tuple components retain their checked types before the callee's owned rest packs are built.
+#[test]
+fn fixed_unpack_beside_rest_parameters_retains_component_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/fixed_call_unpack.incn"
+        ),
+        &["m", "fixed_unpack_rest"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let snapshot = body.render_snapshot();
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{snapshot}"
+    );
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
+/// Constructor Partials cannot bypass predicates whose deferred validation operations have not been retained.
+#[test]
+fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source, body) in [
+        (
+            "declared",
+            "type Positive = newtype int[gt=0]\n\nmake = partial Positive(value=0)\n",
+            "make",
+        ),
+        (
+            "local",
+            "type Positive = newtype int[gt=0]\n\ndef main() -> None:\n    make = partial Positive(value=0)\n",
+            "main",
+        ),
+    ] {
+        let module = build(source, &["m", name])?;
+        let snapshot = body_named(&module, body)?.render_snapshot();
+        assert!(snapshot.contains("unsupported("), "{snapshot}");
+        assert!(!snapshot.contains("constructor(Positive)"), "{snapshot}");
+    }
+    Ok(())
+}
+
+/// An imported type-constructor factory retains declaration-order effects and original source positions.
+#[test]
+fn sdk_factory_argument_effects_retain_declaration_order() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.regex import Regex, RegexError\n\ndef flag(label: str, value: bool) -> bool:\n    println(label)\n    return value\n\ndef build() -> Result[Regex, RegexError]:\n    return Regex(\"x+\", verbose=flag(\"verbose\", false), ignore_case=flag(\"ignore\", true), multiline=false, dotall=false)\n";
+    let module = build(source, &["factory_effect_order"])?;
+    let body = body_named(&module, "build")?;
+    let mut effects = Vec::new();
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+            && target.name == "flag"
+        {
+            effects.push(
+                source
+                    .get(statement.span.start..statement.span.end)
+                    .ok_or("factory effect lacks its original source span")?,
+            );
+        }
+    }
+    assert_eq!(effects, ["flag(\"ignore\", true)", "flag(\"verbose\", false)"]);
+    assert!(body.render_snapshot().contains("evaluation_order=declaration"));
+    let targets = named_targets(&module, "build");
+    let factory = targets
+        .iter()
+        .find(|target| target.name == "Regex")
+        .ok_or("factory target missing")?;
+    let bir::ArgumentBinding::ResolvedDeclarationOrder {
+        arguments,
+        defaulted_slots,
+    } = &factory.binding
+    else {
+        return Err("factory evaluation policy missing".into());
+    };
+    assert!(defaulted_slots.is_empty());
+    assert_eq!(
+        arguments.iter().map(|argument| argument.slot).collect::<Vec<_>>(),
+        [0, 1, 2, 3, 4]
+    );
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|argument| argument.written_position)
+            .collect::<Vec<_>>(),
+        [0, 2, 3, 4, 1]
+    );
+    Ok(())
+}
+
+/// An ordinary fixed named call preserves the frozen free-call effect order with explicit source provenance.
+#[test]
+fn ordinary_argument_effects_keep_frozen_declaration_order() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def flag(label: str, value: bool) -> bool:\n    println(label)\n    return value\n\ndef choose(left: bool, right: bool) -> bool:\n    return left\n\ndef build() -> bool:\n    return choose(right=flag(\"right\", true), left=flag(\"left\", false))\n";
+    let module = build(source, &["ordinary_effect_order"])?;
+    let body = body_named(&module, "build")?;
+    let mut effects = Vec::new();
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+            && target.name == "flag"
+        {
+            effects.push(
+                source
+                    .get(statement.span.start..statement.span.end)
+                    .ok_or("effect span missing")?,
+            );
+        }
+    }
+    assert_eq!(effects, ["flag(\"left\", false)", "flag(\"right\", true)"]);
+    assert!(body.render_snapshot().contains("evaluation_order=declaration"));
+    Ok(())
+}
+
+/// An SDK constructor factory retains its checked applied owner and the associated call's closed owner argument.
+#[test]
+fn sdk_constructor_factory_retains_applied_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.graph import DiGraph\n\ndef build() -> DiGraph[str]:\n    return DiGraph[str]()\n";
+    let module = build(source, &["applied_factory"])?;
+    let targets = named_targets(&module, "build");
+    let [target] = targets.as_slice() else {
+        return Err("expected one SDK factory call".into());
+    };
+    assert_eq!(
+        target.receiver_type,
+        Some(IncanType::Generic {
+            base: "DiGraph".to_owned(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+        }),
+        "{}",
+        body_named(&module, "build")?.render_snapshot()
+    );
+    assert_eq!(target.type_args, [IncanType::Primitive(IncanPrimitiveType::Str)]);
+    assert_eq!(
+        target.canonical.as_ref().map(|identity| &identity.kind),
+        Some(&SemanticSourceTargetKind::Method)
+    );
+    Ok(())
+}
+
+/// A nominal callee and checked parameters cannot substitute for an absent full-call factory selection.
+#[test]
+fn sdk_constructor_factory_requires_full_call_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let call = "Regex(\"x+\", ignore_case=true, multiline=false, dotall=false, verbose=false)";
+    let source = format!(
+        "from std.regex import Regex, RegexError\n\ndef build() -> Result[Regex, RegexError]:\n  return {call}\n"
+    );
+    let tokens = lexer::lex(&source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["unselected_factory".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let start = source.find(call).ok_or("factory call missing")?;
+    let span = ast::Span {
+        start,
+        end: start + call.len(),
+    };
+    let mut checked = checker.type_info().clone();
+    let selected = checked
+        .references
+        .resolved_identities
+        .remove(&(span.start, span.end))
+        .ok_or("factory identity missing")?;
+    assert_eq!(selected.kind, SemanticSourceTargetKind::Method);
+    assert!(checked.call_site_callable_params(span).is_some());
+    assert!(checked.resolved_identity(ast::Span { start, end: start + 5 }).is_some());
+    let module = build_body_ir_module_v0(&program, &path, &checked);
+    let targets = named_targets(&module, "build");
+    let [target] = targets.as_slice() else {
+        return Err("expected one refused nominal call".into());
+    };
+    assert_ne!(target.canonical.as_ref(), Some(&selected));
+    assert!(target.direct_call_id.is_none());
+    Ok(())
+}
+
+/// Constructor syntax retains the checked static factory at the full call span and its complete parameter binding.
+#[test]
+fn sdk_constructor_syntax_retains_selected_factory() -> Result<(), Box<dyn std::error::Error>> {
+    let call = "Regex(\"x+\", ignore_case=true, multiline=false, dotall=false, verbose=false)";
+    let source = format!(
+        "from std.regex import Regex, RegexError\n\ndef build() -> Result[Regex, RegexError]:\n  return {call}\n"
+    );
+    let tokens = lexer::lex(&source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["constructor_factory".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let start = source.find(call).ok_or("factory call missing")?;
+    let span = ast::Span {
+        start,
+        end: start + call.len(),
+    };
+    let expected = checker
+        .type_info()
+        .resolved_identity(span)
+        .ok_or("selected factory identity missing")?
+        .clone();
+    assert_eq!(expected.kind, SemanticSourceTargetKind::Method, "{expected:#?}");
+    assert_eq!(expected.declaration_name, "__incan_new");
+    let parameters = checker
+        .type_info()
+        .call_site_callable_params(span)
+        .ok_or("checked factory parameters missing")?;
+    assert_eq!(parameters.len(), 5);
+    let module = build_body_ir_module_v0(&program, &path, checker.type_info());
+    let targets = named_targets(&module, "build");
+    let [target] = targets.as_slice() else {
+        return Err("expected one factory invocation".into());
+    };
+    assert_eq!(
+        target.canonical.as_ref(),
+        Some(&expected),
+        "{}",
+        body_named(&module, "build")?.render_snapshot()
+    );
+    let bir::ArgumentBinding::ResolvedDeclarationOrder {
+        arguments,
+        defaulted_slots,
+    } = &target.binding
+    else {
+        return Err(format!("factory lacks a checked binding: {target:#?}").into());
+    };
+    assert_eq!(arguments.len(), 5);
+    assert!(defaulted_slots.is_empty());
+    Ok(())
+}
+
+/// A local function named Regex keeps its own function identity and signature rather than becoming an SDK factory.
+#[test]
+fn sdk_constructor_selection_preserves_source_shadowing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def Regex(value: int) -> int:\n  return value + 1\n\ndef main() -> int:\n  return Regex(3)\n",
+        &["shadow_factory"],
+    )?;
+    let expected = body_named(&module, "Regex")?
+        .canonical
+        .as_ref()
+        .ok_or("source function identity missing")?;
+    let targets = named_targets(&module, "main");
+    let [target] = targets.as_slice() else {
+        return Err("expected one source invocation".into());
+    };
+    assert_eq!(target.canonical.as_ref(), Some(expected));
+    assert_eq!(expected.kind, SemanticSourceTargetKind::Function);
+    assert!(target.direct_call_id.is_some());
+    Ok(())
+}
+
+/// A newtype Partial keeps its source parameter name while forwarding to the retained one-field layout.
+#[test]
+fn newtype_partial_retains_value_parameter_and_constructor() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "type UserId = newtype int\n\nuser = partial UserId(value=7)\n",
+        &["m", "newtype_partial"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("newtype declaration missing")?;
+    let body = body_named(&module, "user")?;
+    assert_eq!(
+        body.params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+        ["value"]
+    );
+    let target = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing retained newtype construction: {}", body.render_snapshot()))?;
+    assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+    assert_eq!(
+        target.canonical_field_layout.as_deref(),
+        Some(declaration.fields.as_slice())
+    );
+    Ok(())
+}
+
+/// A local constructor partial forwards checked fields as construction, with each preset evaluated once.
+#[test]
+fn local_constructor_partial_retains_constructing_closure() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Reader:\n  layer: str\n  path: str\n\ndef main() -> None:\n  layer = \"bronze\"\n  make = partial Reader(layer=layer)\n  reader = make(path=\"orders\")\n  println(reader.path)\n",
+        &["m", "local_constructor_partial"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing constructing closure: {}", body.render_snapshot()))?;
+    assert!(
+        closure.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), _),
+                ..
+            }
+        )),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// The exact builtin module import retains one entrypoint effect and the existing authoritative text asset.
+#[test]
+fn import_this_retains_entrypoint_text_effect() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import this\n\ndef main() -> None:\n  println(\"done\")\n",
+        &["m", "import_this_effect"],
+    )?;
+    let value = serde_json::to_value(&module)?;
+    let effects = value
+        .get("entrypoint_effects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing retained entrypoint effects")?;
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0]["PrintText"]["text"].as_str(),
+        Some(include_str!("../../../../../stdlib/zen.txt"))
+    );
+    Ok(())
+}
+
+/// An ordinary module retains no synthetic entrypoint output.
+#[test]
+fn ordinary_module_retains_no_entrypoint_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("def main() -> None:\n  pass\n", &["m", "no_import_effect"])?;
+    let value = serde_json::to_value(&module)?;
+    let effects = value
+        .get("entrypoint_effects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing explicit entrypoint effect list")?;
+    assert!(effects.is_empty());
+    Ok(())
+}
+
+/// A checked write to a shadowed collection cannot settle a different outer binding's open constructor.
+#[test]
+fn collection_write_context_preserves_binding_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"def f[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        mut seen: set[int] = set()
+        seen.add(1)
+    return len(seen)
+"#,
+        &["m", "shadowed_collection_context"],
+    )?;
+    let body = body_named(&module, "f")?;
+    let types: Vec<_> = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("seen"))
+        .map(|local| local.ty.to_string())
+        .collect();
+    assert_eq!(types, ["Set[?]", "Set[int]"], "{}", module.render_snapshot());
+    Ok(())
+}
+
+/// Checked writes settle empty collection bindings through a declared type parameter without legacy inference changes.
+#[test]
+fn empty_collection_writes_retain_parameter_context() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"def distinct[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        seen.add(item)
+    return len(seen)
+
+def keyed[T](items: list[T]) -> int:
+    mut table = {}
+    for item in items:
+        table.insert(item, 1)
+    return len(table)
+"#,
+        &["m", "empty_collection_context"],
+    )?;
+    for (function, name, expected) in [("distinct", "seen", "Set[T]"), ("keyed", "table", "Dict[T, int]")] {
+        let body = body_named(&module, function)?;
+        let target = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Loop { body } => body.stmts.iter().find_map(|statement| match &statement.kind {
+                    bir::StatementKind::Call {
+                        callee: bir::Callee::Method(target),
+                        ..
+                    } => Some(target),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .ok_or("missing checked collection write")?;
+        let canonical_name = if function == "distinct" {
+            "Set.add"
+        } else {
+            "Dict.insert"
+        };
+        assert!(
+            target.canonical.as_ref().is_some_and(|identity| {
+                identity.origin == incan_semantics_core::SymbolOrigin::Builtin
+                    && identity.declaration_name == canonical_name
+            }),
+            "unproven write identity: {target:?}"
+        );
+        let local = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .ok_or("missing collection binding")?;
+        assert_eq!(local.ty.to_string(), expected, "{}", module.render_snapshot());
+    }
+    Ok(())
+}
+
+/// An accepted exact-width literal pattern retains the scrutinee's numeric carrier rather than a default int.
+#[test]
+fn numeric_literal_pattern_retains_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def pick(value: u8) -> int:\n  return match value:\n    250 => 7\n    _ => 0\n",
+        &["m", "numeric_literal_pattern"],
+    )?;
+    let body = body_named(&module, "pick")?;
+    let pattern = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => arms.first().map(|arm| &arm.pattern),
+            _ => None,
+        })
+        .ok_or("missing numeric match pattern")?;
+    assert!(
+        matches!(
+            pattern,
+            bir::Pattern::Literal(bir::Constant::TypedNumeric(bir::TypedNumericConstant::Unsigned {
+                kind: incan_lang::lang::types::numerics::NumericTypeId::U8,
+                value: 250
+            }))
+        ),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// Canonical list count retains its checked element carrier independently of positional signature availability.
+#[test]
+fn numeric_count_probe_retains_checked_element() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  small: i8 = -5\n  values: list[int] = [-5, 250]\n  println(values.count(small))\n",
+        &["m", "numeric_count_probe"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let (target, arguments) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "count" => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("missing count method")?;
+    assert!(
+        target.canonical.as_ref().is_some_and(|identity| identity.origin
+            == incan_semantics_core::SymbolOrigin::Builtin
+            && identity.declaration_name == "List.count"),
+        "{}",
+        module.render_snapshot()
+    );
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = arguments.get(1) else {
+        return Err("count probe has no retained storage".into());
+    };
+    let local = read.place.local_id().ok_or("count probe has no local")?;
+    assert_eq!(
+        body.locals[local.index()].ty,
+        IncanType::Primitive(IncanPrimitiveType::Int),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A numeric dictionary membership probe retains its checked key carrier before the runtime lookup.
+#[test]
+fn numeric_membership_probe_retains_checked_key() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  byte: u8 = 250\n  table: dict[int, str] = {250: \"b\"}\n  println(byte in table)\n",
+        &["m", "numeric_membership_probe"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let probe = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Helper(bir::HelperOp::DictContainsKey),
+                args,
+                ..
+            } => args.get(1),
+            _ => None,
+        })
+        .ok_or("missing dictionary membership helper")?;
+    let bir::ArgumentElement::One(bir::Operand::Place(read)) = probe else {
+        return Err("numeric membership probe has no retained storage".into());
+    };
+    let local = read.place.local_id().ok_or("numeric membership probe has no local")?;
+    assert_eq!(
+        body.locals[local.index()].ty,
+        IncanType::Primitive(IncanPrimitiveType::Int),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A canonical enumerate spread retains the outer collection operand that the frozen builtin actually observes.
+#[test]
+fn enumerate_spread_retains_legacy_operand() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  values = [[4, 5], [9]]\n  for pair in enumerate(*values):\n    println(pair.0)\n",
+        &["m", "enumerate_spread_operand"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let arguments = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.builtin == Some(incan_lang::lang::builtins::BuiltinFnId::Enumerate) => Some(args),
+            _ => None,
+        })
+        .ok_or("missing canonical enumerate call")?;
+    assert!(
+        matches!(arguments.as_slice(), [bir::ArgumentElement::One(_)]),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// The checked union destination retains a numeric widening before its member is injected by the native plan.
+#[test]
+fn numeric_union_widening_retains_selected_member() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def returned(value: u8) -> int | str:\n  return value\n\ndef main() -> None:\n  byte: u8 = 250\n  held: int | str = byte\n  println(isinstance(held, int))\n",
+        &["m", "numeric_union_destination"],
+    )?;
+    for name in ["returned", "main"] {
+        let body = body_named(&module, name)?;
+        assert!(
+            body.locals
+                .iter()
+                .any(|local| local.origin == bir::LocalOrigin::Temporary
+                    && local.ty == IncanType::Primitive(IncanPrimitiveType::Int)),
+            "{}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// A checked tuple variable supplies fixed and rest slots without leaving an unresolved spread or unknown carrier.
+#[test]
+fn tuple_variable_spreads_retain_fixed_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def combine(a: int, b: str, *rest: int) -> str:\n  return b\n\ndef main() -> None:\n  xy: tuple[int, str, int] = (1, \"Ada\", 7)\n  println(combine(*xy))\n",
+        &["m", "tuple_variable_spread"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let target = named_targets(&module, "main")
+        .into_iter()
+        .find(|target| target.name == "combine")
+        .ok_or("missing tuple spread call")?;
+    assert!(
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 3 && defaulted_slots.is_empty()),
+        "{snapshot}"
+    );
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Unknown),
+        "{snapshot}"
+    );
+    Ok(())
+}
+
+/// A capability-bounded call retains its inferred argument even when its body and result do not use it.
+#[test]
+fn capability_bound_calls_retain_checked_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.rust import Send, Sync\n\ndef run[T with Send, Sync](_value: T) -> None:\n  pass\n\ndef main() -> None:\n  run(1)\n",
+        &["m", "capability_bound_arguments"],
+    )?;
+    assert_eq!(body_named(&module, "run")?.type_parameters, ["T"]);
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "run")
+        .ok_or("missing capability-bounded call")?;
+    assert_eq!(
+        target.type_args,
+        [IncanType::Primitive(IncanPrimitiveType::Int)],
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A generic call retains checked arguments even when its result omits the binders and its input is a tuple list.
+#[test]
+fn unused_result_generics_retain_checked_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def run[T](_value: T) -> None:\n  pass\n\ndef count_pairs[K, V](items: list[tuple[K, V]]) -> int:\n  return len(items)\n\ndef main() -> None:\n  run(1)\n  println(count_pairs([(\"host\", 1), (\"port\", 8080)]))\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["m".to_string(), "literal_generic_arguments".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let facts = checker.type_info();
+    let module = build_body_ir_module_v0(&program, &path, facts);
+    let targets = named_targets(&module, "main");
+    for (name, expected) in [
+        ("run", vec![IncanType::Primitive(IncanPrimitiveType::Int)]),
+        (
+            "count_pairs",
+            vec![
+                IncanType::Primitive(IncanPrimitiveType::Str),
+                IncanType::Primitive(IncanPrimitiveType::Int),
+            ],
+        ),
+    ] {
+        let target = targets
+            .iter()
+            .find(|target| target.name == name)
+            .ok_or("missing generic call")?;
+        assert_eq!(
+            target.type_args,
+            expected,
+            "{}\nmonomorph={:?}\nparams={:?}\ndeclarations={:?}",
+            module.render_snapshot(),
+            facts.calls.call_site_monomorph_type_args,
+            facts.calls.call_site_callable_params,
+            facts.declarations.function_bindings
+        );
+    }
+    Ok(())
+}
+
+/// A selected overload keeps its checked slots when this module does not physically own its executable body.
+#[test]
+fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def pick(value: int) -> int:\n  return value\n\ndef pick(left: str, right: int) -> str:\n  return left\n\ndef main() -> None:\n  println(pick(4))\n  println(pick(right=2, left=\"x\"))\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["m".to_string(), "external_overload".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    // Keep checked candidate identities while retaining only the consumer's executable body.
+    program.declarations.retain(
+        |declaration| !matches!(&declaration.node, ast::Declaration::Function(function) if function.name == "pick"),
+    );
+    let module = build_body_ir_module_v0(&program, &path, checker.type_info());
+    let targets = named_targets(&module, "main");
+    let targets: Vec<_> = targets.iter().filter(|target| target.name == "pick").collect();
+    assert_eq!(targets.len(), 2);
+    for (target, arity) in targets.into_iter().zip([1, 2]) {
+        assert!(target.direct_call_id.is_none());
+        assert!(
+            matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == arity && defaulted_slots.is_empty()),
+            "{target:?}"
+        );
+    }
+    assert!(
+        !module.render_snapshot().contains("unsupported("),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+/// A source-local Partial retains its physical target even when the checker uses package-qualified identities.
+#[test]
+fn package_partials_retain_physical_targets_and_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"pub def build(size: int, label: str = "flat") -> str:
+    return f"{label}:{size}"
+
+pub default_build = partial build(size=3)
+
+pub model Spec:
+    pub name: str
+    pub label: str = "unset"
+
+pub default_spec = partial Spec(label="preset")
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["main".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker.set_current_package_identity(Some("partial_provider".to_string()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
+    for name in ["default_build", "default_spec"] {
+        let body = body_named(&module, name)?;
+        assert!(body.first_representation_gap().is_none(), "{}", body.render_snapshot());
+        assert!(
+            body.params
+                .iter()
+                .any(|parameter| matches!(parameter.default, bir::CallableParamDefault::Source(_)))
+        );
+    }
+    let targets = named_targets(&module, "default_build");
+    let [target] = targets.as_slice() else {
+        return Err("the function Partial must forward to one retained target".into());
+    };
+    assert_eq!(
+        target.canonical.as_ref(),
+        body_named(&module, "build")?.canonical.as_ref()
+    );
+    Ok(())
+}
+
+/// Imported metadata and source signatures give one structural union the same Body IR order, including nested uses.
+#[test]
+fn union_member_order_is_canonical_at_the_body_ir_boundary() {
+    let checker = TypeChecker::new();
+    let source = ResolvedType::Generic("Union".to_string(), vec![ResolvedType::Int, ResolvedType::Str]);
+    let imported = ResolvedType::Generic("Union".to_string(), vec![ResolvedType::Str, ResolvedType::Int]);
+    let retain = |ty: &ResolvedType| parameter_types::checked_semantic_type(ty, checker.type_info());
+    assert_eq!(retain(&source), retain(&imported));
+    let nested_source = ResolvedType::Generic(
+        "Option".to_string(),
+        vec![ResolvedType::Generic("List".to_string(), vec![source])],
+    );
+    let nested_imported = ResolvedType::Generic(
+        "Option".to_string(),
+        vec![ResolvedType::Generic("List".to_string(), vec![imported])],
+    );
+    assert_eq!(retain(&nested_source), retain(&nested_imported));
+}
+
+/// Legacy moves a rest spread of an owned local even when a later read remains; that unbuildable case stays refused.
+#[test]
+fn rest_spread_reused_local_retains_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def total(*items: int) -> int:\n  return sum(items)\n\ndef main() -> None:\n  xs = [1, 2]\n  println(total(*xs))\n  println(len(xs))\n",
+        &["m", "rest_spread_reuse"],
+    )?;
+    let snapshot = body_named(&module, "main")?.render_snapshot();
+    assert!(
+        snapshot.contains("unsupported(rest spread of a reused owned local: legacy moves its source)"),
+        "{snapshot}"
+    );
+    Ok(())
+}
+
+/// Rest annotations retain their collection storage, and each call supplies one resolved operand per slot.
+#[test]
+fn rest_parameter_storage_and_bindings_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def collect(prefix: str, *items: int, **labels: str) -> int:\n  return len(items)\n\ndef main() -> None:\n  xs = [2, 3]\n  kw = {\"name\": \"spread\"}\n  xs_bound = [2, 3]\n  kw_bound = {\"name\": \"spread\"}\n  collect(\"x\", 1, *xs, name=\"inline\", **kw)\n  collect(\"empty\")\n  f = collect\n  println(f(\"bound\", *xs_bound, **kw_bound))\n";
+    let module = build(source, &["m", "rest_storage"])?;
+    let declaration = body_named(&module, "collect")?;
+    assert_eq!(declaration.params[1].ty.to_string(), "List[int]");
+    assert_eq!(declaration.params[2].ty.to_string(), "Dict[str, str]");
+    for target in named_targets(&module, "main") {
+        if target.name != "collect" {
+            continue;
+        }
+        let bir::ArgumentBinding::Resolved {
+            arguments,
+            defaulted_slots,
+        } = &target.binding
+        else {
+            return Err("rest call must retain its complete aggregate slot binding".into());
+        };
+        assert_eq!(arguments.len(), 3);
+        assert!(defaulted_slots.is_empty());
+    }
+    let snapshot = body_named(&module, "main")?.render_snapshot();
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Unknown),
+        "{snapshot}"
+    );
+    assert!(snapshot.contains("spread"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+/// A model or class field read by value, as an argument or a returned value, clones from its owner, as legacy's
+/// ownership policy does (#241).
+#[test]
+fn a_nominal_field_read_by_value_clones_from_its_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = rendered_f(
+        "model Cursor:\n  name: str\n\nmodel Pair:\n  left: Cursor\n\ndef take(cursor: Cursor) -> str:\n  return cursor.name\n\ndef f(pair: Pair) -> str:\n  return take(pair.left)\n",
+        "nominal_field_clone",
+    )?;
+    assert!(rendered.contains("call fn:take(clone(_0.left))"), "{rendered}");
+    let returned = rendered_f(
+        "model Cursor:\n  name: str\n\nmodel Pair:\n  left: Cursor\n\ndef f(pair: Pair) -> Cursor:\n  return pair.left\n",
+        "nominal_field_return",
+    )?;
+    assert!(returned.contains("return clone(_0.left)"), "{returned}");
+    Ok(())
+}
+
+/// A Partial over a model constructor builds that model from its complete field layout, keeping its presets and the
+/// model's own field defaults as deferred defaults.
+#[test]
+fn a_constructor_partial_builds_its_model_with_presets_and_field_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Spec:\n  name: str\n  namespace: str = \"unset\"\n  replicas: int = 1\n\nspec = partial Spec(namespace=\"x\")\n",
+        &["m", "constructor_partial"],
+    )?;
+    let declaration = module.nominal_declarations.first().ok_or("model declaration missing")?;
+    let body = body_named(&module, "spec")?;
+    let target = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or_else(|| format!("the partial must construct its model: {}", body.render_snapshot()))?;
+    assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+    assert_eq!(
+        target.canonical_field_layout.as_deref(),
+        Some(declaration.fields.as_slice())
+    );
+    let defaults = body
+        .params
+        .iter()
+        .map(|parameter| matches!(parameter.default, bir::CallableParamDefault::Source(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(defaults, [false, true, true]);
+    Ok(())
+}
+
 /// `unwrap` on Option and Result is an intrinsic carrier method, like `unwrap_or`, so the backend reads its payload
 /// through the carrier layout instead of treating the call as a builtin collection member.
 #[test]
@@ -93,6 +985,44 @@ fn model_derives_retain_checked_native_selection() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Adopting a trait whose supertrait is the standard library's JSON `Serialize` gives a model and a class the serde
+/// derive, as legacy emission forwards it; a same-named local trait gives nothing.
+#[test]
+fn adopted_json_supertrait_retains_the_serde_derive() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde.json import Serialize\n\ntrait Loggable with Serialize:\n    def log(self) -> str:\n        return self.to_json()\n\ntrait Plain:\n    def name(self) -> str:\n        return \"plain\"\n\nmodel Payload with Loggable:\n    value: int\n\nclass Record with Loggable:\n    value: int\n\nmodel Other with Plain:\n    value: int\n",
+        &["m", "adopted_serde"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or_else(|| Box::<dyn std::error::Error>::from(format!("missing nominal `{name}`")))
+    };
+    assert!(derives("Payload")?.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(derives("Record")?.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(!derives("Other")?.iter().any(|derive| derive.starts_with("serde::")));
+    Ok(())
+}
+
+/// A fieldless enum's derived Ord retains the derives it implies, as a model's does, then the automatic ones.
+#[test]
+fn enum_derives_retain_implied_selections() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Eq, Ord)\nenum Level:\n    Low\n    High\n\ndef main() -> bool:\n    return Level.Low < Level.High\n",
+        &["m", "enum_derives"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("missing enum layout")?;
+    assert_eq!(
+        declaration.derives,
+        ["Eq", "Ord", "PartialEq", "PartialOrd", "Debug", "Clone"]
+    );
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    Ok(())
+}
+
 /// Derived Display retains its checked selection and the Debug prerequisite for native formatting.
 #[test]
 fn model_display_retains_checked_selection() -> Result<(), Box<dyn std::error::Error>> {
@@ -166,6 +1096,155 @@ fn model_json_retains_checked_selection() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+/// A model adopting a std.serde.json protocol trait with `with`, by imported or module-qualified name, retains serde's
+/// derive exactly as one deriving the trait does; a model adopting neither retains none.
+#[test]
+fn adopted_json_protocols_retain_serde_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde import json\nfrom std.serde.json import Serialize, Deserialize\n\nmodel Payload with Serialize, Deserialize:\n    value: int\n\n    def from_json(text: str) -> Result[Payload, str]:\n        return Err(text)\n\nmodel Tagged with json.Serialize:\n    label: str\n\nmodel Plain:\n    value: int\n",
+        &["m", "adopted_json"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or(format!("missing retained model {name}"))
+    };
+    let payload = derives("Payload")?;
+    assert!(payload.iter().any(|name| name == "serde::Serialize"), "{payload:?}");
+    assert!(payload.iter().any(|name| name == "serde::Deserialize"), "{payload:?}");
+    let tagged = derives("Tagged")?;
+    assert!(tagged.iter().any(|name| name == "serde::Serialize"), "{tagged:?}");
+    assert!(!tagged.iter().any(|name| name == "serde::Deserialize"), "{tagged:?}");
+    let plain = derives("Plain")?;
+    assert!(!plain.iter().any(|name| name.starts_with("serde::")), "{plain:?}");
+    Ok(())
+}
+
+/// An enum deriving the std.serde.json protocols, through the module or by trait, retains serde's derive paths as a
+/// model does, and a JSON value enum keeps its raw-value registry beside them.
+#[test]
+fn json_enums_retain_serde_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde import json\nfrom std.serde.json import Serialize\n\n@derive(json)\nenum Env(str):\n    Dev = \"development\"\n    Prod = \"production\"\n\n@derive(Serialize)\nenum Tag:\n    A\n    B\n",
+        &["m", "json_enums"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .enum_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or(format!("missing retained enum {name}"))
+    };
+    let env = derives("Env")?;
+    assert!(env.iter().any(|name| name == "serde::Serialize"), "{env:?}");
+    assert!(env.iter().any(|name| name == "serde::Deserialize"), "{env:?}");
+    let tag = derives("Tag")?;
+    assert!(tag.iter().any(|name| name == "serde::Serialize"), "{tag:?}");
+    assert!(!tag.iter().any(|name| name == "serde::Deserialize"), "{tag:?}");
+    assert!(
+        module
+            .value_enum_declarations
+            .iter()
+            .any(|declaration| declaration.name == "Env")
+    );
+    Ok(())
+}
+
+/// The builtin derives a model names through `@rust.derive(...)` are retained in legacy's order, ahead of the implicit
+/// ones, so the model is admitted with them; a plain newtype adopting the std.serde.json Serialize trait retains
+/// serde's derive after its automatic ones, as legacy emits it.
+#[test]
+fn rust_derived_builtins_and_newtype_serde_adoption_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde.json import Serialize\n\n@rust.derive(PartialEq, Eq, Hash)\nmodel Key:\n    id: int\n\ntype Wrapped = newtype str with Serialize\n",
+        &["m", "retained_derives"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or(format!("missing retained nominal {name}"))
+    };
+    assert_eq!(
+        derives("Key")?,
+        ["PartialEq", "Eq", "Hash", "Debug", "Clone", "FieldInfo", "IncanClass"]
+    );
+    assert_eq!(derives("Wrapped")?, ["Debug", "Clone", "serde::Serialize"]);
+    Ok(())
+}
+
+/// A normal enum's methods and the trait slot it fills are retained over its layout: the bodies and the
+/// implementation pass the module's identity validation with the enum as their owner, and a `Self` return names the
+/// enum, as the checker reads it.
+#[test]
+fn enum_methods_and_trait_slots_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Labeled:\n    def label(self) -> str\n\nenum Signal with Labeled:\n    Start\n    Stop\n\n    def label(self) -> str:\n        return \"signal\"\n\n    def default() -> Self:\n        return Signal.Start\n",
+        &["m", "enum_methods"],
+    )?;
+    let [declaration] = module.enum_declarations.as_slice() else {
+        return Err("expected one retained enum".into());
+    };
+    let [implementation] = module.trait_implementations.as_slice() else {
+        return Err(format!("expected one trait slot: {:?}", module.trait_implementations).into());
+    };
+    assert_eq!(implementation.owner, declaration.canonical);
+    assert!(module.is_well_formed_trait_implementation(implementation));
+    for name in ["label", "default"] {
+        assert!(
+            module.body_has_canonical_direct_call_id(body_named(&module, name)?),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        body_named(&module, "default")?.return_type,
+        IncanType::Named("Signal".to_owned())
+    );
+    Ok(())
+}
+
+/// A model's checked field aliases are retained beside its fields, in field order, so its serde form can rename them.
+#[test]
+fn model_field_aliases_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde import json\n\n@derive(json)\nmodel Account:\n    type_ [alias=\"type\"]: str\n    class_ as \"class\": str\n    name: str\n",
+        &["m", "field_aliases"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained model".into());
+    };
+    assert_eq!(
+        declaration.field_aliases,
+        [Some("type".to_owned()), Some("class".to_owned()), None]
+    );
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    Ok(())
+}
+
+/// A model deriving Copy is retained with that derive, so its values copy exactly where checking said they do.
+#[test]
+fn copy_model_is_retained_with_its_derive() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Eq, Hash, Copy)\nmodel Cell:\n    row: int\n    col: int\n",
+        &["m", "copy_model"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained model".into());
+    };
+    assert!(
+        declaration.derives.iter().any(|name| name == "Copy"),
+        "{:?}",
+        declaration.derives
+    );
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
@@ -206,12 +1285,15 @@ fn newtype_methods_retain_layout_without_erasing_validation() -> Result<(), Box<
         "trait Read:\n    def read(self) -> int\n\ntype Positive = newtype int with Read:\n    def read(self) -> int:\n        return self.0\n\n    def from_underlying(value: int) -> Result[Self, ValidationError]:\n        if value <= 0:\n            return Err(ValidationError(\"must be positive\"))\n        return Ok(Positive(value))\n\ndef main() -> None:\n    value = Positive(1)\n",
         &["m", "checked_newtype"],
     )?;
-    assert!(checked.nominal_declarations.is_empty());
-    assert!(checked.trait_implementations.is_empty());
+    assert_eq!(checked.nominal_declarations.len(), 1);
+    assert_eq!(checked.trait_implementations.len(), 1);
+    let main = body_named(&checked, "main")?.render_snapshot();
+    assert!(main.contains("helper:newtype_hook_extract"), "{main}");
+    assert!(!main.contains("constructor(Positive)"), "{main}");
     Ok(())
 }
 
-/// Literal scalar and string initialization retain canonical storage without admitting effectful initializers.
+/// Scalar and string statics retain canonical storage, including an effectful initializer's computed body.
 #[test]
 fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
@@ -243,7 +1325,7 @@ fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::erro
         "def initial() -> int:\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> int:\n    return COUNT\n",
         &["m", "effectful_static"],
     )?;
-    assert!(effectful.static_declarations.is_empty());
+    assert_eq!(effectful.static_declarations.len(), 1);
     Ok(())
 }
 
@@ -333,6 +1415,7 @@ fn call_binding(kind: &bir::StatementKind) -> Result<&bir::ArgumentBinding, Box<
         bir::Callee::Helper(_) => Err("a helper call carries no declared argument binding".into()),
         // A provider operation's declaration slots are described by its plan's inputs, not by an argument binding.
         bir::Callee::ProviderOperation(_) => Err("a provider operation carries its own input facts".into()),
+        bir::Callee::TypeMetadata(_) => Err("a type metadata operation has no value arguments".into()),
     }
 }
 
@@ -349,6 +1432,9 @@ fn resolved_binding(kind: &bir::StatementKind) -> Result<ResolvedBindingParts<'_
             arguments,
             defaulted_slots,
         } => Ok((arguments, defaulted_slots)),
+        bir::ArgumentBinding::ResolvedDeclarationOrder { .. } => {
+            Err("expected a written-order binding, found declaration-order evaluation".into())
+        }
         bir::ArgumentBinding::UnresolvedPositional => {
             Err("expected a resolved declared-slot binding, found an unresolved positional call".into())
         }
@@ -712,10 +1798,10 @@ fn mixed_positional_and_named_call_arguments_bind_to_declared_parameters() -> Re
     Ok(())
 }
 
+/// Reordered fixed free-call effects follow parameter order without losing their written positions.
 #[test]
-fn out_of_order_named_call_arguments_evaluate_in_written_source_order() -> Result<(), Box<dyn std::error::Error>> {
-    // The effect-ordering contract: `g()` is written first, so it must be *called* first, even though its value
-    // binds to the later declared parameter. A consumer executing operands in slot order would swap the effects.
+fn out_of_order_named_call_arguments_evaluate_in_frozen_declaration_order() -> Result<(), Box<dyn std::error::Error>> {
+    // Frozen dev.6 evaluates named free-call values by parameter order, while source positions remain unchanged.
     let source = "def f() -> int:\n  return 1\n\ndef g() -> int:\n  return 2\n\ndef add(a: int, b: int) -> int:\n  return a + b\n\ndef use() -> int:\n  return add(b=g(), a=f())\n";
     let module = build(source, &["m", "written_order"])?;
     let snapshot = module.render_snapshot();
@@ -725,8 +1811,8 @@ fn out_of_order_named_call_arguments_evaluate_in_written_source_order() -> Resul
     let g_at = rendered.find("call fn:g(").ok_or("missing call to g")?;
     let f_at = rendered.find("call fn:f(").ok_or("missing call to f")?;
     assert!(
-        g_at < f_at,
-        "argument sub-expressions must be evaluated in written source order: {rendered}"
+        f_at < g_at,
+        "argument sub-expressions must preserve frozen declaration order: {rendered}"
     );
     assert!(
         rendered.contains("written=[1, 0]"),
@@ -858,12 +1944,12 @@ fn explicit_method_call_type_arguments_survive_lowering() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Direct and local callables share slot planning while retaining their distinct evaluation policies.
 #[test]
-fn direct_and_local_named_binding_go_through_one_mechanism() -> Result<(), Box<dyn std::error::Error>> {
-    // #1158's "one mechanism" criterion: the direct `Callee::Function` path and the #1124 local-callable path
-    // must produce the same binding facts for the same spelling, not merely both succeed.
-    // Deliberately an out-of-order spelling: its binding is *not* the identity, so this cannot be satisfied by
-    // two independent mechanisms that merely agree on the trivial case, nor by a path that never bound at all.
+fn direct_and_local_named_binding_share_slots_with_explicit_evaluation_policy() -> Result<(), Box<dyn std::error::Error>>
+{
+    // The shared planner binds the same written spelling to identical slots; the caller's explicit evaluation
+    // policy distinguishes frozen fixed free calls from the existing local-callable path.
     let direct = "def add(a: int, b: int) -> int:\n  return a + b\n\ndef use() -> int:\n  return add(b=2, a=1)\n";
     let local =
         "def add(a: int, b: int) -> int:\n  return a + b\n\ndef use() -> int:\n  g = add\n  return g(b=2, a=1)\n";
@@ -873,13 +1959,25 @@ fn direct_and_local_named_binding_go_through_one_mechanism() -> Result<(), Box<d
     let direct_binding = call_binding(single_call(body_named(&direct_module, "use")?)?)?;
     let local_binding = call_binding(single_call(body_named(&local_module, "use")?)?)?;
 
-    assert_eq!(
-        direct_binding, local_binding,
-        "a direct call and a local-callable call must resolve one spelling identically"
-    );
-    let bir::ArgumentBinding::Resolved { arguments, .. } = direct_binding else {
-        return Err("the shared mechanism must produce a resolved binding, not a positional fallback".into());
+    let bir::ArgumentBinding::ResolvedDeclarationOrder {
+        arguments,
+        defaulted_slots,
+    } = direct_binding
+    else {
+        return Err("ordinary fixed named call lacks frozen declaration-order policy".into());
     };
+    let bir::ArgumentBinding::Resolved {
+        arguments: local_arguments,
+        defaulted_slots: local_defaults,
+    } = local_binding
+    else {
+        return Err("local callable lost its existing written-order policy".into());
+    };
+    assert_eq!(
+        arguments, local_arguments,
+        "one planner must retain identical slot/source provenance"
+    );
+    assert_eq!(defaulted_slots, local_defaults);
     assert_eq!(
         arguments
             .iter()
@@ -967,10 +2065,9 @@ fn an_overload_set_that_changes_arity_does_not_refuse_a_valid_call() -> Result<(
     Ok(())
 }
 
+/// Explicit rest values form one owned list slot alongside each ordinary declared argument.
 #[test]
 fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(), Box<dyn std::error::Error>> {
-    // Variadics are a delivered language capability. Routing the direct path through the shared planner must not
-    // silently narrow what Body IR represents; the call keeps lowering, it simply makes no declared-slot claim.
     let source = "def total(a: int, *xs: int) -> int:\n  return a\n\ndef use() -> int:\n  return total(1, 2, 3)\n";
     let module = build(source, &["m", "rest"])?;
     let snapshot = module.render_snapshot();
@@ -980,26 +2077,105 @@ fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(),
         "a positional call into a rest-parameter signature must still lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:total unbound(const(1), const(2), const(3))"),
-        "a rest signature has no one-to-one declared slots, so the binding must say so: {snapshot}"
+        !snapshot.contains("call fn:total unbound") && snapshot.contains("List[int]"),
+        "the packed rest list fills one resolved declaration slot: {snapshot}"
     );
+    let body = body_named(&module, "use")?;
+    let (target, args) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "total" => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("missing rest call")?;
+    assert_eq!(args.len(), 2);
+    assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(2));
     Ok(())
 }
 
+/// Declaration-order calls preserve deferred reads and move an owned local only after earlier calls consume it.
 #[test]
-fn argument_ownership_facts_are_sequenced_by_written_order_not_operand_index() -> Result<(), Box<dyn std::error::Error>>
-{
-    // The invariant `ArgumentBinding` documents: operands are reordered into declaration order, but their
-    // ownership facts were decided in written order. Read left to right this vector moves `_0` and then clones
-    // it; `written=[1, 0]` is what tells a consumer the clone happened first.
+fn named_free_call_ownership_follows_frozen_declaration_order() -> Result<(), Box<dyn std::error::Error>> {
+    // Both direct operands are deferred until `two` executes, so its first read reserves the owner and the final
+    // textual read must also clone. Moving it would invalidate that pending earlier argument.
     let source = "def two(p: str, q: str) -> str:\n  return p + q\n\ndef use(a: str) -> str:\n  return two(q=a, p=a)\n";
     let module = build(source, &["m", "own_order"])?;
     let rendered = body_named(&module, "use")?.render_snapshot();
-
     assert!(
-        rendered.contains("call fn:two written=[1, 0](move(_0, last_use), clone(_0))"),
-        "ownership facts must stay sequenced by written order: {rendered}"
+        rendered.contains("call fn:two evaluation_order=declaration written=[1, 0](clone(_0), clone(_0))"),
+        "deferred argument reads must keep their original owner alive: {rendered}"
     );
+
+    // The nested first-slot call consumes its clone before the final slot reads `a`. Unlike two deferred operands,
+    // that complete call releases its owner reservation, so declaration-order evaluation permits the final move.
+    let source = "def two(p: str, q: str) -> str:\n  return p + q\n\ndef copy_text(value: str) -> str:\n  return value\n\ndef use() -> str:\n  a = \"x\"\n  return two(q=a, p=copy_text(a))\n";
+    let module = build(source, &["m", "owned_order"])?;
+    let body = body_named(&module, "use")?;
+    let local = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("a"))
+        .ok_or("owned argument local missing")?
+        .id;
+    let copy = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "copy_text" => Some(args),
+            _ => None,
+        })
+        .ok_or("nested clone-consuming call missing")?;
+    let [bir::ArgumentElement::One(bir::Operand::Place(read))] = copy.as_slice() else {
+        return Err("nested call has no exact local operand".into());
+    };
+    assert_eq!(read.place.local_id(), Some(local));
+    assert_eq!(read.fact, bir::OwnershipFact::Clone);
+    assert!(!read.last_use);
+    let (target, args) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "two" => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("final declaration-order call missing")?;
+    let bir::ArgumentBinding::ResolvedDeclarationOrder {
+        arguments,
+        defaulted_slots,
+    } = &target.binding
+    else {
+        return Err("fixed named call lost declaration-order policy".into());
+    };
+    assert!(defaulted_slots.is_empty());
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|argument| (argument.slot, argument.written_position))
+            .collect::<Vec<_>>(),
+        [(0, 1), (1, 0)]
+    );
+    let [_, bir::ArgumentElement::One(bir::Operand::Place(read))] = args.as_slice() else {
+        return Err("final call has no second-slot local operand".into());
+    };
+    assert_eq!(read.place.local_id(), Some(local));
+    assert_eq!(read.fact, bir::OwnershipFact::Move);
+    assert!(read.last_use);
     Ok(())
 }
 
@@ -1177,18 +2353,16 @@ fn a_statically_shaped_spread_binds_as_an_ordinary_fixed_arity_call() -> Result<
     Ok(())
 }
 
-/// Preserve written argument order while shared list parameter reads retain caller storage.
+/// A runtime-length spread stays inside its packed list, whose single operand fills the declared rest slot.
 #[test]
-fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(), Box<dyn std::error::Error>> {
-    // The contrast case for the test above: a list *variable* has no statically visible arity, so it must keep
-    // its spread element rather than being expanded into slots that cannot be counted.
+fn a_runtime_length_spread_fills_one_resolved_rest_slot() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def log(*items: int) -> None:\n  return\n\ndef m(xs: list[int]) -> None:\n  log(*xs)\n  return\n";
     let module = build(source, &["m", "unshaped"])?;
     let rendered = body_named(&module, "m")?.render_snapshot();
 
     assert!(
-        rendered.contains("call fn:log unbound(*clone(_0))"),
-        "an unproven spread must stay a spread element on the unresolved-arity path: {rendered}"
+        rendered.contains("clone(_0)") && rendered.contains("list[*move(") && !rendered.contains("unbound"),
+        "runtime length belongs to the packed list, not unresolved call arity: {rendered}"
     );
     Ok(())
 }
@@ -1206,8 +2380,8 @@ fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::E
         "a keyword spread call must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(**clone(_0))"),
-        "a keyword spread must render with its own marker and ownership fact: {snapshot}"
+        snapshot.contains("clone(_0)") && snapshot.contains("dict[**move(") && !snapshot.contains("unbound"),
+        "the keyword spread must remain in its dictionary aggregate and fill one resolved slot: {snapshot}"
     );
     Ok(())
 }
@@ -1281,9 +2455,9 @@ fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Preserve written argument order while shared list parameter reads retain caller storage.
+/// A positional spread retains its source ownership read and supplies one packed operand to its declared slot.
 #[test]
-fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(), Box<dyn std::error::Error>> {
+fn a_positional_call_spread_packs_a_resolved_rest_slot() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def log(*items: int) -> None:\n  return\n\ndef m(xs: list[int]) -> None:\n  log(*xs)\n  return\n";
     let module = build(source, &["m", "call_spread"])?;
     let snapshot = module.render_snapshot();
@@ -1292,11 +2466,11 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
         !snapshot.contains("unsupported("),
         "a call spread must lower: {snapshot}"
     );
-    // A spread makes the arity a runtime fact, so the call must record no declared-slot binding rather than
-    // asserting an identity slot map nobody checked.
+    let targets = named_targets(&module, "m");
+    let target = targets.first().ok_or("missing rest call")?;
     assert!(
-        snapshot.contains("call fn:log unbound(*clone(_0))"),
-        "a spread call must be unbound and carry the spliced source's ownership fact: {snapshot}"
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 1 && defaulted_slots.is_empty()),
+        "the packed list must fill exactly its declared rest slot: {snapshot}"
     );
     Ok(())
 }
@@ -1304,8 +2478,6 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
 /// Preserve written argument order while shared list and dictionary reads retain caller storage.
 #[test]
 fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::error::Error>> {
-    // The issue's combined form. A named argument here has no declared slot to bind to, because the spread
-    // makes the arity a runtime fact -- but discarding its name would lose source information.
     let source = "def log(a: int, b: int, *items: int, **fields: int) -> None:\n  return\n\ndef m(xs: list[int], kw: dict[str, int]) -> None:\n  log(1, *xs, b=2, **kw)\n  return\n";
     let module = build(source, &["m", "call_mixed"])?;
     let snapshot = module.render_snapshot();
@@ -1315,8 +2487,13 @@ fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::e
         "the combined call form must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(const(1), *clone(_0), b=const(2), **clone(_1))"),
-        "positional, spread, named, and keyword-spread arguments must each keep their written form and order: {snapshot}"
+        snapshot.contains("list[*move(") && snapshot.contains("dict[**move(") && !snapshot.contains("unbound"),
+        "sequence and mapping spreads must stay in their respective packed collections: {snapshot}"
+    );
+    let targets = named_targets(&module, "m");
+    let target = targets.first().ok_or("missing mixed rest call")?;
+    assert!(
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 4 && defaulted_slots.is_empty())
     );
     Ok(())
 }
@@ -1332,9 +2509,27 @@ fn a_method_call_spread_lowers_after_the_borrowed_receiver() -> Result<(), Box<d
         !snapshot.contains("unsupported("),
         "a method call spread must lower: {snapshot}"
     );
+    let body = body_named(&module, "m")?;
+    let arguments = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "take" => Some(args),
+            _ => None,
+        })
+        .ok_or("missing rest method call")?;
+    assert_eq!(arguments.len(), 2);
     assert!(
-        snapshot.contains("call method:take unbound(borrow(_0), *clone(_1))"),
-        "the receiver stays args[0] and is never spliced: {snapshot}"
+        matches!(&arguments[0], bir::ArgumentElement::One(bir::Operand::Place(read)) if read.fact == bir::OwnershipFact::Borrow && read.place.local_id() == body.param_locals.first().copied())
+    );
+    assert!(
+        snapshot.contains("list[*move(") && !snapshot.contains("unbound"),
+        "{snapshot}"
     );
     Ok(())
 }
@@ -1811,5 +3006,171 @@ fn class_parameters_and_method_instantiations_are_retained() -> Result<(), Box<d
     let mut malformed = declaration.clone();
     malformed.type_parameters.pop();
     assert!(!module.is_well_formed_nominal_declaration(&malformed));
+    Ok(())
+}
+
+/// An `Ok(...)` or `Err(...)` argument of a generic call, alone or in a list literal, is built with the parameter type
+/// the call settles for the side it leaves open: the type another argument fixes, or `None` where nothing does (#1561).
+#[test]
+fn result_constructor_arguments_take_the_parameter_type_the_call_settles() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def pick[T](r: Result[T, int], d: T) -> T:\n  return r.unwrap_or(d)\n\n",
+        "def pick_list[T](rs: list[Result[T, int]], d: T) -> T:\n  return rs[0].unwrap_or(d)\n\n",
+        "def first[T](r: Result[T, int]) -> Option[T]:\n  match r:\n    Ok(v) => return Some(v)\n    Err(_) => return None\n\n",
+        "def main() -> None:\n  println(pick(Err(2), 5))\n  println(pick_list([Err(3)], 9))\n",
+        "  match first(Err(4)):\n    Some(_) => println(\"some\")\n    None => println(\"none\")\n",
+    );
+    let module = build(source, &["m", "settled_constructor_arguments"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert_eq!(
+        local_types_at(main, source, "Err(2)"),
+        ["Result[int, int]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "Err(3)"),
+        ["Result[int, int]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "[Err(3)]"),
+        ["List[Result[int, int]]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "Err(4)"),
+        ["Result[Unit, int]"],
+        "{rendered}"
+    );
+    Ok(())
+}
+
+/// `list.repeat` lowers to its compiler-owned helper with the arguments in slot order, whatever order the call site
+/// names them in, and records that the helper may raise.
+#[test]
+fn list_repeat_lowers_to_its_helper_in_slot_order() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def f() -> list[int]:\n    return list.repeat(count=3, value=7)\n";
+    let module = build(source, &["m", "list_repeat_helper"])?;
+    let body = body_named(&module, "f")?;
+    let rendered = body.render_snapshot();
+    assert!(
+        rendered.contains("helper:list_repeat(const(7), const(3))"),
+        "{rendered}"
+    );
+    assert!(
+        body.panic_facts
+            .iter()
+            .any(|fact| fact.reason == bir::PanicReason::HelperMayPanic(bir::HelperOp::ListRepeat)),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+/// A pattern over a generic call's result that a constructor argument closes binds its payload at the closed type, not
+/// at the callee's type parameter the checker leaves on the arms.
+#[test]
+fn a_matched_generic_call_result_closed_by_a_constructor_argument_binds_closed_payloads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "model Decoded[T]:\n  value: T\n\n",
+        "def unwrap[T](decoded: Decoded[T]) -> Result[T, str]:\n  return Ok(decoded.value)\n\n",
+        "def main() -> None:\n  match unwrap(Decoded(value=9)):\n    Ok(number) => println(number)\n",
+        "    Err(message) => println(message)\n",
+    );
+    let module = build(source, &["m", "closed_generic_match"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(rendered.contains("number : int [binding]"), "{rendered}");
+    assert!(rendered.contains("message : str [binding]"), "{rendered}");
+    Ok(())
+}
+
+/// A supplied non-literal argument may follow omitted fields whose defaults are built only from literals, because
+/// evaluating those defaults after it is not observable.
+#[test]
+fn literal_field_defaults_beside_a_supplied_call_argument_build_the_model() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def effect() -> int:\n    return 1\n\nmodel P:\n    x: int = -1\n    tags: list[str] = []\n    y: int\n\ndef make() -> P:\n    return P(y=effect())\n",
+        &["m", "literal_default_order"],
+    )?;
+    let rendered = body_named(&module, "make")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(rendered.contains("constructor(P)"), "{rendered}");
+    Ok(())
+}
+
+/// A value the checker coerces into a plain newtype, which has no validation hook or constraints, is built into that
+/// newtype's tuple slot, as its explicit construction is.
+#[test]
+fn a_plain_newtype_coercion_builds_the_newtype() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "type Days = newtype int\n\ndef take(days: Days) -> int:\n    return days.0\n\ndef main() -> None:\n    println(take(-7))\n";
+    let module = build(source, &["m", "plain_newtype_coercion"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(rendered.contains("constructor(Days)"), "{rendered}");
+    Ok(())
+}
+/// The checked residual type of the second independent test is retained rather than the original union storage type.
+#[test]
+fn independent_isinstance_retains_residual_newtype() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "@derive(Clone)\ntype LocalPath = newtype str\n\ndef normalize(value: LocalPath | str) -> LocalPath:\n  if isinstance(value, str):\n    return LocalPath(value)\n  if isinstance(value, LocalPath):\n    return value\n";
+    let module = build(source, &["m", "residual_newtype"])?;
+    let body = body_named(&module, "normalize")?;
+    let tests: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::IsInstance { value_ty, .. },
+                ..
+            } => Some(value_ty),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tests.len(), 2, "{}", body.render_snapshot());
+    assert_eq!(
+        tests[1],
+        &IncanType::Named("LocalPath".into()),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// Non-returning branches and intervening calls do not grant a narrowed residual type to a later test.
+#[test]
+fn independent_isinstance_invalidates_unproven_paths() -> Result<(), Box<dyn std::error::Error>> {
+    for middle in [
+        "  if isinstance(value, str):\n    pass\n",
+        "  if isinstance(value, str):\n    return LocalPath(value)\n  observe()\n",
+        "  if isinstance(value, str):\n    return LocalPath(value)\n  marker = 0\n",
+    ] {
+        let source = format!(
+            "@derive(Clone)\ntype LocalPath = newtype str\n\ndef observe() -> None:\n  pass\n\ndef normalize(value: LocalPath | str) -> LocalPath:\n{middle}  if isinstance(value, LocalPath):\n    return value\n  return LocalPath(\"fallback\")\n"
+        );
+        let module = build(&source, &["m", "residual_invalidations"])?;
+        let body = body_named(&module, "normalize")?;
+        let tests: Vec<_> = body
+            .block
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::IsInstance { value_ty, .. },
+                    ..
+                } => Some(value_ty),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tests.len(), 2);
+        assert!(
+            matches!(tests[1], IncanType::Generic { base, .. } if base == "Union"),
+            "{}",
+            body.render_snapshot()
+        );
+    }
     Ok(())
 }

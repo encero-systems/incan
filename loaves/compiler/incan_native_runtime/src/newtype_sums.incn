@@ -1,0 +1,15 @@
+"""Wrapping arithmetic and final hook-result extraction for numeric-newtype iterator sums."""
+
+from rust::incan_std_core::errors import raise
+
+
+pub def add_newtype_sum(left: int, right: int) -> int:
+    """Preserve the frozen release summation bridge's wrapping primitive arithmetic."""
+    return left.wrapping_add(right)
+
+
+pub def checked_sum_result[T, E](result: Result[T, E], failure: str) -> T:
+    """Extract the single final hook result or raise the exact retained sum failure text."""
+    match result:
+        Ok(value) => return value
+        Err(_error) => raise(failure)

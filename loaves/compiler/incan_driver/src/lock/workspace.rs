@@ -1,7 +1,7 @@
 //! Collecting a project's lock context across a workspace: member discovery, merged dependency surfaces, and the
 //! test imports that count as ordinary dependencies.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -103,6 +103,54 @@ pub fn collect_workspace_lock_context_tolerating(
     command_session: Option<&CompilationSession>,
     tolerate_unresolved_siblings: bool,
 ) -> Result<WorkspaceLockCollection, WorkspaceLockMemberFailure> {
+    collect_workspace_lock_context_with_member_sessions(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        command_session,
+        tolerate_unresolved_siblings,
+        &[],
+    )
+}
+
+/// Lend the original reconciled member sessions to the canonical whole-workspace collector.
+/// Declared member features, entry ownership and sibling failures retain their ordinary semantics.
+pub(crate) fn collect_workspace_lock_context_with_sessions(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    sessions: &[(PathBuf, std::sync::Arc<CompilationSession>)],
+) -> CliResult<ProjectLockContext> {
+    collect_workspace_lock_context_with_member_sessions(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        None,
+        false,
+        sessions,
+    )
+    .map(|collection| collection.context)
+    .map_err(|failure| failure.error)
+}
+
+/// One collector serves ordinary, tolerant publisher and retained-owner requests without changing member policy.
+#[allow(clippy::too_many_arguments)]
+fn collect_workspace_lock_context_with_member_sessions(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+    tolerate_unresolved_siblings: bool,
+    sessions: &[(PathBuf, std::sync::Arc<CompilationSession>)],
+) -> Result<WorkspaceLockCollection, WorkspaceLockMemberFailure> {
     let outside = |error: CliError| WorkspaceLockMemberFailure { error };
     let explicit_entry = entry_file
         .map(resolve_explicit_lock_entry)
@@ -128,6 +176,8 @@ pub fn collect_workspace_lock_context_tolerating(
     let mut member_semantics = Vec::new();
     let mut has_context = false;
     let mut unresolved = Vec::new();
+    #[cfg(feature = "cli")]
+    let mut test_discovery = Vec::new();
 
     let declared_defaults = FeatureSelection::default();
     for member in workspace.members() {
@@ -137,12 +187,17 @@ pub fn collect_workspace_lock_context_tolerating(
             .effective_member_manifest(member)
             .map_err(|error| in_member(CliError::failure(error.to_string())))?;
         enforce_project_toolchain_constraint(&manifest).map_err(in_member)?;
-        let member_session = command_session.filter(|session| {
-            session
-                .manifest
-                .as_ref()
-                .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
-        });
+        let member_session = sessions
+            .iter()
+            .find(|(root, _)| project_roots_match(root, member.root()))
+            .map(|(_, session)| session.as_ref())
+            .or(command_session)
+            .filter(|session| {
+                session
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
+            });
         let member_entry = explicit_entry.as_deref().filter(|_| member_is_command_target);
         let member_context = match collect_project_lock_context(
             &manifest,
@@ -164,6 +219,8 @@ pub fn collect_workspace_lock_context_tolerating(
         if member_is_command_target {
             project_dependency_surface = Some(member_context.resolved.clone());
         }
+        #[cfg(feature = "cli")]
+        test_discovery.extend(member_context.test_discovery);
         has_context = true;
         resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved).map_err(outside)?;
         project_requirements =
@@ -181,6 +238,8 @@ pub fn collect_workspace_lock_context_tolerating(
         .map_err(|error| outside(CliError::failure(error)))?;
     Ok(WorkspaceLockCollection {
         context: ProjectLockContext {
+            #[cfg(feature = "cli")]
+            test_discovery,
             resolved,
             project_requirements,
             semantic,
@@ -388,7 +447,7 @@ fn lock_provider_used_module_paths(session: &CompilationSession, modules: &[Pars
 /// A root library need not expose a runnable script. Canonical project and workspace locks nevertheless cover its
 /// `src/lib.incn` graph, so a rooted RFC 077 workspace can publish one complete lock from its root without inventing
 /// a command-only entrypoint.
-fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
+pub(crate) fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
     if let Some(project) = &manifest.project {
         for script in project.scripts.values() {
@@ -411,6 +470,38 @@ fn project_roots_match(left: &Path, right: &Path) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,
     }
+}
+
+/// Union entry and test closures by the existing physical source identity after collecting their contextual imports.
+///
+/// One source may be reached as an entry, an imported module and a test dependency. Keep its first representation
+/// and traversal order; logical module names can legitimately differ between those contexts. Conflicting source
+/// or semantic AST observations refuse lock publication rather than silently choosing one side of an edit or
+/// differing feature/desugaring projection. Diagnostic paths and warnings do not determine dependency demands.
+fn unique_lock_source_modules(modules: Vec<ParsedModule>) -> CliResult<Vec<ParsedModule>> {
+    let mut seen = BTreeMap::<String, usize>::new();
+    let mut unique: Vec<ParsedModule> = Vec::new();
+    for module in modules {
+        let identity = crate::modules::source_identity_key(&module.file_path.to_string_lossy());
+        if let Some(index) = seen.get(&identity) {
+            if unique[*index].source != module.source {
+                return Err(CliError::failure(format!(
+                    "project lock source changed between traversals: {identity}"
+                )));
+            }
+            if unique[*index].ast.declarations != module.ast.declarations
+                || unique[*index].ast.rust_module_path != module.ast.rust_module_path
+            {
+                return Err(CliError::failure(format!(
+                    "project lock source has conflicting semantic projections: {identity}"
+                )));
+            }
+        } else {
+            seen.insert(identity, unique.len());
+            unique.push(module);
+        }
+    }
+    Ok(unique)
 }
 
 /// Collect the project-wide script and owned test dependency inputs used for lock generation and freshness checks.
@@ -460,10 +551,11 @@ fn ordinary_semantic_sdk_paths(
 ) -> CliResult<Vec<DependencySpec>> {
     native.verify()?;
     #[cfg(feature = "rust_inspect")]
-    let queries = crate::build::library_exports::collect_library_rust_abi_query_paths(
+    let queries = crate::build::library_exports::collect_ordinary_library_rust_abi_query_paths(
         project_requirement_modules,
         &crate::build::rust_extern::collect_rust_extern_contexts(project_requirement_modules),
-    )
+        provider_plan,
+    )?
     .into_iter()
     .collect();
     #[cfg(not(feature = "rust_inspect"))]
@@ -475,10 +567,11 @@ fn ordinary_semantic_sdk_paths(
         provider_plan,
         &queries,
     )?
-    .require_ordinary_source_inspection(
+    .require_ordinary_source_inspection_with_vocabulary(
         session
             .admitted_library_dependencies()
             .map(|owners| (owners.as_ref(), provider_plan)),
+        native.prepared_vocabulary().map(std::sync::Arc::as_ref),
     )?;
     native.provider_semantic_dependencies(
         provider_plan,
@@ -620,6 +713,8 @@ fn collect_project_lock_context_impl(
     }
 
     let TestLockInputs {
+        #[cfg(feature = "cli")]
+        discovery_inputs,
         inline_imports: test_inline_imports,
         project_requirement_modules: test_requirement_modules,
     } = collect_test_lock_inputs(
@@ -635,10 +730,17 @@ fn collect_project_lock_context_impl(
     let mut inline_imports = Vec::new();
     for module in &modules {
         inline_imports.extend(collect_rust_dependency_uses(module, false));
+        #[cfg(feature = "rust_inspect")]
+        inline_imports.extend(crate::modules::collect_declared_rust_derive_dependency_uses(
+            module,
+            Some(session_manifest),
+            false,
+        ));
     }
     inline_imports.extend(test_inline_imports);
     let mut project_requirement_modules = modules;
     project_requirement_modules.extend(test_requirement_modules);
+    let project_requirement_modules = unique_lock_source_modules(project_requirement_modules)?;
     let mut project_requirements =
         collect_project_requirements(&project_requirement_modules, &session.library_manifest_index)?;
     // Source demand validation uses authored requirements. Provider coordinates belong to the resolved lock and
@@ -683,6 +785,8 @@ fn collect_project_lock_context_impl(
         })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     Ok(Some(ProjectLockContext {
+        #[cfg(feature = "cli")]
+        test_discovery: vec![discovery_inputs],
         resolved,
         project_requirements,
         semantic,
@@ -735,6 +839,51 @@ fn existing_lock_records_member_sdk(lock_root: &Path, project_root: &Path, is_wo
 mod tests {
     use super::*;
     use crate::lock::test_support::registry_dependency;
+
+    /// Entry and test paths share one source observation without conflating distinct files or hiding edits.
+    #[test]
+    fn lock_source_union_preserves_identity_and_refuses_changed_observations() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("models.incn");
+        let other = root.path().join("other.incn");
+        let source = "pub model Item:\n    value: int\n";
+        fs::write(&path, source)?;
+        fs::write(&other, source)?;
+        let tokens = incan_frontend::lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
+        let ast = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+        let first = ParsedModule {
+            name: "entry".to_string(),
+            path_segments: vec!["entry".to_string()],
+            file_path: path.clone(),
+            source: source.to_string(),
+            ast,
+        };
+        let mut imported = first.clone();
+        imported.name = "models".to_string();
+        imported.path_segments = vec!["models".to_string()];
+        imported.file_path = root.path().join(".").join("models.incn");
+        imported.ast.source_path = Some(imported.file_path.to_string_lossy().into_owned());
+        let mut distinct = first.clone();
+        distinct.file_path = other.clone();
+        let unique = unique_lock_source_modules(vec![first.clone(), distinct, imported.clone()])?;
+        assert_eq!(unique.len(), 2);
+        assert_eq!(unique[0].name, "entry");
+        assert_eq!(unique[0].file_path, path);
+        assert_eq!(unique[1].file_path, other);
+        let mut changed_projection = imported.clone();
+        changed_projection.ast.declarations.clear();
+        let error = unique_lock_source_modules(vec![first.clone(), changed_projection])
+            .err()
+            .ok_or("conflicting semantic observations entered the lock")?;
+        assert!(error.message.contains("conflicting semantic projections"));
+        imported.source = "pub model Item:\n    value: str\n".to_string();
+        let error = unique_lock_source_modules(vec![first, imported])
+            .err()
+            .ok_or("changed observations of one source entered the lock")?;
+        assert!(error.message.contains("project lock source changed between traversals"));
+        Ok(())
+    }
 
     #[test]
     fn sdk_inventory_lock_write_decision_preserves_recorded_sdk_state() {
