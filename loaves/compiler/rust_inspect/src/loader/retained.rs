@@ -11,11 +11,17 @@ pub const OVEN_RETAINED_INSPECTION_MARKER: &str = ".incan_retained_oven_inspecti
 ///
 /// Implementations must revalidate the complete original request, source inventories, facts, physical edges and
 /// compiler intent before returning its exact inspection graph. They must bind sysroot sources to that compiler. A
-/// selected-root hint or deserialized path catalog cannot construct this authority. Macro execution is separate: this
-/// initial loader admits source graphs without executable macro paths or a macro server.
+/// selected-root hint or deserialized path catalog cannot construct this authority. Macro execution is separate:
+/// implementations must explicitly retain and verify their actual original host macro outputs.
 pub trait RetainedInspectionProject: Send {
     /// Return the current exact source graph only after revalidating the original complete producer request.
     fn verified_project(&self) -> Result<serde_json::Value, RustMetadataError>;
+
+    /// Return only original admitted host macro requests after verifying their complete producer inputs.
+    /// Source-only capabilities supply no executable permission, even when a serialized macro sidecar is present.
+    fn verified_native_macros(&self) -> Result<Vec<super::OvenInspectionProcMacro>, RustMetadataError> {
+        Ok(Vec::new())
+    }
 }
 
 impl RustWorkspace {
@@ -25,9 +31,13 @@ impl RustWorkspace {
     }
 
     /// Reuse this database only when its original complete producer still verifies to the exact incoming graph.
-    pub(crate) fn matches_retained_project(&self, graph: &serde_json::Value) -> Result<bool, RustMetadataError> {
+    pub(crate) fn matches_retained_project(
+        &self,
+        graph: &serde_json::Value,
+        macros: &[super::OvenInspectionProcMacro],
+    ) -> Result<bool, RustMetadataError> {
         match &self.retained_project {
-            Some(project) => Ok(project.verified_project()? == *graph),
+            Some(project) => Ok(project.verified_project()? == *graph && project.verified_native_macros()? == macros),
             None => Ok(false),
         }
     }
@@ -42,14 +52,16 @@ impl RustWorkspace {
         project: Box<dyn RetainedInspectionProject>,
         progress: &(dyn Fn(String) + Sync),
     ) -> Result<Self, RustMetadataError> {
-        let graph = project.verified_project()?;
+        let mut graph = project.verified_project()?;
         if native_macros::contains_unowned_macro_path(&graph) {
             return Err(RustMetadataError::LoadWorkspace {
                 path: manifest_dir.to_path_buf(),
                 message: "ordinary source inspection does not grant native macro execution".to_string(),
             });
         }
-        Self::load_oven_graph(manifest_dir, target_dir, graph, Vec::new(), Some(project), progress)
+        let macros = project.verified_native_macros()?;
+        let owners = native_macros::select_retained_native_macros(manifest_dir, &mut graph, macros)?;
+        Self::load_oven_graph(manifest_dir, target_dir, graph, owners, Some(project), progress)
     }
 
     /// Project compiler-bound source coordinates only after the caller verifies their original retained owner.

@@ -46,9 +46,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// kinds outside v0's covered subset fall through to an explicit [`Self::push_unsupported_stmt`] rather than
     /// panicking (see this module's module-level docs for the exact covered/uncovered split).
     ///
-    /// Two kinds are dispatched here despite refusing, rather than being left to the trailing catch-all, and both
-    /// are deliberate. `ast::Statement::Unsafe` is a stated permanent boundary that has to name its own reason —
-    /// see [`Self::refuse_unsafe_region`]. Everything the catch-all still reaches is vocab/surface residue
+    /// Source unsafe regions retain their acknowledgment boundary rather than being silently flattened; see
+    /// [`Self::lower_unsafe_region`]. Everything the catch-all still reaches is vocab/surface residue
     /// (`Surface`, `VocabBlock`, `VocabExpressionItem`), whose disposition belongs to the Body IR input-contract
     /// work rather than to any single construct: those nodes reach this module only when a caller skips the
     /// desugar pass the legacy pipeline runs first (#1166). No statement kind lowers under the bare `"statement"`
@@ -67,7 +66,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_field_assignment(field_assignment, scope, span, out)
             }
             ast::Statement::IndexAssignment(index_assignment) => {
-                self.lower_index_assignment(index_assignment, scope, span, out)
+                // The raw AST span keys a resolved `__setitem__` hook, as for compound assignment below.
+                self.lower_index_assignment(index_assignment, scope, stmt.span, out)
             }
             ast::Statement::CompoundAssignment(compound_assignment) => {
                 // Passed the raw AST span, not `span`: the typechecker keys a resolved operator hook by source
@@ -84,9 +84,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                let value = value.as_ref().map(|v| {
-                    let operand = self.lower_expr_to_operand(v, scope, out);
-                    self.owned_parameter_operand(v, operand)
+                // A returned `Ok(...)` or `Err(...)` builds the sides the declared return type settles for it.
+                let value = value.as_ref().map(|returned| {
+                    let destination = self.owner_return_type.clone();
+                    self.settle_open_result_value(returned, &destination);
+                    let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
+                    self.owned_parameter_operand(returned, operand)
                 });
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
@@ -97,7 +100,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Statement::Loop(loop_stmt) => self.lower_loop_stmt(loop_stmt, scope, span, out),
             ast::Statement::While(while_stmt) => self.lower_while(while_stmt, scope, span, out),
             ast::Statement::For(for_stmt) => self.lower_for(for_stmt, scope, span, out),
-            ast::Statement::Unsafe(_) => self.refuse_unsafe_region(span, out),
+            ast::Statement::Unsafe(region) => self.lower_unsafe_region(region, remaining, scope, span, out),
             ast::Statement::Expr(expr) => {
                 // `yield value` parses as an ordinary expression statement wrapping `ast::Expr::Yield(Some(_))`
                 // (there is no separate `ast::Statement::Yield` AST node) -- mirror the existing Rust-emission
@@ -131,28 +134,41 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Refuse an `unsafe:` region, permanently and by design, naming the boundary rather than leaving a placeholder
-    /// that reads like an unmodeled construct.
+    /// Retain a source acknowledgment and its operations without introducing an Incan binding or drop scope.
     ///
-    /// This is a stated disposition, not a gap waiting on lowering work. `ast::UnsafeStmt` is documented as a
-    /// scoped acknowledgment region for operations requiring explicit authorization, and it introduces no separate
-    /// Incan scope — its statements are ordinary statements of the enclosing block, so lowering them inline would
-    /// be *easy*. That is exactly why the refusal has to be explicit: inlining them would erase the acknowledgment
-    /// and leave a direct replacement execution profile silently running an authorized region it was never told
-    /// about. A consumer that wants to admit such a region must do so deliberately, against a representation that
-    /// carries the acknowledgment, and Body IR v0 has no such representation.
-    ///
-    /// The refusal therefore says why rather than only what, and is the corpus's one `Disposition::Unsupported`
-    /// row (`parity-987-0018` in `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs`), owned by #1162.
-    /// Reversing it means designing the acknowledgment fact first, not adding a dispatch arm.
-    fn refuse_unsafe_region(&self, span: HirSourceSpan, out: &mut Vec<bir::Statement>) {
-        self.push_unsupported_stmt(
-            "`unsafe:` acknowledgment region: refused by design, because Body IR v0 cannot carry the \
-             acknowledgment a consumer would need to admit it deliberately (#1162)"
-                .to_string(),
+    /// Every declaration sees the remaining region statements and then the enclosing suffix, so later reads retain
+    /// the same ownership countdown as legacy's flattened statement list. Admission remains the consumer's decision.
+    fn lower_unsafe_region(
+        &mut self,
+        region: &ast::UnsafeStmt,
+        remaining: &[ast::Spanned<ast::Statement>],
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        let mut operations = Vec::new();
+        for (index, statement) in region.body.iter().enumerate() {
+            let suffix = region.body[index + 1..]
+                .iter()
+                .chain(remaining)
+                .cloned()
+                .collect::<Vec<_>>();
+            self.lower_stmt_into(statement, &suffix, scope, &mut operations);
+        }
+        out.push(bir::Statement {
+            kind: bir::StatementKind::UnsafeRegion {
+                acknowledgment: bir::UnsafeAcknowledgment {
+                    receipt: CompilerNodeId::statement_span(self.module_identity, span.start, span.end),
+                    span,
+                    scope,
+                },
+                body: bir::Block {
+                    scope,
+                    stmts: operations,
+                },
+            },
             span,
-            out,
-        );
+        });
     }
 
     /// Lower an assignment statement while preserving its checked lexical binding decision.
@@ -160,6 +176,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A plain inferred assignment and the internal `Reassign` spelling reuse the nearest active local when one is
     /// bound, falling back to a declaration for an otherwise unbound name. `let` and `mut` always declare a fresh
     /// local: those are the two source declaration forms that deliberately shadow an enclosing binding.
+    /// A Result constructor rebind whose legacy payload is missing retains a named refusal even when Body IR keeps
+    /// the local's closed carrier.
+    /// An inferred binding of a nongeneric source call retains its providing module's closed return carrier, so a
+    /// private import alias in the producer cannot become a consumer-side storage type.
+    /// Inferred SDK task bindings likewise keep the checked call's executable output; explicitly annotated bindings
+    /// keep their declared contract.
+    ///
+    /// A Result constructor rebind whose legacy payload is missing retains a named refusal even when Body IR keeps
+    /// the local's closed carrier.
     pub(super) fn lower_assignment(
         &mut self,
         assignment: &ast::AssignmentStmt,
@@ -173,22 +198,75 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
         let assignment_span = ast::Span::new(span.start, span.end);
-        let mut ty = self
+        let atomic_storage = self
             .type_info
             .assignment_binding_type(assignment_span)
+            .is_some_and(|ty| self.type_info.body_ir_newtypes.controls_type(ty));
+        let mut ty = self
+            .type_info
+            .body_ir_newtypes
+            .assignment_type(assignment_span, self.type_info)
+            .or_else(|| self.type_info.assignment_binding_type(assignment_span))
             .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
+        if assignment.ty.is_none()
+            && !atomic_storage
+            && let Some(returned) = self
+                .type_info
+                .expressions
+                .body_ir_expr_types
+                .get(&(assignment.value.span.start, assignment.value.span.end))
+                .or_else(|| {
+                    self.type_info
+                        .calls
+                        .inferred_call_result_types
+                        .get(&(assignment.value.span.start, assignment.value.span.end))
+                })
+                .map(|ty| self.checked_type(ty))
+                .or_else(|| self.published_expression_type(&assignment.value))
+        {
+            ty = returned;
+        }
+        ty = self.retained_result_binding_type(assignment, ty, out);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
-        let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+        self.settle_open_result_value(&assignment.value, &ty);
+        let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        // An awaited method can retain its closed output only after its future has been constructed. Preserve that
+        // checked native constraint through an inferred binding without changing an explicit annotation.
+        if assignment.ty.is_none()
+            && let Some(settled) = self
+                .settled_types
+                .get(&(assignment.value.span.start, assignment.value.span.end))
+        {
+            ty = self.fill_open_type_parts(&ty, settled);
+        }
+        if let Some(actual) = self.result_operand_type(&value) {
+            ty = self.refine_result_channels(&ty, &actual);
+        }
+        // An awaited method can retain its closed output only after its future has been constructed. Preserve that
+        // checked native constraint through an inferred binding without changing an explicit annotation.
+        if assignment.ty.is_none()
+            && let Some(settled) = self
+                .settled_types
+                .get(&(assignment.value.span.start, assignment.value.span.end))
+        {
+            ty = self.fill_open_type_parts(&ty, settled);
+        }
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
+        // An inferred SDK task binding also keeps the individual checked call's concrete output argument.
         if let bir::Operand::Place(read) = &value
+            && read.place.projection.is_empty()
             && let Some(local) = read.place.local_id()
-            && let IncanType::Generic { base, .. } = &self.locals[local.index()].ty
-            && base == "Awaitable"
         {
-            ty = self.locals[local.index()].ty.clone();
+            let storage = &self.locals[local.index()].ty;
+            let future = matches!(storage, IncanType::Generic { base, .. } if base == "Awaitable");
+            let inferred_task =
+                assignment.ty.is_none() && super::runtime_nominals::retains_task_storage(self.type_info, storage);
+            if future || inferred_task {
+                ty = storage.clone();
+            }
         }
         let binding_span = hir_span(assignment.name_span);
         let target_identity = self
@@ -310,7 +388,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
-        let value = self.lower_expr_to_operand(&field_assignment.value, scope, out);
+        let value = self.lower_boundary_value(&field_assignment.value, None, scope, out);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,
@@ -324,14 +402,32 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// `value` by the parser -- see [`Self::lower_field_assignment`]'s docs for the same note on
     /// `IndexAssignmentStmt::compound_op`). The object place is lowered before the index operand, preserving the
     /// established assignment evaluation order in the Rust-emission backend: object, index, then assigned value.
+    /// A write checking resolved to a user-defined `__setitem__` is that method's call, in the same order. Static
+    /// storage is the exception: legacy computes the assigned value before it locks the storage to write the entry, so
+    /// the value is lowered before the index there, and the index is the last read of what it names.
     pub(super) fn lower_index_assignment(
         &mut self,
         index_assignment: &ast::IndexAssignmentStmt,
         scope: bir::ScopeId,
-        span: HirSourceSpan,
+        source_span: ast::Span,
         out: &mut Vec<bir::Statement>,
     ) {
+        let span = hir_span(source_span);
+        if let Some(dispatch) = self.type_info.resolved_operator_call(source_span)
+            && dispatch.kind == ResolvedOperatorKind::IndexAssign
+        {
+            let method = dispatch.method.clone();
+            let object = &index_assignment.object;
+            let arguments = [&index_assignment.index, &index_assignment.value];
+            let unit = IncanType::Primitive(IncanPrimitiveType::Unit);
+            self.lower_operator_dispatch(&method, object, &arguments, unit, source_span, scope, out);
+            return;
+        }
         let mut place = self.lower_expr_to_place(&index_assignment.object, scope, out);
+        let early_value = place
+            .global()
+            .is_some()
+            .then(|| self.lower_boundary_value(&index_assignment.value, None, scope, out));
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
         if !place.permits_write() {
@@ -342,7 +438,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
-        let value = self.lower_expr_to_operand(&index_assignment.value, scope, out);
+        let value = match early_value {
+            Some(value) => value,
+            None => self.lower_boundary_value(&index_assignment.value, None, scope, out),
+        };
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,
@@ -534,10 +633,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower `a, b = value` / `let a, b = value` into a sequence of single-target `Assign` statements: materialize
     /// `value` once, then bind each name to the corresponding `.{index}` tuple-field projection off it, in
-    /// left-to-right order. Element reads go through the same [`Self::ownership_fact_for_place`] a plain
-    /// `.field`/`[index]` read anywhere else in v0 uses, so a non-Copy element borrows rather than moves (v0 does
-    /// not track partial-move state out of a place, per [`Self::ownership_fact_for_place`]'s own docs) --
-    /// consistent with, not a special case of, that existing policy.
+    /// left-to-right order. A freshly materialized result transfers non-Copy fields without requiring Clone.
+    /// Reads from source-bound tuples retain the ordinary projected ownership policy; their owner stays initialized.
     pub(super) fn lower_tuple_unpack(
         &mut self,
         tuple_unpack: &ast::TupleUnpackStmt,
@@ -552,8 +649,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
         let value_operand = self.lower_expr_to_operand(&tuple_unpack.value, scope, out);
+        let value_ty = self.retained_operand_type(&value_operand).unwrap_or(value_ty);
+        let consumes_tuple = matches!(&value_operand, bir::Operand::Place(read)
+            if read.fact == bir::OwnershipFact::Move && read.last_use && read.place.projection.is_empty());
         let value_place = self.materialize_operand_to_place(value_operand, value_ty.clone(), scope, span, out);
         let element_types = tuple_element_types(&value_ty, tuple_unpack.names.len());
+        // A fresh result has no source alias to preserve. Its fields transfer individually, including non-Clone
+        // SDK handles; borrowed source tuples continue through the ordinary projected ownership policy.
+        let transfers_fields = consumes_tuple
+            || (value_place.projection.is_empty()
+                && value_place
+                    .local_id()
+                    .is_some_and(|local| matches!(self.locals[local.index()].origin, bir::LocalOrigin::Temporary)));
 
         if tuple_unpack.names.len() != tuple_unpack.name_spans.len() {
             self.push_unsupported_stmt(
@@ -575,7 +682,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             element_place
                 .projection
                 .push(bir::PlaceElem::structural_field(index.to_string()));
-            let (fact, last_use) = self.ownership_fact_for_place(&element_place, element_ty);
+            let (fact, last_use) = if transfers_fields && !element_ty.abi_v0_facts().ownership.is_trivially_copy() {
+                (bir::OwnershipFact::Move, true)
+            } else {
+                self.ownership_fact_for_place(&element_place, element_ty)
+            };
             let element_operand = bir::Operand::place(element_place, fact, last_use);
             let place = match self.bind_multi_target_name(
                 name,
@@ -683,9 +794,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first) when the value
-    /// is shared by every target. A value the checker recorded as written per target is instead evaluated once per
-    /// target, at that target's type (see [`Self::lower_chained_per_target`]).
+    /// Evaluate a shared chained value once, then assign its original type to every target in written order.
+    /// Destination injection must not flow back into another target: `xs = maybe = make_list()` gives both targets
+    /// the list, even though `maybe` wraps it in `Some`. A value the checker recorded as written per target is instead
+    /// evaluated once per target at that target's type (see [`Self::lower_chained_per_target`]).
     pub(super) fn lower_chained_assignment(
         &mut self,
         chained_assignment: &ast::ChainedAssignmentStmt,
@@ -709,57 +821,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.lower_chained_per_target(chained_assignment, remaining, scope, span, out);
             return;
         }
-        let Some((last_name, last_span)) = chained_assignment
-            .targets
-            .last()
-            .zip(chained_assignment.target_spans.last())
-        else {
+        if chained_assignment.targets.is_empty() {
             self.push_unsupported_stmt("empty chained assignment".to_string(), span, out);
             return;
-        };
-        let last_span = *last_span;
+        }
         let value_ty = self.resolve_ty(chained_assignment.value.span);
         let value_operand = self.lower_expr_to_operand(&chained_assignment.value, scope, out);
-        let mut prev_place = match self.bind_multi_target_name(
-            last_name,
-            value_ty.clone(),
-            chained_assignment.binding,
-            scope,
-            last_span,
-            remaining,
-        ) {
-            Ok(place) => place,
-            Err(reason) => {
-                self.push_unsupported_stmt(reason, span, out);
-                return;
-            }
-        };
+        let value_local = self.new_temp(value_ty.clone(), scope, span);
+        let value_place = bir::Place::from_local(value_local);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
-                place: prev_place.clone(),
+                place: value_place.clone(),
                 rvalue: bir::Rvalue::Use(value_operand),
             },
             span,
         });
-
-        // Walk the remaining targets right-to-left, each one reading the local immediately to its right.
-        for (name, target_span) in chained_assignment.targets[..chained_assignment.targets.len() - 1]
-            .iter()
-            .zip(&chained_assignment.target_spans[..chained_assignment.target_spans.len() - 1])
-            .rev()
-        {
-            // `remaining_reads[prev_local]` was seeded only from statements *after* this whole chained-assignment
-            // statement (see `Self::declare_new_local`'s `remaining` parameter) -- it does not know about the
-            // synthetic read performed right here, within the very statement that (re)bound `prev_local`. Bump it
-            // by one first so the shared `Self::ownership_fact_for_place` decrement below still lands on the
-            // correct move/clone decision instead of under-counting by one.
-            if let Some(prev_local) = prev_place.local_id()
-                && let Some(remaining_count) = self.remaining_reads.get_mut(&prev_local)
-            {
-                *remaining_count += 1;
-            }
-            let (fact, last_use) = self.ownership_fact_for_place(&prev_place, &value_ty);
-            let operand = bir::Operand::place(prev_place, fact, last_use);
+        // The synthetic value is read once per destination; the last read moves its owner and earlier reads clone it.
+        self.remaining_reads
+            .insert(value_local, chained_assignment.targets.len());
+        for (name, target_span) in chained_assignment.targets.iter().zip(&chained_assignment.target_spans) {
+            let (fact, last_use) = self.ownership_fact_for_place(&value_place, &value_ty);
+            let operand = bir::Operand::place(value_place.clone(), fact, last_use);
             let place = match self.bind_multi_target_name(
                 name,
                 value_ty.clone(),
@@ -776,12 +858,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             };
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
-                    place: place.clone(),
+                    place,
                     rvalue: bir::Rvalue::Use(operand),
                 },
                 span,
             });
-            prev_place = place;
         }
     }
 
@@ -945,7 +1026,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let target = self.loop_break_targets.last().copied().flatten();
         match (value, target) {
             (Some(expr), Some(result_local)) => {
-                let operand = self.lower_expr_to_operand(expr, scope, out);
+                let destination = self.locals[result_local.index()].ty.clone();
+                let operand = self.lower_boundary_value(expr, Some(&destination), scope, out);
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Assign {
                         place: bir::Place::from_local(result_local),
@@ -959,7 +1041,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 });
             }
             _ => {
-                let operand = value.map(|v| self.lower_expr_to_operand(v, scope, out));
+                let operand = value.map(|v| self.lower_boundary_value(v, None, scope, out));
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Break { value: operand },
                     span,
@@ -971,8 +1053,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a statement-position `yield value` (`ast::Expr::Yield(Some(value))` reached through
     /// [`Self::lower_stmt_into`]'s `ast::Statement::Expr` arm) into a [`bir::StatementKind::Yield`].
     ///
-    /// `value` is lowered through the same [`Self::lower_expr_to_operand`] path every other statement's operand
-    /// goes through, so ownership facts/last-use tracking apply to a yielded value exactly like any other read.
+    /// The checked destination boundary retains numeric widening before the generator consumes the value; ownership
+    /// facts and last-use tracking still apply to its source operand exactly as for another value read.
+    ///
     /// Records the runtime dependencies the existing Rust-emission backend's own `yield` lowering actually needs
     /// (`__incan_yield.yield_value(..)` on a `GeneratorYield` handle backed by `std::thread::spawn` and
     /// `std::sync::mpsc::sync_channel` -- see `loaves/stdlib/core/rust/src/iter.rs`'s `Generator`/`SpawnedGenerator`):
@@ -987,7 +1070,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        let operand = self.lower_expr_to_operand(value, scope, out);
+        let operand = self.lower_boundary_value(value, None, scope, out);
         out.push(bir::Statement {
             kind: bir::StatementKind::Yield { value: operand },
             span,

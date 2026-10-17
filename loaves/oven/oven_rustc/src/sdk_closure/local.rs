@@ -492,9 +492,9 @@ fn local_facet_sources_with_observer(
         files.extend(language_catalog_sources(&project)?);
         relative = Path::new("loaves/kernel/incan_lang").join(relative);
     }
-    if name == "incan_emit" {
+    if name == "incan_emit" || name == "incan_frontend" {
         files.push(emitter_text_source(&project)?);
-        relative = Path::new("loaves/compiler/incan_emit").join(relative);
+        relative = Path::new("loaves/compiler").join(&name).join(relative);
     }
     collect_local_sources(&source, &relative, &mut files, observe)?;
     for (source, _) in &files {
@@ -571,7 +571,10 @@ fn language_catalog_sources(project: &Path) -> Result<Vec<(std::path::PathBuf, s
     Ok(files)
 }
 
-/// Enumerate the declared Rust source directory, refusing links and forbidden build inputs before publication.
+/// Enumerate the declared Rust source directory, refusing links and Cargo metadata before publication.
+///
+/// A `build.rs` inside this directory is an ordinary Rust module; its name does not grant build-script execution.
+/// Package-root build scripts remain outside this declared source tree and are never discovered or executed here.
 fn collect_local_sources(
     source: &Path,
     relative: &Path,
@@ -590,11 +593,8 @@ fn collect_local_sources(
         if kind.is_dir() {
             collect_local_sources(&path, &destination, files, observe)?;
         } else if kind.is_file() {
-            if matches!(
-                entry.file_name().to_str(),
-                Some("Cargo.toml" | "Cargo.lock" | "build.rs")
-            ) {
-                return Err("local SDK source tree contains forbidden Cargo metadata or a build script".into());
+            if matches!(entry.file_name().to_str(), Some("Cargo.toml" | "Cargo.lock")) {
+                return Err("local SDK source tree contains forbidden Cargo metadata".into());
             }
             files.push((path, destination));
         } else {
@@ -623,9 +623,15 @@ fn selected_local_edges(unit: &PreparedUnit, available: &[&SdkCompiledUnit]) -> 
     local_dependency_demands(&unit.manifest, &unit.binding.features, &unit.binding.target_predicates)?
         .iter()
         .map(|demand| {
+            let selected = select_local_dependency(demand, &unit.binding.domain, &candidates)?;
+            let target = available[selected];
+            let library = target
+                .inspection
+                .get("display_name")
+                .and_then(serde_json::Value::as_str);
             Ok((
-                demand.alias.clone(),
-                select_local_dependency(demand, &unit.binding.domain, &candidates)?,
+                super::native_extern_alias_with_library_name(&demand.dependency_key, &target.binding.loaf, library),
+                selected,
             ))
         })
         .collect()
@@ -633,6 +639,8 @@ fn selected_local_edges(unit: &PreparedUnit, available: &[&SdkCompiledUnit]) -> 
 
 /// One active authored local dependency demand, shared by native production and current rooted replay.
 pub(crate) struct LocalDependencyDemand {
+    /// Original declaration key, retained before hyphen normalization to distinguish package names from renames.
+    pub(crate) dependency_key: String,
     /// Exact normalized compiler alias, including explicit renames.
     pub(crate) alias: String,
     /// Authored package identity; never inferred from output bytes or a Rust alias.
@@ -715,6 +723,7 @@ pub(crate) fn local_dependency_demands(
             required.extend(features.iter().cloned());
         }
         demands.push(LocalDependencyDemand {
+            dependency_key: alias.clone(),
             alias: alias.replace('-', "_"),
             loaf: loaf.to_string(),
             version,
@@ -918,57 +927,61 @@ mod tests {
         Ok(())
     }
 
-    /// The native executor orders a selected local graph and refuses Cargo metadata as an execution input.
+    /// Canonical package keys and explicit aliases both compile through the declared Rust name without Cargo input.
     #[test]
     fn local_graph_compiles_dependencies_before_consumers() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        let store = tempfile::tempdir()?;
-        for name in ["consumer", "leaf"] {
-            let project = root.path().join(name);
-            std::fs::create_dir_all(project.join("src"))?;
-            std::fs::write(
-                project.join("loaf.toml"),
-                format!(
-                    "[project]\nname='{name}-package'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n{}",
+        for dependency_key in ["leaf", "leaf-package"] {
+            let root = tempfile::tempdir()?;
+            let store = tempfile::tempdir()?;
+            for name in ["consumer", "leaf"] {
+                let project = root.path().join(name);
+                std::fs::create_dir_all(project.join("src"))?;
+                std::fs::write(
+                    project.join("loaf.toml"),
+                    format!(
+                        "[project]\nname='{name}-package'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n{}",
+                        if name == "consumer" {
+                            format!(
+                                "[dependencies]\n{dependency_key}={{loaf='leaf-package',path='../leaf'}}\nabsent={{loaf='absent',optional=true,path='../absent'}}\n"
+                            )
+                        } else {
+                            String::new()
+                        }
+                    ),
+                )?;
+                std::fs::write(
+                    project.join("src/lib.rs"),
                     if name == "consumer" {
-                        "[dependencies]\nleaf={loaf='leaf-package',path='../leaf'}\nabsent={loaf='absent',optional=true,path='../absent'}\n"
+                        "pub fn value() -> u8 { leaf::value() }"
                     } else {
-                        ""
-                    }
-                ),
-            )?;
-            std::fs::write(
-                project.join("src/lib.rs"),
-                if name == "consumer" {
-                    "pub fn value() -> u8 { leaf::value() }"
-                } else {
-                    "pub fn value() -> u8 { 42 }"
-                },
-            )?;
-            std::fs::write(project.join("Cargo.toml"), "poisoned Cargo input")?;
+                        "pub fn value() -> u8 { 42 }"
+                    },
+                )?;
+                std::fs::write(project.join("Cargo.toml"), "poisoned Cargo input")?;
+            }
+            let selections: Vec<_> = ["consumer", "leaf"]
+                .into_iter()
+                .map(|name| LocalFacetSelection {
+                    target_predicates: Vec::new(),
+                    target: None,
+                    project: name.into(),
+                    features: Vec::new(),
+                    domain: "target".to_string(),
+                })
+                .collect();
+            let mut closure = SdkCompiledClosure {
+                report: SdkClosureReport::default(),
+                units: Vec::new(),
+                auxiliary_targets: BTreeMap::new(),
+            };
+            let rustc = crate::rustc::resolve_active_rustc()?;
+            compile_local_sdk_facets(&mut closure, &selections, root.path(), store.path(), &rustc)?;
+            assert!(closure.report.failed.is_empty(), "{:?}", closure.report.failed);
+            assert_eq!(closure.units.len(), 2);
+            assert_eq!(closure.units[0].binding.loaf, "leaf-package");
+            assert_eq!(closure.units[0].inspection["display_name"].as_str(), Some("leaf"));
+            assert_eq!(closure.units[1].inspection["deps"][0]["name"].as_str(), Some("leaf"));
         }
-        let selections: Vec<_> = ["consumer", "leaf"]
-            .into_iter()
-            .map(|name| LocalFacetSelection {
-                target_predicates: Vec::new(),
-                target: None,
-                project: name.into(),
-                features: Vec::new(),
-                domain: "target".to_string(),
-            })
-            .collect();
-        let mut closure = SdkCompiledClosure {
-            report: SdkClosureReport::default(),
-            units: Vec::new(),
-            auxiliary_targets: BTreeMap::new(),
-        };
-        let rustc = crate::rustc::resolve_active_rustc()?;
-        compile_local_sdk_facets(&mut closure, &selections, root.path(), store.path(), &rustc)?;
-        assert!(closure.report.failed.is_empty(), "{:?}", closure.report.failed);
-        assert_eq!(closure.units.len(), 2);
-        assert_eq!(closure.units[0].binding.loaf, "leaf-package");
-        assert_eq!(closure.units[0].inspection["display_name"].as_str(), Some("leaf"));
-        assert_eq!(closure.units[1].inspection["deps"][0]["name"].as_str(), Some("leaf"));
         Ok(())
     }
 
@@ -1013,7 +1026,8 @@ mod tests {
         Ok(())
     }
 
-    /// Real direct compilation reuses a receipt, while changing a nested Rust module invalidates that receipt.
+    /// An ordinary `build.rs` module compiles and tracks receipt changes while the package-root build script stays
+    /// inert.
     #[test]
     fn local_receipts_reuse_and_track_nested_sources() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
@@ -1023,8 +1037,8 @@ mod tests {
             project.path().join("loaf.toml"),
             "[project]\nname='local'\nversion='1.0.0'\n[rust]\nname='local'\ntype='lib'\nedition='2024'\n",
         )?;
-        std::fs::write(project.path().join("src/lib.rs"), "mod nested; pub use nested::value;")?;
-        std::fs::write(project.path().join("src/nested.rs"), "pub fn value() -> u8 { 1 }")?;
+        std::fs::write(project.path().join("src/lib.rs"), "mod build; pub use build::value;")?;
+        std::fs::write(project.path().join("src/build.rs"), "pub fn value() -> u8 { 1 }")?;
         std::fs::write(project.path().join("Cargo.toml"), "invalid TOML")?;
         std::fs::write(project.path().join("build.rs"), "compile_error!(\"must not run\");")?;
         let rustc = crate::rustc::resolve_active_rustc()?;
@@ -1043,7 +1057,7 @@ mod tests {
         compile_local_sdk_facet(&mut second, project.path(), &[], "target", store.path(), &rustc)?;
         assert_eq!(second.report.reused.len(), 1);
         assert_eq!(first.units[0].compiled_identity(), second.units[0].compiled_identity());
-        std::fs::write(project.path().join("src/nested.rs"), "pub fn value() -> u8 { 2 }")?;
+        std::fs::write(project.path().join("src/build.rs"), "pub fn value() -> u8 { 2 }")?;
         let mut third = SdkCompiledClosure {
             report: SdkClosureReport::default(),
             units: Vec::new(),
@@ -1054,7 +1068,7 @@ mod tests {
         assert_ne!(first.units[0].compiled_identity(), third.units[0].compiled_identity());
         let root = third.units[0].source_root();
         assert_eq!(
-            std::fs::read_to_string(root.join("src/nested.rs"))?,
+            std::fs::read_to_string(root.join("src/build.rs"))?,
             "pub fn value() -> u8 { 2 }"
         );
         assert!(!root.join("Cargo.toml").exists());

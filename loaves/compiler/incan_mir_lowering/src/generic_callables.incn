@@ -1,0 +1,188 @@
+"""Keep source generic value slots distinct from explicit function-pointer slots when closing a callable frame."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustBinding,
+    ArgumentElement as RustArgument,
+    Body as RustBody,
+    Operand as RustOperand,
+    StdlibDelegation,
+)
+from frame import Builder
+from pub::incan_mir_plan import PlanType
+from layout_types import native_source_type
+from type_parameters import substitute
+
+
+pub def sdk_owned_callable_bindings(
+    builder: Builder,
+    delegation: &StdlibDelegation,
+    binding: &RustBinding,
+    arguments: &list[RustArgument],
+    types: list[PlanType],
+) -> Result[list[tuple[str, PlanType]], str]:
+    """Keep an SDK generic value binder's evaluated environment ABI, checking its declared callable signature first."""
+    match binding:
+        RustBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Ok([])
+            if len(bindings) != len(types) or len(arguments) != len(types) + 1:
+                return Err("unsupported Body IR SDK generic callable slot binding")
+            mut owned: list[tuple[str, PlanType]] = []
+            mut slots: list[int] = []
+            for index in range(len(bindings)):
+                slot = int(bindings[index].slot)
+                if slot < 0 or slot >= len(types):
+                    return Err("invalid Body IR SDK generic callable slot")
+                match delegation.parameters[slot + 1]:
+                    RustType.TypeVar(name) =>
+                        match argument_storage(builder, arguments[index + 1])?:
+                            Some(PlanType.Closure(signature)) =>
+                                if types[slot] != PlanType.FunctionPointer(signature):
+                                    return Err("unsupported Body IR SDK generic callable signature mismatch")
+                                _ = require_plain_sdk_callable(builder, arguments[index + 1])?
+                                owned.append((str(name), PlanType.Closure(signature)))
+                                slots.append(slot)
+                            Some(PlanType.ClosureRef(_signature)) =>
+                                return Err("unsupported Body IR SDK borrowed generic callable storage")
+                            _ => pass
+                    _ => pass
+            for slot in slots:
+                for other in range(len(types)):
+                    if delegation.parameters[other + 1] == delegation.parameters[slot + 1] and other not in slots:
+                        return Err("unsupported Body IR SDK mixed generic callable storage")
+            return Ok(owned)
+        _ => return Ok([])
+
+
+def require_plain_sdk_callable(builder: Builder, argument: &RustArgument) -> Result[None, str]:
+    """Refuse a partial callable whose extra supplied flags are absent from the SDK's checked input signature."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            match read.place.local_id():
+                Some(local) =>
+                    index = int(local.index()) + builder.local_offset + 1
+                    for entry in builder.partial_callables:
+                        if entry[0] == index and true in entry[1]:
+                            return Err("unsupported Body IR SDK generic callable with default parameters")
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+pub def sdk_callable_type(
+    builder: Builder,
+    original: &RustType,
+    names: list[str],
+    closed: list[RustType],
+    owned: list[tuple[str, PlanType]],
+) -> Result[PlanType, str]:
+    """Use one declaration-owned generic value ABI at both its ordinary parameter and native type-argument slots."""
+    match original:
+        RustType.TypeVar(name) =>
+            for binder, storage in owned:
+                if binder == str(name):
+                    return Ok(storage)
+        _ => pass
+    concrete: RustType = substitute(original, names, closed)?
+    return native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)
+
+
+pub def sdk_callable_type_arguments(
+    builder: Builder,
+    delegation: &StdlibDelegation,
+    names: list[str],
+    closed: list[RustType],
+    owned: list[tuple[str, PlanType]],
+) -> Result[list[PlanType], str]:
+    """Retain explicit native argument order, or close declaration binders without constructing substitute Rust types."""
+    mut result: list[PlanType] = []
+    if len(delegation.native_type_arguments) != 0:
+        for argument in delegation.native_type_arguments:
+            result.append(sdk_callable_type(builder, argument, names, closed, owned)?)
+        return Ok(result)
+    for index in range(len(closed)):
+        mut ty = native_source_type(builder.nominals, builder.enums, builder.unions, closed[index], builder.intrinsics)?
+        for binder, storage in owned:
+            if binder == names[index]:
+                ty = storage
+        result.append(ty)
+    return Ok(result)
+
+
+pub def owned_callable_slots(
+    builder: Builder,
+    original: &RustBody,
+    closed: &RustBody,
+    arguments: &list[RustArgument],
+    binding: &RustBinding,
+) -> Result[list[int], str]:
+    """Select storage from retained generic parameters and already evaluated local closure facts, never infer types."""
+    match binding:
+        RustBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
+            if len(bindings) != len(arguments):
+                return Err("invalid Body IR generic callable slot binding")
+            mut owned: list[int] = []
+            for slot in range(len(original.params)):
+                if not is_generic_value(original.params[slot].ty):
+                    continue
+                for index in range(len(bindings)):
+                    if int(bindings[index].slot) != slot:
+                        continue
+                    ty = argument_storage(builder, arguments[index])?
+                    match ty:
+                        Some(PlanType.Closure(signature)) =>
+                            if original.params[slot].mutable:
+                                return Err("unsupported Body IR mutable generic callable storage")
+                            expected = native_source_type(
+                                builder.nominals,
+                                builder.enums,
+                                builder.unions,
+                                closed.params[slot].ty,
+                                builder.intrinsics,
+                            )?
+                            if expected != PlanType.FunctionPointer(signature):
+                                return Err("unsupported Body IR generic callable signature mismatch")
+                            owned.append(slot)
+                        Some(PlanType.ClosureRef(_signature)) =>
+                            return Err("unsupported Body IR borrowed generic callable storage")
+                        _ => pass
+            validate_uniform_storage(original, owned)?
+            return Ok(owned)
+        _ => return Err("unsupported Body IR generic callable without resolved slot binding")
+
+
+def argument_storage(builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+    """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            match read.place.local_id():
+                Some(local) =>
+                    index = int(local.index()) + builder.local_offset + 1
+                    return Ok(Some(builder.locals[index].ty))
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+def validate_uniform_storage(original: &RustBody, owned: list[int]) -> Result[None, str]:
+    """Refuse one generic type variable used at incompatible callable ABIs or an unevaluated default."""
+    for owner in owned:
+        for slot in range(len(original.params)):
+            if original.params[slot].ty != original.params[owner].ty:
+                continue
+            if slot not in owned:
+                return Err("unsupported Body IR mixed generic callable storage or default")
+    return Ok(None)
+
+
+def is_generic_value(ty: &RustType) -> bool:
+    """Recognize the retained declaration category before checked substitution erases its source role."""
+    match ty:
+        RustType.TypeVar(_name) => return true
+        _ => return false

@@ -1,0 +1,682 @@
+"""Close async frame carriers through checked SDK contracts and local value edges, without changing checker facts."""
+
+from rust::std::string import String as RustString
+from rust::incan_semantics_core import (
+    SemanticSourceTargetKind,
+    SymbolNamespace,
+    IncanType as Ty,
+    IncanPrimitiveType as Primitive,
+    SymbolOrigin,
+    CanonicalSymbolId,
+    generic,
+)
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    Block,
+    Statement,
+    StatementKind,
+    Rvalue,
+    Operand,
+    Constant,
+    Place,
+    PlaceRoot,
+    PlaceElem,
+    Callee,
+    CallableTarget,
+    ArgumentBinding,
+    Pattern,
+    ResultVariantKind,
+    StdlibDelegation,
+    ArgumentElement,
+    MethodTarget,
+    NominalDeclaration,
+)
+
+
+model AsyncTypeFrame:
+    """Own imported Rust body data behind an Incan mutable reference; foreign values themselves pass by value."""
+
+    pub body: Body
+
+
+pub def close_async_types(module: &BodyIrModule) -> Result[BodyIrModule, str]:
+    """Derive local storage types only; declaration signatures, identities, source bodies and originals stay intact."""
+    mut result = module.clone()
+    result.bodies.clear()
+    for original in module.bodies:
+        if len(original.type_parameters) != 0:
+            result.bodies.push(original.clone())
+            continue
+        mut frame = AsyncTypeFrame(body=original.clone())
+        for _ in range(len(frame.body.locals) * 4 + 1):
+            mut before: list[Ty] = []
+            for local in frame.body.locals:
+                before.append(local.ty.clone())
+            block = frame.body.block.clone()
+            visit_block(module, frame, block)?
+            mut unchanged = true
+            for index in range(len(frame.body.locals)):
+                if frame.body.locals[index].ty != before[index]:
+                    unchanged = false
+            if unchanged:
+                break
+        result.bodies.push(frame.body.clone())
+    return Ok(result)
+
+
+pub def primary_async_body(module: &BodyIrModule, body: &Body) -> Option[Body]:
+    """Retain semantic storage only for primary nongeneric frames using the admitted async SDK contracts."""
+    if not body.is_async or len(body.type_parameters) != 0:
+        return None
+    for record in module.stdlib_delegations:
+        if async_record(record):
+            return Some(body.clone())
+    return None
+
+
+pub def async_call_type_arguments(
+    body: &Body,
+    record: &StdlibDelegation,
+    arguments: &list[ArgumentElement],
+    destination: &Option[Place],
+) -> Result[Option[list[Ty]], str]:
+    """Close an otherwise omitted native argument vector from the same frame's SDK parameter/result constraints."""
+    if not async_record(record) or len(record.parameters) != len(arguments):
+        return Ok(None)
+    names = record.type_parameters.clone()
+    mut bindings: list[Option[Ty]] = []
+    for _ in names:
+        bindings.append(None)
+    for index in range(len(arguments)):
+        match arguments[index].as_one():
+            Some(value) =>
+                match read_operand(body, value):
+                    Some(ty) => bind_type(record.parameters[index], ty, names, bindings)?
+                    None => pass
+            None => return Ok(None)
+    match destination:
+        Some(place) =>
+            match read_place(body, place):
+                Some(ty) => bind_type(record.return_type, ty, names, bindings)?
+                None => pass
+        None => pass
+    mut result: list[Ty] = []
+    for binding in bindings:
+        match binding:
+            Some(ty) => result.append(ty.clone())
+            None => return Ok(None)
+    return Ok(Some(result))
+
+
+def closed(ty: &Ty) -> bool:
+    """Only complete structural types contribute a declaration-local generic binding."""
+    match ty:
+        Ty.Unknown => return false
+        Ty.TypeVar(_name) => return false
+        Ty.SelfType => return false
+        Ty.Function(params=_params, return_type=_result) => return false
+        Ty.Infer => return false
+        Ty.Unsupported(_reason) => return false
+        Ty.TypeToken(_value) => return false
+        Ty.Generic(base=_base, args=values) =>
+            for value in values:
+                if not closed(value):
+                    return false
+        Ty.Tuple(values) =>
+            for value in values:
+                if not closed(value):
+                    return false
+        Ty.Ref(value) => return closed(value)
+        Ty.RefMut(value) => return closed(value)
+        _ => pass
+    return true
+
+
+def merge_type(original: &Ty, evidence: &Ty) -> Ty:
+    """Fill open storage positions; an existing closed type remains authoritative for normal ABI validation."""
+    match original:
+        Ty.Unknown =>
+            if closed(evidence):
+                return evidence.clone()
+        Ty.TypeVar(_name) =>
+            if closed(evidence):
+                return evidence.clone()
+        Ty.Generic(base=base, args=values) =>
+            match evidence:
+                Ty.Generic(base=other, args=items) =>
+                    if str(base) == str(other) and len(values) == len(items):
+                        mut merged: list[Ty] = []
+                        for index in range(len(values)):
+                            merged.append(merge_type(values[index], items[index]))
+                        return generic(str(base), merged)
+                _ => pass
+        Ty.Tuple(values) =>
+            match evidence:
+                Ty.Tuple(items) =>
+                    if len(values) == len(items):
+                        mut merged: list[Ty] = []
+                        for index in range(len(values)):
+                            merged.append(merge_type(values[index], items[index]))
+                        return Ty.Tuple(merged)
+                _ => pass
+        _ => pass
+    return original.clone()
+
+
+def place_address(body: &Body, place: &Place) -> Option[tuple[int, list[int]]]:
+    """Follow explicit structural tuple projections; nominal fields and indirect places grant no alias edge."""
+    mut local = -1
+    match place.root:
+        PlaceRoot.Local(identity) =>
+            local = int(identity.index())
+        _ => return None
+    if local < 0 or local >= len(body.locals):
+        return None
+    mut ty = body.locals[local].ty.clone()
+    mut path: list[int] = []
+    for projection in place.projection:
+        match tuple_projection(ty, projection):
+            Some(slot) =>
+                match ty:
+                    Ty.Tuple(values) =>
+                        path.append(slot)
+                        ty = values[slot].clone()
+                    _ => return None
+            None => return None
+    return Some((local, path))
+
+
+def tuple_projection(ty: &Ty, projection: &PlaceElem) -> Option[int]:
+    """Read a checked structural tuple field through the imported projection's declared enum type."""
+    match projection:
+        PlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
+            if not structural:
+                return None
+            match canonical:
+                Some(_identity) => return None
+                None => pass
+            match ty:
+                Ty.Tuple(values) =>
+                    for index in range(len(values)):
+                        if str(name) == str(index):
+                            return Some(index)
+                _ => pass
+        _ => pass
+    return None
+
+
+def read_place(body: &Body, place: &Place) -> Option[Ty]:
+    """Read the current derived local type through a validated tuple path."""
+    match place_address(body, place):
+        Some(address) =>
+            local, path = address
+            mut ty = body.locals[local].ty.clone()
+            for index in path:
+                match ty:
+                    Ty.Tuple(values) =>
+                        ty = values[index].clone()
+                    _ => return None
+            return Some(ty)
+        None => return None
+
+
+def merge_path(original: &Ty, path: list[int], cursor: int, evidence: &Ty) -> Ty:
+    """Replace only one tuple leaf, retaining its siblings and the enclosing factory's independent identity."""
+    if cursor == len(path):
+        return merge_type(original, evidence)
+    match original:
+        Ty.Tuple(values) =>
+            mut result: list[Ty] = []
+            for value in values:
+                result.append(value.clone())
+            slot = path[cursor]
+            result[slot] = merge_path(values[slot], path, cursor + 1, evidence)
+            return Ty.Tuple(result)
+        _ => return original.clone()
+
+
+def write_place(mut frame: AsyncTypeFrame, place: &Place, evidence: &Ty) -> None:
+    """Complete one local storage position without replacing its checked ownership or scope facts."""
+    match place_address(frame.body, place):
+        Some(address) =>
+            local, path = address
+            ty = merge_path(frame.body.locals[local].ty, path, 0, evidence)
+            frame.body.locals[local].ty = ty
+        None => pass
+
+
+def read_operand(body: &Body, operand: &Operand) -> Option[Ty]:
+    """Use local storage or exact scalar categories already retained by the checker."""
+    match operand:
+        Operand.Place(value) => return read_place(body, value.place)
+        Operand.Constant(value) =>
+            match value:
+                Constant.Int(_value) => return Some(Ty.Primitive(Primitive.Int))
+                Constant.Str(_value) => return Some(Ty.Primitive(Primitive.Str))
+                Constant.Bool(_value) => return Some(Ty.Primitive(Primitive.Bool))
+                _ => pass
+    return None
+
+
+def bind_type(formal: &Ty, actual: &Ty, names: list[str], mut bindings: list[Option[Ty]]) -> Result[None, str]:
+    """Solve a fresh binder scope per SDK call; unrelated locals never share a binder because of spelling."""
+    match formal:
+        Ty.Ref(inner) => return bind_type(inner, actual, names, bindings)
+        Ty.RefMut(inner) => return bind_type(inner, actual, names, bindings)
+        Ty.TypeVar(name) =>
+            if not closed(actual):
+                return Ok(None)
+            for index in range(len(names)):
+                if names[index] == str(name):
+                    match bindings[index]:
+                        Some(previous) =>
+                            if previous != actual.clone():
+                                return Err("unsupported Body IR conflicting checked async type constraints")
+                        None =>
+                            bindings[index] = Some(actual.clone())
+        Ty.Generic(base=base, args=values) =>
+            match actual:
+                Ty.Generic(base=other, args=items) =>
+                    if str(base) == str(other) and len(values) == len(items):
+                        for index in range(len(values)):
+                            bind_type(values[index], items[index], names, bindings)?
+                _ => pass
+        Ty.Tuple(values) =>
+            match actual:
+                Ty.Tuple(items) =>
+                    if len(values) == len(items):
+                        for index in range(len(values)):
+                            bind_type(values[index], items[index], names, bindings)?
+                _ => pass
+        _ => pass
+    return Ok(None)
+
+
+def partial_type(formal: &Ty, names: list[str], bindings: list[Option[Ty]]) -> Ty:
+    """Apply only proved call-local bindings; any unresolved positions retain their original placeholders."""
+    match formal:
+        Ty.Ref(inner) => return partial_type(inner, names, bindings)
+        Ty.RefMut(inner) => return partial_type(inner, names, bindings)
+        Ty.TypeVar(name) =>
+            for index in range(len(names)):
+                if names[index] == str(name):
+                    match bindings[index]:
+                        Some(value) => return value.clone()
+                        None => pass
+        Ty.Generic(base=base, args=values) =>
+            mut result: list[Ty] = []
+            for value in values:
+                concrete: Ty = partial_type(value, names, bindings)
+                result.append(concrete.clone())
+            return generic(str(base), result)
+        Ty.Tuple(values) =>
+            mut result: list[Ty] = []
+            for value in values:
+                concrete: Ty = partial_type(value, names, bindings)
+                result.append(concrete.clone())
+            return Ty.Tuple(result)
+        _ => pass
+    return formal.clone()
+
+
+def async_record(record: &StdlibDelegation) -> bool:
+    """Limit completion to retained catalog-owned channel/synchronization declarations with a native counterpart."""
+    match record.canonical.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            if str(library) != "incan_stdlib_async" or (path != ["async", "channel"] and path != ["async", "sync"]):
+                return false
+        SymbolOrigin.Module(path) =>
+            if path != ["std", "async", "sync"]:
+                return false
+        _ => return false
+    if record.canonical.declaration_span.end <= record.canonical.declaration_span.start:
+        return false
+    match record.rust_path():
+        Some(path) => return str(path).startswith("incan_stdlib_async::async::")
+        None => return false
+
+
+def awaits_place(block: &Block, place: &Place) -> bool:
+    """Prove the exact call destination is consumed by an explicit await in this primary checked frame."""
+    for statement in block.stmts:
+        if kind_awaits_place(statement.kind, place):
+            return true
+    return false
+
+
+def kind_awaits_place(kind: &StatementKind, place: &Place) -> bool:
+    """Follow normalized blocks; an unrelated await or projected field grants no carrier evidence."""
+    match kind:
+        StatementKind.Await(destination=_destination, awaited=Operand.Place(value)) =>
+            return value.place == place.clone()
+        StatementKind.If(cond=_cond, then_block=then_block, else_block=else_block) =>
+            if awaits_place(then_block, place):
+                return true
+            match else_block:
+                Some(block) => return awaits_place(block, place)
+                None => pass
+        StatementKind.Loop(body=block) => return awaits_place(block, place)
+        _ => pass
+    return false
+
+
+def write_call_result(mut frame: AsyncTypeFrame, place: &Place, evidence: &Ty) -> None:
+    """Restore an omitted async carrier only from the selected SDK result plus the exact consuming await edge."""
+    match read_place(frame.body, place):
+        Some(original) =>
+            match evidence:
+                Ty.Generic(base=base, args=values) =>
+                    if str(base) == "Awaitable" and len(values) == 1 and closed(values[0]):
+                        if merge_type(original, values[0]) == values[0] and awaits_place(frame.body.block, place):
+                            match place_address(frame.body, place):
+                                Some(address) =>
+                                    local, path = address
+                                    if len(path) == 0:
+                                        frame.body.locals[local].ty = evidence.clone()
+                                        return
+                                None => pass
+                _ => pass
+        None => pass
+    write_place(frame, place, evidence)
+
+
+def visit_call(module: &BodyIrModule, mut frame: AsyncTypeFrame, kind: &StatementKind) -> Result[None, str]:
+    """Use an exact retained SDK signature and complete positional binding before contributing constraints."""
+    match kind:
+        StatementKind.Call(destination=destination, callee=callee, args=args, may_panic=_panic) =>
+            mut identity: Option[CanonicalSymbolId] = None
+            mut binding: ArgumentBinding = ArgumentBinding.UnresolvedPositional
+            mut receiver = 0
+            match callee:
+                Callee.Method(target) =>
+                    identity = target.canonical.clone()
+                    binding = target.binding.clone()
+                    receiver = 1
+                    if identity == None:
+                        match selected_async_receiver(module, frame.body, target, args)?:
+                            Some(record) =>
+                                identity = Some(record.canonical.clone())
+                                binding = ArgumentBinding.resolved_positional(0)
+                            None => pass
+                Callee.Function(callable) =>
+                    match callable:
+                        CallableTarget.Named(target) =>
+                            identity = target.canonical.clone()
+                            binding = target.binding.clone()
+                        _ => return Ok(None)
+                _ => return Ok(None)
+            match binding:
+                ArgumentBinding.Resolved(arguments=bound, defaulted_slots=defaults) =>
+                    if len(defaults) != 0 or len(bound) + receiver != len(args):
+                        return Ok(None)
+                    for index in range(len(bound)):
+                        if int(bound[index].slot) != index or int(bound[index].written_position) != index:
+                            return Ok(None)
+                _ => return Ok(None)
+            mut selected = -1
+            for index in range(len(module.stdlib_delegations)):
+                record = module.stdlib_delegations[index]
+                if identity == Some(record.canonical) and async_record(record):
+                    if selected >= 0 and module.stdlib_delegations[selected] != record:
+                        return Err("unsupported Body IR ambiguous checked async signature")
+                    selected = index
+            if selected < 0:
+                return Ok(None)
+            record = module.stdlib_delegations[selected]
+            if len(record.parameters) != len(args):
+                return Ok(None)
+            retain_result_owners(module, frame, record.return_type)?
+            names = record.type_parameters.clone()
+            mut bindings: list[Option[Ty]] = []
+            for _ in names:
+                bindings.append(None)
+            for index in range(len(args)):
+                match args[index].as_one():
+                    Some(value) =>
+                        match read_operand(frame.body, value):
+                            Some(ty) => bind_type(record.parameters[index], ty, names, bindings)?
+                            None => pass
+                    None => return Ok(None)
+            match destination:
+                Some(place) =>
+                    match read_place(frame.body, place):
+                        Some(ty) => bind_type(record.return_type, ty, names, bindings)?
+                        None => pass
+                None => pass
+            for index in range(len(args)):
+                match args[index].as_one():
+                    Some(Operand.Place(value)) => write_place(
+                        frame,
+                        value.place,
+                        partial_type(record.parameters[index], names, bindings),
+                    )
+                    _ => pass
+            match destination:
+                Some(place) => write_call_result(frame, place, partial_type(record.return_type, names, bindings))
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+def bind_pattern(mut frame: AsyncTypeFrame, pattern: &Pattern, ty: &Ty) -> None:
+    """Connect intrinsic pattern payloads to their already declared binding locals, preserving checked identities."""
+    match pattern:
+        Pattern.Var(binding) =>
+            local = int(binding.local.index())
+            if local >= 0 and local < len(frame.body.locals):
+                frame.body.locals[local].ty = merge_type(frame.body.locals[local].ty, ty)
+        Pattern.Enum(canonical=canonical, name=_name, variant=_variant, fields=fields) =>
+            match canonical:
+                Some(identity) =>
+                    if identity.origin == SymbolOrigin.Builtin and str(identity.declaration_name) == "Some" and len(
+                        fields,
+                    ) == 1:
+                        match ty:
+                            Ty.Generic(base=base, args=values) =>
+                                if str(base) == "Option" and len(values) == 1:
+                                    bind_pattern(frame, fields[0], values[0])
+                            _ => pass
+                None => pass
+        Pattern.Result(variant=variant, fields=fields) =>
+            match ty:
+                Ty.Generic(base=base, args=values) =>
+                    if str(base) == "Result" and len(values) == 2 and len(fields) == 1:
+                        mut index = 0
+                        match variant:
+                            ResultVariantKind.Err =>
+                                index = 1
+                            _ => pass
+                        bind_pattern(frame, fields[0], values[index])
+                _ => pass
+        _ => pass
+
+
+def visit_statements(
+    module: &BodyIrModule,
+    mut frame: AsyncTypeFrame,
+    statements: list[Statement],
+) -> Result[None, str]:
+    """Visit borrowed foreign statements through their explicitly declared enum boundary."""
+    for statement in statements:
+        visit_kind(module, frame, statement.kind)?
+    return Ok(None)
+
+
+def visit_value(module: &BodyIrModule, mut frame: AsyncTypeFrame, place: &Place, value: &Rvalue) -> Result[None, str]:
+    """Borrow the imported rvalue explicitly before reading its alias or match payload edges."""
+    match value:
+        Rvalue.Use(Operand.Place(source)) =>
+            match read_place(frame.body, source.place):
+                Some(ty) => write_place(frame, place, ty)
+                None => pass
+            match read_place(frame.body, place):
+                Some(ty) => write_place(frame, source.place, ty)
+                None => pass
+        Rvalue.Match(scrutinee=scrutinee, arms=arms) =>
+            for arm in arms:
+                match read_operand(frame.body, scrutinee):
+                    Some(ty) => bind_pattern(frame, arm.pattern, ty)
+                    None => pass
+                visit_statements(module, frame, arm.guard_stmts)?
+                visit_statements(module, frame, arm.body_stmts)?
+        _ => pass
+    return Ok(None)
+
+
+def visit_kind(module: &BodyIrModule, mut frame: AsyncTypeFrame, kind: &StatementKind) -> Result[None, str]:
+    """Traverse normalized control flow while deriving only types, never executing or reordering statements."""
+    visit_call(module, frame, kind)?
+    match kind:
+        StatementKind.Assign(place=place, rvalue=value) => visit_value(module, frame, place, value)?
+        StatementKind.Await(destination=destination, awaited=awaited) =>
+            match destination:
+                Some(place) =>
+                    match read_operand(frame.body, awaited):
+                        Some(Ty.Generic(base=base, args=values)) =>
+                            if str(base) == "Awaitable" and len(values) == 1:
+                                write_place(frame, place, values[0])
+                        _ => pass
+                None => pass
+        StatementKind.If(cond=_cond, then_block=then_body, else_block=else_body) =>
+            visit_block(module, frame, then_body)?
+            match else_body:
+                Some(nested) => visit_block(module, frame, nested)?
+                None => pass
+        StatementKind.Loop(body=nested) => visit_block(module, frame, nested)?
+        _ => pass
+    return Ok(None)
+
+
+def visit_block(module: &BodyIrModule, mut frame: AsyncTypeFrame, block: &Block) -> Result[None, str]:
+    """Borrow the statement vector at the imported kernel boundary explicitly."""
+    return visit_statements(module, frame, block.stmts)
+
+
+def async_source_owner(owner: &NominalDeclaration) -> bool:
+    """Admit only an existing source-owned async layout with its positive physical declaration anchor."""
+    match owner.canonical.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            if str(library) != "incan_stdlib_async" or (path != ["async", "sync"] and path != ["async", "channel"]):
+                return false
+        _ => return false
+    return owner.canonical.declaration_span.end > owner.canonical.declaration_span.start
+
+
+pub def selected_async_receiver(
+    module: &BodyIrModule,
+    body: &Body,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+) -> Result[Option[StdlibDelegation], str]:
+    """Select a receiver-only signature from its checked nominal owner and exact retained member anchor."""
+    if target.canonical != None or len(target.type_args) != 0 or len(arguments) != 1:
+        return Ok(None)
+    match target.binding:
+        ArgumentBinding.UnresolvedPositional => pass
+        _ => return Ok(None)
+    match arguments[0].as_one():
+        Some(value) =>
+            match read_operand(body, value):
+                Some(Ty.Generic(base=base, args=values)) =>
+                    for index in range(len(values)):
+                        if not closed(values[index]):
+                            return Ok(None)
+                    match body.named_type_identities.get(str(base)):
+                        Some(identity) =>
+                            mut selected: Option[StdlibDelegation] = None
+                            for owner in module.nominal_declarations:
+                                if owner.canonical != identity.clone() or str(owner.canonical.declaration_name) != str(base) or not async_source_owner(
+                                    owner,
+                                ):
+                                    continue
+                                if owner.canonical.kind != SemanticSourceTargetKind.Newtype:
+                                    continue
+                                if len(owner.type_parameters) != 0 and len(owner.type_parameters) != len(values):
+                                    continue
+                                for record in module.stdlib_delegations:
+                                    if not async_record(record) or str(record.canonical.declaration_name) != str(
+                                        target.name,
+                                    ):
+                                        continue
+                                    if record.canonical.kind != SemanticSourceTargetKind.Method or record.canonical.namespace != SymbolNamespace.Member:
+                                        continue
+                                    if record.canonical.declaration_span.start < owner.canonical.declaration_span.start or record.canonical.declaration_span.end > owner.canonical.declaration_span.end:
+                                        continue
+                                    if len(record.type_parameters) != len(values) or len(record.parameters) != 1:
+                                        continue
+                                    if len(owner.type_parameters) != 0 and record.type_parameters != owner.type_parameters:
+                                        continue
+                                    match record.canonical.origin:
+                                        SymbolOrigin.Package(library=_library, module_path=_path) =>
+                                            if record.canonical.origin != owner.canonical.origin:
+                                                continue
+                                        SymbolOrigin.Module(path) =>
+                                            if path != ["std", "async", "sync"]:
+                                                continue
+                                            match owner.canonical.origin:
+                                                SymbolOrigin.Package(library=_library, module_path=owner_path) =>
+                                                    if owner_path != ["async", "sync"]:
+                                                        continue
+                                                _ =>
+                                                    continue
+                                        _ =>
+                                            continue
+                                    match record.rust_path():
+                                        Some(path) =>
+                                            if str(path) != f"incan_stdlib_async::async::sync::{owner.canonical.declaration_name}::{target.name}":
+                                                continue
+                                        None =>
+                                            continue
+                                    match record.parameters[0]:
+                                        Ty.Ref(inner) =>
+                                            if not receiver_signature_matches(inner, str(base), record.type_parameters):
+                                                continue
+                                        _ =>
+                                            continue
+                                    match selected:
+                                        Some(prior) =>
+                                            if prior != record.clone():
+                                                return Err(
+                                                    "unsupported Body IR ambiguous retained async receiver method",
+                                                )
+                                        None =>
+                                            selected = Some(record.clone())
+                            return Ok(selected)
+                        None => return Ok(None)
+                _ => return Ok(None)
+        None => return Ok(None)
+
+
+def retain_result_owners(module: &BodyIrModule, mut frame: AsyncTypeFrame, result: &Ty) -> Result[None, str]:
+    """Carry existing canonical async layouts along authenticated SDK result edges; never overwrite a foreign binding."""
+    match result:
+        Ty.Generic(base=base, args=values) =>
+            for owner in module.nominal_declarations:
+                if str(owner.name) == str(base) and async_source_owner(owner):
+                    match frame.body.named_type_identities.get(str(base)):
+                        Some(identity) =>
+                            if identity.clone() != owner.canonical:
+                                return Err("unsupported Body IR conflicting checked async result owner")
+                        None =>
+                            frame.body.named_type_identities.insert(RustString.from(str(base)), owner.canonical.clone())
+            for value in values:
+                retain_result_owners(module, frame, value)?
+        Ty.Tuple(values) =>
+            for value in values:
+                retain_result_owners(module, frame, value)?
+        _ => pass
+    return Ok(None)
+
+
+def receiver_signature_matches(ty: &Ty, base: str, names: list[str]) -> bool:
+    """Match the selected receiver after crossing the explicit boxed semantic-type boundary."""
+    match ty:
+        Ty.Generic(base=receiver, args=parameters) =>
+            if str(receiver) != base or len(parameters) != len(names):
+                return false
+            for index in range(len(parameters)):
+                if parameters[index] != Ty.TypeVar(str(names[index])):
+                    return false
+            return true
+        _ => return false

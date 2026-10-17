@@ -44,10 +44,21 @@ pub def generator_type(ty: &RustType) -> Option[Result[PlanType, str]]:
                         if len(elements) == 2:
                             return Some(Ok(PlanType.ZipIterator(elements[0], elements[1])))
                     _ => pass
-            match primitive_leaf(arguments[0], false):
-                Ok(leaf) => return Some(Ok(PlanType.Generator(leaf, 0)))
+            match generator_item(arguments[0]):
+                Ok((leaf, depth)) => return Some(Ok(PlanType.Generator(leaf, depth)))
                 Err(_error) => return Some(Err(f"unsupported Body IR type {type_name(ty)}"))
         _ => return None
+
+
+def generator_item(ty: &RustType) -> Result[tuple[ListLeaf, int], str]:
+    """Lay out a primitive item, or a list nesting one, such as the lists `batch` yields."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "List" and len(arguments) == 1:
+                leaf, depth = generator_item(arguments[0])?
+                return Ok((leaf, depth + 1))
+        _ => pass
+    return Ok((primitive_leaf(ty, false)?, 0))
 
 
 def iterator_pair_type(ty: &RustType) -> Result[PlanType, str]:
@@ -81,7 +92,7 @@ pub def is_generator_reference(ty: PlanType) -> bool:
 
 
 pub def generator_element(leaf: ListLeaf, depth: int) -> PlanType:
-    """Recover the generator's exact yielded type; depth zero is a primitive element."""
+    """Recover the generator's exact yielded type; depth zero is its immediate retained leaf."""
     if depth == 0:
         return leaf_type(leaf)
     return PlanType.List(leaf, depth)
@@ -156,6 +167,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.BoolToInt(value) => return RvalueKind.BoolToInt(swap_operand(value, handle))
         RvalueKind.Array(values) => return RvalueKind.Array(swap_operands(values, handle))
         RvalueKind.Tuple(values) => return RvalueKind.Tuple(swap_operands(values, handle))
+        RvalueKind.Range(values) => return RvalueKind.Range(swap_operands(values, handle))
         RvalueKind.Model(owner, values) => return RvalueKind.Model(owner, swap_operands(values, handle))
         RvalueKind.Enum(owner, variant, values) => return RvalueKind.Enum(owner, variant, swap_operands(values, handle))
         RvalueKind.Discriminant(place) => return RvalueKind.Discriminant(swap_place(place, handle))
@@ -165,6 +177,8 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.UnsizeSlice(value) => return RvalueKind.UnsizeSlice(swap_operand(value, handle))
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
         RvalueKind.FrozenText(value) => return RvalueKind.FrozenText(swap_operand(value, handle))
+        RvalueKind.FrozenBytes(values) => return RvalueKind.FrozenBytes(values)
+        RvalueKind.FrozenCollection(ty, values) => return RvalueKind.FrozenCollection(ty, values)
         RvalueKind.FunctionItem(callee) => return RvalueKind.FunctionItem(swap_callee(callee, handle))
         RvalueKind.ReifyFunction(value) => return RvalueKind.ReifyFunction(swap_operand(value, handle))
         RvalueKind.ClosureObject(place) => return RvalueKind.ClosureObject(swap_place(place, handle))
@@ -314,7 +328,7 @@ pub def generator_reference(mut builder: Builder, receiver: Place, span: SourceS
         None => return Err("unsupported Body IR generator borrow receiver")
 
 
-def generator_runtime_call(
+pub def generator_runtime_call(
     mut builder: Builder,
     name: str,
     element: PlanType,
@@ -324,12 +338,12 @@ def generator_runtime_call(
     output: Place,
     span: SourceSpan,
 ) -> None:
-    """Retain one exact generic runtime signature alongside its poll-frame call."""
+    """Retain one exact runtime signature, generic over the generator element, alongside its call."""
     path = f"incan_native_runtime::{name}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, element), operands, output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [element]), operands, output, span)
 
 
 pub def generator_next(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:

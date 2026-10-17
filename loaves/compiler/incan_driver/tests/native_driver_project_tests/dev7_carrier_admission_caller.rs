@@ -2,14 +2,23 @@
 #![feature(rustc_private)]
 extern crate rustc_abi;
 extern crate rustc_ast;
+extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
+extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
+extern crate rustc_trait_selection;
 extern crate thin_vec;
 
 // DRIVER_MODULES
+
+#[path = "instantiated_owned_results_caller.rs"]
+mod instantiated_owned_results;
+
+#[path = "checked_json_admission_caller.rs"]
+mod checked_json_admission;
 
 use incan_frontend::{body_ir::build_body_ir_module_v0, lexer, parser, typechecker::TypeChecker};
 use incan_mir_lowering::caller::incan::lower_module;
@@ -57,10 +66,16 @@ fn checked_module() -> TestResult<BodyIrModule> {
 
 /// Retain genuine frontend identities for each independent source control.
 fn checked_source(source: &str, module: &str) -> TestResult<BodyIrModule> {
+    checked_source_in_package(source, module, None)
+}
+
+/// Mint actual package identities before checking a publication control; local source controls keep module origins.
+fn checked_source_in_package(source: &str, module: &str, package: Option<&str>) -> TestResult<BodyIrModule> {
     let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let module_path = vec![module.to_owned()];
     let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(package.map(str::to_owned));
     checker.set_current_module_path(Some(module_path.clone()));
     checker
         .check_program(&program)
@@ -76,24 +91,15 @@ pub def main() -> None:
 "#;
 
 /// Decode actual package fragments whose publisher deliberately removed every call's source-local span id.
-fn published_calls(source: &BodyIrModule) -> TestResult<BodyIrModule> {
+fn published_calls() -> TestResult<BodyIrModule> {
+    let source = checked_source_in_package(CALL_SOURCE, "dev7_calls", Some("dev7_calls"))?;
     let public: BTreeSet<_> = source
         .bodies
         .iter()
-        .map(|body| {
-            let mut identity = body.canonical.clone().ok_or("missing source body identity")?;
-            let SymbolOrigin::Module(module_path) = identity.origin else {
-                return Err("expected checked source owner");
-            };
-            identity.origin = SymbolOrigin::Package {
-                library: "dev7_calls".into(),
-                module_path,
-            };
-            Ok(identity)
-        })
+        .map(|body| body.canonical.clone().ok_or("missing checked package body identity"))
         .collect::<Result<_, &str>>()?;
     let bytes = build_surface(
-        std::slice::from_ref(source),
+        std::slice::from_ref(&source),
         "dev7_calls",
         "1.0.0",
         &public,
@@ -140,7 +146,7 @@ fn callable_controls() -> TestResult<()> {
     let source = checked_source(CALL_SOURCE, "dev7_calls")?;
     let plan = lower_module(&source, CALL_SOURCE.to_owned(), "dev7_calls.incn".to_owned())?;
     validation::validate(&plan)?;
-    let mut published = published_calls(&source)?;
+    let mut published = published_calls()?;
     if named_call(&mut published)?.direct_call_id.is_some() {
         return Err("publisher retained a source-local call id".into());
     }
@@ -749,7 +755,7 @@ fn plan_controls(baseline: &plan::Plan) -> TestResult<()> {
 }
 
 /// Check nested payloads and reversed carrier ordering before independent malformed-input controls.
-fn main() -> TestResult<()> {
+fn nested_carrier_controls() -> TestResult<()> {
     let baseline = checked_module()?;
     let mut checked = baseline.clone();
     let _ = projection(&mut checked)?;
@@ -764,6 +770,7 @@ fn main() -> TestResult<()> {
     declaration.name = "HeapRecursive".into();
     declaration.carrier.clear();
     declaration.source_type.clear();
+    declaration.member_debug = false;
     declaration.variants = vec![plan::EnumVariant {
         name: "Children".into(),
         fields: vec![plan::PlanType::List(
@@ -780,4 +787,14 @@ fn main() -> TestResult<()> {
     projected_enum_borrow_controls()?;
     println!("nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed");
     Ok(())
+}
+
+/// Select independent ownership controls so each regression fails only its dedicated host test.
+fn main() -> TestResult<()> {
+    match std::env::args().nth(1).as_deref() {
+        Some("checked-json") => checked_json_admission::check(),
+        Some("owned-result") => instantiated_owned_results::check(),
+        Some("validation-format") => instantiated_owned_results::check_validation_format(),
+        _ => nested_carrier_controls(),
+    }
 }

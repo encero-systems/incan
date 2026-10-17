@@ -1,8 +1,33 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
-from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType, ListLeaf
+from rust::incan_semantics_core import SymbolOrigin, IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    NominalDeclaration,
+    StaticDeclaration,
+    GlobalPlace,
+    EnumDeclaration as RustEnumDeclaration,
+)
+from pub::incan_mir_plan import (
+    EnumDeclaration,
+    ModelDeclaration,
+    MarkerTrait,
+    FieldMetadata,
+    Parameter,
+    SourceSpan,
+    PlanType,
+    ListLeaf,
+)
 from unions import native_source_type, collect_unions
+from checked_json_contracts import checked_deserialize_name
+from comparison_methods import comparison_functions
+from fallible_methods import fallible_methods
+from iterator_methods import iterator_methods
+from callable_methods import callable_methods
+from marker_traits import checked_marker_traits
+from nominal_instances import NominalInstance
+from library_model_arguments import library_model_arguments
+from string_conversion_contracts import conversion_name, conversion_trait
 
 
 pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -15,12 +40,26 @@ pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) 
 
 
 pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
-    """Name persistent primitive and flat-list cells after checked carrier admission."""
+    """
+    Name persistent primitive, flat-list and hashed-collection cells after checked carrier admission.
+
+    The runtime keeps a typed cell per carrier, so a hashed carrier without one stays refused by name.
+    """
     match ty:
         PlanType.List(leaf, depth) =>
             if depth != 1:
                 return Err("unsupported Body IR nested static list carrier")
             return static_list_accessors(leaf)
+        PlanType.Dict(key, value) =>
+            if key == ListLeaf.Str and value == ListLeaf.Int:
+                return Ok(
+                    ("incan_native_runtime::read_static_text_int_dict", "incan_native_runtime::write_static_text_int_dict"),
+                )
+            return Err("unsupported Body IR static dictionary carrier")
+        PlanType.Set(leaf) =>
+            if leaf == ListLeaf.Int:
+                return Ok(("incan_native_runtime::read_static_int_set", "incan_native_runtime::write_static_int_set"))
+            return Err("unsupported Body IR static set carrier")
         PlanType.String =>
             return Ok(("incan_native_runtime::read_static_text", "incan_native_runtime::write_static_text"))
         PlanType.Int => return Ok(("incan_native_runtime::read_static_int", "incan_native_runtime::write_static_int"))
@@ -47,37 +86,310 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
-pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: list[EnumDeclaration] = []) -> Result[list[ModelDeclaration], str]:
-    """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
+pub def lower_model_declarations(
+    module: &BodyIrModule,
+    file: str,
+    intrinsics: list[EnumDeclaration] = [],
+    nominal_instances: list[NominalInstance] = [],
+) -> Result[list[ModelDeclaration], str]:
+    """
+    Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
+
+    A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
+    derives Default: a Rust derive would give every field its zero value instead.
+    """
     unions = collect_unions(module)
+    reached = serde_propagation(module)?
     mut models: list[ModelDeclaration] = []
-    for declaration in module.nominal_declarations:
-        if declaration.has_field_defaults and "Default" in declaration.derives:
-            return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
+    comparisons = comparison_functions(module, intrinsics)?
+    for owner in range(len(module.nominal_declarations)):
+        declaration = module.nominal_declarations[owner]
+        item = library_item(declaration)
+        mut library_arguments: list[PlanType] = []
+        mut checked_deserialize = ""
+        mut string_conversion_root = ""
+        mut string_conversion_trait = ""
+        if item == "" and declaration.canonical.kind == SemanticSourceTargetKind.Newtype:
+            checked_deserialize = checked_deserialize_name(declaration)?
+            string_conversion_root = conversion_name(module, declaration)?
+            if string_conversion_root != "":
+                string_conversion_trait = conversion_trait(module)?
+        mut derives: list[str] = []
+        for derive in declaration.derives:
+            if derive != "Default" and not (
+                len(comparisons[owner]) != 0
+                and derive in ["PartialEq", "Eq", "PartialOrd", "Ord"]
+            ):
+                derives.append(derive)
         mut fields: list[Parameter] = []
-        for slot in range(len(declaration.fields)):
-            fields.append(
-                Parameter(
-                    name=str(declaration.fields[slot]),
-                    ty=native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
-                        unions,
-                        declaration.field_types[slot],
-                        intrinsics,
-                    )?,
-                    span=SourceSpan(file=file, line=1, column=1),
-                ),
-            )
+        mut field_public = declaration.field_public
+        mut serde_names: list[str] = []
+        if item != "":
+            if len(declaration.native_type_arguments) == 0:
+                library_arguments = library_model_arguments(module, declaration, nominal_instances, intrinsics)?
+            else:
+                mut arguments: list[RustType] = []
+                for argument in declaration.native_type_arguments:
+                    arguments.append(argument.clone())
+                for argument in arguments:
+                    library_arguments.append(
+                        native_source_type(
+                            module.nominal_declarations,
+                            module.enum_declarations,
+                            unions,
+                            argument,
+                            intrinsics,
+                        )?,
+                    )
+            fields = library_fields(module, declaration, file, intrinsics)
+            if len(fields) != len(declaration.fields):
+                field_public = []
+            # The SDK crate already derives and implements everything its layout carries.
+            derives = []
+        else:
+            # Only a plain newtype takes a propagated serde derive; another reached nominal keeps its own derives.
+            if len(declaration.fields) == 1 and str(declaration.fields[0]) == "0":
+                derives = with_serde_derives(derives, str(declaration.name), reached)
+            serde_names = serde_field_names(declaration)
+            for slot in range(len(declaration.fields)):
+                mut ty = PlanType.Unit
+                match native_source_type(
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    unions,
+                    declaration.field_types[slot],
+                    intrinsics,
+                ):
+                    Ok(resolved) =>
+                        ty = resolved
+                    Err(reason) => return Err(f"{reason} in model {declaration.name} field {declaration.fields[slot]}")
+                fields.append(
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                )
+        callable_name, callable_signature = callable_methods(module, owner, intrinsics)?
+        mut markers: list[MarkerTrait] = []
+        if item == "":
+            markers = checked_marker_traits(declaration)?
         models.append(
             ModelDeclaration(
                 name=str(declaration.name),
-                public=declaration.public,
+                public=declaration.public or item != "",
                 fields=fields,
-                field_public=declaration.field_public,
-                derives=declaration.derives,
+                field_public=field_public,
+                derives=derives,
                 source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
+                library_item=item,
+                library_type_arguments=library_arguments,
+                field_serde_names=serde_names,
+                checked_deserialize=checked_deserialize,
+                reflection_metadata=planned_field_metadata(declaration),
+                comparison_methods=comparisons[owner],
+                fallible_iterator=fallible_methods(module, owner, intrinsics)?,
+                iterator=iterator_methods(module, owner, intrinsics)?,
+                callable_method=callable_name,
+                callable_signature=callable_signature,
+                marker_traits=markers,
+                string_conversion_root=string_conversion_root,
+                string_conversion_trait=string_conversion_trait,
             ),
         )
     return Ok(models)
+
+
+def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[FieldMetadata]]:
+    """Copy checked metadata values without recovering missing visibility, type names, or defaults."""
+    match declaration.reflection_metadata:
+        None => return None
+        Some(fields) =>
+            mut result: list[FieldMetadata] = []
+            for field in fields:
+                mut alias: Option[str] = None
+                mut description: Option[str] = None
+                match field.alias:
+                    Some(value) =>
+                        alias = Some(str(value))
+                    None => pass
+                match field.description:
+                    Some(value) =>
+                        description = Some(str(value))
+                    None => pass
+                result.append(
+                    FieldMetadata(
+                        name=str(field.name),
+                        alias=alias,
+                        description=description,
+                        type_name=str(field.type_name),
+                        has_default=field.has_default,
+                    ),
+                )
+            return Some(result)
+
+
+pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list[str]], str]:
+    """
+    Name the nominals a serde-deriving declaration's fields hold, as legacy's serde derive propagation collects them:
+    the names reached under Serialize, then those reached under Deserialize.
+
+    Legacy adds a model's serde derives to each source enum and plain newtype its field types name, so the generated
+    derive compiles without annotating every nested type. Field types are walked through lists, sets, dictionaries,
+    tuples, `Option` and `Result` carriers and other type arguments, one level deep: a reached model's own fields
+    propagate nothing. Legacy propagates within one module's declarations, so a reached declaration of another module
+    takes nothing. A stdlib layout's derives belong to its crate, so it neither propagates nor receives a derive.
+    """
+    mut serialize: list[str] = []
+    mut deserialize: list[str] = []
+    for declaration in module.nominal_declarations:
+        if library_item(declaration) != "":
+            continue
+        if "serde::Serialize" not in declaration.derives and "serde::Deserialize" not in declaration.derives:
+            continue
+        mut reached: list[str] = []
+        for ty in declaration.field_types:
+            reached = reached_names(ty, reached)?
+        for name in reached:
+            if not declared_beside(module, name, declaration):
+                continue
+            if "serde::Serialize" in declaration.derives and name not in serialize:
+                serialize.append(name)
+            if "serde::Deserialize" in declaration.derives and name not in deserialize:
+                deserialize.append(name)
+    return Ok((serialize, deserialize))
+
+
+def declared_beside(module: &BodyIrModule, name: str, source: &NominalDeclaration) -> bool:
+    """Whether `name` is a source enum or nominal declared in the same module as `source`."""
+    for declaration in module.enum_declarations:
+        if str(declaration.name) == name:
+            return declaration.canonical.origin == source.canonical.origin
+    for declaration in module.nominal_declarations:
+        if str(declaration.name) == name:
+            return declaration.canonical.origin == source.canonical.origin
+    return false
+
+
+def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
+    """
+    Add the nominal names one field type holds to `names`.
+
+    A union field is refused: the direct route's union layout carries no serde derive.
+    """
+    mut result = names
+    match ty:
+        RustType.NativeBuiltin(_builtin) => return Err("unsupported Body IR serde of a builtin runtime carrier")
+        RustType.Named(name) =>
+            if str(name) not in result:
+                result.append(str(name))
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "Union":
+                return Err("unsupported Body IR serde derive propagation through a union field")
+            for argument in arguments:
+                result = reached_names(argument, result)?
+        RustType.Tuple(elements) =>
+            for element in elements:
+                result = reached_names(element, result)?
+        RustType.Ref(inner) =>
+            result = reached_names(inner, result)?
+        RustType.RefMut(inner) =>
+            result = reached_names(inner, result)?
+        _ => pass
+    return Ok(result)
+
+
+pub def with_serde_derives(derives: list[str], name: str, reached: tuple[list[str], list[str]]) -> list[str]:
+    """Append each serde derive a serde-deriving declaration's fields require of `name`, unless it is already derived."""
+    serialize, deserialize = reached
+    mut result = derives
+    if name in serialize and "serde::Serialize" not in result:
+        result.append("serde::Serialize")
+    if name in deserialize and "serde::Deserialize" not in result:
+        result.append("serde::Deserialize")
+    return result
+
+
+def library_fields(
+    module: &BodyIrModule,
+    declaration: &NominalDeclaration,
+    file: str,
+    intrinsics: list[EnumDeclaration],
+) -> list[Parameter]:
+    """
+    A stdlib layout's fields when the plan can carry every one of them, otherwise none.
+
+    A layout without fields is opaque: its values move and drop as the SDK crate's own type. Reading a field whose type
+    the plan cannot carry refuses while lowering; the driver's plan validation rejects any projection into an opaque
+    layout.
+    """
+    unions = collect_unions(module)
+    mut fields: list[Parameter] = []
+    for slot in range(len(declaration.fields)):
+        match native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            unions,
+            declaration.field_types[slot],
+            intrinsics,
+        ):
+            Ok(ty) =>
+                fields.append(
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                )
+            Err(_reason) => return []
+    return fields
+
+
+pub def library_item(declaration: &NominalDeclaration) -> str:
+    """Name the compiled item that owns a stdlib layout, or nothing for any other layout."""
+    if declaration.native_item != "":
+        return str(declaration.native_item)
+    return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
+
+
+pub def library_enum_item(declaration: &RustEnumDeclaration) -> str:
+    """Name the compiled item that owns a stdlib enum, or nothing for any other enum."""
+    return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
+
+
+def library_path(origin: &SymbolOrigin, name: str) -> str:
+    """
+    Name a stdlib declaration's compiled item, `library::module::Name`, or nothing for any other origin.
+
+    SDK packages compile each stdlib module into the like-named module of their crate, and the native route links
+    those crates, so a stdlib type is named rather than declared. A dependency package's type is declared from its
+    published representation instead. Registered async runtime types name their runtime facet directly; their opaque
+    records expose no fields or constructors.
+    """
+    # Comparing in expression position keeps the `SymbolOrigin` import that the match patterns alone would not.
+    if origin == SymbolOrigin.Builtin:
+        return ""
+    match origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            if not str(library).startswith("incan_stdlib_") and str(library) != "incan_std_async":
+                return ""
+            mut segments = [str(library)]
+            for segment in path:
+                segments.append(str(segment))
+            segments.append(name)
+            return "::".join(segments)
+        _ => return ""
+
+
+def serde_field_names(declaration: &NominalDeclaration) -> list[str]:
+    """
+    Name each aliased field by its alias in the declaration's serde form, as legacy's `#[serde(rename)]` does.
+
+    Legacy renames only when the declaration derives serde; without any alias every field keeps its name.
+    """
+    mut names: list[str] = []
+    if "serde::Serialize" not in declaration.derives and "serde::Deserialize" not in declaration.derives:
+        return names
+    mut renamed = false
+    for alias in declaration.field_aliases:
+        match alias:
+            Some(name) =>
+                names.append(str(name))
+                renamed = true
+            None => names.append("")
+    if not renamed:
+        return []
+    return names

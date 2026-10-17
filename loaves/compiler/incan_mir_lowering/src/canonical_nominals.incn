@@ -1,0 +1,181 @@
+"""Resolve checked source carrier names from retained canonical type bindings."""
+
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId, encode_incan_symbol_identity, generic
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, EnumDeclaration, nominal_carrier_key
+
+
+model CarrierBinding:
+    """One checked type-position name and the storage key of its actual declaration."""
+
+    name: str
+    key: str
+
+
+pub def qualify_nominal_modules(modules: &list[BodyIrModule]) -> Result[list[BodyIrModule], str]:
+    """Align checked source references and disambiguate nongeneric layouts after original module validation."""
+    collisions = colliding_names(modules)
+    mut result: list[BodyIrModule] = []
+    for module in modules:
+        closed = qualify_module(module, collisions)?
+        result.append(closed.clone())
+    return Ok(result)
+
+
+def colliding_names(modules: &list[BodyIrModule]) -> list[str]:
+    """Find source spellings shared by distinct retained owners; duplicate copies of one owner are not collisions."""
+    mut names: list[str] = []
+    mut owners: list[CanonicalSymbolId] = []
+    mut collisions: list[str] = []
+    for module in modules:
+        for slot in range(len(module.nominal_declarations)):
+            declaration = module.nominal_declarations[slot].clone()
+            for index in range(len(names)):
+                if names[index] == declaration.name and owners[index] != declaration.canonical:
+                    if names[index] not in collisions:
+                        collisions.append(names[index])
+            names.append(str(declaration.name))
+            owners.append(declaration.canonical.clone())
+    return collisions
+
+
+def qualify_module(module: &BodyIrModule, collisions: list[str]) -> Result[BodyIrModule, str]:
+    """Project declaration and frame references onto checked source storage keys, preserving canonical identities."""
+    mut result = module.clone()
+    result.nominal_declarations.clear()
+    for index in range(len(module.nominal_declarations)):
+        mut declaration = module.nominal_declarations[index].clone()
+        name = str(declaration.name)
+        if name in collisions:
+            if declaration.type_parameter_count != 0:
+                return Err(f"unsupported Body IR ambiguous project nominal carrier {name} with type parameters")
+            key = carrier_key(declaration.canonical)
+            declaration.name = key
+        mut bindings: list[CarrierBinding] = []
+        for name in declaration.named_type_identities.keys():
+            match declaration.named_type_identities.get(name):
+                Some(identity) => add_binding(bindings, str(name), identity, collisions)
+                None => return Err("invalid Body IR missing retained nominal type binding")
+        declaration.field_types.clear()
+        for field_index in range(len(module.nominal_declarations[index].field_types)):
+            field = module.nominal_declarations[index].field_types[field_index].clone()
+            concrete: RustType = qualify_type(field, bindings, collisions)?
+            declaration.field_types.push(concrete.clone())
+        declaration.trait_adoptions.clear()
+        for adoption in module.nominal_declarations[index].trait_adoptions:
+            mut closed = adoption.clone()
+            closed.arguments.clear()
+            for argument in adoption.arguments:
+                concrete: RustType = qualify_type(argument, bindings, collisions)?
+                closed.arguments.push(concrete.clone())
+            declaration.trait_adoptions.push(closed)
+        match declaration.field_default_body:
+            Some(body) =>
+                closed: Body = qualify_body(body, collisions)?
+                declaration.field_default_body = Some(closed.into_box())
+            None => pass
+        result.nominal_declarations.push(declaration.clone())
+    result.enum_declarations.clear()
+    for index in range(len(module.enum_declarations)):
+        closed = qualify_enum(module.enum_declarations[index], collisions)?
+        result.enum_declarations.push(closed.clone())
+    result.bodies.clear()
+    for index in range(len(module.bodies)):
+        closed: Body = qualify_body(module.bodies[index], collisions)?
+        result.bodies.push(closed.clone())
+    return Ok(result)
+
+
+def qualify_enum(declaration: &EnumDeclaration, collisions: list[str]) -> Result[EnumDeclaration, str]:
+    """Resolve payload and native argument types using the enum's checked bindings, preserving enum and variant identities."""
+    mut bindings: list[CarrierBinding] = []
+    for name in declaration.named_type_identities.keys():
+        match declaration.named_type_identities.get(name):
+            Some(identity) => add_binding(bindings, str(name), identity, collisions)
+            None => return Err("invalid Body IR missing retained enum type binding")
+    mut result = declaration.clone()
+    result.variants.clear()
+    for variant in declaration.variants:
+        mut closed = variant.clone()
+        closed.fields.clear()
+        for field in variant.fields:
+            concrete: RustType = qualify_type(field, bindings, collisions)?
+            closed.fields.push(concrete.clone())
+        result.variants.push(closed.clone())
+    result.native_type_arguments.clear()
+    for argument in declaration.native_type_arguments:
+        concrete: RustType = qualify_type(argument, bindings, collisions)?
+        result.native_type_arguments.push(concrete.clone())
+    return Ok(result)
+
+
+def carrier_key(identity: &CanonicalSymbolId) -> str:
+    """Use checked source nominal storage keys; preserve symbol keys for owners without a source carrier."""
+    match nominal_carrier_key(identity):
+        Some(key) => return str(key)
+        None => return encode_incan_symbol_identity(identity)
+
+
+def add_binding(
+    mut bindings: list[CarrierBinding],
+    name: str,
+    identity: &CanonicalSymbolId,
+    collisions: list[str],
+) -> None:
+    """Align every checked source binding with project storage, retaining collision-only keys for native owners."""
+    match nominal_carrier_key(identity):
+        Some(key) =>
+            bindings.append(CarrierBinding(name=name, key=str(key)))
+            return
+        None => pass
+    if str(identity.declaration_name) in collisions:
+        bindings.append(CarrierBinding(name=name, key=carrier_key(identity)))
+
+
+def qualify_body(body: &Body, collisions: list[str]) -> Result[Body, str]:
+    """Resolve each frame's own checked aliases instead of borrowing another module's same-spelled binding."""
+    mut bindings: list[CarrierBinding] = []
+    for name in body.named_type_identities.keys():
+        match body.named_type_identities.get(name):
+            Some(identity) => add_binding(bindings, str(name), identity, collisions)
+            None => return Err("invalid Body IR missing retained frame type binding")
+    mut result = body.clone()
+    returned: RustType = qualify_type(body.return_type, bindings, collisions)?
+    result.return_type = returned.clone()
+    for index in range(len(result.locals)):
+        local_type: RustType = qualify_type(result.locals[index].ty, bindings, collisions)?
+        result.locals[index].ty = local_type.clone()
+    for index in range(len(result.params)):
+        parameter_type: RustType = qualify_type(result.params[index].ty, bindings, collisions)?
+        result.params[index].ty = parameter_type.clone()
+    return Ok(result)
+
+
+def qualify_type(ty: &RustType, bindings: list[CarrierBinding], collisions: list[str]) -> Result[RustType, str]:
+    """Project existing nominal leaf bindings recursively; unresolved colliding leaves remain specifically refused."""
+    match ty:
+        RustType.Named(name) =>
+            for binding in bindings:
+                if binding.name == str(name):
+                    return Ok(RustType.Named(binding.key))
+            if str(name) in collisions:
+                return Err(f"unsupported Body IR colliding nominal without retained type binding {name}")
+        RustType.Generic(base=base, args=arguments) =>
+            mut closed: list[RustType] = []
+            for argument in arguments:
+                value: RustType = qualify_type(argument, bindings, collisions)?
+                closed.append(value.clone())
+            return Ok(generic(str(base), closed))
+        RustType.Tuple(elements) =>
+            mut closed: list[RustType] = []
+            for element in elements:
+                value: RustType = qualify_type(element, bindings, collisions)?
+                closed.append(value.clone())
+            return Ok(RustType.Tuple(closed))
+        RustType.Ref(inner) =>
+            concrete: RustType = qualify_type(inner, bindings, collisions)?
+            return Ok(RustType.Ref(concrete.clone()))
+        RustType.RefMut(inner) =>
+            concrete: RustType = qualify_type(inner, bindings, collisions)?
+            return Ok(RustType.RefMut(concrete.clone()))
+        _ => pass
+    return Ok(ty.clone())

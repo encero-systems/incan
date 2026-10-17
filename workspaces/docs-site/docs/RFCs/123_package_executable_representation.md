@@ -50,7 +50,7 @@ Identity is what makes this coherent rather than duplicative. A package already 
 
 - Defining the exact wire encoding. This RFC fixes the contract and constrains the encoding to be binary; it does not select a specific binary format.
 - Replacing the compiled Rust library. Packages continue to ship one, and it remains what the Rust-linking route uses.
-- Making a package's private implementation executable. Only the public surface is in scope.
+- Making private declarations importable or callable as consumer-selected roots. Required private implementation may execute through a public entry point.
 - Cross-version execution guarantees. A representation produced by one compiler release need not be interpretable by another; it must only say so clearly.
 - Rust-hosted callers, which RFC 097 owns, and the interop surface a package may expose to Rust.
 
@@ -74,7 +74,7 @@ A representation **must** be produced by the compilation that declares the symbo
 
 A representation **must** carry a version distinct from the manifest's. A consumer **must** refuse a representation whose version it does not support, and that refusal **must not** invalidate the manifest or the package.
 
-A representation **must** be self-consistent with the manifest it accompanies: every identity it covers **must** appear in that manifest's public surface, and a representation **must not** cover a declaration the package does not export.
+A representation **must** be self-consistent with the manifest it accompanies: its public coverage index **must** contain exactly that manifest's public identities owned by the package. Internal implementation dependencies **must** be indexed separately and **must not** become public exports or consumer-selected resolution roots.
 
 A consumer that requires a representation and cannot obtain a usable one **must** refuse before producing any result or publishing an execution receipt. The refusal **must** name the package, the version, and the requirement that was not met. It **must not** silently select another route, and it **must not** report the condition as an unsupported language construct.
 
@@ -84,7 +84,9 @@ A representation **must** use a binary encoding. A self-describing text encoding
 
 A representation **must** be addressable by canonical identity without decoding the whole of it. A consumer that calls three declarations of four hundred **must not** be required to load four hundred.
 
-A representation **must not** expose a package's private declarations, its compiler-session state, or its generated Rust layout. A consumer **must not** derive compatibility from any of those, and **must** derive it from the declared version and requirements alone.
+A representation **may** retain private bodies, defaults and type layouts required by covered public declarations. Such content **must** come from the declaring compilation's checked facts and **must** be reachable through the public execution closure; unrelated private declarations **must not** be retained. A consumer **must** authorize private content only through same-package requirements of selected fragments. Explicit private roots and requirements originating in another package **must** resolve against the public index and **must** be refused if absent there. Private layout fields remain private to source-level import and access checking.
+
+A representation **must not** carry compiler-session state or generated Rust layout. Its implementation payload is executable content and provides no confidentiality guarantee for retained private names or behavior. A consumer **must not** derive compatibility from private content, compiler-session state or generated Rust layout, and **must** derive it from the declared version and requirements alone.
 
 ## Design details
 
@@ -168,7 +170,7 @@ Consumers will want the decoded form to outlive one invocation, and the natural 
 
 ### Phase 1: Public executable publication
 
-Produce the representation from the compilation that finalizes the manifest. Select declarations through its canonical public graph, record explicit uncovered reasons, and retain the complete public execution closure, including defaults, deferred computations and required type context. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Exclude private declarations and compiler-session identities. A public declaration that cannot satisfy those constraints remains uncovered.
+Produce the representation from the compilation that finalizes the manifest. Select public roots through its canonical public graph, record explicit uncovered reasons, and retain their complete execution closure, including private helpers, defaults, recursion, deferred computations and required type layouts. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Separate required private content from finalized public coverage, omit unrelated private declarations and compiler-session identities, and keep missing or unsupported dependencies uncovered transitively. A public declaration that cannot satisfy those constraints remains uncovered.
 
 ### Phase 2: Versioned selective consumption
 
@@ -189,7 +191,8 @@ Keep each selected semantic sidecar coherent with its manifest through publicati
 - [x] Review the RFC contract and establish an independent implementation and acceptance design.
 - [x] Select published identities from the finalized manifest, including public members and canonical facade targets.
 - [x] Record uncovered exports separately from empty executable bodies.
-- [x] Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.
+- [x] Close public requirements over defaults, deferred computations, callees and type context without publishing compiler-session state.
+- [ ] Retain reachable checked private implementation in a separate dependency index, preserving public imports and explicit-root refusal.
 - [x] Share checked dependency relationships with RFC 106 codegraph and prove agreement for aliases, facades, members, type context and defaults without another analysis pass.
 - [x] Publish semantic content from the same checked compilation as the manifest and native artifact.
 

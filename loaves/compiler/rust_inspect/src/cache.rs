@@ -4803,6 +4803,7 @@ impl RustMetadataCache {
             });
         }
         let graph = project.verified_project()?;
+        let native_macros = project.verified_native_macros()?;
         let fingerprint = workspace_fingerprint(&root)?;
         {
             let mut inner = self.inner.lock().map_err(|error| RustMetadataError::LoadWorkspace {
@@ -4811,7 +4812,7 @@ impl RustMetadataCache {
             })?;
             ensure_disk_cache_loaded_for_admission(&mut inner, &root)?;
             if let Some(workspace) = inner.workspaces.get(&(root.clone(), false))
-                && workspace.matches_retained_project(&graph)?
+                && workspace.matches_retained_project(&graph, &native_macros)?
             {
                 return Ok(true);
             }

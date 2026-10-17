@@ -1,0 +1,89 @@
+"""Validated frame roles, cache signatures and callable-name admission for closed generic decorators."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, DecoratedBinding, DecoratedInitialization
+from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Callee, CalleeKind, RvalueKind
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place
+from classes import body_module_identity
+from closures import callable_component
+
+
+pub enum DecoratorFrame:
+    """An explicit planning role; source spellings never choose hidden originals or initializers."""
+
+    Normal
+    Original
+    Initializer
+
+
+pub def frame_name(base: str, role: DecoratorFrame) -> str:
+    """Give authenticated hidden frames distinct symbols while retaining the normal closed instance's key."""
+    match role:
+        DecoratorFrame.Normal => return base
+        DecoratorFrame.Original => return f"{base}__incan_original"
+        DecoratorFrame.Initializer => return f"{base}__incan_initializer"
+
+
+pub def validate_text_binding(binding: &DecoratedBinding) -> Result[None, str]:
+    """Admit only the measured synchronous zero-argument string-returning original and matching initializer."""
+    if binding.initialization != DecoratedInitialization.PerInstantiation:
+        return Err("unsupported Body IR cached decorator outside per-instantiation policy")
+    body = binding.original_body
+    if body.is_async or body.is_generator() or len(body.params) != 0 or not string_type(body.return_type):
+        return Err("unsupported Body IR generic decorator outside a zero-argument string callable")
+    match binding.initializer:
+        Some(initializer) =>
+            if callable_component(initializer.return_type)? == PlanType.FunctionPointer([PlanType.String]):
+                return Ok(None)
+        None => pass
+    return Err("unsupported Body IR generic decorator initializer outside a text function pointer")
+
+
+pub def string_type(ty: &RustType) -> bool:
+    """Require the checked owned string type without promoting a named or sized carrier."""
+    match ty:
+        RustType.Primitive(IncanPrimitiveType.Str) => return true
+        _ => return false
+
+
+pub def callable_name_profile(module: &BodyIrModule, owner: str) -> Result[bool, str]:
+    """Bound dynamic name lookup to one registration module with no unretained static function candidates."""
+    for body in module.bodies:
+        if len(body.type_parameters) != 0 or len(body.params) != 0 or not string_type(body.return_type):
+            continue
+        match body.canonical:
+            Some(identity) =>
+                if identity.kind == SemanticSourceTargetKind.Function:
+                    return Ok(false)
+            None => pass
+    for binding in module.decorated_bindings:
+        match binding.initializer:
+            Some(_initializer) =>
+                validate_text_binding(binding)?
+                if body_module_identity(binding.original_body)? != owner:
+                    return Ok(false)
+            None => pass
+    return Ok(true)
+
+
+pub def reified_pointer(mut builder: Builder, name: str, signature: list[PlanType], span: SourceSpan) -> Operand:
+    """Materialize an already authenticated planned item through the existing function-pointer coercion."""
+    item = temporary(builder, PlanType.FunctionItem(name, signature), span)
+    builder.emit(plan_assign(item, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span)), span))
+    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(item, false, span)), span))
+    return read_place(pointer, false, span)
+
+
+pub def validate_binding_policy(binding: &DecoratedBinding) -> Result[None, str]:
+    """Honor the kernel-validated lifetime and complete initializer field without inferring a replacement from storage."""
+    match binding.initialization:
+        DecoratedInitialization.PerInstantiation => return validate_text_binding(binding)
+        DecoratedInitialization.PerInvocation =>
+            if len(binding.original_body.type_parameters) == 0 or binding.initializer != None:
+                return Err("unsupported Body IR per-invocation decorator lifetime")
+        DecoratedInitialization.ModuleStorage =>
+            if len(binding.original_body.type_parameters) != 0 or binding.initializer != None:
+                return Err("unsupported Body IR module decorator lifetime")
+    return Ok(None)

@@ -238,7 +238,9 @@ pub(super) fn prepare_oven_project_with_session(
     phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_resolve_dependencies").entered();
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    ensure_loaf_stdlib_facets(&mut project_requirements.stdlib_facets, loaf_codegen_mode());
+    if !compilation_session.has_admitted_library_dependencies() {
+        ensure_loaf_stdlib_facets(&mut project_requirements.stdlib_facets, loaf_codegen_mode());
+    }
     let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
         .iter()
         .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
@@ -362,7 +364,15 @@ pub(super) fn prepare_oven_project_with_session(
     // Compiled Incan providers participate in linking; their checked types do not require Rust source inspection.
     let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
-    let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
+    let inline_path_dependencies = if let Some(admitted) = compilation_session.admitted_library_dependencies() {
+        // Checked packages carry their Rust requirements even when the consumer has no direct rust:: import.
+        // Only exact generated Incan package projections are omitted from native selection.
+        let mut dependencies = resolved.dependencies.clone();
+        dependencies.extend(resolved.dev_dependencies.clone());
+        admitted.physical_native_dependencies(&provider_plan, &dependencies)?
+    } else {
+        oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?
+    };
     drop(phase);
     record_timing(&mut prepare_timings, "prepare_resolve_dependencies", lap);
     lap = Instant::now();
@@ -407,10 +417,62 @@ pub(super) fn prepare_oven_project_with_session(
     {
         retained_dependencies = None;
     }
+    let mut native_request = Some(native_request);
     let mut dependency_inputs = None;
+    let ordinary_profiles = if compilation_session.has_admitted_library_dependencies() {
+        if let Some(native) = retained_dependencies
+            .as_ref()
+            .and_then(|record| record.inputs.ordinary.as_ref())
+        {
+            Some(Arc::clone(native))
+        } else {
+            let inputs = super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?
+                .ok_or_else(|| CliError::failure("ordinary executable lost its configured native producer"))?;
+            let support = super::ordinary_support::CompilerSupportSources::discover()?
+                .ok_or_else(|| CliError::failure("ordinary executable requires compiler-bound support sources"))?;
+            let rustc = resolve_active_rustc().map_err(oven_rustc_error)?;
+            let target = rustc_host_target(&rustc).map_err(oven_rustc_error)?;
+            Some(Arc::new(
+                super::ordinary_library_native::OrdinaryLibraryNativeProfiles::prepare(
+                    super::ordinary_library_native::OrdinaryLibraryNativeRequest {
+                        support: Arc::new(support),
+                        graph: &inputs.graph,
+                        index: &inputs.index,
+                        blobs: &inputs.blobs,
+                        output: &project_root.join("target/oven/ordinary-library-native"),
+                        rustc: &rustc,
+                        target: &target,
+                        profiles: &[profile],
+                    },
+                )?,
+            ))
+        }
+    } else {
+        None
+    };
+    let ordinary_runtime = ordinary_profiles
+        .as_ref()
+        .map(|native| {
+            let admitted = compilation_session.admitted_library_dependencies().map(Arc::as_ref);
+            let semantic_paths =
+                native.provider_semantic_dependencies(&provider_plan, &project_requirements, admitted)?;
+            let identities = compilation_session.provider_semantic_identities(&provider_plan, &semantic_paths)?;
+            crate::build_unit::OrdinaryLibraryRuntimeInputs::from_checked(
+                Arc::clone(native),
+                &project_root,
+                &provider_plan,
+                &project_requirements,
+                &resolved,
+                &identities,
+                admitted,
+            )
+        })
+        .transpose()?;
     let (native_sdk_context, mut oven_build_inputs) = if let Some(retained) = &retained_dependencies {
         tracing::trace!(target: "incan::invocation", decision = "reuse_native_dependency_inputs");
         (retained.inputs.context.clone(), retained.inputs.build_inputs.clone())
+    } else if ordinary_runtime.is_some() {
+        (None, crate::build_unit::ordinary_library_build_unit_inputs())
     } else {
         let _native_admission_trace =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::native_dependency_admission").entered();
@@ -435,7 +497,9 @@ pub(super) fn prepare_oven_project_with_session(
         );
         if retain_native_inputs {
             dependency_inputs = Some(ExecutableDependencyInputs::new(
-                native_request,
+                native_request
+                    .take()
+                    .ok_or_else(|| CliError::failure("native request already retained"))?,
                 Arc::clone(&provider_plan),
                 context.clone(),
                 inputs.clone(),
@@ -443,7 +507,7 @@ pub(super) fn prepare_oven_project_with_session(
         }
         (context, inputs)
     };
-    let mut active_runtime_foundation = if loaf_codegen_mode() {
+    let mut active_runtime_foundation = if loaf_codegen_mode() || ordinary_runtime.is_some() {
         None
     } else {
         acquire_active_release_runtime_foundation("rust-policy-foundation")
@@ -495,8 +559,35 @@ pub(super) fn prepare_oven_project_with_session(
             "active runtime dependency closure retained a compiler with the wrong toolchain identity".to_string(),
         ));
     }
-    let mut caller_owned_libraries =
-        oven_caller_owned_libraries(&provider_plan, profile, &rustc_target, &rustc_toolchain, None)?;
+    if let Some(runtime) = &ordinary_runtime {
+        let intent = oven_store::OvenBuildIntent {
+            target: rustc_target.clone(),
+            toolchain: rustc_toolchain.clone(),
+            profile: profile.to_string(),
+            features: cargo_features.cargo_features.clone(),
+        };
+        for (key, value) in runtime.for_profile(&intent, &inline_path_dependencies)? {
+            oven_build_inputs.insert(key, value);
+        }
+        if retain_native_inputs && retained_dependencies.is_none() {
+            let mut inputs = ExecutableDependencyInputs::new(
+                native_request
+                    .take()
+                    .ok_or_else(|| CliError::failure("native request already retained"))?,
+                Arc::clone(&provider_plan),
+                None,
+                oven_build_inputs.clone(),
+            );
+            inputs.ordinary = ordinary_profiles.clone();
+            inputs.ordinary_session = Some(Arc::clone(&compilation_session));
+            dependency_inputs = Some(inputs);
+        }
+    }
+    let mut caller_owned_libraries = if ordinary_runtime.is_some() {
+        Vec::new()
+    } else {
+        oven_caller_owned_libraries(&provider_plan, profile, &rustc_target, &rustc_toolchain, None)?
+    };
     if oven_plan_mode != OvenProjectPlanMode::InteropBootstrap {
         append_oven_interop_execution_build_inputs(&mut oven_build_inputs, manifest.as_ref(), &rustc_target)?;
     }
@@ -662,24 +753,24 @@ pub(super) fn prepare_oven_project_with_session(
     record_timing(&mut prepare_timings, "prepare_typecheck", lap);
     lap = Instant::now();
     phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_provider_profiles").entered();
-    let checked_provider_profiles = checked_packaged_provider_profiles(
-        &provider_plan,
-        &requested_provider_profiles,
-        &rustc_target,
-        &rustc_toolchain,
-        authority_context,
-    )?;
+    let checked_provider_profiles = if let Some(admitted) = compilation_session.admitted_library_dependencies() {
+        admitted
+            .execution_profiles(&requested_provider_profiles)?
+            .into_values()
+            .flatten()
+            .collect()
+    } else {
+        checked_packaged_provider_profiles(
+            &provider_plan,
+            &requested_provider_profiles,
+            &rustc_target,
+            &rustc_toolchain,
+            authority_context,
+        )?
+    };
     let oven_plan_dependencies = inline_path_dependencies.clone();
     import_packaged_provider_loafs_for_explicit_bake(oven_plan_mode, &oven_store, &checked_provider_profiles)?;
     let provider_candidates = packaged_provider_candidates(&checked_provider_profiles, profile);
-    let selected_provider_inputs =
-        select_packaged_provider_plans(&oven_store, &provider_candidates).map_err(oven_plan_error)?;
-    let provider_compilations = checked_provider_compilation_requirements(
-        &selected_provider_inputs,
-        &checked_provider_profiles,
-        profile,
-        &oven_build_inputs,
-    )?;
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -739,13 +830,6 @@ pub(super) fn prepare_oven_project_with_session(
     for (name, value) in &oven_build_inputs {
         receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
     }
-    if !provider_compilations.is_empty() {
-        receipt_request = receipt_request.with_build_unit_input(
-            "provider-compilation-requirements",
-            provider_compilation_requirements_digest(&provider_compilations)
-                .map_err(|error| CliError::failure(error.to_string()))?,
-        );
-    }
     if let Some(identity) =
         oven_rustc::rustc::pinned_link_closure_identity(&rustc, &rustc_target).map_err(oven_rustc_error)?
     {
@@ -763,7 +847,6 @@ pub(super) fn prepare_oven_project_with_session(
     }
     let receipt_path =
         prepared_oven_receipt_path(&project_root, oven_plan_mode, &receipt.intent.target, path, profile)?;
-    write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
     drop(phase);
     record_timing(&mut prepare_timings, "prepare_receipt", lap);
     lap = Instant::now();
@@ -779,9 +862,12 @@ pub(super) fn prepare_oven_project_with_session(
     // by portable selected-unit identity: one provider payload remains authoritative and a semantic mismatch fails
     // closed before Rustc can observe colliding `StableCrateId`s.
     let consumer_declares_registry_roots = !oven_plan_dependencies.is_empty();
-    let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
-        || (oven_plan_mode == OvenProjectPlanMode::ExplicitBake && !consumer_declares_registry_roots)
+    let packaged_provider_selection = if ordinary_runtime.is_none()
+        && (oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
+            || (oven_plan_mode == OvenProjectPlanMode::ExplicitBake && !consumer_declares_registry_roots))
     {
+        let selected_provider_inputs =
+            select_packaged_provider_plans(&oven_store, &provider_candidates).map_err(oven_plan_error)?;
         packaged_provider_selection_links_required_stdlib(
             compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
                 .map_err(oven_plan_error)?,
@@ -790,6 +876,30 @@ pub(super) fn prepare_oven_project_with_session(
     } else {
         None
     };
+    // ---- Source-free packages retain their sealed outputs; only fallback source compilation needs macros ----
+    let provider_compilations = if ordinary_runtime.is_some() || packaged_provider_selection.is_some() {
+        caller_owned_libraries = oven_caller_owned_libraries(
+            &provider_plan,
+            profile,
+            &rustc_target,
+            &rustc_toolchain,
+            Some(&checked_provider_profiles),
+        )?;
+        Vec::new()
+    } else {
+        let selected = select_packaged_provider_plans(&oven_store, &provider_candidates).map_err(oven_plan_error)?;
+        checked_provider_compilation_requirements(&selected, &checked_provider_profiles, profile, &oven_build_inputs)?
+    };
+    if !provider_compilations.is_empty() {
+        receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            "provider-compilation-requirements",
+            provider_compilation_requirements_digest(&provider_compilations)
+                .map_err(|error| CliError::failure(error.to_string()))?,
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    }
+    write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
     let ordinary_plan_selected = packaged_provider_selection.is_none() && ordinary_native.is_some();
     let retained_selection = if packaged_provider_selection.is_none()
         && ordinary_native.is_none()
@@ -805,7 +915,31 @@ pub(super) fn prepare_oven_project_with_session(
     } else {
         None
     };
-    let plan_preparation = if let Some(selection) = retained_selection.or(packaged_provider_selection) {
+    let plan_preparation = if let Some(runtime) = &ordinary_runtime {
+        let (bound, plan_selection) =
+            runtime
+                .native()
+                .select_plan(&oven_store, &receipt, &oven_plan_dependencies, &project_root)?;
+        receipt = bound;
+        let OvenDirectRustcPlanSelection::Stored(native) = plan_selection else {
+            return Err(CliError::failure(
+                "ordinary native selection lost its original direct plan",
+            ));
+        };
+        let packages = crate::build::package_loafs::select_ordinary_packaged_provider_plans(
+            &oven_store,
+            &checked_provider_profiles,
+            profile,
+        )?;
+        let plan_selection = oven_rustc::plan::composition::compose_ordinary_consumer_plan(*native, &receipt, packages)
+            .map_err(oven_plan_error)?;
+        write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
+        Some(OvenDirectRustcPlanPreparation {
+            plan_selection,
+            materialization: OvenToolchainMaterialization::Reused,
+            cargo_process_started: false,
+        })
+    } else if let Some(selection) = retained_selection.or(packaged_provider_selection) {
         Some(OvenDirectRustcPlanPreparation {
             plan_selection: selection,
             materialization: OvenToolchainMaterialization::Reused,
@@ -873,13 +1007,15 @@ pub(super) fn prepare_oven_project_with_session(
         })
         .cloned()
         .collect::<Vec<_>>();
-    super::plan_authority::validate_selected_plan_registry_dependencies_with_native_sdk(
-        &remaining_dependencies,
-        &artifact_plan,
-        registry_authority.as_ref(),
-        profile,
-        native_sdk_context.as_deref(),
-    )?;
+    if ordinary_runtime.is_none() {
+        super::plan_authority::validate_selected_plan_registry_dependencies_with_native_sdk(
+            &remaining_dependencies,
+            &artifact_plan,
+            registry_authority.as_ref(),
+            profile,
+            native_sdk_context.as_deref(),
+        )?;
+    }
     let inline_libraries = declared_rust_libraries_missing_from_selected_plan_with_current_project_paths(
         &inline_path_dependencies,
         &artifact_plan,
@@ -962,6 +1098,8 @@ pub(super) fn prepare_oven_project_with_session(
             else {
                 return Ok((
                     OvenPreparedProject {
+                        ordinary_session: ordinary_profiles.as_ref().map(|_| Arc::clone(&compilation_session)),
+                        ordinary_native: ordinary_profiles,
                         native_sdk_context,
                         generator,
                         project_root,
@@ -1042,6 +1180,8 @@ pub(super) fn prepare_oven_project_with_session(
     };
     Ok((
         OvenPreparedProject {
+            ordinary_session: ordinary_profiles.as_ref().map(|_| Arc::clone(&compilation_session)),
+            ordinary_native: ordinary_profiles,
             native_sdk_context,
             generator,
             project_root,

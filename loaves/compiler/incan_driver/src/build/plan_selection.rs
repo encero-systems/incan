@@ -298,6 +298,7 @@ pub fn prepare_oven_test_dependency_envelope(
                 | OvenDirectRustcPlanSelection::ProjectExtension(_)
         ) {
             return Ok(PreparedOvenTestDependencyEnvelope {
+                native_roots: None,
                 receipt: receipt.clone(),
                 dependency_surface_digest,
                 dependencies,
@@ -372,6 +373,7 @@ pub fn prepare_oven_test_dependency_envelope(
     };
     remove_completed_generated_cargo_lock(generator.output_dir())?;
     Ok(PreparedOvenTestDependencyEnvelope {
+        native_roots: None,
         receipt,
         dependency_surface_digest,
         dependencies,
@@ -888,6 +890,7 @@ mod tests {
             &root_digests,
             std::slice::from_ref(&locked_json),
             &[],
+            None,
         )?;
         assert!(matches!(
             exact_roots.get("json_api"),

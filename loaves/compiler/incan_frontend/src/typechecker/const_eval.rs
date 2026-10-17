@@ -746,7 +746,9 @@ impl TypeChecker {
                             self.errors.push(errors::const_string_index_out_of_range(expr.span));
                             return None;
                         }
-                        Err(StringAccessError::SliceStepZero) => unreachable!("step zero is not used for index"),
+                        Err(StringAccessError::SliceStepZero) => {
+                            unreachable!("step zero is not used for index")
+                        }
                     }
                 }
                 Some(ConstEvalResult {
@@ -881,6 +883,9 @@ impl TypeChecker {
                     ));
                     return None;
                 }
+                if lit.suffix.is_none() {
+                    self.retain_body_ir_const_newtype(callee_name, &newtype.underlying, lit.magnitude, expr.span);
+                }
                 Some(ConstEvalResult {
                     ty: ResolvedType::Named(expected_name.clone()),
                     kind: ConstKind::RustNative,
@@ -920,6 +925,36 @@ impl TypeChecker {
                 None
             }
         }
+    }
+
+    /// Retain only an already range-checked unsuffixed sized integer constructor, without altering legacy evaluation.
+    fn retain_body_ir_const_newtype(&mut self, name: &str, underlying: &ResolvedType, magnitude: u128, span: Span) {
+        use incan_lang::lang::types::numerics::{NumericFamily, info_for};
+        use incan_semantics_core::body_ir::TypedNumericConstant;
+        let ResolvedType::Numeric(kind) = underlying else {
+            return;
+        };
+        let Some(owner) = self.named_type_reference_identity(name) else {
+            return;
+        };
+        if owner.kind != incan_semantics_core::SemanticSourceTargetKind::Newtype {
+            return;
+        }
+        let value = match info_for(*kind).family {
+            NumericFamily::SignedInteger => match i128::try_from(magnitude) {
+                Ok(value) => TypedNumericConstant::Signed { kind: *kind, value },
+                Err(_) => return,
+            },
+            NumericFamily::UnsignedInteger => TypedNumericConstant::Unsigned {
+                kind: *kind,
+                value: magnitude,
+            },
+            _ => return,
+        };
+        self.type_info.consts.body_ir_newtype_values.insert(
+            (span.start, span.end),
+            super::type_info::BodyIrNewtypeConstantValue { owner, value },
+        );
     }
 
     /// Return whether a name resolves to a model constructor that can be considered for const literal validation.

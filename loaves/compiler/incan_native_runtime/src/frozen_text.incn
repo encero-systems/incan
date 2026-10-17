@@ -1,8 +1,13 @@
 """Text observation of the legacy frozen string carrier."""
 
-from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozen
+from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozen, FrozenBytes as RuntimeFrozenBytes
 
 
 pub def format_frozen(value: RuntimeFrozen) -> str:
     """Materialize owned text through the frozen carrier's canonical Display implementation."""
     return str(value)
+
+
+pub def length_frozen_bytes(value: RuntimeFrozenBytes) -> int:
+    """Measure static bytes without copying them into a mutable vector."""
+    return int(value.len())

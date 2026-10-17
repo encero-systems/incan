@@ -587,11 +587,7 @@ pub fn ensure_direct_rust_inspect_workspace(
         ),
     ]));
     let declaration = toml::to_string(&declaration).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut source = String::new();
-    for (index, path) in derive_paths.iter().enumerate() {
-        source.push_str(&format!("#[derive({path})]\nstruct __IncanDeriveProbe{index};\n"));
-    }
-    source.push_str("fn main() {}\n");
+    let source = direct_rust_inspect_probe_source(derive_paths);
     let selection = serde_json::to_string(selection_inputs).map_err(|error| CliError::failure(error.to_string()))?;
     let fingerprint = oven_store::digest_bytes(format!("{declaration}\0{source}\0{selection}").as_bytes());
     let root = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
@@ -602,6 +598,17 @@ pub fn ensure_direct_rust_inspect_workspace(
     fs::write(root.join(::rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")
         .map_err(|error| CliError::failure(error.to_string()))?;
     Ok(root)
+}
+
+/// Render the direct inspection root from its requested derive probes, shared by generation and retained validation.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn direct_rust_inspect_probe_source(derive_paths: &[String]) -> String {
+    let mut source = String::new();
+    for (index, path) in derive_paths.iter().enumerate() {
+        source.push_str(&format!("#[derive({path})]\nstruct __IncanDeriveProbe{index};\n"));
+    }
+    source.push_str("fn main() {}\n");
+    source
 }
 
 /// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.

@@ -26,7 +26,7 @@ fn static_list_literals_retain_checked_elements() -> Result<(), Box<dyn std::err
         "def initial() -> int:\n    return 1\n\nstatic ITEMS: list[int] = [initial()]\n\ndef main() -> int:\n    return len(ITEMS)\n",
         &["m", "effectful_list"],
     )?;
-    assert!(effectful.static_declarations.is_empty());
+    assert_eq!(effectful.static_declarations.len(), 1);
     Ok(())
 }
 
@@ -74,5 +74,105 @@ fn static_alias_reads_retain_storage_until_whole_rebind() -> Result<(), Box<dyn 
             .render_snapshot()
             .contains("control-flow-dependent static binding handle")
     );
+    Ok(())
+}
+
+/// Primitive dictionary and set literals and the empty `Set()` constructor retain their checked elements; forged
+/// mismatched payloads are malformed, and a dictionary of lists keeps a computed initializer.
+#[test]
+fn static_hashed_literals_retain_checked_elements() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static COUNTS: dict[str, int] = {\"a\": 1}\nstatic SEEN: set[int] = Set()\nstatic WORDS: set[str] = {\"a\", \"b\"}\n\ndef main() -> int:\n    return len(COUNTS) + len(SEEN) + len(WORDS)\n",
+        &["m", "static_hashed"],
+    )?;
+    let [counts, seen, words] = module.static_declarations.as_slice() else {
+        return Err("expected three retained hashed statics".into());
+    };
+    assert_eq!(
+        counts.initial,
+        bir::StaticInitializer::Dict(vec![(bir::Constant::Str("a".into()), bir::Constant::Int(1))])
+    );
+    assert_eq!(seen.initial, bir::StaticInitializer::Set(Vec::new()));
+    assert_eq!(
+        words.initial,
+        bir::StaticInitializer::Set(vec![bir::Constant::Str("a".into()), bir::Constant::Str("b".into())])
+    );
+    for declaration in [counts, seen, words] {
+        assert!(module.is_well_formed_static_declaration(declaration));
+    }
+    let mut malformed = counts.clone();
+    malformed.initial = bir::StaticInitializer::Dict(vec![(bir::Constant::Bool(true), bir::Constant::Int(1))]);
+    assert!(!module.is_well_formed_static_declaration(&malformed));
+    let nested = build(
+        "static GROUPS: dict[str, list[int]] = {}\n\ndef main() -> int:\n    return len(GROUPS)\n",
+        &["m", "nested_hashed"],
+    )?;
+    assert_eq!(nested.static_declarations.len(), 1);
+    Ok(())
+}
+
+/// Computed initializers retain declaration order, canonical storage identity, and their closed checked carrier.
+#[test]
+fn computed_statics_retain_order_and_closed_initializer_bodies() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def initial(value: int) -> int:\n    return value\n\nstatic FIRST: int = initial(1)\nstatic SECOND: int = initial(FIRST + 1)\n",
+        &["m", "computed_statics"],
+    )?;
+    let [first, second] = module.static_declarations.as_slice() else {
+        return Err("expected both computed static declarations in source order".into());
+    };
+    for declaration in [first, second] {
+        assert!(module.is_well_formed_static_declaration(declaration));
+        let initializer = format!("{:?}", declaration.initial);
+        assert!(initializer.starts_with("Computed("), "{initializer}");
+        assert!(initializer.contains("params: []"), "{initializer}");
+        assert!(initializer.contains("return_type: Primitive(Int)"), "{initializer}");
+        assert!(initializer.contains(&format!("canonical: Some({:?})", declaration.canonical)));
+    }
+    assert!(format!("{:?}", first.canonical).contains("FIRST"));
+    assert!(format!("{:?}", second.canonical).contains("SECOND"));
+    assert_eq!(
+        module.bodies.len(),
+        1,
+        "initializers must not become callable source declarations"
+    );
+    Ok(())
+}
+
+/// A static entry write evaluates its value before its key, as legacy computes it before writing the entry, so the
+/// key is the last read of the name it shares with the value.
+#[test]
+fn static_index_key_follows_its_value() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static counts: dict[str, int] = {}\n\ndef record(name: str) -> None:\n    counts[name] = counts.get(name, 0) + 1\n",
+        &["m", "static_index_key"],
+    )?;
+    let body = body_named(&module, "record")?;
+    let statements = &body.block.stmts;
+    let lookup = statements
+        .iter()
+        .position(|statement| matches!(statement.kind, bir::StatementKind::Call { .. }))
+        .ok_or("missing value lookup")?;
+    let write = statements
+        .iter()
+        .position(
+            |statement| matches!(&statement.kind, bir::StatementKind::Assign { place, .. } if place.global().is_some()),
+        )
+        .ok_or("missing storage write")?;
+    assert!(
+        lookup < write,
+        "the value must precede the write: {}",
+        body.render_snapshot()
+    );
+    let bir::StatementKind::Assign { place, .. } = &statements[write].kind else {
+        return Err("the storage write must be an assignment".into());
+    };
+    let [bir::PlaceElem::Index(key)] = place.projection.as_slice() else {
+        return Err("the storage write must index the static once".into());
+    };
+    let bir::Operand::Place(read) = key.as_ref() else {
+        return Err("the key must read the parameter".into());
+    };
+    assert_eq!(read.fact, bir::OwnershipFact::Move, "{}", body.render_snapshot());
     Ok(())
 }

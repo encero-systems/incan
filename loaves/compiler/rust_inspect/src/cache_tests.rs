@@ -49,6 +49,66 @@ fn publish_dependency_fixture(root: &Path, dependencies: &[(&str, &Path)]) -> Re
     Ok(())
 }
 
+/// Unnamed generated probes must not hide named dependencies; selected malformed or ambiguous records still refuse.
+#[test]
+fn frozen_source_lookup_ignores_unnamed_probe_records() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().join("root");
+    let dependency = tmp.path().join("dependency");
+    let other = tmp.path().join("other");
+    for (path, name) in [(&root, "root"), (&dependency, "dependency"), (&other, "other")] {
+        fs::create_dir_all(path.join("src"))?;
+        fs::write(
+            path.join("loaf.toml"),
+            format!("[project]\nname='{name}'\nversion='0.1.0'\n[rust]\ntype='lib'\nedition='2021'\n"),
+        )?;
+        fs::write(
+            path.join("src/lib.rs"),
+            "mod inner { pub struct Item; } pub use inner::Item;\n",
+        )?;
+    }
+    publish_dependency_fixture(
+        &root,
+        &[("dependency", dependency.as_path()), ("other", other.as_path())],
+    )?;
+    let graph_path = root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE);
+    let graph: serde_json::Value = serde_json::from_slice(&fs::read(&graph_path)?)?;
+    let selected = dependency.canonicalize()?;
+    for before in [true, false] {
+        let mut candidate = graph.clone();
+        let records = candidate["crates"].as_array_mut().ok_or("fixture crates missing")?;
+        let probe = serde_json::json!({"root_module": root.join("src/lib.rs"), "edition": "2021"});
+        if before {
+            records.insert(0, probe);
+        } else {
+            records.push(probe);
+        }
+        fs::write(&graph_path, serde_json::to_vec(&candidate)?)?;
+        assert_eq!(
+            crate::cache_resolve::dependency_manifest_dir_for_crate(&root, "dependency", Some(&[])),
+            Some(selected.clone())
+        );
+        let cache = RustMetadataCache::new();
+        let hit = cache
+            .get_cached_or_extract_fast_with_registry_src_roots(&root, "dependency::Item", &[])?
+            .ok_or("public re-export metadata missing beside unnamed probe")?;
+        assert_eq!(hit.metadata.definition_path.as_deref(), Some("dependency::inner::Item"));
+    }
+    for bad in [
+        serde_json::json!({"display_name": "dependency"}),
+        serde_json::json!({"display_name": "dependency", "root_module": other.join("src/lib.rs")}),
+    ] {
+        let mut candidate = graph.clone();
+        candidate["crates"]
+            .as_array_mut()
+            .ok_or("fixture crates missing")?
+            .push(bad);
+        fs::write(&graph_path, serde_json::to_vec(&candidate)?)?;
+        assert!(crate::cache_resolve::dependency_manifest_dir_for_crate(&root, "dependency", Some(&[])).is_none());
+    }
+    Ok(())
+}
+
 /// Build minimal public Rust type metadata for cache round-trip tests.
 fn dummy_type_metadata(path: &str) -> RustItemMetadata {
     RustItemMetadata {

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::{BodyIrPropertyBindingInfo, FunctionBindingInfo, TypeChecker};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::SemanticSourceTargetKind;
 
@@ -446,26 +446,41 @@ pub(super) fn collect_properties(
     active_properties
         .into_iter()
         .map(|property| {
-            (
-                property.node.name.clone(),
-                PropertyInfo {
-                    identity: Some(checker.symbols.member_declaration_identity(
-                        &property.node.name,
-                        SemanticSourceTargetKind::Property,
-                        property.span,
-                    )),
-                    return_type: resolve_declared_type(
-                        checker,
-                        &property.node.return_type,
-                        &active_type_params,
-                        owner_name,
-                        owner_self_ty.as_ref(),
-                    ),
-                    visibility: property.node.visibility,
-                    owner: owner_name.map(str::to_string),
-                    has_body: property.node.body.is_some(),
+            let info = PropertyInfo {
+                identity: Some(checker.symbols.member_declaration_identity(
+                    &property.node.name,
+                    SemanticSourceTargetKind::Property,
+                    property.span,
+                )),
+                return_type: resolve_declared_type(
+                    checker,
+                    &property.node.return_type,
+                    &active_type_params,
+                    owner_name,
+                    owner_self_ty.as_ref(),
+                ),
+                visibility: property.node.visibility,
+                owner: owner_name.map(str::to_string),
+                has_body: property.node.body.is_some(),
+            };
+            checker.type_info.declarations.body_ir_property_bindings.insert(
+                (property.span.start, property.span.end),
+                BodyIrPropertyBindingInfo {
+                    callable: FunctionBindingInfo {
+                        is_async: false,
+                        params: Vec::new(),
+                        return_type: info.return_type.clone(),
+                        identity: info.identity.clone(),
+                    },
+                    receiver_type: owner_self_ty.clone().unwrap_or(ResolvedType::SelfType),
+                    owner_parameters: owner_type_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect(),
+                    receiver_identity: None,
                 },
-            )
+            );
+            (property.node.name.clone(), info)
         })
         .collect()
 }

@@ -1,0 +1,61 @@
+"""Explicit u8 overflow policies at the native runtime boundary."""
+
+
+pub def checked_add_u8(left: u8, right: u8) -> Option[u8]:
+    """Apply the native u8 checked add policy at the checked operand widths."""
+    return left.checked_add(right)
+
+
+pub def checked_sub_u8(left: u8, right: u8) -> Option[u8]:
+    """Apply the native u8 checked sub policy at the checked operand widths."""
+    return left.checked_sub(right)
+
+
+pub def checked_mul_u8(left: u8, right: u8) -> Option[u8]:
+    """Apply the native u8 checked mul policy at the checked operand widths."""
+    return left.checked_mul(right)
+
+
+pub def checked_pow_u8(left: u8, right: u32) -> Option[u8]:
+    """Apply the native u8 checked pow policy at the checked operand widths."""
+    return left.checked_pow(right)
+
+
+pub def wrapping_add_u8(left: u8, right: u8) -> u8:
+    """Apply the native u8 wrapping add policy at the checked operand widths."""
+    return left.wrapping_add(right)
+
+
+pub def wrapping_sub_u8(left: u8, right: u8) -> u8:
+    """Apply the native u8 wrapping sub policy at the checked operand widths."""
+    return left.wrapping_sub(right)
+
+
+pub def wrapping_mul_u8(left: u8, right: u8) -> u8:
+    """Apply the native u8 wrapping mul policy at the checked operand widths."""
+    return left.wrapping_mul(right)
+
+
+pub def wrapping_pow_u8(left: u8, right: u32) -> u8:
+    """Apply the native u8 wrapping pow policy at the checked operand widths."""
+    return left.wrapping_pow(right)
+
+
+pub def saturating_add_u8(left: u8, right: u8) -> u8:
+    """Apply the native u8 saturating add policy at the checked operand widths."""
+    return left.saturating_add(right)
+
+
+pub def saturating_sub_u8(left: u8, right: u8) -> u8:
+    """Apply the native u8 saturating sub policy at the checked operand widths."""
+    return left.saturating_sub(right)
+
+
+pub def saturating_mul_u8(left: u8, right: u8) -> u8:
+    """Apply the native u8 saturating mul policy at the checked operand widths."""
+    return left.saturating_mul(right)
+
+
+pub def saturating_pow_u8(left: u8, right: u32) -> u8:
+    """Apply the native u8 saturating pow policy at the checked operand widths."""
+    return left.saturating_pow(right)

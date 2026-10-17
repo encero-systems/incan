@@ -589,11 +589,16 @@ fn extern_alias(dependency_key: &str, target: &PreparedUnit) -> String {
 
 /// Share the actual native producer's alias contract with source-current physical edge validation.
 pub(crate) fn native_extern_alias(dependency_key: &str, loaf: &str, manifest: &toml::Value) -> String {
-    let package = loaf.rsplit('/').next().unwrap_or(loaf);
     let library = manifest
         .get("rust")
         .and_then(|rust| rust.get("name"))
         .and_then(toml::Value::as_str);
+    native_extern_alias_with_library_name(dependency_key, loaf, library)
+}
+
+/// Apply the producer's alias contract to an authenticated declaration or compiled library name.
+pub(crate) fn native_extern_alias_with_library_name(dependency_key: &str, loaf: &str, library: Option<&str>) -> String {
+    let package = loaf.rsplit('/').next().unwrap_or(loaf);
     let alias = match library {
         Some(library) if dependency_key == package => library,
         _ => dependency_key,

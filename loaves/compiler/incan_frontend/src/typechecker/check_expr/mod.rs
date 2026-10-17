@@ -25,6 +25,12 @@ use super::{IdentKind, TypeChecker};
 
 mod access;
 mod basics;
+mod body_ir_closure_parameters;
+mod body_ir_empty_lists;
+mod body_ir_nominals;
+mod body_ir_reexports;
+mod body_ir_string_slices;
+mod body_ir_values;
 mod builtin_method_args;
 mod calls;
 mod collections;
@@ -658,16 +664,22 @@ impl TypeChecker {
             Expr::Binary(left, op, right) => self.check_binary(left, *op, right, expr.span),
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
             Expr::Call(callee, type_args, args) => {
+                let errors_before = self.errors.len();
                 let ty = self.check_call(callee, type_args, args, expr.span);
+                self.retain_body_ir_reexport_call(expr, errors_before, &ty);
                 self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
                 ty
             }
             Expr::Index(base, index) => self.check_index(base, index, expr.span),
             Expr::Slice(base, slice) => self.check_slice(base, slice, expr.span),
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
             Expr::MethodCall(base, method, type_args, args) => {
+                let errors_before = self.errors.len();
                 let ty = self.check_method_call(base, method, type_args, args, expr.span);
                 self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
+                self.retain_body_ir_string_slice_call(expr, errors_before);
                 ty
             }
             Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
@@ -747,6 +759,7 @@ impl TypeChecker {
 
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
+        self.retain_body_ir_result_value(expr, &ty);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }
@@ -887,14 +900,20 @@ impl TypeChecker {
             }
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
+                let errors_before = self.errors.len();
                 let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty));
+                self.retain_body_ir_reexport_call(expr, errors_before, &ty);
                 self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
                 ty
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
+                let errors_before = self.errors.len();
                 let ty =
                     self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
                 self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+                self.retain_body_ir_empty_list_use(expr, errors_before);
+                self.retain_body_ir_string_slice_call(expr, errors_before);
                 ty
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
@@ -917,6 +936,8 @@ impl TypeChecker {
             self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
         }
         self.record_expr_type(expr.span, ty.clone());
+        self.retain_body_ir_result_value(expr, &ty);
+        self.retain_body_ir_value_destination(expr, &ty, expected);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }

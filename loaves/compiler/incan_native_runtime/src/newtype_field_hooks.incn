@@ -1,0 +1,17 @@
+"""Aggregate extraction for a constructor with exactly one supplied checked field."""
+
+from std.derives.string import Display
+from rust::incan_std_core::validation import ValidationErrorsBuilder
+from rust::incan_std_core::errors import raise
+
+
+pub def checked_newtype_field_result[T, E with Display](result: Result[T, E], target: str, field: str) -> T:
+    """Use the dependency-owned error formatter after the sole field hook; multi-field construction needs a collector."""
+    match result:
+        Ok(value) => return value
+        Err(error) =>
+            mut errors = ValidationErrorsBuilder.new(target)
+            errors.push_field_error(field, error)
+            errors.raise_if_any()
+            failure: str = "unreachable empty validation collector after a recorded field error"
+            raise(failure)

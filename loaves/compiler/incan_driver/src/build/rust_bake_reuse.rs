@@ -1,11 +1,12 @@
-//! Receipt-bound reuse of Rust caller binaries before checking or rebuilding their Incan caller facets.
+//! Receipt-bound reuse of Rust caller targets before checking or rebuilding their Incan caller facets.
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::bake::ProjectRustUnit;
 use crate::build::output_selection::{project_output_locator, remember_project_output};
 use crate::build::source_authority::digest_baked_project_source_authority;
 use crate::build::{OvenProjectBakeProfileReport, OvenProjectBakeReport};
@@ -123,32 +124,29 @@ pub(super) fn rust_bake_reuse_key(
 }
 
 /// Construct one lookup receipt whose intent distinguishes each unit and native profile.
-fn lookup_receipt(root: &Path, key: &RustBakeReuseKey, unit: &str, profile: &str) -> CliResult<OvenReceipt> {
+fn lookup_receipt(
+    root: &Path,
+    key: &RustBakeReuseKey,
+    unit: &ProjectRustUnit,
+    profile: &str,
+) -> CliResult<OvenReceipt> {
     receipt_generated_project(
-        &OvenGeneratedProjectRequest::new(root, unit, "1", &key.target, &key.toolchain, profile, Vec::new())
+        &OvenGeneratedProjectRequest::new(root, &unit.name, "1", &key.target, &key.toolchain, profile, Vec::new())
             .with_generated_source("project-manifest", root.join("loaf.toml"))
-            .with_build_unit_input("rust-caller-bake-inputs", &key.digest),
+            .with_build_unit_input("rust-caller-bake-inputs", &key.digest)
+            .with_build_unit_input("rust-caller-target", unit.report_target())
+            .with_build_unit_input("rust-caller-edition", &unit.edition),
     )
     .map_err(|error| CliError::failure(error.to_string()))
 }
 
-/// Validate a manifest unit name before using it as a caller-relative artifact path.
-fn output_paths(root: &Path, unit: &str, profile: &str) -> CliResult<(PathBuf, PathBuf)> {
-    let relative = crate::build::output_paths::validated_project_output_relative_path(unit, "Rust unit")?;
-    if relative.components().count() != 1 {
-        return Err(CliError::failure("Rust unit name must be a single path component"));
-    }
-    Ok((
-        root.join("target/rust").join(profile).join(unit),
-        root.join("target/rust/receipts").join(format!("{unit}-{profile}.json")),
-    ))
-}
-
-/// Replace a stale or read-only caller binary through a private staged file, preserving immutable aliases.
+/// Replace a stale or read-only caller output through a private staged file, preserving immutable aliases.
 ///
 /// Matching writable regular files remain untouched. Store permissions never make the caller projection read-only;
 /// the copy completes before publication, so an ordinary copy failure leaves the previous generation selected.
-fn materialize_rust_caller_output(stored: &Path, output: &Path) -> CliResult<()> {
+fn materialize_rust_caller_output(stored: &Path, output: &Path, library: bool) -> CliResult<()> {
+    #[cfg(not(unix))]
+    let _ = library;
     let expected = file_digest(stored)?;
     let current = fs::symlink_metadata(output).is_ok_and(|metadata| {
         metadata.is_file() && !metadata.file_type().is_symlink() && !metadata.permissions().readonly()
@@ -167,7 +165,7 @@ fn materialize_rust_caller_output(stored: &Path, output: &Path) -> CliResult<()>
     #[cfg(unix)]
     let permissions = {
         use std::os::unix::fs::PermissionsExt;
-        fs::Permissions::from_mode(0o755)
+        fs::Permissions::from_mode(if library { 0o644 } else { 0o755 })
     };
     #[cfg(not(unix))]
     let permissions = {
@@ -223,22 +221,22 @@ fn select_rust_bake_output(
 /// Select every unit/profile before restoring any caller output; incomplete sets are ordinary cache misses.
 pub(super) fn try_reuse_rust_bake(
     root: &Path,
-    units: &[(String, PathBuf)],
+    units: &[ProjectRustUnit],
     store: &OvenStore,
     key: &RustBakeReuseKey,
 ) -> CliResult<Option<OvenProjectBakeReport>> {
     let mut selected = Vec::new();
-    for (unit, _) in units {
+    for unit in units {
         for profile in crate::build::plan_authority::explicit_bake_profiles() {
             let lookup = lookup_receipt(root, key, unit, profile)?;
-            let (_, receipt_path) = output_paths(root, unit, profile)?;
+            let (_, receipt_path) = unit.output_paths(root, profile)?;
             let Some(candidate) = select_rust_bake_output(store, &receipt_path, &lookup)? else {
                 return Ok(None);
             };
             let payload: RustBakeOutput =
                 serde_json::from_slice(candidate.payload()).map_err(|error| CliError::failure(error.to_string()))?;
-            if payload.schema != "rust-caller-output/1"
-                || payload.unit != *unit
+            if payload.schema != "rust-caller-output/2"
+                || payload.unit != unit.report_target()
                 || payload.plan.is_empty()
                 || payload.receipt.verify_identity().is_err()
                 || payload.receipt.intent != lookup.intent
@@ -248,14 +246,14 @@ pub(super) fn try_reuse_rust_bake(
             candidate
                 .verify_materialized_files()
                 .map_err(|error| CliError::failure(error.to_string()))?;
-            selected.push((unit.clone(), profile, candidate, payload));
+            selected.push((unit, profile, candidate, payload));
         }
     }
     let mut profiles = Vec::new();
     for (unit, profile, candidate, payload) in selected {
-        let (output, receipt_path) = output_paths(root, &unit, profile)?;
-        let stored = candidate.artifact_root().join("binary");
-        materialize_rust_caller_output(&stored, &output)?;
+        let (output, receipt_path) = unit.output_paths(root, profile)?;
+        let stored = candidate.artifact_root().join("native-output");
+        materialize_rust_caller_output(&stored, &output, unit.library)?;
         let mut expected_receipt =
             serde_json::to_vec_pretty(&payload.receipt).map_err(|error| CliError::failure(error.to_string()))?;
         expected_receipt.push(b'\n');
@@ -264,7 +262,7 @@ pub(super) fn try_reuse_rust_bake(
         }
         remember_project_output(&receipt_path, &candidate.manifest().identity);
         profiles.push(OvenProjectBakeProfileReport {
-            project_target: format!("rust:{unit}"),
+            project_target: unit.report_target(),
             profile: profile.into(),
             target: key.target.clone(),
             toolchain: key.toolchain.clone(),
@@ -282,7 +280,7 @@ pub(super) fn try_reuse_rust_bake(
         outputs: Vec::new(),
         generated_sources: units
             .iter()
-            .map(|(unit, source)| (format!("rust:{unit}"), source.clone()))
+            .map(|unit| (unit.report_target(), unit.source.clone()))
             .collect(),
     }))
 }
@@ -292,13 +290,17 @@ pub(super) fn publish_rust_bake(
     store: &OvenStore,
     key: &RustBakeReuseKey,
     report: &OvenProjectBakeReport,
+    units: &[ProjectRustUnit],
 ) -> CliResult<()> {
     for profile in &report.profiles {
-        let unit = profile
-            .project_target
-            .strip_prefix("rust:")
-            .ok_or_else(|| CliError::failure("expected Rust target"))?;
-        let (output, _) = output_paths(&report.project, unit, &profile.profile)?;
+        let unit = units
+            .iter()
+            .find(|unit| unit.report_target() == profile.project_target)
+            .ok_or_else(|| CliError::failure("Rust bake report names an undeclared target"))?;
+        let (output, expected_receipt) = unit.output_paths(&report.project, &profile.profile)?;
+        if profile.receipt != expected_receipt {
+            return Err(CliError::failure("Rust bake report names a different target receipt"));
+        }
         let receipt: OvenReceipt =
             serde_json::from_slice(&fs::read(&profile.receipt).map_err(|error| CliError::failure(error.to_string()))?)
                 .map_err(|error| CliError::failure(error.to_string()))?;
@@ -312,8 +314,8 @@ pub(super) fn publish_rust_bake(
             return Err(CliError::failure("Rust bake output disagrees with its receipt"));
         }
         let payload = RustBakeOutput {
-            schema: "rust-caller-output/1".into(),
-            unit: unit.into(),
+            schema: "rust-caller-output/2".into(),
+            unit: unit.report_target(),
             plan: profile.plan_identity.clone(),
             receipt,
         };
@@ -325,7 +327,7 @@ pub(super) fn publish_rust_bake(
                 payload: serde_json::to_vec(&payload).map_err(|error| CliError::failure(error.to_string()))?,
                 materialized_files: vec![OvenArtifactMaterializedFile {
                     source_path: output,
-                    relative_path: "binary".into(),
+                    relative_path: "native-output".into(),
                 }],
                 materialized_directories: Vec::new(),
             })
@@ -342,6 +344,17 @@ mod tests {
     /// A portable lookup restores every profile in a fresh directory and rejects changed semantic inputs.
     #[test]
     fn rust_bake_reuse_restores_copied_project_and_refuses_changed_key() -> Result<(), Box<dyn std::error::Error>> {
+        prove_rust_bake_relocation(false)
+    }
+
+    /// A library caller retains the same relocation, exact locator and corruption guarantees as a binary.
+    #[test]
+    fn rust_library_bake_reuse_restores_and_refuses_changed_key() -> Result<(), Box<dyn std::error::Error>> {
+        prove_rust_bake_relocation(true)
+    }
+
+    /// Exercise shared Store reuse for both native target kinds without executing fabricated fixture bytes.
+    fn prove_rust_bake_relocation(library: bool) -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let original = root.path().join("original");
         let copied = root.path().join("copied");
@@ -358,15 +371,18 @@ mod tests {
             target: "aarch64-apple-darwin".into(),
             toolchain: "rustc test".into(),
         };
+        let mut unit = ProjectRustUnit::binary("caller".into(), copied.join("src/main.rs"));
+        unit.library = library;
+        let units = vec![unit];
         let mut profiles = Vec::new();
         for profile in crate::build::plan_authority::explicit_bake_profiles() {
-            let (output, receipt_path) = output_paths(&original, "caller", profile)?;
+            let (output, receipt_path) = units[0].output_paths(&original, profile)?;
             fs::create_dir_all(output.parent().ok_or("missing output parent")?)?;
             fs::write(output, format!("native {profile}"))?;
-            let receipt = lookup_receipt(&original, &key, "caller", profile)?;
+            let receipt = lookup_receipt(&original, &key, &units[0], profile)?;
             write_receipt(&receipt, &receipt_path)?;
             profiles.push(OvenProjectBakeProfileReport {
-                project_target: "rust:caller".into(),
+                project_target: units[0].report_target(),
                 profile: profile.into(),
                 target: key.target.clone(),
                 toolchain: key.toolchain.clone(),
@@ -384,14 +400,13 @@ mod tests {
             profiles,
             outputs: Vec::new(),
         };
-        publish_rust_bake(&store, &key, &report)?;
-        let units = vec![("caller".into(), copied.join("src/main.rs"))];
+        publish_rust_bake(&store, &key, &report, &units)?;
         let reused = try_reuse_rust_bake(&copied, &units, &store, &key)?.ok_or("portable reuse missed")?;
         assert_eq!(reused.profiles.len(), report.profiles.len());
         for profile in &reused.profiles {
             assert_eq!(profile.action, "reused");
             assert_eq!(
-                fs::read_to_string(output_paths(&copied, "caller", &profile.profile)?.0)?,
+                fs::read_to_string(units[0].output_paths(&copied, &profile.profile)?.0)?,
                 format!("native {}", profile.profile)
             );
         }
@@ -411,14 +426,14 @@ mod tests {
             serde_json::to_vec(&format!("sha256:{}", "f".repeat(64)))?,
         ] {
             for profile in &reused.profiles {
-                let (_, receipt) = output_paths(&copied, "caller", &profile.profile)?;
+                let (_, receipt) = units[0].output_paths(&copied, &profile.profile)?;
                 fs::write(receipt.with_extension("output.json"), &hint)?;
             }
             assert!(try_reuse_rust_bake(&copied, &units, &store, &key)?.is_some());
         }
 
         // An exact locator does not authorize edited output bytes, even with a restored modification time.
-        let (edited_output, _) = output_paths(&copied, "caller", "debug")?;
+        let (edited_output, _) = units[0].output_paths(&copied, "debug")?;
         let modified = fs::metadata(&edited_output)?.modified()?;
         let expected = fs::read(&edited_output)?;
         fs::write(&edited_output, vec![b'X'; expected.len()])?;

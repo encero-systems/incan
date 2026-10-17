@@ -1,9 +1,49 @@
-"""Static frozen string literals preserve the legacy carrier's lifetime and copy semantics."""
+"""Static frozen literals preserve the legacy carrier's lifetime and checked storage types."""
 
 from rust::incan_semantics_core::body_ir import Constant as RustConstant
-from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan, FrozenValue, Constant
+from models import model_type
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, text_literal
+
+
+pub def frozen_observation_type(ty: PlanType) -> bool:
+    """Recognize immutable static carriers whose read-only wrapper observations own no allocation."""
+    match ty:
+        PlanType.FrozenStr => return true
+        PlanType.FrozenBytes => return true
+        PlanType.FrozenCollection(_name, _elements) => return true
+        _ => return false
+
+
+pub def frozen_collection_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize a fresh checked static wrapper by value, without imposing Copy on its element type."""
+    match value:
+        RustConstant.FrozenAggregate(ty, elements) =>
+            storage = model_type(builder.nominals, ty)?
+            values = frozen_elements(builder, elements)?
+            output = temporary(builder, storage, span)
+            builder.emit(plan_assign(output, RvalueKind.FrozenCollection(storage, values), span))
+            return Ok(read_place(output, true, span))
+        _ => return Err("unsupported Body IR nonstatic frozen collection")
+
+
+def frozen_elements(builder: Builder, elements: &list[RustConstant]) -> Result[list[FrozenValue], str]:
+    """Translate retained literal trees without evaluating expressions or reading syntax."""
+    mut values: list[FrozenValue] = []
+    for element in elements:
+        match element:
+            RustConstant.Int(value) => values.append(FrozenValue.Scalar(Constant.Int(value)))
+            RustConstant.Bool(value) => values.append(FrozenValue.Scalar(Constant.Bool(value)))
+            RustConstant.Str(value) => values.append(FrozenValue.Scalar(Constant.Text(str(value))))
+            RustConstant.FrozenStr(value) => values.append(FrozenValue.Scalar(Constant.Text(str(value))))
+            RustConstant.Bytes(_bytes) => values.append(FrozenValue.Bytes(frozen_byte_data(element)?))
+            RustConstant.FrozenAggregate(ty, nested) =>
+                values.append(
+                    FrozenValue.Collection(model_type(builder.nominals, ty)?, frozen_elements(builder, nested)?),
+                )
+            _ => return Err("unsupported Body IR frozen collection element")
+    return Ok(values)
 
 
 pub def frozen_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
@@ -22,3 +62,22 @@ pub def literal_text(value: &RustConstant) -> Option[str]:
         RustConstant.Str(text) => return Some(str(text))
         RustConstant.FrozenStr(text) => return Some(str(text))
         _ => return None
+
+
+pub def frozen_bytes_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Retain exact static byte data for the SDK's copyable frozen wrapper, without allocating an owned byte vector."""
+    values = frozen_byte_data(value)?
+    output = temporary(builder, PlanType.FrozenBytes, span)
+    builder.emit(plan_assign(output, RvalueKind.FrozenBytes(values), span))
+    return Ok(read_place(output, false, span))
+
+
+def frozen_byte_data(value: &RustConstant) -> Result[list[int], str]:
+    """Read byte data at one explicitly typed foreign boundary, so nested enum patterns do not lose scalar item types."""
+    match value:
+        RustConstant.Bytes(bytes) =>
+            mut values: list[int] = []
+            for byte in bytes:
+                values.append(int(byte))
+            return Ok(values)
+        _ => return Err("unsupported Body IR nonstatic FrozenBytes literal")

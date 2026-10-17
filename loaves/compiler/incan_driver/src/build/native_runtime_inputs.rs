@@ -116,11 +116,7 @@ struct OrdinaryRoot<'a> {
 
 /// Encode declared roots identically for the Incan exchange and the final native consumer receipt.
 pub(crate) fn ordinary_roots_digest(roots: &BTreeMap<String, String>) -> CliResult<String> {
-    let roots = roots
-        .iter()
-        .map(|(alias, record_identity)| OrdinaryRoot { alias, record_identity })
-        .collect::<Vec<_>>();
-    Ok(oven_store::digest_bytes(&serde_json::to_vec(&roots).map_err(failure)?))
+    oven_rustc::native_loaf::native_loaf_roots_digest(roots).map_err(failure)
 }
 
 /// Physical identity exchange; no semantic, macro or namespace authority is conveyed by this payload.
@@ -542,8 +538,8 @@ fn compiler_engine_binding() -> CliResult<BoundCompilerEngine> {
 
 /// Select the compiler belonging to the command's toolchain before validating its receipt and output bytes.
 /// Oven uses its adjacent compiler, never an ambient test override. Native libtest hosts keep the runner's explicit
-/// compiler.
-fn compiler_for_native_runtime(executable: &Path, test_compiler: Option<PathBuf>) -> CliResult<PathBuf> {
+/// compiler. This is transport selection only; callers still verify compiler receipts before artifact admission.
+pub fn compiler_for_toolchain_command(executable: &Path, test_compiler: Option<PathBuf>) -> CliResult<PathBuf> {
     let name = executable.file_stem().and_then(|name| name.to_str());
     match name {
         Some("incan") => Ok(executable.to_path_buf()),
@@ -568,7 +564,7 @@ fn compiler_for_native_runtime(executable: &Path, test_compiler: Option<PathBuf>
 fn resolve_compiler_engine() -> CliResult<BoundCompilerEngine> {
     let executable = std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?;
     let compiler =
-        compiler_for_native_runtime(&executable, std::env::var_os("CARGO_BIN_EXE_incan").map(PathBuf::from))?;
+        compiler_for_toolchain_command(&executable, std::env::var_os("CARGO_BIN_EXE_incan").map(PathBuf::from))?;
     let receipt: oven_store::OvenReceipt = read_json(&PathBuf::from(format!("{}.receipt.json", compiler.display())))?;
     let identity = oven_store::receipt_identity(
         &receipt.project,
@@ -691,7 +687,7 @@ fn exchange(
 }
 
 /// Execute only the caller-owned request/response files through the already verified engine.
-fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, bytes: &[u8]) -> CliResult<T> {
+pub(super) fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, bytes: &[u8]) -> CliResult<T> {
     let directory = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
     let request_path = directory.path().join("request.json");
     let response_path = directory.path().join("response.json");

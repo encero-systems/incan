@@ -1,6 +1,11 @@
 """Class receiver frames and canonical source method admission."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, canonical_module_identity
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    CanonicalSymbolId,
+    SemanticSourceTargetKind,
+    canonical_module_identity,
+)
 from rust::incan_semantics_core::body_ir import (
     Body,
     LocalOrigin,
@@ -9,9 +14,11 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
     OwnershipFact,
     ArgumentElement as RustArgumentElement,
+    NamedCallableTarget,
 )
 from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
+from ranges import range_value_local
 from unions import native_source_type, collect_unions
 from symbols import symbol_component, type_component
 
@@ -21,7 +28,14 @@ pub def frame_type(
     local: &RustLocal,
     intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Turn only checker-retained receiver origins into borrowed native frame slots."""
+    """
+    Turn only checker-retained receiver origins into borrowed native frame slots.
+
+    A source enum's receiver is a shared reference; a `mut self` enum method would replace the value its caller holds,
+    which no enum receiver frame retains, so it refuses.
+    """
+    if range_value_local(local.ty, local.origin):
+        return Ok(PlanType.RangeValue)
     ty = native_source_type(
         module.nominal_declarations,
         module.enum_declarations,
@@ -36,7 +50,13 @@ pub def frame_type(
                     if mutable:
                         return Ok(PlanType.ModelMutRef(index, name))
                     return Ok(PlanType.ModelRef(index, name))
-                _ => return Err("unsupported Body IR nonnominal receiver")
+                PlanType.Enum(index, name) =>
+                    if mutable:
+                        return Err("unsupported Body IR mutable enum receiver")
+                    if index < len(module.enum_declarations):
+                        return Ok(PlanType.EnumRef(index, name))
+                _ => pass
+            return Err("unsupported Body IR nonnominal receiver")
         None => return Ok(ty)
 
 
@@ -50,6 +70,9 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
                         return module_function_symbol(owner, body)
                 None => pass
             if identity.kind == SemanticSourceTargetKind.Function:
+                # Overloads share their source name, so each takes its own declaration span as well.
+                if has_overloaded_name(module, body, identity):
+                    return f"__incan_overload_{body.span.start}{symbol_component(str(body.name))}"
                 return str(body.name)
         None => pass
     if len(body.locals) != 0:
@@ -60,7 +83,53 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
                     symbol += symbol_component(str(body.name))
                 return symbol
             None => pass
+    # Instances of one associated method share its span; the instantiated name tells their frames apart.
+    if len(body.type_parameters) != 0:
+        return f"__incan_body_{body.span.start}{symbol_component(str(body.name))}"
     return f"__incan_body_{body.span.start}"
+
+
+def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &CanonicalSymbolId) -> bool:
+    """Report whether another function of the same module declares this body's source name, as overloads do."""
+    owner = canonical_module_identity(identity)
+    for other in module.bodies:
+        if other.name != body.name or other.span.start == body.span.start:
+            continue
+        match other.canonical:
+            Some(other_identity) =>
+                same_module = canonical_module_identity(other_identity) == owner
+                if other_identity.kind == SemanticSourceTargetKind.Function and same_module:
+                    return true
+            None => pass
+    return false
+
+
+pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
+    """Close an associated call's owner parameters at its checked receiver's arguments, ahead of the call's own."""
+    mut arguments = static_owner_arguments(module, target)?
+    for argument in target.type_args:
+        arguments.append(argument.clone())
+    return Ok(arguments)
+
+
+def static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
+    """Read an explicitly instantiated receiver's arguments once its retained declaration confirms their arity."""
+    match target.receiver_type:
+        Some(ty) =>
+            match ty:
+                RustType.Generic(base=base, args=owner_arguments) =>
+                    for declaration in module.nominal_declarations:
+                        if declaration.canonical.declaration_name != str(base):
+                            continue
+                        if len(declaration.type_parameters) != len(owner_arguments):
+                            return Err(f"unsupported Body IR static owner type argument arity on {base}")
+                        mut arguments: list[RustType] = []
+                        for argument in owner_arguments:
+                            arguments.append(argument.clone())
+                        return Ok(arguments)
+                    return Err(f"unsupported Body IR static receiver {base}")
+                _ => return Ok([])
+        None => return Ok([])
 
 
 pub def body_module_identity(body: &Body) -> Result[str, str]:
@@ -158,11 +227,20 @@ def receiver_borrow(
                 OwnershipFact.Borrow => pass
                 OwnershipFact.MutBorrow => pass
                 _ => return Err("unsupported Body IR Method receiver ownership")
-            mut receiver = model_place(module.nominal_declarations, locals, read.place, span, module.enum_declarations, unions, intrinsics)?
+            mut receiver = model_place(
+                module.nominal_declarations,
+                locals,
+                read.place,
+                span,
+                module.enum_declarations,
+                unions,
+                intrinsics,
+            )?
             receiver.local += local_offset
             match receiver_type:
                 PlanType.ModelRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))
                 PlanType.ModelMutRef(_owner, _name) => return Ok((receiver_type, RvalueKind.MutBorrow(receiver)))
+                PlanType.EnumRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))
                 _ => return Err("invalid Body IR Method receiver type")
         _ => return Err("unsupported Body IR Method nonplace receiver")
 

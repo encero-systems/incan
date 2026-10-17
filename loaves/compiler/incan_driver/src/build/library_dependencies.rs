@@ -92,6 +92,7 @@ impl PreparedLibraryDependencies {
     /// An authored path selects its current publication; the captured digest then binds every later admission and
     /// verification to those exact bytes. This does not grant reserved namespaces or infer an installed-set reference.
     /// Source-free dependencies require their original selected handoff through `admit` instead.
+    #[cfg(test)]
     pub(crate) fn from_source_feature_plan(
         features: &PackageFeaturePlan,
         target: &str,
@@ -525,11 +526,12 @@ impl PreparedLibraryDependencies {
     ///
     /// Parent namespaces with admitted descendants are legal import containers. They grant no extra module owner;
     /// an unavailable exact module requires another selected ordinary package, never ambient source discovery.
+    /// Frontend-only namespaces have no runtime package or source owner and retain their registry-defined handling.
     pub fn validate_module_usage(&self, modules: &BTreeSet<Vec<String>>) -> CliResult<()> {
-        for module in modules
-            .iter()
-            .filter(|module| module.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT))
-        {
+        for module in modules.iter().filter(|module| {
+            module.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                && !stdlib::is_typechecker_only_stdlib(module)
+        }) {
             if !matches!(
                 self.provider_plan.resolve_module(module),
                 ProviderModuleResolution::Active(_)

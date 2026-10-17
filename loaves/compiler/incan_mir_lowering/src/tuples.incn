@@ -41,6 +41,8 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Ref(_inner) => return "Ref"
         RustType.RefMut(_inner) => return "RefMut"
         RustType.RustInteropPath(_path) => return "RustInteropPath"
+        RustType.NativeBuiltin(_builtin) => return str(ty)
+        RustType.Unsupported(description) => return f"Unsupported[{description}]"
         RustType.Never => return "Never"
         RustType.SelfType => return "SelfType"
         RustType.Infer => return "Infer"
@@ -72,6 +74,7 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
                     Primitive.Float => types.append(TupleElement.Float)
                     Primitive.Bool => types.append(TupleElement.Bool)
                     Primitive.Str => types.append(TupleElement.String)
+                    Primitive.FrozenStr => types.append(TupleElement.FrozenStr)
                     Primitive.Unit => types.append(TupleElement.Unit)
                     _ => return Err(f"unsupported Body IR tuple element type {type_name(element)}")
             _ => return Err(f"unsupported Body IR tuple element type {type_name(element)}")
@@ -79,16 +82,19 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
 
 
 pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, str]:
-    """Admit one resolved tuple element: a scalar, owned text, an owned list, an enum carrier, or a nested tuple."""
+    """Retain a resolved tuple element's scalar, text, collection, nominal, function-pointer or nested tuple layout."""
     match ty:
         PlanType.Int => return Ok(TupleElement.Int)
         PlanType.Float => return Ok(TupleElement.Float)
         PlanType.Bool => return Ok(TupleElement.Bool)
         PlanType.Unit => return Ok(TupleElement.Unit)
         PlanType.String => return Ok(TupleElement.String)
+        PlanType.FrozenStr => return Ok(TupleElement.FrozenStr)
         PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
+        PlanType.Model(owner, name) => return Ok(TupleElement.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
         PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
+        PlanType.FunctionPointer(signature) => return Ok(TupleElement.FunctionPointer(signature))
         _ => return Err(f"unsupported Body IR tuple element type {type_name(source)}")
 
 
@@ -96,6 +102,7 @@ pub def is_tuple_type(ty: PlanType) -> bool:
     """Identify tuple locals without guessing their layout from a source expression."""
     match ty:
         PlanType.Tuple(_elements) => return true
+        PlanType.TupleMutRef(_elements) => return true
         _ => return false
 
 
@@ -146,27 +153,31 @@ pub def tuple_debug_formatted(ty: PlanType) -> bool:
 
 
 pub def carrier_element(element: TupleElement) -> bool:
-    """Report whether a tuple element is an owned list, an enum carrier or a nested tuple rather than a scalar or text."""
+    """Report whether a tuple element carries a list, nominal value or nested tuple requiring its retained layout."""
     match element:
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(_elements) => return true
         _ => return false
 
 
 pub def owned_carrier(ty: PlanType) -> bool:
-    """Report whether a value is an owned list or an enum carrier, the element kinds a tuple holds beyond scalars and text."""
+    """Report whether a list, nominal or dependency-owned validation error keeps its enclosing tuple initialized."""
     match ty:
+        PlanType.ValidationError => return true
         PlanType.List(_leaf, _depth) => return true
+        PlanType.Model(_owner, _name) => return true
         PlanType.Enum(_owner, _name) => return true
         _ => return false
 
 
 pub def element_has_owner(element: TupleElement) -> bool:
-    """Report whether a tuple element may own storage: text, a list, an enum carrier, or a tuple holding one."""
+    """Report whether a tuple element may own storage; function-pointer fields remain Copy values."""
     match element:
         TupleElement.String => return true
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(elements) =>
             for nested in elements:
@@ -179,14 +190,23 @@ pub def element_has_owner(element: TupleElement) -> bool:
 pub def tuple_fields(value: Place, ty: PlanType, span: SourceSpan) -> Result[list[Place], str]:
     """Project the admitted tuple layout in canonical element order, after any field path that reached the tuple."""
     mut fields: list[Place] = []
+    mut owner = value
+    mut layout = ty
     match ty:
+        PlanType.TupleMutRef(elements) =>
+            layout = PlanType.Tuple(elements)
+            if value.projection != Projection.Whole:
+                return Err("unsupported Body IR projected tuple reference")
+            owner = Place(local=value.local, projection=Projection.Deref(layout), span=span)
+        _ => pass
+    match layout:
         PlanType.Tuple(elements) =>
             for slot in range(len(elements)):
                 element = tuple_element_type(elements[slot])
-                if value.projection == Projection.Whole:
-                    fields.append(Place(local=value.local, projection=Projection.Field(slot, element), span=span))
+                if owner.projection == Projection.Whole:
+                    fields.append(Place(local=owner.local, projection=Projection.Field(slot, element), span=span))
                 else:
-                    fields.append(appended_field(value, FieldProjection(slot=slot, ty=element), span)?)
+                    fields.append(appended_field(owner, FieldProjection(slot=slot, ty=element), span)?)
         _ => pass
     return Ok(fields)
 

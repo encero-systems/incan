@@ -345,7 +345,6 @@ fn integer_power() -> CaseResult {
 
 /// Runs the fixture `len_of_an_int_is_refused`.
 #[test]
-#[ignore = "pending: the checker accepts `len(1)` instead of refusing it"]
 fn len_of_an_int_is_refused() -> CaseResult {
     assert_fixture_holds(AREA, "len_of_an_int_is_refused")
 }

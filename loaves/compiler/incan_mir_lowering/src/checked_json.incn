@@ -1,0 +1,175 @@
+"""Checked serde reconstruction rooted in exact source hook bodies and authored Incan error mapping."""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    SemanticSourceTargetKind,
+    generic,
+)
+from pub::incan_mir_plan import (
+    Function,
+    Parameter,
+    PlanType,
+    EnumDeclaration,
+    ExternalFunction,
+    CalleeKind,
+    SourceSpan,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import place as plan_place
+from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned
+from string_input import owned_string_frame
+from classes import function_name
+from type_parameters import Instance
+from lowering import instantiated_external_call
+from checked_json_contracts import checked_deserialize_name, checked_owner_arguments, selected_deserialize_hook
+from nominal_instances import NominalInstance
+from options import retain_body_carriers, retain_carrier, result_layout
+from unions import native_source_type, collect_unions
+from decls import library_item
+
+
+pub def lower_checked_deserialize(
+    module: &BodyIrModule,
+    instances: list[NominalInstance],
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[tuple[list[Function], list[ExternalFunction], list[Instance]], str]:
+    """Close every selected checked ingress before tuple Deserialize can be admitted for a concrete source owner."""
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    mut pending: list[Instance] = []
+    for owner_index in range(len(module.nominal_declarations)):
+        declaration = module.nominal_declarations[owner_index]
+        if declaration.canonical.kind != SemanticSourceTargetKind.Newtype or library_item(declaration) != "":
+            continue
+        name = checked_deserialize_name(declaration)?
+        if name == "":
+            continue
+        arguments = checked_owner_arguments(declaration, instances)?
+        hook, selected = selected_deserialize_hook(module, declaration, arguments)?
+        retain_body_carriers(module, intrinsics, selected, file)?
+        owner = PlanType.Model(owner_index, str(declaration.name))
+        success: RustType = checked_success(selected)?
+        output: RustType = generic("Result", [success, RustType.Primitive(Primitive.Str)])
+        retain_carrier(module, intrinsics, output, file)?
+        hook_result = native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            collect_unions(module),
+            selected.return_type,
+            intrinsics,
+        )?
+        result = native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            collect_unions(module),
+            output,
+            intrinsics,
+        )?
+        span = SourceSpan(file=file, line=1, column=1)
+        function, runtime, scheduled = checked_json_function(
+            module,
+            hook,
+            selected,
+            arguments,
+            name,
+            owner,
+            hook_result,
+            result,
+            intrinsics,
+            span,
+        )?
+        functions.append(function)
+        externals.extend(runtime)
+        pending.extend(scheduled)
+    return Ok((functions, externals, pending))
+
+
+def checked_success(hook: &Body) -> Result[RustType, str]:
+    """Read the already validated standard Result success without reconstructing a nominal identity by spelling."""
+    match hook.return_type:
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "Result" and len(arguments) == 2:
+                return Ok(arguments[0].clone())
+        _ => pass
+    return Err("unsupported Body IR checked Deserialize hook Result")
+
+
+def checked_json_function(
+    module: &BodyIrModule,
+    hook: &Body,
+    selected: &Body,
+    arguments: list[RustType],
+    name: str,
+    owner: PlanType,
+    hook_result: PlanType,
+    result: PlanType,
+    intrinsics: list[EnumDeclaration],
+    span: SourceSpan,
+) -> Result[tuple[Function, list[ExternalFunction], list[Instance]], str]:
+    """Invoke the previously validated source hook once, then return its actual displayed error through owned Result."""
+    mut builder = owned_string_frame(module, name, result, intrinsics, span)
+    checked_layout = checked_result_layout(builder, hook_result)?
+    result_layout_value = checked_result_layout(builder, result)?
+    if checked_layout.variants[0].fields != [owner] or result_layout_value.variants[0].fields != [owner] or result_layout_value.variants[1].fields != [PlanType.String]:
+        return Err("unsupported Body IR checked Deserialize Result owner disagreement")
+    error = checked_layout.variants[1].fields[0]
+    if error != PlanType.ValidationError:
+        return Err("unsupported Body IR checked Deserialize error carrier")
+    checked = temporary(builder, hook_result, span)
+    terminate_call(
+        builder,
+        CalleeKind.Planned(function_name(module, selected)),
+        [read_place(plan_place(1, span), true, span)],
+        checked,
+        span,
+    )
+    builder.owned.append(checked.local)
+    instantiated_external_call(
+        builder,
+        "incan_native_runtime::checked_json_result",
+        [owner, error],
+        [hook_result],
+        result,
+        [read_place(checked, true, span)],
+        plan_place(0, span),
+        span,
+    )?
+    forget_owned(builder, 0)
+    drop_all_owned(builder, span)
+    builder.finish(TerminatorKind.Return, span)
+    function = Function(
+        name=name,
+        parameters=[Parameter(name="value", ty=PlanType.String, span=span)],
+        return_type=result,
+        locals=builder.locals,
+        blocks=builder.blocks,
+        span=span,
+    )
+    mut pending: list[Instance] = []
+    if len(hook.type_parameters) != 0:
+        pending.append(
+            Instance(body=hook.clone(), arguments=arguments, owned_callable_slots=[], original_callable=false),
+        )
+    return Ok((function, builder.externals, pending))
+
+
+def checked_result_layout(builder: Builder, ty: PlanType) -> Result[EnumDeclaration, str]:
+    """Check bounds and the full standard Result shape before reading checked ingress payloads."""
+    match ty:
+        PlanType.Enum(owner, name) =>
+            if owner < len(builder.enums) or owner - len(builder.enums) >= len(builder.intrinsics):
+                return Err("unsupported Body IR checked Deserialize Result index")
+            if builder.intrinsics[owner - len(builder.enums)].name != name:
+                return Err("unsupported Body IR checked Deserialize Result name")
+        _ => return Err("unsupported Body IR checked Deserialize Result carrier")
+    _owner, declaration = result_layout(builder, ty)?
+    if len(declaration.variants) != 2:
+        return Err("unsupported Body IR checked Deserialize Result variants")
+    if declaration.variants[0].name != "Ok" or declaration.variants[1].name != "Err" or len(
+        declaration.variants[0].fields,
+    ) != 1 or len(declaration.variants[1].fields) != 1:
+        return Err("unsupported Body IR checked Deserialize Result payloads")
+    return Ok(declaration)

@@ -148,3 +148,40 @@ pub type LifetimeAlias<'a> = &'a mut Thing;
     );
     Ok(())
 }
+
+/// A trait its crate does not export is no fact about a type: source cannot name it, and recording it would make a
+/// re-exported type's facts depend on which crate's surface was queried, as `std::io::SizeHint` does for
+/// `std::time::Duration` against `core::time::Duration`.
+#[test]
+fn private_trait_implementations_are_not_type_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::create_dir_all(tmp.path().join("src"))?;
+    fs::write(
+        tmp.path().join("loaf.toml"),
+        "[project]\nname = \"private_traits\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"private_traits\"\nedition = \"2021\"\ntype = \"lib\"\n",
+    )?;
+    fs::write(tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER), b"direct\n")?;
+    fs::write(
+        tmp.path().join("src/lib.rs"),
+        "pub struct Thing;\npub trait Public {}\nimpl Public for Thing {}\ntrait Hidden {}\nimpl Hidden for Thing {}\n",
+    )?;
+    let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+    let metadata = extract_rust_item(&workspace, "private_traits::Thing")?;
+    let RustItemKind::Type(info) = metadata.kind else {
+        return Err(std::io::Error::other("expected Thing type metadata").into());
+    };
+    let paths: Vec<_> = info
+        .implemented_traits
+        .iter()
+        .map(|trait_| trait_.path.as_str())
+        .collect();
+    assert!(
+        paths.contains(&"private_traits::Public"),
+        "public trait missing: {paths:?}"
+    );
+    assert!(
+        !paths.contains(&"private_traits::Hidden"),
+        "private trait recorded: {paths:?}"
+    );
+    Ok(())
+}

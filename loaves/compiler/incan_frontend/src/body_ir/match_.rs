@@ -64,8 +64,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
-        let scrutinee_ty = self.resolve_ty(subject.span);
         let scrutinee_place = self.lower_expr_to_place(subject, scope, out);
+        let scrutinee_ty = if scrutinee_place.projection.is_empty() {
+            scrutinee_place
+                .local_id()
+                .and_then(|local| self.locals.get(local.index()))
+                .map_or_else(|| self.resolve_ty(subject.span), |local| local.ty.clone())
+        } else {
+            self.resolve_ty(subject.span)
+        };
+        let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
         // Always read as `Borrow` -- see `bir::Rvalue::Match::scrutinee`'s own docs for why the overall scrutinee
         // read must not risk an unconditional move while individual pattern bindings below compute their own,
         // more precise facts against projected places rooted at this same scrutinee.
@@ -84,6 +92,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // ---- Lower the pattern, declaring one fresh arm-scoped local per distinct bound name ----
             let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
             let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
+            let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
             let pattern = self.lower_match_pattern(
                 &arm.node.pattern,
                 &scrutinee_ty,
@@ -93,6 +102,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &mut seen,
                 &mut saved_bindings,
             );
+            self.in_place_pattern = enclosing_in_place;
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
             // ----
@@ -106,7 +116,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let (body_stmts, result) = match &arm.node.body {
                 ast::MatchBody::Expr(e) => {
                     let mut stmts = Vec::new();
-                    let result = self.lower_expr_to_operand(e, arm_scope, &mut stmts);
+                    let result = self.lower_boundary_value(e, None, arm_scope, &mut stmts);
                     (stmts, result)
                 }
                 ast::MatchBody::Block(block_stmts) => {
@@ -155,6 +165,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Return whether the `match`, `if let` or `while let` over the scrutinee at `span` matches it in place.
+    ///
+    /// The checker records a scrutinee when an arm changes a part of a writable place through a name the pattern
+    /// binds (#1561); legacy then matches through `&mut` so the change lands in the place. A union-typed scrutinee
+    /// keeps the ordinary match, because its arms bind narrowed members rather than parts of the place.
+    pub(super) fn matches_in_place(&self, span: ast::Span, scrutinee_ty: &IncanType) -> bool {
+        !matches!(scrutinee_ty, IncanType::Generic { base, .. } if base == "Union")
+            && self.type_info.match_scrutinee_is_changed_in_place(span)
+    }
+
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
     ///
     /// Shared by the `if let` and `while let` desugarings (#1161), which both need the same three steps: test a
@@ -163,12 +183,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// it may carry a guard, both of which change what the arm produces.
     ///
     /// Restoring is what makes `if let`'s scoping honest: the pattern's names belong to the `then` branch only, and
-    /// an `else` branch lowered afterwards must not see them.
+    /// an `else` branch lowered afterwards must not see them. `in_place` is [`Self::matches_in_place`] for the
+    /// construct's scrutinee; it applies to the pattern only, never to patterns nested in the body.
+    #[allow(clippy::too_many_arguments)] // The scrutinee's type, place and in-place fact travel together into one arm.
     pub(super) fn lower_statement_pattern_arm(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
         scrutinee_ty: &IncanType,
         scrutinee_place: &bir::Place,
+        in_place: bool,
         scope: bir::ScopeId,
         body: &[ast::Spanned<ast::Statement>],
         span: HirSourceSpan,
@@ -176,6 +199,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let arm_scope = self.new_scope(Some(scope), span);
         let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
         let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
+        let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
         let lowered_pattern = self.lower_match_pattern(
             pattern,
             scrutinee_ty,
@@ -185,6 +209,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &mut seen,
             &mut saved_bindings,
         );
+        self.in_place_pattern = enclosing_in_place;
 
         let mut body_stmts = Vec::new();
         self.lower_block_into(body, arm_scope, &mut body_stmts);
@@ -239,9 +264,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// form of any of those -- is read back here rather than re-derived; this is the same fact `for` patterns
     /// carry (#1125), and it is what a binding's [`bir::OwnershipFact`] follows from. `expected_ty` is the threaded
     /// fallback for a node the checker recorded no type for: [`Self::lower_match`]'s scrutinee type for the root,
-    /// [`tuple_element_types`] for `Tuple` elements, and [`result_type_parts`] for an intrinsic `Result` payload.
-    /// A generic constructor's sub-patterns thread [`IncanType::Unknown`], because lowering has no payload
-    /// resolution of its own and must not grow one that could disagree with the checker's.
+    /// [`tuple_element_types`] for `Tuple` elements, [`result_type_parts`] for an intrinsic `Result` payload, and the
+    /// retained intrinsic `Option` carrier for `Some`'s single payload.
+    /// Caller-open parts of a checked binding type take the retained scrutinee's matching payload type; fixed node
+    /// types and declaration-owned parameters remain authoritative. A generic constructor's sub-patterns thread
+    /// [`IncanType::Unknown`], because lowering has no payload resolution of its own and must not grow one that
+    /// could disagree with the checker's.
     #[allow(clippy::too_many_arguments)] // Carries one recursive pattern-lowering context; see the rustdoc above.
     pub(super) fn lower_match_pattern(
         &mut self,
@@ -254,13 +282,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> bir::Pattern {
         let span = hir_span(pattern.span);
+        let literal_storage_type = expected_ty;
 
-        // ---- The checker's recorded type for this node outranks the threaded expectation ----
+        // ---- Retain the checked node type, closing only caller-open parts from the retained scrutinee ----
         let checked_ty = self.resolve_ty(pattern.span);
+        let settled_ty = self.fill_open_type_parts(&checked_ty, expected_ty);
         let expected_ty = if matches!(checked_ty, IncanType::Unknown) {
             expected_ty
         } else {
-            &checked_ty
+            &settled_ty
         };
 
         match &pattern.node {
@@ -283,13 +313,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         local
                     }
                 };
-                let (fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
+                let (mut fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
+                // An arm changes this part of the scrutinee through the name, so the name borrows the part itself.
+                if self.in_place_pattern
+                    && !place.projection.is_empty()
+                    && !expected_ty.abi_v0_facts().ownership.is_trivially_copy()
+                {
+                    fact = bir::OwnershipFact::MutBorrow;
+                }
                 bir::Pattern::Var(bir::PatternBinding { local, fact, last_use })
             }
             // `match_pattern_is_supported` has already ruled out byte-string patterns before
             // `Self::lower_match` calls this method. Literal expression lowering is total; this is a separate
             // pattern-vocabulary boundary, retained until Body IR models byte-pattern matching semantics.
-            ast::Pattern::Literal(lit) => bir::Pattern::Literal(lower_literal(lit)),
+            ast::Pattern::Literal(lit) => bir::Pattern::Literal(lower_checked_literal(lit, literal_storage_type)),
             ast::Pattern::Tuple(items) => {
                 let element_types = tuple_element_types(expected_ty, items.len());
                 let fields = items
@@ -306,197 +343,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .collect();
                 bir::Pattern::Tuple(fields)
             }
-            ast::Pattern::Constructor(name, args) => {
-                // Pattern checking records the selected union member at the constructor span. Keep that fact separate
-                // from generic enum spelling.
-                let target_ty = self.resolve_ty(name.span);
-                let subject_ty = self.resolve_ty(pattern.span);
-                if matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union")
-                    && !matches!(target_ty, IncanType::Unknown)
-                    && args.iter().all(|arg| matches!(arg, ast::PatternArg::Positional(_)))
-                {
-                    let mut fields = Vec::new();
-                    for arg in args {
-                        if let ast::PatternArg::Positional(payload) = arg {
-                            let mut payload_place = place.clone();
-                            payload_place
-                                .projection
-                                .push(bir::PlaceElem::UnionMember { ty: target_ty.clone() });
-                            fields.push(self.lower_match_pattern(
-                                payload,
-                                &target_ty,
-                                &payload_place,
-                                arm_scope,
-                                reads,
-                                seen,
-                                saved_bindings,
-                            ));
-                        }
-                    }
-                    return bir::Pattern::UnionMember { ty: target_ty, fields };
-                }
-                // Retain the checked pattern target from local or imported declaration context. Source aliases
-                // never participate in declaration or layout equality. The direct profile accepts only canonical
-                // named fields of a plain model; every other structurally lowered constructor remains the
-                // name-only fallback below and is visibly refused by replacement execution.
-                if let Some(declaration) = self
-                    .local_nominal_declarations
-                    .values()
-                    .find(|declaration| self.type_info.resolved_identity(name.span) == Some(&declaration.canonical))
-                    && args.iter().all(|arg| matches!(arg, ast::PatternArg::Named(_, _)))
-                    && self.type_info.resolved_identity(name.span) == Some(&declaration.canonical)
-                {
-                    let fields = args
-                        .iter()
-                        .filter_map(|arg| match arg {
-                            ast::PatternArg::Named(field, pat) => {
-                                let identity = self.type_info.resolved_identity(field.span).cloned();
-                                let name = canonical_pattern_field(declaration, identity.as_ref(), &field.node);
-                                let mut field_place = place.clone();
-                                field_place
-                                    .projection
-                                    .push(bir::PlaceElem::field(name.clone(), identity));
-                                Some((
-                                    name,
-                                    self.lower_match_pattern(
-                                        pat,
-                                        &IncanType::Unknown,
-                                        &field_place,
-                                        arm_scope,
-                                        reads,
-                                        seen,
-                                        saved_bindings,
-                                    ),
-                                ))
-                            }
-                            ast::PatternArg::Positional(_) => None,
-                        })
-                        .collect();
-                    return bir::Pattern::Nominal {
-                        target: bir::NominalPatternTarget {
-                            direct_declaration_id: declaration.direct_declaration_id.clone(),
-                            canonical: declaration.canonical.clone(),
-                            name: declaration.name.clone(),
-                        },
-                        fields,
-                    };
-                }
-
-                if args.is_empty()
-                    && let Some(declaration) = self.local_fieldless_enum_declarations.values().find(|declaration| {
-                        declaration
-                            .variants
-                            .iter()
-                            .any(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
-                    })
-                    && let Some(variant) = declaration
-                        .variants
-                        .iter()
-                        .find(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
-                {
-                    return bir::Pattern::FieldlessEnumVariant(bir::FieldlessEnumVariantTarget {
-                        enum_declaration_id: declaration.direct_declaration_id.clone(),
-                        enum_canonical: declaration.canonical.clone(),
-                        variant_declaration_id: variant.direct_declaration_id.clone(),
-                        variant_canonical: variant.canonical.clone(),
-                        enum_name: declaration.name.clone(),
-                        variant_name: variant.name.clone(),
-                    });
-                }
-
-                if let Some(variant) = result_variant_kind(&name.node)
-                    && let Some((ok_type, error_type)) = result_type_parts(expected_ty)
-                    && args.len() == 1
-                    && let [ast::PatternArg::Positional(payload)] = args.as_slice()
-                {
-                    let payload_type = match variant {
-                        bir::ResultVariantKind::Ok => ok_type,
-                        bir::ResultVariantKind::Err => error_type,
-                    };
-                    // The payload is read from inside the scrutinee, as for every other positional constructor, so its
-                    // binding's fact follows from that projected place rather than from the whole scrutinee: an
-                    // untracked temporary scrutinee (a call result) would otherwise yield `Unknown`.
-                    let mut payload_place = place.clone();
-                    payload_place
-                        .projection
-                        .push(bir::PlaceElem::structural_field("0".to_string()));
-                    let lowered_payload = self.lower_match_pattern(
-                        payload,
-                        payload_type,
-                        &payload_place,
-                        arm_scope,
-                        reads,
-                        seen,
-                        saved_bindings,
-                    );
-                    return bir::Pattern::Result {
-                        variant,
-                        fields: vec![lowered_payload],
-                    };
-                }
-
-                // Mirrors the existing Rust-emission backend's own `lower_pattern` (non-union-aware) mapping
-                // exactly: a mix of named and positional arguments (unusual, likely non-representative source)
-                // still lowers every sub-pattern's own bindings for side effects, but only the named fields survive
-                // into the constructed `Pattern` once `has_named` is known.
-                let mut named_fields = Vec::new();
-                let mut positional_fields = Vec::new();
-                let mut has_named = false;
-                let mut positional_index = 0usize;
-                for arg in args {
-                    match arg {
-                        ast::PatternArg::Named(field, pat) => {
-                            has_named = true;
-                            let mut field_place = place.clone();
-                            field_place.projection.push(bir::PlaceElem::field(
-                                field.node.clone(),
-                                self.type_info.resolved_identity(field.span).cloned(),
-                            ));
-                            let lowered = self.lower_match_pattern(
-                                pat,
-                                &IncanType::Unknown,
-                                &field_place,
-                                arm_scope,
-                                reads,
-                                seen,
-                                saved_bindings,
-                            );
-                            named_fields.push((field.node.clone(), lowered));
-                        }
-                        ast::PatternArg::Positional(pat) => {
-                            let mut field_place = place.clone();
-                            field_place
-                                .projection
-                                .push(bir::PlaceElem::structural_field(positional_index.to_string()));
-                            positional_index += 1;
-                            let lowered = self.lower_match_pattern(
-                                pat,
-                                &IncanType::Unknown,
-                                &field_place,
-                                arm_scope,
-                                reads,
-                                seen,
-                                saved_bindings,
-                            );
-                            positional_fields.push(lowered);
-                        }
-                    }
-                }
-                if has_named {
-                    bir::Pattern::Struct {
-                        canonical: self.type_info.resolved_identity(name.span).cloned(),
-                        name: name.node.clone(),
-                        fields: named_fields,
-                    }
-                } else {
-                    bir::Pattern::Enum {
-                        canonical: self.type_info.resolved_identity(name.span).cloned(),
-                        name: String::new(),
-                        variant: name.node.clone(),
-                        fields: positional_fields,
-                    }
-                }
-            }
+            ast::Pattern::Constructor(name, args) => self.lower_constructor_pattern(
+                pattern,
+                name,
+                args,
+                expected_ty,
+                place,
+                arm_scope,
+                reads,
+                seen,
+                saved_bindings,
+            ),
             ast::Pattern::Group(inner) => {
                 self.lower_match_pattern(inner, expected_ty, place, arm_scope, reads, seen, saved_bindings)
             }
@@ -510,6 +367,409 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Pattern::Or(alternatives)
             }
         }
+    }
+
+    /// Dispatch a checked constructor through its carrier, nominal and enum identity boundaries.
+    #[allow(clippy::too_many_arguments)] // Carries one pattern and its recursive lowering context.
+    fn lower_constructor_pattern(
+        &mut self,
+        pattern: &ast::Spanned<ast::Pattern>,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        expected_ty: &IncanType,
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> bir::Pattern {
+        if let Some(value) =
+            self.lower_union_pattern(pattern, name, args, place, arm_scope, reads, seen, saved_bindings)
+        {
+            return value;
+        }
+        if let Some(value) = self.lower_nominal_pattern(name, args, place, arm_scope, reads, seen, saved_bindings) {
+            return value;
+        }
+        if let Some(value) = self.lower_fieldless_enum_pattern(name, args) {
+            return value;
+        }
+        if let Some(value) =
+            self.lower_intrinsic_result_pattern(name, args, expected_ty, place, arm_scope, reads, seen, saved_bindings)
+        {
+            return value;
+        }
+        if let Some(value) =
+            self.lower_intrinsic_option_pattern(name, args, expected_ty, place, arm_scope, reads, seen, saved_bindings)
+        {
+            return value;
+        }
+        self.lower_generic_constructor_pattern(name, args, expected_ty, place, arm_scope, reads, seen, saved_bindings)
+    }
+
+    /// Retain the checked union member and optional carrier before projecting payload bindings.
+    #[allow(clippy::too_many_arguments)] // Carries the recursive pattern context without reconstructing bindings.
+    fn lower_union_pattern(
+        &mut self,
+        pattern: &ast::Spanned<ast::Pattern>,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> Option<bir::Pattern> {
+        // Pattern checking records the selected union member at the constructor span. Keep that fact separate
+        // from generic enum spelling.
+        let mut target_ty = self.resolve_ty(name.span);
+        if self.retain_nominal_carriers {
+            super::nominal_carriers::retain_checked_site_type(&mut target_ty, name.span, self.type_info);
+        }
+        let subject_ty = self.resolve_ty(pattern.span);
+        // A member pattern over an optional union (`int | str | None`) selects `Some` first, then the member
+        // of its union payload.
+        let optional_union = is_optional_union(&subject_ty);
+        if (matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union") || optional_union)
+            && !matches!(target_ty, IncanType::Unknown)
+            && args.iter().all(|arg| matches!(arg, ast::PatternArg::Positional(_)))
+        {
+            let mut union_place = place.clone();
+            if optional_union {
+                union_place
+                    .projection
+                    .push(bir::PlaceElem::structural_field("0".to_string()));
+            }
+            let mut fields = Vec::new();
+            for arg in args {
+                if let ast::PatternArg::Positional(payload) = arg {
+                    let mut payload_place = union_place.clone();
+                    payload_place
+                        .projection
+                        .push(bir::PlaceElem::UnionMember { ty: target_ty.clone() });
+                    fields.push(self.lower_match_pattern(
+                        payload,
+                        &target_ty,
+                        &payload_place,
+                        arm_scope,
+                        reads,
+                        seen,
+                        saved_bindings,
+                    ));
+                }
+            }
+            let member = bir::Pattern::UnionMember { ty: target_ty, fields };
+            if optional_union {
+                return Some(bir::Pattern::Enum {
+                    canonical: Some(crate::symbols::canonical_builtin_constructor_identity(
+                        constructors::ConstructorId::Some,
+                    )),
+                    name: String::new(),
+                    variant: constructors::as_str(constructors::ConstructorId::Some).to_string(),
+                    fields: vec![member],
+                });
+            }
+            return Some(member);
+        }
+        None
+    }
+
+    /// Retain canonical named fields of a checked nominal; aliases never establish layout equality.
+    #[allow(clippy::too_many_arguments)] // Carries the recursive pattern context without reconstructing bindings.
+    fn lower_nominal_pattern(
+        &mut self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> Option<bir::Pattern> {
+        // Retain the checked pattern target from local or imported declaration context. Source aliases
+        // never participate in declaration or layout equality. The direct profile accepts only canonical
+        // named fields of a plain model; every other structurally lowered constructor remains the
+        // name-only fallback below and is visibly refused by replacement execution.
+        let selected = self.type_info.resolved_identity(name.span).or_else(|| {
+            self.type_info
+                .expressions
+                .body_ir_nominal_pattern_owners
+                .get(&(name.span.start, name.span.end))
+        });
+        if let Some(declaration) = self
+            .local_nominal_declarations
+            .values()
+            .find(|declaration| selected == Some(&declaration.canonical))
+            && args.iter().all(|arg| matches!(arg, ast::PatternArg::Named(_, _)))
+            && selected == Some(&declaration.canonical)
+        {
+            let fields = args
+                .iter()
+                .filter_map(|arg| match arg {
+                    ast::PatternArg::Named(field, pat) => {
+                        let identity = self.type_info.resolved_identity(field.span).cloned();
+                        let name = canonical_pattern_field(declaration, identity.as_ref(), &field.node);
+                        let mut field_place = place.clone();
+                        field_place
+                            .projection
+                            .push(bir::PlaceElem::field(name.clone(), identity));
+                        Some((
+                            name,
+                            self.lower_match_pattern(
+                                pat,
+                                &IncanType::Unknown,
+                                &field_place,
+                                arm_scope,
+                                reads,
+                                seen,
+                                saved_bindings,
+                            ),
+                        ))
+                    }
+                    ast::PatternArg::Positional(_) => None,
+                })
+                .collect();
+            return Some(bir::Pattern::Nominal {
+                target: bir::NominalPatternTarget {
+                    direct_declaration_id: declaration.direct_declaration_id.clone(),
+                    canonical: declaration.canonical.clone(),
+                    name: declaration.name.clone(),
+                },
+                fields,
+            });
+        }
+        None
+    }
+
+    /// Select a retained unit variant by its checked canonical declaration identity.
+    #[allow(clippy::too_many_arguments)] // Carries the recursive pattern context without reconstructing bindings.
+    fn lower_fieldless_enum_pattern(
+        &self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+    ) -> Option<bir::Pattern> {
+        if args.is_empty()
+            && let Some(declaration) = self.local_fieldless_enum_declarations.values().find(|declaration| {
+                declaration
+                    .variants
+                    .iter()
+                    .any(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
+            })
+            && let Some(variant) = declaration
+                .variants
+                .iter()
+                .find(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
+        {
+            return Some(bir::Pattern::FieldlessEnumVariant(bir::FieldlessEnumVariantTarget {
+                enum_declaration_id: declaration.direct_declaration_id.clone(),
+                enum_canonical: declaration.canonical.clone(),
+                variant_declaration_id: variant.direct_declaration_id.clone(),
+                variant_canonical: variant.canonical.clone(),
+                enum_name: declaration.name.clone(),
+                variant_name: variant.name.clone(),
+            }));
+        }
+        None
+    }
+
+    /// Thread exact checked Result payload types through nested patterns without changing legacy inference.
+    #[allow(clippy::too_many_arguments)] // Carries the recursive pattern context without reconstructing bindings.
+    fn lower_intrinsic_result_pattern(
+        &mut self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        expected_ty: &IncanType,
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> Option<bir::Pattern> {
+        if let Some(variant) = result_variant_kind(&name.node)
+            && let Some((ok_type, error_type)) = result_type_parts(expected_ty)
+            && args.len() == 1
+            && let [ast::PatternArg::Positional(payload)] = args
+        {
+            let payload_type = match variant {
+                bir::ResultVariantKind::Ok => ok_type,
+                bir::ResultVariantKind::Err => error_type,
+            };
+            // The payload is read from inside the scrutinee, as for every other positional constructor, so its
+            // binding's fact follows from that projected place rather than from the whole scrutinee: an
+            // untracked temporary scrutinee (a call result) would otherwise yield `Unknown`.
+            let mut payload_place = place.clone();
+            payload_place
+                .projection
+                .push(bir::PlaceElem::structural_field("0".to_string()));
+            let lowered_payload = self.lower_match_pattern(
+                payload,
+                payload_type,
+                &payload_place,
+                arm_scope,
+                reads,
+                seen,
+                saved_bindings,
+            );
+            return Some(bir::Pattern::Result {
+                variant,
+                fields: vec![lowered_payload],
+            });
+        }
+        None
+    }
+
+    /// Preserve checked enum payload facts and leave unresolved layouts visibly unproven.
+    #[allow(clippy::too_many_arguments)] // Carries the recursive pattern context without reconstructing bindings.
+    fn lower_generic_constructor_pattern(
+        &mut self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        expected_ty: &IncanType,
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> bir::Pattern {
+        // Mirrors the existing Rust-emission backend's own `lower_pattern` (non-union-aware) mapping
+        // exactly: a mix of named and positional arguments (unusual, likely non-representative source)
+        // still lowers every sub-pattern's own bindings for side effects, but only the named fields survive
+        // into the constructed `Pattern` once `has_named` is known.
+        let mut named_fields = Vec::new();
+        let mut positional_fields = Vec::new();
+        let mut has_named = false;
+        let mut positional_index = 0usize;
+        let variant_identity = self
+            .type_info
+            .resolved_identity(name.span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+            .cloned()
+            .or_else(|| runtime_enums::pattern_identity(self.local_enum_declarations, &name.node, expected_ty));
+        let payload_types = variant_identity
+            .as_ref()
+            .and_then(|identity| self.enum_payload_types(identity, expected_ty));
+        for arg in args {
+            match arg {
+                ast::PatternArg::Named(field, pat) => {
+                    has_named = true;
+                    let mut field_place = place.clone();
+                    field_place.projection.push(bir::PlaceElem::field(
+                        field.node.clone(),
+                        self.type_info.resolved_identity(field.span).cloned(),
+                    ));
+                    let lowered = self.lower_match_pattern(
+                        pat,
+                        &IncanType::Unknown,
+                        &field_place,
+                        arm_scope,
+                        reads,
+                        seen,
+                        saved_bindings,
+                    );
+                    named_fields.push((field.node.clone(), lowered));
+                }
+                ast::PatternArg::Positional(pat) => {
+                    let mut field_place = place.clone();
+                    field_place
+                        .projection
+                        .push(bir::PlaceElem::structural_field(positional_index.to_string()));
+                    if let Some(ty) = payload_types.as_ref().and_then(|fields| fields.get(positional_index)) {
+                        self.settled_types.insert((pat.span.start, pat.span.end), ty.clone());
+                    }
+                    positional_index += 1;
+                    let mut lowered = self.lower_match_pattern(
+                        pat,
+                        &IncanType::Unknown,
+                        &field_place,
+                        arm_scope,
+                        reads,
+                        seen,
+                        saved_bindings,
+                    );
+                    if variant_identity.as_ref().is_some_and(|identity| {
+                        matches!(&identity.origin,
+                        incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                        if library == "incan_std_async" && module_path == &["time"])
+                    }) && let bir::Pattern::Var(binding) = &mut lowered
+                    {
+                        self.native_enum_payload_bindings.insert(binding.local);
+                        if binding.fact == bir::OwnershipFact::Borrow {
+                            binding.fact = bir::OwnershipFact::Move;
+                        }
+                    }
+                    positional_fields.push(lowered);
+                }
+            }
+        }
+        if has_named {
+            bir::Pattern::Struct {
+                canonical: self.type_info.resolved_identity(name.span).cloned(),
+                name: name.node.clone(),
+                fields: named_fields,
+            }
+        } else {
+            bir::Pattern::Enum {
+                canonical: variant_identity.clone(),
+                name: String::new(),
+                variant: variant_identity
+                    .as_ref()
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                    .map_or_else(|| name.node.clone(), |identity| identity.declaration_name.clone()),
+                fields: positional_fields,
+            }
+        }
+    }
+
+    /// Retain the compiler-owned Some payload from an already-checked Option carrier when legacy left the pattern open.
+    /// A conflicting checked constructor or a differently shaped carrier never acquires intrinsic meaning by spelling.
+    #[allow(clippy::too_many_arguments)] // Shares the recursive pattern context with lower_match_pattern.
+    fn lower_intrinsic_option_pattern(
+        &mut self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        expected_ty: &IncanType,
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> Option<bir::Pattern> {
+        if constructors::from_str(&name.node) != Some(ConstructorId::Some) {
+            return None;
+        }
+        let [payload_type] = collection_member_types(expected_ty, CollectionTypeId::Option)? else {
+            return None;
+        };
+        let [ast::PatternArg::Positional(payload)] = args else {
+            return None;
+        };
+        let canonical = crate::symbols::canonical_builtin_constructor_identity(ConstructorId::Some);
+        if self
+            .type_info
+            .resolved_identity(name.span)
+            .is_some_and(|checked| checked != &canonical)
+        {
+            return None;
+        }
+        let mut payload_place = place.clone();
+        payload_place
+            .projection
+            .push(bir::PlaceElem::structural_field("0".to_string()));
+        let field = self.lower_match_pattern(
+            payload,
+            payload_type,
+            &payload_place,
+            arm_scope,
+            reads,
+            seen,
+            saved_bindings,
+        );
+        Some(bir::Pattern::Enum {
+            canonical: Some(canonical),
+            name: "Option".to_string(),
+            variant: constructors::as_str(ConstructorId::Some).to_string(),
+            fields: vec![field],
+        })
     }
 }
 

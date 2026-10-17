@@ -1,0 +1,172 @@
+"""
+Derived `Default` construction for `Type.default()` and `T.default()` under a `Default` bound.
+
+Legacy implements a derived Default by building the value: each field takes its declared default, and a field that
+declares none takes its type's own default. The direct route builds that same value at the call, so no native struct
+derives Default and no field default is ever replaced by a zero value.
+"""
+
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    CallableParamDefault,
+    NamedCallableTarget,
+    Place as RustPlace,
+    nominal_carrier_key,
+)
+from pub::incan_mir_plan import Constant, Operand, OperandKind, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, literal, track_rvalue_moves, drop_owned, forget_owned, place_type
+from type_parameters import substitute
+from unions import native_source_type
+from defaults import evaluate_default
+from text_plan import owned_literal
+from options import none_operand
+from builtins import list_call
+from lists import list_element
+from collections import is_collection, collection_call
+from lowering import scalar_place
+
+
+pub def is_derived_default(target: &NamedCallableTarget) -> bool:
+    """Recognize the std `Default` trait's `default` in source and compiled SDK identities, never a same-name method."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "default":
+                return false
+            match identity.origin:
+                SymbolOrigin.Module(path) =>
+                    return len(path) == 3 and path[0] == "std" and path[1] == "derives" and path[2] == "copying"
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    return library == "incan_stdlib_core" and len(path) == 2 and path[0] == "derives" and path[1] == "copying"
+                _ => return false
+        None => return false
+
+
+pub def lower_derived_default(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &NamedCallableTarget,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Build the receiver model's derived default into the call's destination, replacing any value held there."""
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR derived Default with type arguments")
+    ty = receiver_type(builder, target, destination, span)?
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if place_type(builder.locals, output) != ty:
+                return Err("unsupported Body IR derived Default receiver and result mismatch")
+        None => pass
+    value = default_value(module, builder, ty, span)?
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            drop_owned(builder, output.local, span)
+            match value.kind:
+                OperandKind.Move(result) => forget_owned(builder, result.local)
+                _ => pass
+            builder.emit(plan_assign(output, RvalueKind.Use(value), span))
+            builder.owned.append(output.local)
+        None => pass
+    return Ok(None)
+
+
+def receiver_type(
+    builder: Builder,
+    target: &NamedCallableTarget,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Close a checked receiver; an associated generic owner takes arguments only from its exact canonical result layout."""
+    match target.receiver_type:
+        Some(ty) =>
+            closed: RustType = substitute(ty, builder.type_parameters, builder.type_arguments)?
+            match closed:
+                RustType.Named(name) =>
+                    match destination:
+                        Some(place) =>
+                            output = scalar_place(builder, place, span)?
+                            result = place_type(builder.locals, output)
+                            match result:
+                                PlanType.Model(owner, _name) =>
+                                    declaration = builder.nominals[owner]
+                                    if declaration.type_parameter_count != 0:
+                                        match nominal_carrier_key(declaration.canonical):
+                                            Some(key) =>
+                                                if str(key) == str(name):
+                                                    return Ok(result)
+                                            None => pass
+                                _ => pass
+                        None => pass
+                _ => pass
+            return native_source_type(builder.nominals, builder.enums, builder.unions, closed, builder.intrinsics)
+        None => return Err("unsupported Body IR derived Default without a receiver type")
+
+
+def default_value(module: &BodyIrModule, mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+    """Build a model that derives Default from its fields; the result is a new owner the caller moves."""
+    match ty:
+        PlanType.Model(owner, _name) =>
+            if "Default" not in builder.nominals[owner].derives:
+                return Err("unsupported Body IR Default of a model that does not derive it")
+            operands = default_fields(module, builder, owner, span)?
+            result = temporary(builder, ty, span)
+            operation = RvalueKind.Model(owner, operands)
+            track_rvalue_moves(builder, operation)
+            builder.emit(plan_assign(result, operation, span))
+            builder.owned.append(result.local)
+            return Ok(read_place(result, true, span))
+        _ => return Err("unsupported Body IR derived Default receiver")
+
+
+def default_fields(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Evaluate each field in declaration order: its declared default, or its type's default when it declares none."""
+    declaration = builder.nominals[owner]
+    mut operands: list[Operand] = []
+    for slot in range(len(declaration.fields)):
+        ty = native_source_type(
+            builder.nominals,
+            builder.enums,
+            builder.unions,
+            declaration.field_types[slot],
+            builder.intrinsics,
+        )?
+        match declaration.field_default_body:
+            Some(body) =>
+                match body.params[slot].default:
+                    CallableParamDefault.Source(_computation) =>
+                        operands.append(evaluate_default(module, builder, body, slot, ty, span, true)?)
+                        continue
+                    _ => pass
+            None => pass
+        operands.append(type_default(module, builder, ty, span)?)
+    return Ok(operands)
+
+
+def type_default(module: &BodyIrModule, mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+    """The value a field type's own Default gives: zero, empty text or collection, None, or a nested derived default."""
+    match ty:
+        PlanType.Int => return Ok(literal(Constant.Int(0), span))
+        PlanType.Float => return Ok(literal(Constant.Float(0.0), span))
+        PlanType.Bool => return Ok(literal(Constant.Bool(false), span))
+        PlanType.String => return Ok(read_place(owned_literal(builder, "", span), true, span))
+        PlanType.List(leaf, depth) =>
+            output = temporary(builder, ty, span)
+            list_call(builder, "empty_list", list_element(leaf, depth), [], ty, [], output, span)
+            return Ok(read_place(output, true, span))
+        PlanType.Model(_owner, _name) => return default_value(module, builder, ty, span)
+        PlanType.Enum(_owner, _name) => return none_operand(builder, ty, span)
+        _ => pass
+    if is_collection(ty):
+        output = temporary(builder, ty, span)
+        collection_call(builder, ty, "empty", [], ty, [], output, span)?
+        return Ok(read_place(output, true, span))
+    return Err("unsupported Body IR derived Default field type")

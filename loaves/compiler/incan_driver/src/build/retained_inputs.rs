@@ -34,6 +34,11 @@ pub(super) struct RetainedProject {
 }
 
 impl RetainedProject {
+    /// Borrow the same observed workspace topology used to compute effective member declarations.
+    pub(super) fn workspace(&self) -> Option<&WorkspaceGraph> {
+        self.workspace.as_ref()
+    }
+
     /// Borrow the original member declaration for policies that precede effective dependency inheritance.
     pub(super) fn authored_manifest(&self) -> &ProjectManifest {
         self.workspace
@@ -74,6 +79,7 @@ struct RetainedSession {
     /// Canonical discovery warnings replayed for every check request, including retained sessions.
     check_warnings: Vec<String>,
     check_report: Option<super::check::CompletedCheck>,
+    lock_preparation: Option<super::lock_preparation::CompletedLockPreparation>,
     executable: Option<RetainedExecutableDependencies>,
     native_admission: Option<ObservedNativeAdmission>,
     test_generation: Arc<super::test_generation::RetainedTestGeneration>,
@@ -97,6 +103,9 @@ pub(super) struct ExecutableDependencyInputs {
     key: ExecutableDependencyRequest,
     provider: Arc<ProviderPlan>,
     pub(super) context: Option<Arc<NativeSdkCommandContext>>,
+    /// Original ordinary producer requests and semantic owners survive retained plan reuse.
+    pub(super) ordinary: Option<Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
+    pub(super) ordinary_session: Option<Arc<CompilationSession>>,
     pub(super) build_inputs: BTreeMap<String, String>,
     observations: ModelInputs,
     plan_observed: bool,
@@ -118,6 +127,8 @@ impl ExecutableDependencyInputs {
             key,
             provider,
             context,
+            ordinary: None,
+            ordinary_session: None,
             build_inputs,
             observations,
             plan_observed: false,
@@ -131,6 +142,12 @@ impl ExecutableDependencyInputs {
             && Arc::ptr_eq(&self.provider, provider)
             && self.observations.supports_retention()
             && self.observations.current()
+            && self.ordinary.as_ref().is_none_or(|native| native.verify().is_ok())
+            && self.ordinary_session.as_ref().is_none_or(|session| {
+                session
+                    .admitted_library_dependencies()
+                    .is_some_and(|dependencies| dependencies.verify().is_ok())
+            })
     }
 
     /// Require observation of a replacement selection instead of treating the previous plan as still retained.
@@ -420,6 +437,7 @@ impl RetainedProjectInputs {
                 session: Arc::clone(&session),
                 check_warnings,
                 check_report: None,
+                lock_preparation: None,
                 executable: None,
                 native_admission: None,
                 test_generation: Arc::default(),
@@ -440,6 +458,20 @@ impl RetainedProjectInputs {
             .sessions
             .get_mut(&SessionPurpose::CheckMetadata)?;
         Arc::ptr_eq(&retained.session, session).then_some(&mut retained.check_report)
+    }
+
+    /// Retain lock publication only in the original reconciled artifact session, never in a second project cache.
+    pub(super) fn lock_preparation(
+        &mut self,
+        root: &Path,
+        session: &Arc<CompilationSession>,
+    ) -> Option<&mut Option<super::lock_preparation::CompletedLockPreparation>> {
+        let retained = self
+            .projects
+            .get_mut(root)?
+            .sessions
+            .get_mut(&SessionPurpose::Artifacts)?;
+        Arc::ptr_eq(&retained.session, session).then_some(&mut retained.lock_preparation)
     }
 
     /// Discard a session whose input generation changed during preparation, including failed reconciliation.
@@ -484,6 +516,9 @@ impl RetainedProjectInputs {
         root: &Path,
         session: &Arc<CompilationSession>,
     ) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
+        if session.has_admitted_library_dependencies() {
+            return Ok(None);
+        }
         let Some(retained) = self
             .projects
             .get_mut(root)

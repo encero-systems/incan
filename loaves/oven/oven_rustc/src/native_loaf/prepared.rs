@@ -298,6 +298,8 @@ struct CurrentCandidate {
     domain: String,
     features: Vec<String>,
     proc_macro: bool,
+    /// Current declared Rust library name; package identity and physical authority remain separate.
+    native_library_name: Option<String>,
     origin: NativeLoafOrigin,
 }
 
@@ -803,11 +805,16 @@ impl Current {
             let selected = current_inputs::select_local_dependency(&demand, &record.source.domain, &bindings)
                 .map_err(NativeLoafError::Failed)?;
             let candidate = &candidates[selected];
+            let alias = crate::sdk_closure::native_extern_alias_with_library_name(
+                &demand.dependency_key,
+                &candidate.loaf,
+                candidate.native_library_name.as_deref(),
+            );
             let matched = record
                 .dependencies
                 .iter()
                 .filter(|edge| {
-                    edge.alias == demand.alias
+                    edge.alias == alias
                         && edge.source.loaf == candidate.loaf
                         && edge.source.version == candidate.version
                         && edge.source.domain == candidate.domain
@@ -874,6 +881,11 @@ impl Current {
                         .and_then(toml::Value::as_str)
                         == Some("proc-macro"),
                     origin: NativeLoafOrigin::Registry,
+                    native_library_name: manifest
+                        .get("rust")
+                        .and_then(|rust| rust.get("name"))
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string),
                 });
             }
             for (facet, manifest) in self.graph.facets.iter().zip(&declarations.manifests) {
@@ -901,6 +913,11 @@ impl Current {
                         .and_then(toml::Value::as_str)
                         == Some("proc-macro"),
                     origin: NativeLoafOrigin::Local,
+                    native_library_name: manifest
+                        .get("rust")
+                        .and_then(|rust| rust.get("name"))
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string),
                 });
             }
             declarations.candidates.insert(loaf.to_string(), candidates);

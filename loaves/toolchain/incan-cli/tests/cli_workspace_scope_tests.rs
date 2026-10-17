@@ -1021,3 +1021,61 @@ path = "../vendor/foo-v2"
     assert!(leaf.join("target/lib/oven/release/libleaf.rlib").is_file());
     Ok(())
 }
+
+/// The shared owner retains the whole workspace lock but refuses changed sibling sources and test inputs.
+#[cfg(unix)]
+#[test]
+fn workspace_owner_retains_all_members_and_invalidates_sibling_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let root = fs::canonicalize(temporary.path())?;
+    fs::write(root.join("loaf.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n")?;
+    let source = "def main() -> None:\n    println(42)\n";
+    for name in ["a", "b"] {
+        let member = root.join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("loaf.toml"),
+            format!("[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n"),
+        )?;
+        fs::write(member.join("src/main.incn"), source)?;
+    }
+    let mut request = incan_driver::build::lock_preparation::LockPreparationRequest {
+        directory: root.join("a"),
+        entry: None,
+        features: incan_provider::FeatureSelection::default(),
+        sdk_profile: None,
+        cargo_features: oven_model::lock::CargoFeatureSelection::default(),
+    };
+    let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
+    // ---- Initial semantic publication followed by a stable owner generation ----
+    owner.prepare_lock(&request)?;
+    owner.prepare_lock(&request)?;
+    incan_driver::lock::reset_project_lock_collection_metrics();
+    owner.prepare_lock(&request)?;
+    assert_eq!(incan_driver::lock::project_lock_collection_counts(), (0, 0));
+    request.directory = root.join("b");
+    owner.prepare_lock(&request)?;
+    assert_eq!(incan_driver::lock::project_lock_collection_counts(), (0, 0));
+    request.directory = root.join("a");
+    let original = fs::read(root.join("oven.lock"))?;
+    assert!(!root.join("a/oven.lock").exists() && !root.join("b/oven.lock").exists());
+    // ---- A sibling remains part of the command's authority ----
+    fs::write(root.join("b/src/main.incn"), "this is invalid Incan syntax !!!\n")?;
+    assert!(owner.prepare_lock(&request).is_err());
+    assert_eq!(fs::read(root.join("oven.lock"))?, original);
+    fs::write(root.join("b/src/main.incn"), source)?;
+    owner.prepare_lock(&request)?;
+    incan_driver::lock::reset_project_lock_collection_metrics();
+    owner.prepare_lock(&request)?;
+    assert_eq!(incan_driver::lock::project_lock_collection_counts(), (0, 0));
+    // ---- Test discovery outside src cannot be hidden by unchanged source graph hashes ----
+    fs::write(root.join("b/test_new.incn"), "this is invalid Incan syntax !!!\n")?;
+    assert!(owner.prepare_lock(&request).is_err());
+    assert_eq!(fs::read(root.join("oven.lock"))?, original);
+    fs::remove_file(root.join("b/test_new.incn"))?;
+    owner.prepare_lock(&request)?;
+    incan_driver::lock::reset_project_lock_collection_metrics();
+    owner.prepare_lock(&request)?;
+    assert_eq!(incan_driver::lock::project_lock_collection_counts(), (0, 0));
+    Ok(())
+}

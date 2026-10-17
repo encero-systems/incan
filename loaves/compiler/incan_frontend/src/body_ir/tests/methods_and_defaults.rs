@@ -4,6 +4,745 @@
 
 use super::*;
 
+/// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
+#[test]
+fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n",
+        &["classmethods"],
+    )?;
+    let body = body_named(&module, "make")?;
+    assert_eq!(body.type_parameters, ["T"]);
+    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Box"));
+    Ok(())
+}
+
+/// Generated reflection retains its checked typed/string mode and excludes type-private slots, not all private slots.
+#[test]
+fn reflection_retains_checked_mode_and_field_policy() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Local:\n    name: str\n\npub model Visible:\n    pub name: str\n    secret: int\n\ndef generic[T](value: T) -> None:\n    println(value.__field_value__(\"name\"))\n    value.__field_items__()\n\ndef main() -> None:\n    local = Local(name=\"Ada\")\n    local.__field_value__(\"name\")\n    local.__field_items__()\n",
+        &["reflection_policy"],
+    )?;
+    let json = serde_json::to_value(&module)?;
+    for (name, expected) in [("Local", vec![0]), ("Visible", vec![0])] {
+        let declaration = json["nominal_declarations"]
+            .as_array()
+            .ok_or("missing declarations")?
+            .iter()
+            .find(|value| value["name"] == name)
+            .ok_or("missing nominal")?;
+        assert_eq!(declaration["reflection_fields"], serde_json::json!(expected));
+    }
+    for (body, expected) in [
+        ("main", ["TypedValue", "TypedItems"]),
+        ("generic", ["StringValue", "StringItems"]),
+    ] {
+        let value = serde_json::to_string(body_named(&module, body)?)?;
+        for mode in expected {
+            assert!(value.contains(mode), "missing {mode} in {value}");
+        }
+    }
+    Ok(())
+}
+
+/// Bare generic adoptions retain both their own and inherited canonical implementation slots.
+#[test]
+fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[Element]:\n    def read(self) -> Element: ...\n\ntrait Ordered[Item] with Read[Item]:\n    def same(self) -> Self: ...\n\nmodel Cell[Payload] with Ordered:\n    value: Payload\n    def read(self) -> Payload:\n        return self.value\n    def same(self) -> Self:\n        return self\n\ndef main() -> None:\n    println(Cell(value=7).read())\n",
+        &["m", "bare_supertrait_slots"],
+    )?;
+    let owner = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Cell")
+        .ok_or("missing Cell")?;
+    for name in ["read", "same"] {
+        let body = body_named(&module, name)?;
+        assert!(
+            module
+                .trait_implementations
+                .iter()
+                .any(|slot| slot.owner == owner.canonical
+                    && slot.method.declaration_name == name
+                    && Some(&slot.implementation) == body.canonical.as_ref()),
+            "missing {name} slot: {:#?}",
+            module.trait_implementations
+        );
+    }
+    Ok(())
+}
+
+/// A repeated consuming read clones the incoming carrier and leaves its enclosing scope responsible for its drop.
+#[test]
+fn consuming_carrier_in_a_loop_keeps_the_incoming_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  value: Option[str] = Some(\"kept\")\n  for index in range(2):\n    println(value.unwrap_or(\"fallback\"))\n",
+        &["app", "repeated_carrier"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let local = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("value"))
+        .ok_or("missing carrier local")?;
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing repeated body")?;
+    let read = loop_body
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } if read.place.local_id() == Some(local.id) => Some(read),
+            _ => None,
+        })
+        .ok_or("missing carrier snapshot")?;
+    assert_eq!(read.fact, bir::OwnershipFact::Clone, "{}", body.render_snapshot());
+    assert!(!read.last_use, "a repeated read is not the final dynamic use");
+    assert!(
+        body.block.stmts.iter().any(|statement| matches!(
+            statement.kind, bir::StatementKind::Drop { local: dropped } if dropped == local.id
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A consuming carrier field is materialized before a default can mutate its owner in place.
+#[test]
+fn carrier_receiver_snapshot_precedes_default_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Holder:\n  value: Option[str]\n\ndef reset(mut holder: Holder) -> str:\n  holder.value = Some(\"new\")\n  return \"fallback\"\n\ndef choose(mut holder: Holder) -> str:\n  return holder.value.unwrap_or(reset(holder))\n",
+        &["app", "carrier_order"],
+    )?;
+    let body = body_named(&module, "choose")?;
+    let snapshot = body
+        .block
+        .stmts
+        .iter()
+        .enumerate()
+        .find_map(|(index, statement)| {
+            let bir::StatementKind::Assign { place, rvalue } = &statement.kind else {
+                return None;
+            };
+            let bir::Rvalue::Use(bir::Operand::Place(read)) = rvalue else {
+                return None;
+            };
+            (read.fact == bir::OwnershipFact::Clone).then_some((index, place))
+        })
+        .ok_or_else(|| format!("missing carrier snapshot: {}", body.render_snapshot()))?;
+    let default = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| {
+            matches!(
+                &statement.kind,
+                bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. }
+                    if target.name == "reset"
+            )
+        })
+        .ok_or("missing default call")?;
+    assert!(snapshot.0 < default, "{}", body.render_snapshot());
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "unwrap_or" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => Some(&read.place),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing consuming receiver")?;
+    assert_eq!(receiver, snapshot.1);
+    Ok(())
+}
+
+/// Static defaults are evaluated before reading lock-guarded storage, so Body IR preserves the global receiver.
+#[test]
+fn static_carrier_receiver_remains_after_default_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static VALUE: Option[str] = Some(\"old\")\n\ndef reset() -> str:\n  VALUE = Some(\"new\")\n  return \"fallback\"\n\ndef main() -> str:\n  return VALUE.unwrap_or(reset())\n",
+        &["app", "static_carrier_order"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "unwrap_or" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => read.place.global(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing delayed global receiver")?;
+    assert_eq!(receiver.identity.declaration_name, "VALUE");
+    Ok(())
+}
+
+/// Empty model field defaults retain the declaration's checked element type in their deferred frame.
+#[test]
+fn empty_model_field_defaults_retain_declared_elements() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/records.incn"
+        ),
+        &["records"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("Record declaration missing")?;
+    let frame = declaration
+        .field_default_body
+        .as_ref()
+        .ok_or("Record default frame missing")?;
+    for local in &frame.locals {
+        assert!(
+            !matches!(&local.ty, IncanType::Generic { args, .. } if args.iter().any(|ty|
+                matches!(ty, IncanType::Unknown | IncanType::Infer))),
+            "{}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// A concrete witness reached through a call also closes a later hidden trait input's retained argument binding.
+#[test]
+fn trait_value_returns_close_later_hidden_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Root:\n  pass\n\ntrait Mid with Root:\n  pass\n\nmodel Item with Mid:\n  number: int\n\ndef make() -> Mid:\n  return Item(number=3)\n\ndef upcast(value: Mid) -> Root:\n  return value\n\ndef main() -> None:\n  value = upcast(make())\n  println(7)\n",
+        &["trait_value_return_calls"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "upcast")
+        .ok_or("upcast missing")?;
+    assert_eq!(target.type_args, [IncanType::Named("Item".to_owned())]);
+    Ok(())
+}
+
+/// An opaque trait result keeps the single concrete carrier selected by its checked return expression.
+#[test]
+fn trait_value_return_retains_concrete_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel Item with Named:\n  number: int\n\ndef make() -> Named:\n  return Item(number=3)\n\ndef main() -> None:\n  value = make()\n  println(7)\n",
+        &["trait_value_return"],
+    )?;
+    assert_eq!(
+        body_named(&module, "make")?.return_type,
+        IncanType::Named("Item".to_owned())
+    );
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Named".to_owned())),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// An earlier concrete return witness must retain its model identity beside the declared trait's identity.
+#[test]
+fn concrete_return_witness_keeps_nominal_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel Item with Named:\n  number: int\n\ndef make() -> Named:\n  return Item(number=3)\n\ndef main() -> None:\n  value = make()\n  println(7)\n",
+        &["concrete_return_identity"],
+    )?;
+    let body = body_named(&module, "make")?;
+    let identity = body.named_type_identities.get("Item").ok_or("missing model identity")?;
+    assert_eq!(identity.kind, SemanticSourceTargetKind::Model, "{body:#?}");
+    Ok(())
+}
+
+/// A supertrait result preserves the hidden concrete input rather than allocating or converting a trait object.
+#[test]
+fn trait_value_supertrait_return_retains_input_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Root:\n  pass\n\ntrait Mid with Root:\n  pass\n\nmodel Item with Mid:\n  number: int\n\ndef upcast(value: Mid) -> Root:\n  return value\n\ndef main() -> None:\n  value = upcast(Item(number=3))\n  println(7)\n",
+        &["trait_value_upcast"],
+    )?;
+    assert_eq!(
+        body_named(&module, "upcast")?.return_type,
+        IncanType::TypeVar("__IncanTrait0".to_owned())
+    );
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Root".to_owned()))
+    );
+    Ok(())
+}
+
+/// A method whose declared result is Self preserves its hidden receiver through an opaque trait return.
+#[test]
+fn trait_value_self_result_retains_hidden_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  def same(self) -> Self: ...\n\nmodel Item with Named:\n  number: int\n  def same(self) -> Self:\n    return self\n\ndef forward(value: Named) -> Named:\n  return value.same()\n\ndef main() -> None:\n  value = forward(Item(number=3))\n  println(7)\n",
+        &["trait_value_self_result"],
+    )?;
+    let body = body_named(&module, "forward")?;
+    assert_eq!(body.return_type, IncanType::TypeVar("__IncanTrait0".to_owned()));
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Named".to_owned())),
+        "{body:#?}"
+    );
+    Ok(())
+}
+
+/// Distinct concrete return carriers cannot be silently collapsed into one opaque legacy result.
+#[test]
+fn trait_value_return_with_several_carriers_stays_open() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel One with Named:\n  number: int\n\nmodel Two with Named:\n  text: str\n\ndef choose(flag: bool) -> Named:\n  if flag:\n    return One(number=3)\n  return Two(text=\"x\")\n",
+        &["trait_value_several_returns"],
+    )?;
+    assert_eq!(
+        body_named(&module, "choose")?.return_type,
+        IncanType::Named("Named".to_owned())
+    );
+    Ok(())
+}
+
+/// Legacy's trait-typed input is a hidden concrete binder, recorded independently of its source trait identity.
+#[test]
+fn trait_value_input_retains_hidden_binder_and_call_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel Item with Named:\n  number: int\n\ndef consume(value: Named) -> int:\n  return 7\n\ndef main() -> None:\n  println(consume(Item(number=3)))\n",
+        &["trait_value_input"],
+    )?;
+    let body = body_named(&module, "consume")?;
+    assert_eq!(body.type_parameters, ["__IncanTrait0"]);
+    assert_eq!(body.params[0].ty, IncanType::TypeVar("__IncanTrait0".to_owned()));
+    assert_eq!(
+        body.named_type_identities.get("__IncanTrait0"),
+        module.trait_declarations.first()
+    );
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "consume")
+        .ok_or("call missing")?;
+    assert_eq!(target.type_args, [IncanType::Named("Item".to_owned())]);
+    Ok(())
+}
+
+/// Two independently typed trait inputs receive separate binders and preserve named argument slot order.
+#[test]
+fn trait_value_inputs_bind_independent_concrete_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel One with Named:\n  number: int\n\nmodel Two with Named:\n  text: str\n\ndef consume(left: Named, right: Named) -> int:\n  return 7\n\ndef main() -> None:\n  println(consume(right=Two(text=\"x\"), left=One(number=3)))\n",
+        &["trait_value_inputs"],
+    )?;
+    let body = body_named(&module, "consume")?;
+    assert_eq!(body.type_parameters, ["__IncanTrait0", "__IncanTrait1"]);
+    assert_eq!(body.params[1].ty, IncanType::TypeVar("__IncanTrait1".to_owned()));
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "consume")
+        .ok_or("call missing")?;
+    assert_eq!(
+        target.type_args,
+        [IncanType::Named("One".to_owned()), IncanType::Named("Two".to_owned())]
+    );
+    Ok(())
+}
+
+/// The record-pattern fixture closes every enum construction even alongside inferred generic model and class calls.
+#[test]
+fn generic_enum_record_fixture_has_closed_temporaries() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/record_patterns_over_generic_models_and_classes.incn"
+    );
+    let module = build(source, &["record_enum_destination"])?;
+    let body = body_named(&module, "main")?;
+    let unclosed = body
+        .locals
+        .iter()
+        .filter(|local| local.ty == IncanType::Named("Shape".to_owned()))
+        .map(|local| (local.span, source.get(local.span.start..local.span.end)))
+        .collect::<Vec<_>>();
+    assert!(unclosed.is_empty(), "{unclosed:#?}");
+    Ok(())
+}
+
+/// A checked generic enum destination closes unit and payload constructor temporaries and retains positional slots.
+#[test]
+fn generic_enum_constructors_keep_destination_and_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "enum Shape[T]:\n  Filled(T)\n  Empty\n\ndef read(value: Shape[int]) -> int:\n  match value:\n    Shape.Filled(n) => return n\n    Shape.Empty => return 0\n\ndef main() -> None:\n  empty: Shape[int] = Shape.Empty\n  println(read(Shape.Filled(7)))\n",
+        &["enum_destination"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Shape".to_owned())),
+        "{body:#?}"
+    );
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(target), _),
+            ..
+        } = &statement.kind
+        {
+            assert!(
+                matches!(target.binding, bir::ArgumentBinding::Resolved { .. }),
+                "{target:#?}"
+            );
+        }
+    }
+    let read = body_named(&module, "read")?;
+    assert_eq!(
+        read.locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some("n"))
+            .ok_or("payload local missing")?
+            .ty,
+        IncanType::Primitive(IncanPrimitiveType::Int)
+    );
+    Ok(())
+}
+/// Ordered enum binders and checked payload placeholders survive the Body IR boundary, including variant aliases.
+#[test]
+fn generic_enum_retains_ordered_binders_and_payloads() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Clone)\nenum Holder[Elem with Clone]:\n  Items(list[Elem])\n  Empty\n  Full = alias Items\n",
+        &["m", "generic_enum_layout"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("generic enum layout missing")?;
+    let encoded = serde_json::to_value(declaration)?;
+    assert_eq!(encoded.get("type_parameters"), Some(&serde_json::json!(["Elem"])));
+    assert_eq!(declaration.variants.len(), 2);
+    assert_eq!(
+        declaration.variants[0].fields,
+        [incan_semantics_core::generic(
+            "List".to_owned(),
+            vec![IncanType::TypeVar("Elem".to_owned())]
+        )]
+    );
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    Ok(())
+}
+
+/// Error fallback and a user's own string method retain their selected canonical targets; derived Display keeps Debug.
+#[test]
+fn nominal_display_retains_checked_method_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.traits.error import Error\n\nmodel Failure with Error:\n  detail: str\n  def message(self) -> str:\n    return self.detail\n\nmodel Loud with Error:\n  def message(self) -> str:\n    return \"quiet\"\n  def __str__(self) -> str:\n    return \"LOUD\"\n\n@derive(Display)\nmodel Point:\n  x: int\n",
+        &["m", "nominal_display_selection"],
+    )?;
+    let selected = |owner: &str| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let declaration = module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == owner)
+            .ok_or("display owner missing")?;
+        Ok(serde_json::to_value(declaration)?)
+    };
+    assert_eq!(selected("Failure")?["display_method"]["declaration_name"], "message");
+    assert_eq!(selected("Loud")?["display_method"]["declaration_name"], "__str__");
+    assert!(selected("Point")?["display_method"].is_null());
+    Ok(())
+}
+
+/// A newtype's wrapped-value reads through self and a Self-typed parameter retain the same storage identity.
+#[test]
+fn self_field_reads_keep_declared_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "type Cell = newtype int:\n  def add(self, other: Self) -> int:\n    return self.0 + other.0\n",
+        &["m", "self_field_identity"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("model missing")?;
+    let identity = owner.field_identities.first().ok_or("field identity missing")?;
+    let body = body_named(&module, "add")?;
+    let mut projections = 0;
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::BinaryOp(_, left, right),
+            ..
+        } = &statement.kind
+        {
+            for operand in [left, right] {
+                if let bir::Operand::Place(read) = operand {
+                    for projection in &read.place.projection {
+                        if let bir::PlaceElem::Field { canonical, .. } = projection {
+                            assert_eq!(canonical.as_ref(), Some(identity), "{module:#?}");
+                            projections += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(projections, 2, "{module:#?}");
+    Ok(())
+}
+
+/// A generic owner's method partial carries the same receiver and parameter types as its target frame.
+#[test]
+fn generic_method_partials_retain_owner_frames() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Wrapper[T]:\n  value: T\n  def tag(self, prefix: str) -> str:\n    return prefix\n  tagged = partial tag(prefix=\"wrapped\")\n",
+        &["m", "generic_partial_frames"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("generic owner missing")?;
+    let [preset] = owner.method_partial_defaults.as_slice() else {
+        return Err(format!("partial frame missing: {module:#?}").into());
+    };
+    let target = body_named(&module, "tag")?;
+    assert_eq!(preset.frame.params[0].ty, target.params[0].ty);
+    assert!(matches!(
+        preset.frame.params[1].default,
+        bir::CallableParamDefault::Source(_)
+    ));
+    Ok(())
+}
+
+/// TOML bundle aliases expand the checked module's derive metadata, while Descriptor is a checked opt-in without a
+/// Rust derive macro; neither spelling may leak into the direct runtime's native derive list.
+#[test]
+fn retains_model_toml_and_descriptor_native_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std import toml as manifest\n\n@derive(manifest)\nmodel Project:\n  name: str\n\n@derive(Descriptor)\nmodel Version:\n  major: int\n",
+        &["m", "model_derive_metadata"],
+    )?;
+    let project = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Project")
+        .ok_or("TOML model missing")?;
+    assert!(project.derives.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(project.derives.iter().any(|derive| derive == "serde::Deserialize"));
+    assert!(!project.derives.iter().any(|derive| derive == "manifest"));
+    let version = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Version")
+        .ok_or("descriptor model missing")?;
+    assert!(!version.derives.iter().any(|derive| derive == "Descriptor"));
+    Ok(())
+}
+
+/// A model combining owner arguments, an instantiated trait and an alias retains its layout, method frame and trait
+/// implementation once, with canonical targets rather than an alias wrapper body.
+#[test]
+fn retains_model_with_type_parameters_trait_adoption_and_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n  def read(self) -> T: ...\n\nmodel Cell[T with Clone] with Read[T]:\n  value: T\n  get = read\n  def read(self) -> T:\n    return self.value\n\ndef main() -> None:\n  println(Cell(value=7).get())\n  println(Cell(value=\"text\").get())\n",
+        &["m", "combined_model_shape"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("model layout missing")?;
+    assert_eq!(owner.name, "Cell");
+    assert_eq!(owner.type_parameter_count, 1);
+    let read = body_named(&module, "read")?;
+    assert_eq!(owner.type_parameters, ["T"]);
+    assert_eq!(read.name, "read");
+    let implementation = module
+        .trait_implementations
+        .first()
+        .ok_or("trait implementation missing")?;
+    assert_eq!(implementation.owner, owner.canonical);
+    assert!(module.is_well_formed_trait_implementation(implementation));
+    Ok(())
+}
+
+/// Class defaults retain declaration-owned computations with the same omission contract as model defaults.
+#[test]
+fn retains_class_field_default_computations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("class Vault:\n  value: int = 7\n", &["class_defaults"])?;
+    let declaration = module.nominal_declarations.first().ok_or("class declaration missing")?;
+    let body = declaration
+        .field_default_body
+        .as_ref()
+        .ok_or("class default frame missing")?;
+    assert!(matches!(body.params[0].default, bir::CallableParamDefault::Source(_)));
+    Ok(())
+}
+
+/// Class derives use the checked selection models use: explicit names, the derives they imply, then the automatic set.
+#[test]
+fn retains_checked_class_derive_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Display)\nclass Account:\n  pub owner: str\n",
+        &["class_derives"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("derived class declaration missing")?;
+    assert_eq!(
+        declaration.derives,
+        ["Display", "Debug", "Clone", "FieldInfo", "IncanClass"]
+    );
+    Ok(())
+}
+
+/// A classmethod's `cls(...)` constructs its owner with the owner's declaration identity and layout in local and
+/// project profiles; qualifying the result carrier must not erase the checked constructor target.
+#[test]
+fn classmethod_construction_retains_its_owner_declaration() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Cell:\n  pub v: int\n  @classmethod\n  def of(cls, v: int) -> Self:\n    return cls(v=v)\n";
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let path = vec!["classmethod_construction".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    for project in [false, true] {
+        let module = if project {
+            super::build_body_ir_module_v0_with_executable_context(&program, &path, checker.type_info(), &[])
+        } else {
+            super::build_body_ir_module_v0(&program, &path, checker.type_info())
+        };
+        let declaration = module.nominal_declarations.first().ok_or("class declaration missing")?;
+        let body = body_named(&module, "of")?;
+        let target = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .ok_or("the classmethod construction must lower as a constructor aggregate")?;
+        assert_eq!(
+            target.canonical.as_ref(),
+            Some(&declaration.canonical),
+            "project={project}: {}",
+            body.render_snapshot()
+        );
+        assert_eq!(
+            target.direct_declaration_id.as_ref(),
+            Some(&declaration.direct_declaration_id),
+            "project={project}: {}",
+            body.render_snapshot()
+        );
+        assert_eq!(target.canonical_field_layout.as_ref(), Some(&declaration.fields));
+    }
+    Ok(())
+}
+
+/// A static call keeps owner arguments in its receiver without duplicating them as method arguments.
+#[test]
+fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n\ndef main() -> int:\n  return Box[int].make(1).value\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["applied_static".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let facts = checker.type_info();
+    let module = build_body_ir_module_v0(&program, &path, facts);
+    let targets = named_targets(&module, "main");
+    let make = targets
+        .iter()
+        .find(|target| target.name.ends_with("make"))
+        .ok_or("no named call to `make`")?;
+    assert_eq!(
+        make.receiver_type,
+        Some(IncanType::Generic {
+            base: "Box".to_string(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        })
+    );
+    assert!(
+        make.type_args.is_empty(),
+        "owner binders must not also become method binders: native={:?}, legacy={:?}",
+        facts.calls.body_ir_call_type_arguments,
+        facts.calls.call_site_monomorph_type_args,
+    );
+    Ok(())
+}
+
+/// Explicit and inferred method binders stay independent of an applied static owner.
+#[test]
+fn applied_static_call_preserves_independent_method_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @staticmethod\n  def echo[U](value: U) -> U:\n    return value\n\ndef main() -> None:\n  println(Box[int].echo[str](\"explicit\"))\n  println(Box[int].echo(\"inferred\"))\n",
+        &["independent_static"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let calls = targets
+        .iter()
+        .filter(|target| target.name.ends_with("echo"))
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    for target in calls {
+        assert_eq!(target.type_args, [IncanType::Primitive(IncanPrimitiveType::Str)]);
+        assert_eq!(
+            target.receiver_type,
+            Some(IncanType::Generic {
+                base: "Box".to_string(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            })
+        );
+    }
+    Ok(())
+}
+
+/// Method aliases, a newtype's short rebinding of its own method, and lint suppressions keep their declarations.
+#[test]
+fn retains_aliased_and_lint_suppressed_declarations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@rust.allow(\"non_camel_case_types\")\nclass Counter:\n  pub n: int\n  grow = add\n\n  @rust.allow(\"non_snake_case\")\n  def add(mut self) -> None:\n    self.n += 1\n\ntype Meters = newtype int:\n  def value(self) -> int:\n    return self.0\n  get = value\n\n@rust.allow(\"clippy::large_enum_variant\")\nenum Size:\n  Small\n  Large(str)\n",
+        &["aliases_and_lints"],
+    )?;
+    let retained = module
+        .nominal_declarations
+        .iter()
+        .map(|declaration| declaration.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(retained, ["Counter", "Meters"]);
+    assert!(
+        module
+            .enum_declarations
+            .iter()
+            .any(|declaration| declaration.name == "Size"),
+        "a lint-suppressed enum keeps its native layout"
+    );
+    Ok(())
+}
+
 /// Explicit builtin derives survive collection of a newtype's checked nominal carrier.
 #[test]
 fn retains_explicit_newtype_derives() -> Result<(), Box<dyn std::error::Error>> {
@@ -133,6 +872,51 @@ fn lowers_chained_assignment_right_to_left() -> Result<(), Box<dyn std::error::E
         snapshot.contains("const(5)"),
         "the rightmost target reads the literal value: {snapshot}"
     );
+    Ok(())
+}
+
+/// A shared chained value retains its original type rather than reading an already wrapped target back into
+/// another destination. Each target reads the same once-evaluated value in written order.
+#[test]
+fn chained_targets_read_the_original_value_before_destination_injection() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def value() -> list[int]:\n  return [1]\ndef chain() -> None:\n  mut left: list[int] = []\n  mut right: Option[list[int]] = None\n  left = right = value()\n";
+    let module = build(source, &["m", "chained_original"])?;
+    let body = body_named(&module, "chain")?;
+    let left = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("left"))
+        .ok_or("missing left")?
+        .id;
+    let right = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("right"))
+        .ok_or("missing right")?
+        .id;
+    let mut reads: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } if place.local_id() == Some(left) || place.local_id() == Some(right) => {
+                Some((place.local_id(), read.place.local_id()))
+            }
+            _ => None,
+        })
+        .rev()
+        .take(2)
+        .collect();
+    reads.reverse();
+    assert_eq!(reads.len(), 2);
+    assert_eq!(reads[0].0, Some(left));
+    assert_eq!(reads[1].0, Some(right));
+    assert_eq!(reads[0].1, reads[1].1);
+    assert_ne!(reads[0].1, Some(left));
+    assert_ne!(reads[0].1, Some(right));
     Ok(())
 }
 
@@ -509,7 +1293,9 @@ fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans
                 params: Vec::new(),
                 captured_operands: Vec::new(),
                 body: Box::new(bir::ClosureBody {
+                    original_callable: None,
                     function_item: false,
+                    consumes_environment: false,
                     capture_locals: Vec::new(),
                     stmts: vec![unsupported(closure_span, "closure body")],
                     result: result.clone(),
@@ -1085,6 +1871,37 @@ fn a_self_typed_parameter_in_a_types_own_method_reads_as_that_type() -> Result<(
         .find(|param| param.name == "other")
         .ok_or("`other` must be a parameter")?;
     assert_eq!(other.ty, IncanType::Named("P".to_string()), "{rendered}");
+    Ok(())
+}
+
+#[test]
+fn a_self_return_type_in_a_types_own_method_reads_as_that_type() -> Result<(), Box<dyn std::error::Error>> {
+    // A declared type's own method returning `Self` returns that type, nested in a collection too, as the checker reads
+    // it at every call site; only a trait default keeps `Self` open for specialization per adopter.
+    let source = concat!(
+        "model P:\n",
+        "  v: int\n\n",
+        "  def again(self) -> Self:\n",
+        "    return P(v=self.v)\n\n",
+        "  def both(self) -> list[Self]:\n",
+        "    return [P(v=self.v)]\n\n",
+        "trait T:\n",
+        "  def me(self) -> Self:\n",
+        "    return self\n",
+    );
+    let module = build(source, &["m", "self_return"])?;
+    let again = body_named(&module, "again")?;
+    assert_eq!(again.return_type, IncanType::Named("P".to_string()));
+    let both = body_named(&module, "both")?;
+    assert_eq!(
+        both.return_type,
+        IncanType::Generic {
+            base: "List".to_string(),
+            args: vec![IncanType::Named("P".to_string())],
+        }
+    );
+    let me = body_named(&module, "me")?;
+    assert_eq!(me.return_type, IncanType::SelfType, "a trait default keeps `Self` open");
     Ok(())
 }
 
