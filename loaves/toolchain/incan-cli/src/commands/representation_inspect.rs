@@ -93,7 +93,7 @@ struct DeclarationReport {
     state: &'static str,
     /// Refusal reason, present only for an uncovered declaration.
     reason: Option<&'static str>,
-    /// Direct public requirements, present only for a covered declaration.
+    /// Direct canonical execution requirements, present only for a covered public declaration.
     requirements: Vec<CanonicalSymbolId>,
     /// Owning public type, present only for a member that executes through its type context.
     type_context_owner: Option<CanonicalSymbolId>,

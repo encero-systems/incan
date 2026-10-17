@@ -1,8 +1,10 @@
-"""Legacy zip snapshots and materialized builtin enumeration of lists and text."""
+"""Legacy zip snapshots, materialized builtin enumeration of lists and text, and text iteration items."""
 
 from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
 from rust::std::clone import Clone as RuntimeClone
+from std.rust import Static
+from generators import list_generator
 
 
 @derive(Clone)
@@ -31,6 +33,22 @@ pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut out
         None => return false
 
 
+pub def zip_lists_generator[T with (Clone, Static), U with (Clone, Static)](
+    values: ZipLists[T, U],
+) -> Generator[tuple[T, U]]:
+    """
+    Yield a zip snapshot's pairs as a generator expression's first source, in legacy's left-then-right polling order.
+
+    Both inputs are owned list snapshots, so drawing the pairs before the first poll cannot be observed.
+    """
+    mut source = values
+    mut pairs: list[tuple[T, U]] = []
+    mut more = poll_zip(source, pairs)
+    while more:
+        more = poll_zip(source, pairs)
+    return list_generator(pairs)
+
+
 pub def enumerate_list[T with Clone](values: &list[T]) -> list[tuple[int, T]]:
     """Retain the checked builtin's materialized pairs without consuming the source list."""
     mut pairs: list[tuple[int, T]] = []
@@ -47,3 +65,11 @@ pub def enumerate_text(values: &str) -> list[tuple[int, str]]:
         pairs.append((index, value))
         index += 1
     return pairs
+
+
+pub def text_items(values: &str) -> list[str]:
+    """List a text's Unicode scalar values as one-character strings, in the order a loop over the text draws them."""
+    mut items: list[str] = []
+    for value in values:
+        items.append(value)
+    return items

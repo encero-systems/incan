@@ -9,6 +9,7 @@ use std::time::Instant;
 
 mod current_plans;
 pub(crate) mod metadata_replay;
+mod standard_dependencies;
 
 use sha2::Sha256;
 
@@ -19,8 +20,8 @@ use crate::build::caller_facet::CallerFacetRequest;
 use crate::build::caller_owned::append_oven_interop_execution_build_inputs;
 use crate::build::library_exports::{
     LibraryReexportResolver, collect_library_rust_abi_query_paths, collect_library_rust_abi_with_shipped,
-    library_rust_abi_source_queries, module_key, public_ordinal_type_identities, resolve_library_project_root,
-    validate_library_entrypoint,
+    collect_ordinary_library_rust_abi_query_paths, library_rust_abi_source_queries, module_key,
+    public_ordinal_type_identities, resolve_library_project_root, validate_library_entrypoint,
 };
 use crate::build::library_outputs::{
     dependency_artifact_skips_canonical_lock, library_output_path, library_rust_inspection_required,
@@ -531,7 +532,8 @@ pub fn prepare_library_project_with_caller_facet(
 /// The original native request is shared with the consumer, never prepared again. Core owns its source publication;
 /// consumers retain its exact checked metadata/generation and independently source-bound namespace issuer. Existing
 /// completed-output reuse skips publication only after the original Store, source and preparation checks pass.
-fn prepare_core_checked_dependency(
+#[cfg(test)]
+pub(super) fn prepare_core_checked_dependency(
     source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
     native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
     target: &str,
@@ -572,14 +574,14 @@ fn prepare_core_checked_dependency(
         let input = AdmittedLibraryPreparation::with_ordinary_native(session, native)?;
         super::bake::bake_admitted_library(&input, &features, Some(target))?;
     }
-    select_core_checked_dependency(source)
+    select_standard_checked_dependency(source)
 }
 
-/// Select an already published core loaf through the original namespace issuer and exact handoff bytes.
+/// Select an already published standard Loaf through the original namespace issuer and exact handoff bytes.
 ///
 /// Publication and metadata-only consumers share this boundary. Missing or stale publications refuse through the
 /// same checked dependency admission; selection never prepares native inputs or publishes a replacement.
-fn select_core_checked_dependency(
+fn select_standard_checked_dependency(
     source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
 ) -> CliResult<super::library_dependencies::LibraryDependencyInput> {
     let root = source
@@ -652,6 +654,15 @@ fn ordinary_library_session(
 /// The configured ordinary route requires existing publications matching the host target, toolchain and resolved
 /// features. Failures propagate; only an unconfigured toolchain or a manifest-free source uses the existing reader.
 pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Option<CompilationSession>> {
+    discover_ordinary_dependency_session(entry, &FeatureSelection::default())
+}
+
+/// Select the original checked package owners for a consumer's exact feature projection.
+/// This is shared by metadata and executable consumers; native profiles are selected separately by the latter.
+pub(crate) fn discover_ordinary_dependency_session(
+    entry: &Path,
+    package_features: &FeatureSelection,
+) -> CliResult<Option<CompilationSession>> {
     if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none() {
         return Ok(None);
     }
@@ -659,8 +670,7 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
     let Some(manifest) = discover_effective_project_manifest(&root)? else {
         return Ok(None);
     };
-    let package_features = FeatureSelection::default();
-    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, &package_features)
+    let features = incan_provider::PackageFeaturePlan::resolve(&manifest, package_features)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
@@ -672,15 +682,9 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
                 CliError::failure("ordinary metadata inspection requires compiler-owned core publication")
             })?,
     );
-    let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-    let core_root = core_source
-        .verified_package_root()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let namespaces = if root == core_root {
-        Vec::new()
-    } else {
-        vec![select_core_checked_dependency(Arc::clone(&core_source))?]
-    };
+    let namespaces =
+        standard_dependencies::StandardDependencies::new(Arc::clone(&core_source), None, &target, &toolchain)
+            .for_library(&manifest, package_features)?;
     let dependencies = Arc::new(
         super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
             &features,
@@ -690,7 +694,7 @@ pub(crate) fn discover_ordinary_metadata_session(entry: &Path) -> CliResult<Opti
             *open_default_oven_store()?.limits(),
         )?,
     );
-    ordinary_library_session(&manifest, entry, &package_features, dependencies, core_source).map(Some)
+    ordinary_library_session(&manifest, entry, package_features, dependencies, core_source).map(Some)
 }
 
 /// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
@@ -752,21 +756,13 @@ impl AdmittedLibraryPreparation {
                     CliError::failure("ordinary preparation requires compiler-owned core publication source")
                 })?,
         );
-        let root =
-            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-        let core_root = core_source
-            .verified_package_root()
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        let namespaces = if root == core_root {
-            Vec::new()
-        } else {
-            vec![prepare_core_checked_dependency(
-                Arc::clone(&core_source),
-                Arc::clone(&native),
-                &target,
-                &toolchain,
-            )?]
-        };
+        let namespaces = standard_dependencies::StandardDependencies::new(
+            Arc::clone(&core_source),
+            Some(Arc::clone(&native)),
+            &target,
+            &toolchain,
+        )
+        .for_library(manifest, package_features)?;
         let dependencies = Arc::new(
             super::library_dependencies::PreparedLibraryDependencies::from_source_feature_plan_with_namespaces(
                 &features,
@@ -814,6 +810,7 @@ impl AdmittedLibraryPreparation {
             .admitted_library_dependencies()
             .ok_or_else(|| CliError::failure("ordinary native preparation requires admitted language dependencies"))?
             .verify()?;
+        let native = native.for_session(&session)?;
         native.verify()?;
         Ok(Self {
             session,
@@ -1362,7 +1359,11 @@ fn prepare_library_project_with_context(
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
-    let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
+    let metadata_query_paths = if ordinary_native.is_some() {
+        collect_ordinary_library_rust_abi_query_paths(&modules, &rust_extern_contexts, &provider_plan)?
+    } else {
+        collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts)
+    };
     #[cfg(feature = "rust_inspect")]
     let inspection_query_paths =
         library_rust_abi_source_queries(&metadata_query_paths, provider_plan.library_manifest_index());
@@ -1704,9 +1705,13 @@ fn prepare_library_project_with_context(
         .unwrap_or_default();
     let manifest_start = Instant::now();
     #[cfg(feature = "rust_inspect")]
+    let checked_rust_metadata_queries = public_metadata.rust_metadata_queries;
+    #[cfg(not(feature = "rust_inspect"))]
+    let checked_rust_metadata_queries = BTreeSet::new();
+    #[cfg(feature = "rust_inspect")]
     let metadata_query_paths = metadata_query_paths
         .into_iter()
-        .chain(public_metadata.rust_metadata_queries)
+        .chain(checked_rust_metadata_queries.iter().cloned())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -1772,11 +1777,14 @@ fn prepare_library_project_with_context(
             content_digest: hex::encode(Sha256::digest(&executable_surface)),
         });
 
+    let publication_dependencies = native_sdk
+        .map(|context| compilation_session.native_sdk_publication_dependency_index(context.inventory, context.catalog))
+        .transpose()?;
     library_manifest.contract_metadata.provider = compiled_provider_metadata(CompiledProviderMetadataInputs {
         manifest: &manifest,
         feature_plan: &package_feature_plan,
         provider_plan: &provider_plan,
-        library_manifest_index: &library_manifest_index,
+        library_manifest_index: publication_dependencies.as_ref().unwrap_or(&library_manifest_index),
         artifact_root: &out_dir,
         modules: &provider_metadata_modules,
         active_library_entrypoint: lib_module,
@@ -1855,6 +1863,7 @@ fn prepare_library_project_with_context(
                 &modules,
                 lib_module,
                 &metadata_query_paths,
+                &checked_rust_metadata_queries,
                 None,
             );
             match contract {
@@ -2311,6 +2320,7 @@ fn prepare_library_project_with_context(
             &modules,
             lib_module,
             &metadata_query_paths,
+            &checked_rust_metadata_queries,
             report_draft.backend.clone(),
         ) {
             Ok(contract) => {
@@ -2391,6 +2401,7 @@ fn checked_requirement_contract(
     modules: &[ParsedModule],
     entry: &ParsedModule,
     rust_abi_queries: &[String],
+    checked_rust_metadata_queries: &BTreeSet<String>,
     backend: Option<crate::backend::selection::BackendExecutionReceipt>,
 ) -> CliResult<crate::build::library_metadata::requirements::CheckedLibraryRequirements> {
     crate::build::library_metadata::validate_required_rust_abi(
@@ -2408,6 +2419,18 @@ fn checked_requirement_contract(
         })
         .collect::<CliResult<BTreeMap<_, _>>>()?;
     let provider_plan = session.provider_plan_for_modules(modules)?;
+    let native_demands = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        manifest,
+        modules,
+        requirements,
+        provider_plan.as_ref(),
+        &rust_abi_queries.iter().cloned().collect(),
+    )?;
+    let native_demands = if session.has_admitted_library_dependencies() {
+        native_demands.with_checked_rust_abi_queries(library_manifest, checked_rust_metadata_queries)?
+    } else {
+        native_demands
+    };
     crate::build::library_metadata::requirements::CheckedLibraryRequirements::capture(
         crate::build::library_metadata::requirements::CheckedLibraryCapture {
             project: manifest,
@@ -2415,18 +2438,13 @@ fn checked_requirement_contract(
             requirements,
             imports,
             exports,
+            publication: Some(library_manifest),
             version,
             used_module_paths: session.provider_module_paths(modules),
             source_modules,
             entry_module: entry.path_segments.clone(),
             rust_abi_queries: rust_abi_queries.iter().cloned().collect(),
-            native_demands: crate::build::library_metadata::requirements::capture_checked_native_demands(
-                manifest,
-                modules,
-                requirements,
-                provider_plan.as_ref(),
-                &rust_abi_queries.iter().cloned().collect(),
-            )?,
+            native_demands,
             rust_extern_paths: rust_extern_report_paths(&collect_rust_extern_contexts(modules)),
             backend,
         },

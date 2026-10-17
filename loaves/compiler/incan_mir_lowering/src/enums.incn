@@ -10,10 +10,14 @@ from rust::incan_semantics_core::body_ir import (
     Pattern as RustPattern,
     ArgumentBinding,
     OwnershipFact,
+    Constant as RustConstant,
+    ValueEnumBacking,
 )
 from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
+from decls import library_enum_item, serde_propagation, with_serde_derives
+from nominal_instances import nominal_symbol
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -23,6 +27,11 @@ pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Opt
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Some(PlanType.Enum(index, str(name)))
+        RustType.Generic(base=base, args=arguments) =>
+            name = nominal_symbol(str(base), arguments.clone())
+            for index in range(len(declarations)):
+                if declarations[index].name == name:
+                    return Some(PlanType.Enum(index, name))
         _ => pass
     return None
 
@@ -30,9 +39,15 @@ pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Opt
 pub def variant_index(
     declarations: list[RustEnumDeclaration],
     target: &EnumVariantTarget,
+    expected: PlanType,
 ) -> Result[tuple[int, int], str]:
     """Resolve construction by exact variant and owner identities; written owner aliases remain diagnostic spelling."""
     for owner in range(len(declarations)):
+        match expected:
+            PlanType.Enum(selected, _name) =>
+                if owner != selected:
+                    continue
+            _ => return Err("unsupported Body IR enum constructor destination")
         declaration = declarations[owner]
         for slot in range(len(declaration.variants)):
             variant = declaration.variants[slot]
@@ -94,19 +109,41 @@ pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern
 
 
 pub def validate_payload_patterns(patterns: &list[RustPattern]) -> Result[None, str]:
-    """Refuse refutable/nested payload patterns until their comparison and ownership paths are represented."""
+    """
+    Admit payload patterns whose tests and bindings are represented: bindings with a known ownership, literals,
+    nested carrier and tuple patterns, and alternations of those; anything else stays refused by name.
+    """
     for pattern in patterns:
-        match pattern:
-            RustPattern.Wildcard => pass
-            RustPattern.Var(binding) =>
-                # A moved payload binding reads like a cloned one: legacy matches a cloned enum by value.
-                match binding.fact:
-                    OwnershipFact.Copy => pass
-                    OwnershipFact.Clone => pass
-                    OwnershipFact.Borrow => pass
-                    OwnershipFact.Move => pass
-                    _ => return Err("unsupported Body IR enum payload binding ownership")
-            _ => return Err("unsupported Body IR nested enum payload pattern")
+        validate_payload_pattern(pattern)?
+    return Ok(None)
+
+
+def validate_payload_pattern(pattern: &RustPattern) -> Result[None, str]:
+    """Admit one payload pattern, recursing into the payloads a nested pattern names."""
+    match pattern:
+        RustPattern.Wildcard => pass
+        RustPattern.Literal(_value) => pass
+        RustPattern.FieldlessEnumVariant(_target) => pass
+        RustPattern.Var(binding) =>
+            # A moved payload binding reads like a cloned one: legacy matches a cloned enum by value. A payload its
+            # arm changes in place is borrowed exclusively from the scrutinee instead.
+            match binding.fact:
+                OwnershipFact.Copy => pass
+                OwnershipFact.Clone => pass
+                OwnershipFact.Borrow => pass
+                OwnershipFact.Move => pass
+                OwnershipFact.MutBorrow => pass
+                _ => return Err("unsupported Body IR enum payload binding ownership")
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
+            return validate_payload_patterns(fields)
+        RustPattern.Result(variant=_variant, fields=fields) => return validate_payload_patterns(fields)
+        RustPattern.UnionMember(ty=_ty, fields=fields) => return validate_payload_patterns(fields)
+        RustPattern.Tuple(items) => return validate_payload_patterns(items)
+        RustPattern.Nominal(target=_target, fields=fields) =>
+            for _name, field_pattern in fields:
+                validate_payload_pattern(field_pattern)?
+        RustPattern.Or(alternatives) => return validate_payload_patterns(alternatives)
+        _ => return Err("unsupported Body IR nested enum payload pattern")
     return Ok(None)
 
 
@@ -139,27 +176,85 @@ pub def native_source_type(
 
 
 pub def lower_enum_declarations(
-    module: &RustBodyIrModule, file: str, intrinsics: list[EnumDeclaration] = [],
+    module: &RustBodyIrModule,
+    file: str,
+    intrinsics: list[EnumDeclaration] = [],
 ) -> Result[list[EnumDeclaration], str]:
-    """Copy checked source-order variants and derives into the native declaration plan."""
+    """
+    Copy checked source-order variants and derives into the native declaration plan.
+
+    A source enum also takes the serde derives a serde-deriving declaration's fields require of it, as legacy
+    propagates them. A value enum reached this way stays refused until propagated raw-value serialization has parity
+    evidence; explicitly selected value-enum serde keeps its proven raw-value form. Source Display uses its checked Debug path rather than a native Rust derive.
+    """
+    reached = serde_propagation(module)?
     mut declarations: list[EnumDeclaration] = []
     for declaration in module.enum_declarations:
         mut variants: list[EnumVariant] = []
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(retained_source_type(module.nominal_declarations, module.enum_declarations, [], ty, intrinsics)?)
+                fields.append(
+                    retained_source_type(module.nominal_declarations, module.enum_declarations, [], ty, intrinsics)?,
+                )
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
+        # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
+        item = library_enum_item(declaration)
+        mut native_arguments: list[PlanType] = []
+        if item != "":
+            for argument in declaration.native_type_arguments:
+                native_arguments.append(
+                    retained_source_type(module.nominal_declarations, module.enum_declarations, [], argument, intrinsics)?,
+                )
+        selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
+        mut derives: list[str] = []
+        if item == "":
+            for derive in selected:
+                if derive != "Display":
+                    derives.append(str(derive))
+        raw_kind, raw_values = value_enum_raw_values(module, declaration)?
+        serialize, deserialize = reached
+        adds_serialize = str(declaration.name) in serialize and "serde::Serialize" not in declaration.derives
+        adds_deserialize = str(declaration.name) in deserialize and "serde::Deserialize" not in declaration.derives
+        if raw_kind != "" and item == "" and (adds_serialize or adds_deserialize):
+            return Err(f"unsupported Body IR serde derive propagation to value enum {declaration.name}")
         declarations.append(
             EnumDeclaration(
                 name=str(declaration.name),
-                public=declaration.public,
+                public=declaration.public or item != "",
                 variants=variants,
-                derives=declaration.derives,
+                derives=derives,
                 span=SourceSpan(file=file, line=1, column=1),
+                library_item=item,
+                library_type_arguments=native_arguments,
+                raw_kind=raw_kind,
+                raw_values=raw_values,
+                comparison_methods=[],
             ),
         )
     return Ok(declarations)
+
+
+def value_enum_raw_values(
+    module: &RustBodyIrModule,
+    declaration: &RustEnumDeclaration,
+) -> Result[tuple[str, list[str]], str]:
+    """A source value enum's backing and raw values in variant order; an SDK enum keeps its serialization in its crate."""
+    if library_enum_item(declaration) != "":
+        return Ok(("", []))
+    for value_enum in module.value_enum_declarations:
+        if value_enum.canonical != declaration.canonical:
+            continue
+        mut raw_values: list[str] = []
+        for variant in value_enum.variants:
+            match variant.raw_value:
+                RustConstant.Str(text) => raw_values.append(str(text))
+                RustConstant.Int(number) => raw_values.append(str(number))
+                _ => return Err("invalid Body IR value enum raw value")
+        match value_enum.backing:
+            ValueEnumBacking.Str => return Ok(("str", raw_values))
+            ValueEnumBacking.Int => return Ok(("int", raw_values))
+    return Ok(("", []))
 
 
 pub def enum_owner(ty: PlanType) -> Result[int, str]:
@@ -191,3 +286,21 @@ pub def validate_unit_comparison(
         if len(variant.fields) != 0:
             return Err("unsupported Body IR payload enum comparison")
     return Ok(None)
+
+
+pub def validate_unit_ordering(declarations: list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
+    """
+    Authorize tag ordering only for a fieldless owner whose checked derives select a derived order.
+
+    The checker retains an enum's written derives without their implications, so a derived `Ord` names the order
+    as well as a derived `PartialOrd`.
+    """
+    match ty:
+        PlanType.Enum(index, _name) =>
+            if index < 0 or index >= len(declarations):
+                return Err("unsupported Body IR non-source enum ordering")
+            derives = declarations[index].derives
+            if "PartialOrd" not in derives and "Ord" not in derives:
+                return Err("unsupported Body IR enum ordering without a derived order")
+            return Ok(None)
+        _ => return Err("unsupported Body IR nonenum ordering")

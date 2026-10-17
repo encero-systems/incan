@@ -1,7 +1,7 @@
 //! Constructor-style call validation for models, classes, enums, and surface constructors.
 
 use super::TypeChecker;
-use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, Expr, Literal, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::type_param_subst_map_call_site;
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
@@ -11,6 +11,102 @@ use incan_lang::lang::conventions::TYPE_CONSTRUCTOR_HOOK;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 impl TypeChecker {
+    /// Retain a checked newtype payload's nominal arguments, permitting only parameters owned by the active frame.
+    /// Concrete calls become closed carriers; a declaration's own parameter remains explicit for later specialization.
+    fn retain_body_ir_newtype_payload(
+        &mut self,
+        name: &str,
+        parameters: &[String],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        if parameters.is_empty()
+            || parameters.iter().any(|parameter| {
+                bindings
+                    .get(parameter)
+                    .is_none_or(|ty| !Self::is_settled_type_argument(ty) && self.active_type_param_name(ty).is_none())
+            })
+        {
+            return;
+        }
+        let carrier = self.constructor_result_type_with_bindings(name, bindings);
+        self.type_info
+            .calls
+            .body_ir_constructor_types
+            .insert((span.start, span.end), carrier);
+    }
+
+    /// Retain an executable constructor binding without changing contextual types or legacy call facts.
+    ///
+    /// The constructor's original fields identify its own binders, whereas contextual checking can replace them
+    /// with a generic callee's still-open binders. Checked value types close the original field contract here; a
+    /// settled destination takes precedence, and every declared nominal bound must hold before Body IR uses it.
+    pub(in crate::typechecker::check_expr::calls) fn retain_body_ir_constructor_type(
+        &mut self,
+        name: &str,
+        declaration: &TypeInfo,
+        context: Option<&(ResolvedType, std::collections::HashMap<String, ResolvedType>)>,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        let (parameters, fields) = match declaration {
+            TypeInfo::Model(model) => (&model.type_params, &model.fields),
+            TypeInfo::Class(class) => (&class.type_params, &class.fields),
+            _ => return,
+        };
+        if parameters.is_empty() {
+            return;
+        }
+
+        // ---- Checked destination and original field binders ----
+        let mut bindings = context
+            .map(|(_, bindings)| bindings)
+            .into_iter()
+            .flat_map(|bindings| bindings.iter())
+            .filter(|(_, ty)| Self::is_settled_type_argument(ty))
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        for argument in args {
+            let CallArg::Named(field, value) = argument else {
+                return;
+            };
+            let Some((_, original)) = self.resolve_field_info(fields, &field.node, true, true) else {
+                return;
+            };
+            let Some(actual) = self.type_info.expr_type(value.span) else {
+                return;
+            };
+            self.infer_type_param_bindings(&original.ty, actual, &mut bindings);
+        }
+        if parameters.iter().any(|parameter| {
+            bindings
+                .get(parameter)
+                .is_none_or(|ty| !Self::is_settled_type_argument(ty))
+        }) {
+            return;
+        }
+
+        // ---- Bound proof and Body IR-only publication ----
+        if let Some(bounds) = self.declared_nominal_bounds(name) {
+            for (parameter, requirements) in bounds {
+                let Some(actual) = bindings.get(parameter) else {
+                    return;
+                };
+                if requirements
+                    .iter()
+                    .any(|bound| !self.type_satisfies_explicit_bound_info(actual, bound, &bindings))
+                {
+                    return;
+                }
+            }
+        }
+        let carrier = self.constructor_result_type_with_bindings(name, &bindings);
+        self.type_info
+            .calls
+            .body_ir_constructor_types
+            .insert((span.start, span.end), carrier);
+    }
+
     /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
     pub(in crate::typechecker::check_expr::calls) fn check_model_or_class_constructor_call(
         &mut self,
@@ -61,6 +157,7 @@ impl TypeChecker {
             if let Some(identity) = field_info.identity.clone() {
                 self.type_info.record_resolved_identity(field_name.span, identity);
             }
+            self.record_body_ir_constructor_field_requirement(type_name, field_info, field_name.span);
 
             let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
             self.record_value_destination_if_compatible(expr.span, &value_ty, &field_info.ty);
@@ -181,6 +278,32 @@ impl TypeChecker {
         }
         result
     }
+
+    /// Retain the checked constructor owner for a field argument without exporting its private storage identity.
+    /// The existing field lookup and lexical type binding supply both canonical identities. A missing binding or
+    /// a non-nominal target grants no layout requirement; execution never guesses an owner from a field's spelling.
+    fn record_body_ir_constructor_field_requirement(&mut self, type_name: &str, field: &FieldInfo, span: Span) {
+        let Some(identity) = field.identity.as_ref() else {
+            return;
+        };
+        let Some(owner) = self.named_type_reference_identity(type_name) else {
+            return;
+        };
+        if identity.kind != incan_semantics_core::SemanticSourceTargetKind::Field
+            || !matches!(
+                owner.kind,
+                incan_semantics_core::SemanticSourceTargetKind::Model
+                    | incan_semantics_core::SemanticSourceTargetKind::Class
+            )
+        {
+            return;
+        }
+        self.type_info
+            .calls
+            .body_ir_constructor_field_requirements
+            .insert((span.start, span.end), (identity.clone(), owner));
+    }
+
     /// Record the resolved argument-to-field binding for one `model`/`class` construction, for Body IR lowering.
     ///
     /// Declared field order lives in the symbol table (`ModelInfo::field_order` / `ClassInfo::field_order`), which
@@ -237,6 +360,86 @@ impl TypeChecker {
         );
     }
 
+    /// Retain a module-selected class's complete zero-argument default binding from its checked declaration.
+    /// Canonical call identity, nongeneric owner and a default on every declared field are mandatory. Missing or
+    /// inconsistent field metadata grants no binding; source and legacy constructor tables remain untouched.
+    pub(in crate::typechecker::check_expr::calls) fn retain_body_ir_defaulted_module_class(
+        &mut self,
+        declaration: &TypeInfo,
+        span: Span,
+    ) {
+        let TypeInfo::Class(class) = declaration else { return };
+        if !class.type_params.is_empty()
+            || class.field_order.len() != class.fields.len()
+            || class
+                .field_order
+                .iter()
+                .any(|name| class.fields.get(name).is_none_or(|field| !field.has_default))
+        {
+            return;
+        }
+        let Some(owner) = self
+            .type_info
+            .resolved_identity(span)
+            .filter(|owner| owner.kind == incan_semantics_core::SemanticSourceTargetKind::Class)
+            .cloned()
+        else {
+            return;
+        };
+        self.type_info.calls.body_ir_module_constructor_bindings.insert(
+            (span.start, span.end),
+            (
+                owner,
+                ConstructorFieldBinding {
+                    argument_slots: Vec::new(),
+                    defaulted_slots: (0..class.field_order.len()).collect(),
+                    field_count: class.field_order.len(),
+                },
+            ),
+        );
+    }
+
+    /// Record Html's native tuple owner only for a checked String payload. Other accepted legacy shapes have no
+    /// direct construction fact, so they keep a named refusal instead of becoming Html<String> with another payload.
+    pub(in crate::typechecker::check_expr::calls) fn record_body_ir_html_constructor(
+        &mut self,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        let [CallArg::Positional(value)] = args else {
+            return;
+        };
+        let is_string = match self.type_info.expr_type(value.span) {
+            Some(ty) => ty == &ResolvedType::Str,
+            None => match &value.node {
+                Expr::Literal(Literal::String(_)) => true,
+                Expr::Ident(name) => self.lookup_symbol(name).is_some_and(
+                    |symbol| matches!(&symbol.kind, SymbolKind::Variable(variable) if variable.ty == ResolvedType::Str),
+                ),
+                _ => false,
+            },
+        };
+        if is_string && let Some(owner) = self.stdlib_cache.native_web_identity(SurfaceTypeId::Html) {
+            self.type_info.record_body_ir_native_constructor(span, owner);
+            self.type_info
+                .calls
+                .body_ir_native_argument_types
+                .insert((value.span.start, value.span.end), ResolvedType::Str);
+            if let Expr::Ident(name) = &value.node
+                && let Some(identity) = self
+                    .symbols
+                    .lookup(name)
+                    .and_then(|id| self.symbols.identity_of(id))
+                    .cloned()
+            {
+                self.type_info
+                    .calls
+                    .body_ir_native_argument_identities
+                    .insert((value.span.start, value.span.end), identity);
+            }
+        }
+    }
+
     /// Type-check a JSON/Query constructor call (`Json(...)` / `Query(...)`).
     ///
     /// NOTE: This method is called from multiple dispatch points in the typechecker because calls can be classified
@@ -290,6 +493,8 @@ impl TypeChecker {
             let name = surface_types::as_str(tid);
             self.errors
                 .push(errors::constructor_single_arg_required(name, args.len(), call_span));
+        } else if let Some(owner) = self.stdlib_cache.native_web_identity(tid) {
+            self.type_info.record_body_ir_native_constructor(call_span, owner);
         }
 
         ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
@@ -549,6 +754,7 @@ impl TypeChecker {
             }
             if matches!(tid, SurfaceTypeId::Html) {
                 self.record_direct_callee_identity(name, span);
+                self.record_body_ir_html_constructor(args, span);
                 return ResolvedType::Named(surface_types::as_str(tid).to_string());
             }
         }
@@ -561,6 +767,7 @@ impl TypeChecker {
                         self.errors.push(errors::newtype_constructor_shape(name, span));
                         return self.constructor_result_type(name);
                     };
+                    let errors_before_payload = self.errors.len();
                     let value_ty = self.check_expr_with_expected(value, Some(&newtype.underlying));
                     if !self.types_compatible(&value_ty, &newtype.underlying) {
                         self.errors.push(errors::type_mismatch(
@@ -578,6 +785,9 @@ impl TypeChecker {
                         TypeArgumentOrigin::Inferred,
                         span,
                     );
+                    if self.errors.len() == errors_before_payload {
+                        self.retain_body_ir_newtype_payload(name, &newtype.type_params, &type_bindings, span);
+                    }
                     self.type_info.record_constructor_field_binding(
                         span,
                         ConstructorFieldBinding {

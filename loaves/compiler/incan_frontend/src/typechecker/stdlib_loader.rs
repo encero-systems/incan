@@ -44,6 +44,7 @@ use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::rust_keywords;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::{self as surface_functions, SurfaceFnId};
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_lang::lang::types::numerics as numeric_types;
 use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
@@ -64,6 +65,9 @@ struct StdlibModuleData {
     trait_declarations: Vec<(String, ast::TraitDecl)>,
     /// Canonical source paths for imported types referenced by each trait declaration's defaults.
     trait_type_import_paths: HashMap<String, HashMap<String, Vec<String>>>,
+    /// The stdlib types and traits this module imports, keyed by local name, each with the import's module path
+    /// followed by the imported name.
+    imported_type_paths: HashMap<String, Vec<String>>,
     types: Vec<(String, TypeInfo)>,
     /// Source declarations for methods keyed by `(type name, method name)`.
     ///
@@ -91,6 +95,9 @@ struct StdlibFunctionEntry {
     name: String,
     info: FunctionInfo,
     declaration: Option<ast::FunctionDecl>,
+    /// Source span of the `def` declaration, which a same-name overload's canonical identity carries; `None` for a
+    /// runtime function imported from Rust.
+    declaration_span: Option<ast::Span>,
     /// Canonical paths of the consts the declaration's parameter defaults name, keyed by their declaring spelling.
     default_const_paths: HashMap<String, Vec<String>>,
 }
@@ -154,21 +161,68 @@ impl StdlibAstCache {
     /// Pinned publication uses its retained source policy; legacy sessions retain their existing catalog check.
     /// Names, kinds, scopes and provenance spans must still match after rebasing the source's `std` root.
     pub(crate) fn callable_source_identity(&mut self, identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
-        use incan_semantics_core::SymbolOrigin;
-        let path = match &identity.origin {
-            SymbolOrigin::Module(path) => path.clone(),
-            SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
-                .chain(module_path.iter().cloned())
-                .collect(),
-            _ => return None,
-        };
-        if !stdlib::is_any_stdlib_path(&path) {
+        let path = stdlib_source_path(identity)?;
+        let source = self.lookup_identity(&path, &identity.declaration_name)?;
+        self.published_source_identity(&path, source, identity)
+    }
+
+    /// Return the checked signature of the one stdlib overload an exact identity selects.
+    ///
+    /// A same-name overload set has no per-name identity in this cache, because a spelling does not select one
+    /// declaration, so [`Self::callable_source_identity`] refuses its members. Each member's identity names its own
+    /// `def` span instead: this selects the overload declared at exactly that span, then confirms the full identity
+    /// the way [`Self::callable_source_identity`] confirms any other. A single declaration, a span no overload has and
+    /// a foreign owner all answer `None`.
+    pub(crate) fn overload_function_info(&mut self, identity: &CanonicalSymbolId) -> Option<FunctionInfo> {
+        if identity.kind != SemanticSourceTargetKind::Function {
             return None;
         }
-        let source = self.lookup_identity(&path, &identity.declaration_name)?;
+        let path = stdlib_source_path(identity)?;
+        self.ensure_loaded(&path);
+        let overloads = self
+            .cache
+            .get(&path.join("."))?
+            .functions
+            .iter()
+            .filter(|entry| entry.name == identity.declaration_name)
+            .collect::<Vec<_>>();
+        if overloads.len() < 2 {
+            return None;
+        }
+        let span = identity.declaration_span;
+        let info = overloads
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .declaration_span
+                    .is_some_and(|declared| declared.start == span.start && declared.end == span.end)
+            })?
+            .info
+            .clone();
+        let source = CanonicalSymbolId::module_declaration(
+            path.clone(),
+            identity.declaration_name.clone(),
+            SemanticSourceTargetKind::Function,
+            span,
+        );
+        self.published_source_identity(&path, source, identity)?;
+        Some(info)
+    }
+
+    /// Confirm that `identity` is the published form of one stdlib source identity, returning the source identity.
+    ///
+    /// A package identity must name the library that owns the module, and every other field must match after the
+    /// source's `std` root is rebased onto that package.
+    fn published_source_identity(
+        &self,
+        path: &[String],
+        source: CanonicalSymbolId,
+        identity: &CanonicalSymbolId,
+    ) -> Option<CanonicalSymbolId> {
+        use incan_semantics_core::SymbolOrigin;
         let mut published = source.clone();
         if let SymbolOrigin::Package { library, module_path } = &identity.origin {
-            match self.source_inputs.owns_package_identity(&path, library) {
+            match self.source_inputs.owns_package_identity(path, library) {
                 Some(false) => return None,
                 Some(true) => {}
                 None => {
@@ -205,6 +259,48 @@ impl StdlibAstCache {
             ast::Declaration::Import(_) => true,
             ast::Declaration::Function(function) => {
                 function.name == identity.declaration_name
+                    && declaration.span.start == identity.declaration_span.start
+                    && declaration.span.end == identity.declaration_span.end
+            }
+            _ => false,
+        });
+        Some(program)
+    }
+
+    /// Load a stdlib module's source keeping only its imports and its `const` declarations, so checking the result
+    /// evaluates each const as the declaring module does without checking the rest of the module.
+    pub fn constants_program(&mut self, module_path: &[String]) -> Option<ast::Program> {
+        let source = self.source_inputs.read_module(module_path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| {
+            matches!(
+                declaration.node,
+                ast::Declaration::Import(_) | ast::Declaration::Const(_)
+            )
+        });
+        Some(program)
+    }
+
+    /// Load imports and one exact constant for Body IR retention. This additive accessor leaves legacy constant
+    /// evaluation unchanged; stale spans and foreign package owners never select a source declaration.
+    pub(crate) fn body_ir_constant_program(&mut self, identity: &CanonicalSymbolId) -> Option<ast::Program> {
+        if identity.kind != SemanticSourceTargetKind::Const {
+            return None;
+        }
+        let source_identity = self.callable_source_identity(identity)?;
+        let incan_semantics_core::SymbolOrigin::Module(path) = &source_identity.origin else {
+            return None;
+        };
+        let source = self.source_inputs.read_module(path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| match &declaration.node {
+            ast::Declaration::Import(_) => true,
+            ast::Declaration::Const(item) => {
+                item.name == identity.declaration_name
                     && declaration.span.start == identity.declaration_span.start
                     && declaration.span.end == identity.declaration_span.end
             }
@@ -302,6 +398,75 @@ impl StdlibAstCache {
             .iter()
             .find(|(name, _)| name == type_name)
             .map(|(_, info)| info.clone())
+    }
+
+    /// Resolve an active web surface's original Rust re-export for Body IR only. Ordinary surface placeholders have
+    /// no target identity; this independent import-only check keeps the actual source path and leaves legacy symbols
+    /// and the shared stdlib cache unchanged. Other surfaces or a changed runtime owner yield nothing.
+    pub(crate) fn native_web_identity(&mut self, surface: SurfaceTypeId) -> Option<CanonicalSymbolId> {
+        let module = match surface {
+            SurfaceTypeId::Json | SurfaceTypeId::Html => "response",
+            SurfaceTypeId::Query | SurfaceTypeId::Path => "request",
+            _ => return None,
+        };
+        let name = surface_types::as_str(surface);
+        let path = vec!["std".to_owned(), "web".to_owned(), module.to_owned()];
+        let source = self.source_inputs.read_module(&path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| {
+            let ast::Declaration::Import(import) = &declaration.node else {
+                return false;
+            };
+            matches!(&import.kind, ast::ImportKind::RustFrom { items, .. }
+                if items.iter().any(|item| item.alias.as_deref().unwrap_or(&item.name) == name))
+        });
+        let mut checker = super::TypeChecker::new();
+        checker.set_current_module_path(Some(path));
+        checker.check_program(&program).ok()?;
+        let identity = checker.symbols.identity_of(checker.symbols.lookup(name)?)?.clone();
+        incan_semantics_core::body_ir::native_carrier_nominal(&identity)?;
+        Some(identity)
+    }
+
+    /// Read the source layout of a compiler-provided foreign nominal for Body IR only. The ordinary cache exports
+    /// public source types, while FieldInfo's private source declaration describes public runtime metadata. This
+    /// query validates its exact native owner and declaration span, then checks an independent public layout;
+    /// it never changes the shared cache, source visibility, import resolution or legacy signatures.
+    pub(crate) fn native_nominal_type(&mut self, identity: &CanonicalSymbolId) -> Option<TypeInfo> {
+        incan_semantics_core::body_ir::native_nominal_item(identity)?;
+        let source_identity = self.callable_source_identity(identity)?;
+        let incan_semantics_core::SymbolOrigin::Module(path) = &source_identity.origin else {
+            return None;
+        };
+        let source = self.source_inputs.read_module(path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| {
+            matches!(declaration.node, ast::Declaration::Import(_))
+                || (declaration.span.start == identity.declaration_span.start
+                    && declaration.span.end == identity.declaration_span.end
+                    && matches!(&declaration.node, ast::Declaration::Class(class)
+                        if class.name == identity.declaration_name))
+        });
+        for declaration in &mut program.declarations {
+            if let ast::Declaration::Class(class) = &mut declaration.node {
+                class.visibility = ast::Visibility::Public;
+                for field in &mut class.fields {
+                    field.node.visibility = ast::Visibility::Public;
+                }
+            }
+        }
+        let mut checker = super::TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker.check_program(&program).ok()?;
+        let symbol = checker.symbols.lookup(&identity.declaration_name)?;
+        match &checker.symbols.get(symbol)?.kind {
+            SymbolKind::Type(info) => Some(info.clone()),
+            _ => None,
+        }
     }
 
     /// Look up a method declaration on a stdlib type, following prelude re-exports.
@@ -489,6 +654,22 @@ impl StdlibAstCache {
     /// member does not exist.
     pub fn cached_identity(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
         self.cache.get(&module_path.join("."))?.identities.get(name).cloned()
+    }
+
+    /// Return the declaring identity of a stdlib type or trait one stdlib module imports under `name`.
+    ///
+    /// The import's own module path is followed, so a type imported through a facade resolves through that facade's
+    /// re-export to the module that declares it. `None` when the module imports no stdlib type under that name.
+    pub fn imported_type_identity(&mut self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
+        self.ensure_loaded(module_path);
+        let path = self
+            .cache
+            .get(&module_path.join("."))?
+            .imported_type_paths
+            .get(name)?
+            .clone();
+        let (declared, module) = path.split_last()?;
+        self.lookup_identity(module, declared)
     }
 
     /// Look up a specific static binding in a stdlib module.
@@ -701,6 +882,7 @@ fn load_stdlib_module_data_unguarded(
         traits,
         trait_declarations,
         trait_type_import_paths,
+        imported_type_paths,
         types,
         type_method_declarations,
         type_method_default_const_paths,
@@ -905,6 +1087,21 @@ fn stdlib_module_uses_prelude_stub(module_path: &[String]) -> bool {
         .is_some_and(|path| path.ends_with("/prelude.incn") || path == "stdlib/prelude.incn")
 }
 
+/// The stdlib source module that declares a module or package identity, rooted at `std`.
+///
+/// `None` for any other origin, and for a module path outside the stdlib.
+fn stdlib_source_path(identity: &CanonicalSymbolId) -> Option<Vec<String>> {
+    use incan_semantics_core::SymbolOrigin;
+    let path = match &identity.origin {
+        SymbolOrigin::Module(path) => path.clone(),
+        SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
+            .chain(module_path.iter().cloned())
+            .collect(),
+        _ => return None,
+    };
+    stdlib::is_any_stdlib_path(&path).then_some(path)
+}
+
 /// Return whether a stdlib module is only an import facade.
 ///
 /// Some public modules, such as `std.datetime.civil`, are real `.incn` files rather than `prelude.incn` registry
@@ -946,6 +1143,7 @@ fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> 
                 name: func.name.clone(),
                 info,
                 declaration: Some(func.clone()),
+                declaration_span: Some(decl.span),
                 default_const_paths: HashMap::new(),
             });
             continue;
@@ -964,6 +1162,7 @@ fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> 
                         name: local_name.to_string(),
                         info,
                         declaration: None,
+                        declaration_span: None,
                         default_const_paths: HashMap::new(),
                     });
                 }
@@ -2776,6 +2975,53 @@ pub enum State:
         Ok(())
     }
 
+    /// Each member of a same-name stdlib overload set is selected by its own declaration span; a span no overload
+    /// declares, and a function with a single declaration, are refused.
+    #[test]
+    fn overload_function_info_selects_the_overload_declared_at_the_identity_span()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "environ".to_string()];
+        let mut cache = StdlibAstCache::new();
+        cache.ensure_loaded(&path);
+        let spans = cache
+            .cache
+            .get("std.environ")
+            .ok_or("std.environ should load")?
+            .functions
+            .iter()
+            .filter(|entry| entry.name == "get_as")
+            .filter_map(|entry| entry.declaration_span)
+            .collect::<Vec<_>>();
+        assert_eq!(spans.len(), 2, "std.environ declares two get_as overloads");
+        let identity = |start: usize, end: usize| {
+            CanonicalSymbolId::module_declaration(
+                path.clone(),
+                "get_as",
+                SemanticSourceTargetKind::Function,
+                HirSourceSpan::new(start, end),
+            )
+        };
+        let arities = spans
+            .iter()
+            .map(|span| {
+                cache
+                    .overload_function_info(&identity(span.start, span.end))
+                    .map(|info| info.params.len())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(arities, [Some(1), Some(2)]);
+        assert!(
+            cache
+                .overload_function_info(&identity(spans[0].start, spans[0].end + 1))
+                .is_none()
+        );
+        let single = cache
+            .lookup_identity(&path, "get_optional")
+            .ok_or("get_optional has one declaration")?;
+        assert!(cache.overload_function_info(&single).is_none());
+        Ok(())
+    }
+
     #[test]
     fn recursively_cached_module_matches_a_direct_load() -> Result<(), Box<dyn std::error::Error>> {
         let mut cache = StdlibAstCache::new();
@@ -2875,6 +3121,7 @@ pub type File = rusttype RustFile:
             traits: extract_trait_signatures(&program, &["std".to_string(), "fs".to_string()]),
             trait_declarations: extract_trait_declarations(&program),
             trait_type_import_paths: HashMap::new(),
+            imported_type_paths: HashMap::new(),
             types: extract_type_signatures(&program, &["std".to_string(), "fs".to_string()]),
             type_method_declarations: extract_type_method_declarations(&program),
             type_method_default_const_paths: HashMap::new(),

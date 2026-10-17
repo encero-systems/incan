@@ -155,6 +155,19 @@ impl SelectedProviderNamespace {
         &self.issuer.record
     }
 
+    /// Retain an original dependency source only while compiling another genuine standard source publisher.
+    ///
+    /// Standard trait defaults are expanded into adopters by lowering. Ordinary package consumers remain checked
+    /// metadata-only; this internal transfer requires both original source publication and namespace issuers.
+    pub(crate) fn source_for_standard_publisher(
+        &self,
+        publisher: &TrustedStandardSourcePublication,
+    ) -> Result<Arc<TrustedStandardSourcePublication>, String> {
+        publisher.verify().map_err(|error| error.to_string())?;
+        self.verify()?;
+        Ok(Arc::clone(&self.issuer.source))
+    }
+
     /// Retain the original private issuer capability when constructing another immutable admitted plan.
     pub(super) fn issuer(&self) -> &Arc<ProviderNamespaceIssuer> {
         &self.issuer

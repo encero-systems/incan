@@ -59,6 +59,7 @@ impl LineageFixture {
         let plan_identity = prepared.plan_selection.report_identity();
         let source_digest = digest_bytes(&fs::read(root.path().join("src/main.incn"))?);
         let payload = OvenProjectInspectionAuthorityPayload {
+            native_roots: None,
             schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
             project_identity: "lineage-project".to_string(),
             source_authority_digest: source_digest.clone(),

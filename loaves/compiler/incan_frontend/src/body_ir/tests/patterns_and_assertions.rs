@@ -950,3 +950,126 @@ def capture(value: int | str) -> int:
     assert!(!snapshot.contains("unsupported("), "{snapshot}");
     Ok(())
 }
+
+/// A qualified `Maybe.None` pattern names the source enum's own `None` variant, while a bare `None` over an `Option`
+/// keeps the builtin constructor's identity.
+#[test]
+fn source_enum_none_variant_pattern_keeps_its_own_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Maybe:
+    Some(int)
+    None
+
+def unwrap_or(value: Maybe, fallback: int) -> int:
+    match value:
+        Maybe.Some(x) => return x
+        Maybe.None => return fallback
+
+def present(value: Option[int]) -> bool:
+    match value:
+        Some(_) => return true
+        None => return false
+"#;
+    let module = build(source, &["source_enum_none"])?;
+    let snapshot = module.render_snapshot();
+    assert!(
+        snapshot.contains("None canonical=member/variant:source_enum_none::None@"),
+        "{snapshot}"
+    );
+    assert!(!snapshot.contains("None canonical=builtin"), "{snapshot}");
+    assert!(snapshot.contains("canonical=builtin:builtin::Some"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
+/// A member pattern over an optional union selects the builtin `Some` constructor first, then the checker-selected
+/// member of its union payload, binding the name from inside both.
+#[test]
+fn optional_union_member_pattern_selects_some_then_the_member() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def describe(value: int | str | None) -> str:
+    match value:
+        int(number) => return str(number)
+        str(text) => return text
+        None => return "missing"
+"#;
+    let module = build(source, &["optional_union_facts"])?;
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("Some(union int(bind("), "{snapshot}");
+    assert!(snapshot.contains("Some(union str(bind("), "{snapshot}");
+    assert!(snapshot.contains("canonical=builtin:builtin::Some"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
+// ---- #1561: a pattern whose arm changes part of a writable place binds that part in place ----
+
+#[test]
+fn in_place_match_bindings_borrow_the_changed_payload_mutably() -> Result<(), Box<dyn std::error::Error>> {
+    // Legacy matches `&mut box`, so each arm's change lands in `box`: `match`, `if let` and a field scrutinee alike.
+    let source = concat!(
+        "model Holder:\n",
+        "  pub inner: Option[list[int]]\n",
+        "\n",
+        "def change() -> None:\n",
+        "  mut box = Some([1])\n",
+        "  match box:\n",
+        "    Some(first) => first.append(2)\n",
+        "    None => pass\n",
+        "  if let Some(second) = box:\n",
+        "    second.append(3)\n",
+        "  mut h = Holder(inner=Some([1]))\n",
+        "  if let Some(third) = h.inner:\n",
+        "    third.append(4)\n",
+        "  println(box)\n",
+    );
+    let module = build(source, &["m", "in_place_bindings"])?;
+    for name in ["first", "second", "third"] {
+        let (_ty, fact) = bound_local_type_and_fact(&module, "change", name)?;
+        assert_eq!(
+            fact,
+            "mut_borrow",
+            "`{name}` is changed in place: {}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn in_place_match_copies_a_copyable_payload_beside_a_changed_one() -> Result<(), Box<dyn std::error::Error>> {
+    // An `int` bound beside a changed list is still a copy, as legacy binds it through a dereference.
+    let source = concat!(
+        "enum Slot:\n",
+        "  Pair(list[int], int)\n",
+        "  Empty\n",
+        "\n",
+        "def change() -> None:\n",
+        "  mut s = Slot.Pair([1], 5)\n",
+        "  match s:\n",
+        "    Slot.Pair(items, n) => items.append(n)\n",
+        "    Slot.Empty => pass\n",
+    );
+    let module = build(source, &["m", "in_place_copy"])?;
+    let (_ty, items) = bound_local_type_and_fact(&module, "change", "items")?;
+    let (_ty, count) = bound_local_type_and_fact(&module, "change", "n")?;
+    assert_eq!(items, "mut_borrow", "{}", module.render_snapshot());
+    assert_eq!(count, "copy", "{}", module.render_snapshot());
+    Ok(())
+}
+
+#[test]
+fn a_match_that_only_reads_keeps_its_borrowed_binding() -> Result<(), Box<dyn std::error::Error>> {
+    // No arm changes `kept`, so its pattern binds a read of the payload rather than an exclusive borrow.
+    let source = concat!(
+        "def read() -> None:\n",
+        "  kept = Some([1])\n",
+        "  match kept:\n",
+        "    Some(xs) => println(len(xs))\n",
+        "    None => pass\n",
+    );
+    let module = build(source, &["m", "read_only_binding"])?;
+    let (_ty, fact) = bound_local_type_and_fact(&module, "read", "xs")?;
+    assert_eq!(fact, "borrow", "{}", module.render_snapshot());
+    Ok(())
+}

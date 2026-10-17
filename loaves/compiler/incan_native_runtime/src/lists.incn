@@ -8,6 +8,7 @@ from rust::incan_std_core::collections import (
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
+    list_repeat as runtime_repeat,
     list_slice as runtime_slice,
 )
 from std.derives.comparison import Eq, Ord
@@ -102,6 +103,11 @@ pub def concat_list[T with Clone](left: &list[T], right: &list[T]) -> list[T]:
     return runtime_concat(left, right)
 
 
+pub def repeat_list[T with Clone](value: T, count: int) -> list[T]:
+    """Build `count` clones of an owned value through the legacy helper, including its negative-count ValueError."""
+    return runtime_repeat(value, count)
+
+
 pub def sorted_list[T with (Clone, Ord)](values: &list[T]) -> list[T]:
     """Copy and sort ordered elements through legacy builtin emission."""
     owned = RuntimeClone.clone(values)
@@ -132,7 +138,7 @@ pub def slice_list[T with Clone](
     )
 
 
-def optional_index(present: bool, value: int) -> Option[int]:
+pub def optional_index(present: bool, value: int) -> Option[int]:
     """Decode a presence flag without treating an omitted index as zero."""
     if present:
         return Some(value)

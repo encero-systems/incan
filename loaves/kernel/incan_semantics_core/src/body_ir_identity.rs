@@ -11,51 +11,211 @@ use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use std::collections::BTreeSet;
 
 use crate::body_ir::{
-    Body, BodyIrModule, Constant, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration, StaticInitializer,
-    ValueEnumDeclaration,
+    Body, BodyIrModule, CallableParamDefault, Constant, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration,
+    StaticInitializer, ValueEnumDeclaration,
 };
 use crate::{
     CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
     SymbolNamespace, canonical_module_identity,
 };
 
+/// Match an initialized method's explicit passing reference against its receiver frame's nominal type and mode.
+/// Ordinary inputs must agree exactly; this does not authorize another owner or a different receiver mode.
+fn decorated_parameter_matches(
+    body: &Body,
+    left: &crate::IncanCallableParam,
+    right: &crate::body_ir::CallableParam,
+) -> bool {
+    if left.kind != right.kind {
+        return false;
+    }
+    match body.locals.get(right.local.index()).map(|local| &local.origin) {
+        Some(LocalOrigin::Receiver { mutable }) => match (&left.ty, mutable) {
+            (IncanType::Ref(inner), false) | (IncanType::RefMut(inner), true) => **inner == right.ty && !left.is_mut,
+            _ => false,
+        },
+        _ => decorated_input_type_matches(left, &right.ty) && left.is_mut == right.mutable,
+    }
+}
+
+/// Require each retained rest frame to contain exactly the source signature's checked element type.
+fn decorated_input_type_matches(parameter: &crate::IncanCallableParam, packed: &IncanType) -> bool {
+    match parameter.kind {
+        crate::IncanCallableParamKind::Normal => parameter.ty == *packed,
+        crate::IncanCallableParamKind::RestPositional => matches!(packed,
+            IncanType::Generic { base, args } if base == "List" && args.as_slice() == [parameter.ty.clone()]),
+        crate::IncanCallableParamKind::RestKeyword => matches!(packed,
+            IncanType::Generic { base, args } if base == "Dict"
+                && args.as_slice() == [IncanType::Primitive(IncanPrimitiveType::Str), parameter.ty.clone()]),
+    }
+}
+
 impl BodyIrModule {
-    /// Prove a literal static belongs to this module and its initializer matches its exact retained carrier.
+    /// Prove a static belongs to this module and its initializer matches its exact retained carrier. A computed
+    /// initializer's body must carry the static's own canonical identity and declaration id, so a module cannot attach
+    /// another declaration's body to it.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
-        self.declaration_id_for_canonical(
+        if matches!(
+            declaration.canonical.kind,
+            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
+        ) {
+            return self.decorated_bindings.iter().any(|binding| {
+                binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
+                    && self.is_well_formed_decorated_binding(binding)
+            });
+        }
+        let Some(declaration_id) = self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
             SemanticSourceTargetKind::Static,
-        )
-        .is_some()
-            && match &declaration.initial {
-                StaticInitializer::Literal(value) => literal_static_carrier_matches(&declaration.ty, value),
-                StaticInitializer::List(values) => {
-                    let IncanType::Generic { base, args } = &declaration.ty else {
-                        return false;
-                    };
-                    let [element] = args.as_slice() else {
-                        return false;
-                    };
-                    collections::from_str(base) == Some(CollectionTypeId::List)
-                        && matches!(
-                            element,
-                            IncanType::Primitive(
-                                IncanPrimitiveType::Int
-                                    | IncanPrimitiveType::Float
-                                    | IncanPrimitiveType::Bool
-                                    | IncanPrimitiveType::Str
-                            )
-                        )
-                        && values
-                            .iter()
-                            .all(|value| literal_static_carrier_matches(element, value))
-                }
-            }
+        ) else {
+            return false;
+        };
+        if let StaticInitializer::Computed(body) = &declaration.initial
+            && (body.canonical.as_ref() != Some(&declaration.canonical) || body.decl_id != declaration_id)
+        {
+            return false;
+        }
+        static_initializer_matches_parts(&declaration.ty, &declaration.initial)
+    }
+
+    /// Prove an RFC 036 original and wrapper belong to the same source declaration and obey the checked replacement
+    /// lifetime. Only module replacements acquire initialized storage; originals never replace ordinary lookup.
+    pub fn is_well_formed_decorated_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
+        if binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation {
+            return binding.initializer.is_none() && self.is_well_formed_invocation_binding(binding);
+        }
+        let original = &binding.original_body;
+        if let Some(initializer) = &binding.initializer {
+            return binding.initialization == crate::body_ir::DecoratedInitialization::PerInstantiation
+                && self.is_well_formed_generic_decorated_binding(original, initializer);
+        }
+        if binding.initialization != crate::body_ir::DecoratedInitialization::ModuleStorage {
+            return false;
+        }
+        let mut replacements = self
+            .static_declarations
+            .iter()
+            .filter(|storage| original.canonical.as_ref() == Some(&storage.canonical));
+        let Some(replacement) = replacements.next() else {
+            return false;
+        };
+        if replacements.next().is_some() {
+            return false;
+        }
+        let StaticInitializer::Computed(initializer) = &replacement.initial else {
+            return false;
+        };
+        original.canonical.as_ref() == Some(&replacement.canonical)
+            && matches!(replacement.canonical.kind, SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method)
+            && original.type_parameters.is_empty()
+            && !original.is_async
+            && self.body_has_canonical_direct_call_id(original)
+            && initializer.canonical == original.canonical
+            && initializer.decl_id == original.decl_id
+            && self.bodies.iter().any(|body| {
+                body.canonical == original.canonical
+                    && matches!(&replacement.ty, IncanType::Function { params, return_type }
+                        if params.len() == body.params.len()
+                            && params.iter().zip(&body.params).all(|(left, right)| decorated_parameter_matches(body, left, right))
+                            && **return_type == body.return_type)
+            })
+            && static_initializer_matches_parts(&replacement.ty, &replacement.initial)
+    }
+
+    /// Validate a per-instantiation initializer against its original and wrapper, without granting module storage.
+    /// The same formal binders must govern both templates; another source declaration cannot provide either body.
+    fn is_well_formed_generic_decorated_binding(&self, original: &Body, initializer: &Body) -> bool {
+        let Some(identity) = &original.canonical else {
+            return false;
+        };
+        if identity.kind != SemanticSourceTargetKind::Function
+            || original.type_parameters.is_empty()
+            || original.type_parameters.iter().any(String::is_empty)
+            || original.type_parameters.iter().collect::<BTreeSet<_>>().len() != original.type_parameters.len()
+            || original.params.iter().any(|parameter| {
+                crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
+            })
+            || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters)
+            || original.is_async
+            || initializer.is_async
+            || !self.body_has_canonical_direct_call_id(original)
+            || !self.body_has_canonical_direct_call_id(initializer)
+            || initializer.canonical != original.canonical
+            || initializer.decl_id != original.decl_id
+            || initializer.type_parameters != original.type_parameters
+            || !initializer.params.is_empty()
+            || !initializer.param_locals.is_empty()
+            || self
+                .static_declarations
+                .iter()
+                .any(|storage| &storage.canonical == identity)
+        {
+            return false;
+        }
+        let IncanType::Function { params, return_type } = &initializer.return_type else {
+            return false;
+        };
+        let mut wrappers = self.bodies.iter().filter(|body| body.canonical == original.canonical);
+        let Some(wrapper) = wrappers.next() else {
+            return false;
+        };
+        wrappers.next().is_none()
+            && wrapper.decl_id == original.decl_id
+            && wrapper.type_parameters == original.type_parameters
+            && params.len() == wrapper.params.len()
+            && params
+                .iter()
+                .zip(&wrapper.params)
+                .all(|(left, right)| decorated_parameter_matches(wrapper, left, right))
+            && **return_type == wrapper.return_type
+    }
+
+    /// Require one source generic frame and its visible wrapper, with identical declared binders and no storage.
+    /// Only signatures using those binders have per-call semantics; closed signatures require the separate cache
+    /// policy.
+    fn is_well_formed_invocation_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
+        let original = &binding.original_body;
+        let Some(identity) = original.canonical.as_ref() else {
+            return false;
+        };
+        if identity.kind != SemanticSourceTargetKind::Function
+            || original.type_parameters.is_empty()
+            || original.type_parameters.iter().any(String::is_empty)
+            || original.type_parameters.iter().collect::<BTreeSet<_>>().len() != original.type_parameters.len()
+            || original.is_async
+            || original.is_generator()
+            || !self.body_has_canonical_direct_call_id(original)
+            || self
+                .static_declarations
+                .iter()
+                .any(|storage| &storage.canonical == identity)
+        {
+            return false;
+        }
+        let uses_parameters =
+            original.params.iter().any(|parameter| {
+                crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
+            }) || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters);
+        uses_parameters
+            && self.bodies.iter().any(|wrapper| {
+                wrapper.canonical.as_ref() == Some(identity)
+                    && wrapper.decl_id == original.decl_id
+                    && self.body_has_canonical_direct_call_id(wrapper)
+                    && wrapper.type_parameters == original.type_parameters
+                    && wrapper.params == original.params
+                    && wrapper.return_type == original.return_type
+                    && !wrapper.is_async
+            })
     }
 
     /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
     pub fn is_well_formed_native_enum_declaration(&self, declaration: &crate::body_ir::EnumDeclaration) -> bool {
+        if declaration.type_parameters.iter().any(String::is_empty)
+            || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
+        {
+            return false;
+        }
         self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
@@ -132,9 +292,11 @@ impl BodyIrModule {
         })
     }
 
-    /// Whether a function, source Partial forwarding body, or retained nominal method has its own canonical declaration
-    /// identity and span-derived direct-call id. Methods must belong to a retained nominal or trait owner whose
-    /// span contains them; an instance receiver must match that owner.
+    /// Whether a function, source Partial forwarding body, or retained nominal method or computed-property getter has
+    /// its own canonical declaration identity and span-derived direct-call id. Methods and getters must belong to a
+    /// retained nominal, normal enum or trait owner whose span contains them; an instance receiver must match that
+    /// owner. A getter additionally requires its exact implicit immutable receiver and no ordinary or method-scoped
+    /// parameters.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {
@@ -142,9 +304,12 @@ impl BodyIrModule {
                     SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial => {
                         SymbolNamespace::OrdinaryLexical
                     }
-                    SemanticSourceTargetKind::Method => SymbolNamespace::Member,
+                    SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property => SymbolNamespace::Member,
                     _ => return false,
                 };
+                if canonical.kind == SemanticSourceTargetKind::Property && !is_getter_frame(body, canonical) {
+                    return false;
+                }
                 canonical.declaration_name == body.name
                     && self.declaration_id_for_canonical(canonical, namespace, canonical.kind.clone())
                         == Some(body.direct_call_id.clone())
@@ -153,19 +318,35 @@ impl BodyIrModule {
                         SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
                     ) || self.nominal_declarations.iter().any(|owner| {
                         self.is_well_formed_nominal_declaration(owner)
+                            && (canonical.kind != SemanticSourceTargetKind::Property
+                                || matches!(
+                                    owner.canonical.kind,
+                                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                                ))
                             && canonical.origin == owner.canonical.origin
                             && declares_member(&owner.canonical, canonical)
                             && body.locals.first().is_none_or(|receiver| {
                                 !matches!(receiver.origin, LocalOrigin::Receiver { .. })
                                     || receiver.ty == nominal_receiver_type(owner)
                             })
+                    }) || self.enum_declarations.iter().any(|owner| {
+                        canonical.kind == SemanticSourceTargetKind::Method
+                            && self.is_well_formed_native_enum_declaration(owner)
+                            && canonical.origin == owner.canonical.origin
+                            && declares_member(&owner.canonical, canonical)
+                            && body.locals.first().is_none_or(|receiver| {
+                                !matches!(receiver.origin, LocalOrigin::Receiver { .. })
+                                    || receiver.ty == crate::IncanType::Named(owner.name.clone())
+                            })
                     }) || self.trait_declarations.iter().any(|owner| {
-                        self.declaration_id_for_canonical(
-                            owner,
-                            SymbolNamespace::OrdinaryLexical,
-                            SemanticSourceTargetKind::Trait,
-                        )
-                        .is_some()
+                        canonical.kind == SemanticSourceTargetKind::Method
+                            && self
+                                .declaration_id_for_canonical(
+                                    owner,
+                                    SymbolNamespace::OrdinaryLexical,
+                                    SemanticSourceTargetKind::Trait,
+                                )
+                                .is_some()
                             && canonical.origin == owner.origin
                             && declares_member(owner, canonical)
                             && body.locals.first().is_none_or(|receiver| {
@@ -176,11 +357,15 @@ impl BodyIrModule {
             })
     }
 
-    /// Validate a concrete trait slot against retained physical owners and implementation bodies.
+    /// Validate a concrete trait slot against retained physical owners (a nominal or a normal enum) and implementation
+    /// bodies.
     ///
     /// A default belongs to a retained trait: the slot's own or a subtrait's. An explicit implementation must belong
-    /// to the concrete owner and takes no trait type arguments; a default's type arguments must be closed types.
-    /// Matching method spellings never suffice to establish any of these relationships.
+    /// to the concrete owner and takes no trait type arguments; its name may differ from the slot for a checked
+    /// method alias. A default's arguments may contain only closed types or the exact nominal owner's declared
+    /// parameters, which concrete instance scheduling must close before execution; its name still matches its slot.
+    /// Matching method spellings never suffice to establish any of these relationships. A property slot may only be
+    /// filled by its same-named owned getter, never a method or property default.
     pub fn is_well_formed_trait_implementation(&self, value: &crate::body_ir::TraitImplementation) -> bool {
         let owned = declares_member(&value.owner, &value.implementation);
         let inherited = value.method == value.implementation
@@ -190,18 +375,25 @@ impl BodyIrModule {
         let arguments_close = if owned {
             value.type_arguments.is_empty()
         } else {
-            value
-                .type_arguments
-                .iter()
-                .all(|binding| is_closed_type(&binding.argument))
+            self.trait_arguments_are_owner_bound(value)
         };
         value.method.namespace == SymbolNamespace::Member
-            && value.method.declaration_name == value.implementation.declaration_name
-            && value.implementation.kind == SemanticSourceTargetKind::Method
-            && self
+            && (owned || value.method.declaration_name == value.implementation.declaration_name)
+            && matches!(
+                value.implementation.kind,
+                SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property
+            )
+            && value.method.kind == value.implementation.kind
+            && (value.method.kind != SemanticSourceTargetKind::Property
+                || owned && value.method.declaration_name == value.implementation.declaration_name)
+            && (self
                 .nominal_declarations
                 .iter()
                 .any(|owner| owner.canonical == value.owner && self.is_well_formed_nominal_declaration(owner))
+                || self
+                    .enum_declarations
+                    .iter()
+                    .any(|owner| owner.canonical == value.owner && self.is_well_formed_native_enum_declaration(owner)))
             && self.trait_declarations.iter().any(|owner| {
                 self.declaration_id_for_canonical(
                     owner,
@@ -211,7 +403,10 @@ impl BodyIrModule {
                 .is_some()
                     && owner.origin == value.method.origin
                     && declares_member(owner, &value.method)
-                    && value.method.kind == SemanticSourceTargetKind::Method
+                    && matches!(
+                        value.method.kind,
+                        SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property
+                    )
             })
             && arguments_close
             && self.bodies.iter().any(|body| {
@@ -221,8 +416,97 @@ impl BodyIrModule {
             })
     }
 
-    /// Whether a retained model, class, or newtype layout agrees with its checked canonical identities.
+    /// Validate default arguments against the exact retained owner's parameter scope. A nominal template may refer
+    /// to its declared parameters recursively; an enum has no parameter scope here. Missing or malformed owners,
+    /// foreign variables, `Self`, and uninferred placeholders never authorize a template. This validates existing
+    /// facts only; consumers must still instantiate every admitted owner parameter before constructing native MIR.
+    pub fn trait_arguments_are_owner_bound(&self, value: &crate::body_ir::TraitImplementation) -> bool {
+        if let Some(owner) = self
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical == value.owner && self.is_well_formed_nominal_declaration(owner))
+        {
+            return value
+                .type_arguments
+                .iter()
+                .all(|binding| is_owner_bound_type(&binding.argument, &owner.type_parameters));
+        }
+        self.enum_declarations
+            .iter()
+            .any(|owner| owner.canonical == value.owner && self.is_well_formed_native_enum_declaration(owner))
+            && value
+                .type_arguments
+                .iter()
+                .all(|binding| is_closed_type(&binding.argument))
+    }
+
+    /// Whether a retained source/SDK layout agrees with its canonical identities, or a native carrier exactly
+    /// matches the ABI whitelist and its dedicated physical declaration scope. A selected native equality witness
+    /// must be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
+        if declaration.trait_adoptions.iter().enumerate().any(|(index, adoption)| {
+            adoption.trait_identity.kind != SemanticSourceTargetKind::Trait
+                || adoption.trait_identity.namespace != SymbolNamespace::OrdinaryLexical
+                || adoption.trait_identity.declaration_name.is_empty()
+                || adoption.trait_identity.scope_discriminant.is_some()
+                || adoption.methods.as_ref().is_some_and(|methods| {
+                    methods.iter().enumerate().any(|(index, method)| {
+                        method.kind != SemanticSourceTargetKind::Method
+                            || method.namespace != SymbolNamespace::Member
+                            || method.scope_discriminant.is_some()
+                            || methods[..index].contains(method)
+                    })
+                })
+                || declaration.trait_adoptions[..index].contains(adoption)
+        }) {
+            return false;
+        }
+        if let Some(metadata) = &declaration.reflection_metadata {
+            let Some(slots) = &declaration.reflection_fields else {
+                return false;
+            };
+            if slots.len() != metadata.len()
+                || slots
+                    .iter()
+                    .zip(metadata)
+                    .any(|(slot, record)| declaration.fields.get(*slot) != Some(&record.name))
+            {
+                return false;
+            }
+        }
+        if !declaration.native_item.is_empty()
+            && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
+                != Some(declaration.native_item.as_str())
+        {
+            return false;
+        }
+        if matches!(
+            declaration.canonical.origin,
+            crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
+        ) {
+            return crate::body_ir::native_carrier_nominal(&declaration.canonical).as_ref() == Some(declaration)
+                && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
+                    == Some(self.module_id.path());
+        }
+        if !declaration.native_type_arguments.is_empty() {
+            return false;
+        }
+        if declaration.display_method.as_ref().is_some_and(|method| {
+            method.kind != SemanticSourceTargetKind::Method || method.namespace != SymbolNamespace::Member
+        }) {
+            return false;
+        }
+        if declaration.comparison_equality.as_ref().is_some_and(|method| {
+            !matches!(
+                declaration.canonical.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class | SemanticSourceTargetKind::Newtype
+            ) || method.kind != SemanticSourceTargetKind::Method
+                || method.namespace != SymbolNamespace::Member
+                || method.origin != declaration.canonical.origin
+                || !declares_member(&declaration.canonical, method)
+        }) {
+            return false;
+        }
         if declaration.type_parameters.len() != declaration.type_parameter_count
             || declaration.type_parameters.iter().any(String::is_empty)
             || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
@@ -240,8 +524,23 @@ impl BodyIrModule {
                 && declaration.field_identities == [declaration.canonical.clone()]
                 && declaration.field_types.len() == 1
                 && declaration.field_public == [true]
-                && declaration.type_parameter_count == 0
-                && !declaration.has_field_defaults;
+                && declaration.field_aliases.iter().all(Option::is_none)
+                && !declaration.has_field_defaults
+                && declaration.class_inheritance.is_none()
+                && declaration.method_partial_defaults.is_empty()
+                && Self::has_well_formed_newtype_string_conversion(declaration)
+                && self.has_well_formed_newtype_deserialize(declaration);
+        }
+        if declaration.newtype_deserialize != crate::body_ir::NewtypeDeserialize::Unselected
+            || declaration.newtype_string_conversion != crate::body_ir::NewtypeStringConversion::Unselected
+        {
+            return false;
+        }
+        if !self.are_well_formed_method_partial_defaults(declaration) {
+            return false;
+        }
+        if !self.class_inheritance_is_well_formed(declaration) {
+            return false;
         }
 
         matches!(
@@ -256,20 +555,275 @@ impl BodyIrModule {
             && declaration.fields.len() == declaration.field_identities.len()
             && declaration.fields.len() == declaration.field_types.len()
             && declaration.fields.len() == declaration.field_public.len()
+            && (declaration.field_aliases.is_empty() || declaration.fields.len() == declaration.field_aliases.len())
+            && declaration.reflection_fields.as_ref().is_none_or(|slots| {
+                slots.iter().all(|slot| *slot < declaration.fields.len())
+                    && slots.windows(2).all(|pair| pair[0] < pair[1])
+            })
             && declaration.fields.iter().collect::<BTreeSet<_>>().len() == declaration.fields.len()
             && declaration.field_identities.iter().collect::<BTreeSet<_>>().len() == declaration.field_identities.len()
             && declaration
                 .fields
                 .iter()
                 .zip(&declaration.field_identities)
-                .all(|(name, identity)| {
+                .enumerate()
+                .all(|(index, (name, identity))| {
                     identity.namespace == SymbolNamespace::Member
                         && identity.kind == SemanticSourceTargetKind::Field
                         && identity.scope_discriminant.is_none()
                         && identity.origin == declaration.canonical.origin
-                        && declares_member(&declaration.canonical, identity)
+                        && (declares_member(&declaration.canonical, identity)
+                            || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Validate a bounded local class edge and complete ancestor-slot mapping without recursively validating bodies.
+    /// Original bodies are validated separately; nearest dispatch is checked against their retained owner spans.
+    fn class_inheritance_is_well_formed(&self, declaration: &NominalDeclaration) -> bool {
+        let Some(inheritance) = &declaration.class_inheritance else {
+            return true;
+        };
+        if declaration.canonical.kind != SemanticSourceTargetKind::Class
+            || declaration.type_parameter_count != 0
+            || declaration.has_field_defaults
+            || !declaration.method_partial_defaults.is_empty()
+        {
+            return false;
+        }
+        let Some(chain) = self.class_owner_chain(declaration) else {
+            return false;
+        };
+        let parent = chain[1];
+        if declaration.fields.len() < parent.fields.len()
+            || !parent.fields.iter().enumerate().all(|(index, name)| {
+                declaration.fields.get(index) == Some(name)
+                    && declaration.field_identities.get(index) == parent.field_identities.get(index)
+                    && declaration.field_types.get(index) == parent.field_types.get(index)
+                    && declaration.field_public.get(index) == parent.field_public.get(index)
+            })
+        {
+            return false;
+        }
+        let ancestors = &chain[1..];
+        let slots: BTreeSet<_> = self
+            .bodies
+            .iter()
+            .filter_map(|body| body.canonical.as_ref())
+            .filter(|method| {
+                method.kind == SemanticSourceTargetKind::Method
+                    && ancestors.iter().any(|owner| declares_member(&owner.canonical, method))
+            })
+            .collect();
+        if inheritance.methods.len() != slots.len() {
+            return false;
+        }
+        let mut recorded = BTreeSet::new();
+        inheritance.methods.iter().all(|record| {
+            slots.contains(&record.method)
+                && recorded.insert(&record.method)
+                && self.nearest_class_body_identity(&chain, &record.method) == Some(&record.implementation)
+                && !self.decorated_bindings.iter().any(|binding| {
+                    binding.original_body.canonical.as_ref() == Some(&record.method)
+                        || binding.original_body.canonical.as_ref() == Some(&record.implementation)
+                })
+        })
+    }
+
+    /// Resolve a local class's concrete-to-oldest owner chain, rejecting cycles, unretained parents and open layouts.
+    fn class_owner_chain<'a>(&'a self, declaration: &'a NominalDeclaration) -> Option<Vec<&'a NominalDeclaration>> {
+        let mut chain = vec![declaration];
+        let mut seen = BTreeSet::from([&declaration.canonical]);
+        let mut current = declaration;
+        while let Some(inheritance) = &current.class_inheritance {
+            let parent = self
+                .nominal_declarations
+                .iter()
+                .find(|owner| owner.canonical == inheritance.parent)?;
+            if !seen.insert(&parent.canonical)
+                || parent.canonical.kind != SemanticSourceTargetKind::Class
+                || parent.type_parameter_count != 0
+                || parent.canonical.origin != declaration.canonical.origin
+                || self.declaration_id_for_canonical(
+                    &parent.canonical,
+                    SymbolNamespace::OrdinaryLexical,
+                    SemanticSourceTargetKind::Class,
+                ) != Some(parent.direct_declaration_id.clone())
+            {
+                return None;
+            }
+            chain.push(parent);
+            current = parent;
+        }
+        Some(chain)
+    }
+
+    /// Check an inherited field at its exact parent-first position, preserving identity, type and visibility.
+    fn inherited_field_matches(&self, declaration: &NominalDeclaration, index: usize) -> bool {
+        let Some(chain) = self.class_owner_chain(declaration) else {
+            return false;
+        };
+        declaration.class_inheritance.is_some()
+            && chain[1..].iter().any(|parent| {
+                parent.field_identities.get(index) == declaration.field_identities.get(index)
+                    && parent.fields.get(index) == declaration.fields.get(index)
+                    && parent.field_types.get(index) == declaration.field_types.get(index)
+                    && parent.field_public.get(index) == declaration.field_public.get(index)
+            })
+    }
+
+    /// Select the nearest retained original method body for one ancestor slot, without minting or rewriting identities.
+    fn nearest_class_body_identity<'a>(
+        &'a self,
+        chain: &[&NominalDeclaration],
+        slot: &CanonicalSymbolId,
+    ) -> Option<&'a CanonicalSymbolId> {
+        for owner in chain {
+            for body in &self.bodies {
+                let Some(method) = &body.canonical else {
+                    continue;
+                };
+                if method.kind == SemanticSourceTargetKind::Method
+                    && method.declaration_name == slot.declaration_name
+                    && method.origin == owner.canonical.origin
+                    && declares_member(&owner.canonical, method)
+                {
+                    return Some(method);
+                }
+            }
+        }
+        None
+    }
+
+    /// Validate reconstruction authority against the exact attached owner and its unique checked source Body.
+    /// Missing selection never authorizes Deserialize. Checked hooks retain no duplicate signature or binder facts;
+    /// their existing frame must carry one owned underlying parameter and the exact owner/ValidationError Result.
+    ///
+    /// Nongeneric project owners use their identity-checked carrier key, matching the hook frame after projection.
+    fn has_well_formed_newtype_deserialize(&self, declaration: &NominalDeclaration) -> bool {
+        use crate::body_ir::{CallableParamDefault, NewtypeDeserialize};
+        let deserialize = declaration.derives.iter().any(|derive| derive == "serde::Deserialize");
+        let hook = match &declaration.newtype_deserialize {
+            NewtypeDeserialize::Unselected => return !deserialize,
+            NewtypeDeserialize::Ordinary => return deserialize,
+            NewtypeDeserialize::Checked(hook) if deserialize => hook,
+            NewtypeDeserialize::Checked(_) => return false,
+        };
+        if hook.kind != SemanticSourceTargetKind::Method
+            || hook.namespace != SymbolNamespace::Member
+            || hook.origin != declaration.canonical.origin
+            || !declares_member(&declaration.canonical, hook)
+        {
+            return false;
+        }
+        let Some(body) = self.body_for_canonical_target(hook) else {
+            return false;
+        };
+        let [parameter] = body.params.as_slice() else {
+            return false;
+        };
+        let [underlying] = declaration.field_types.as_slice() else {
+            return false;
+        };
+        // This check is nonrecursive: body_has_canonical_direct_call_id validates the owner's layout in turn.
+        if self.declaration_id_for_canonical(hook, SymbolNamespace::Member, SemanticSourceTargetKind::Method)
+            != Some(body.direct_call_id.clone())
+            || body.direct_call_id
+                != CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
+            || body.name != hook.declaration_name
+            || body.is_async
+            || body.is_generator()
+            || body.type_parameters != declaration.type_parameters
+            || parameter.mutable
+            || !matches!(parameter.default, CallableParamDefault::Required)
+            || &parameter.ty != underlying
+        {
+            return false;
+        }
+        let owner = if declaration.type_parameters.is_empty() {
+            if underlying != &IncanType::Primitive(IncanPrimitiveType::Str) {
+                return false;
+            }
+            IncanType::Named(declaration.carrier_name())
+        } else {
+            let [name] = declaration.type_parameters.as_slice() else {
+                return false;
+            };
+            if underlying != &IncanType::TypeVar(name.clone()) {
+                return false;
+            }
+            IncanType::Generic {
+                base: declaration.name.clone(),
+                args: vec![underlying.clone()],
+            }
+        };
+        body.return_type
+            == IncanType::Generic {
+                base: "Result".to_owned(),
+                args: vec![
+                    owner,
+                    IncanType::NativeBuiltin(crate::RuntimeBuiltinType::ValidationError),
+                ],
+            }
+    }
+
+    /// Check retained storage consistency without inferring support or activation from a raw tuple layout.
+    /// The producer's automatic selection attests source-only exclusions that physical layout cannot recover.
+    /// Qualified carrier keys must encode the exact retained inner identity; a matching source name alone cannot
+    /// substitute another owner.
+    fn has_well_formed_newtype_string_conversion(declaration: &NominalDeclaration) -> bool {
+        use crate::body_ir::NewtypeStringConversion;
+        if declaration.newtype_string_conversion == NewtypeStringConversion::Unselected {
+            return true;
+        }
+        declaration.type_parameters.is_empty()
+            && declaration.field_default_body.is_none()
+            && !matches!(
+                declaration.newtype_deserialize,
+                crate::body_ir::NewtypeDeserialize::Checked(_)
+            )
+            && match declaration.field_types.as_slice() {
+                [IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Str)] => true,
+                [IncanType::Named(name)] => declaration.named_type_identities.get(name).is_some_and(|identity| {
+                    identity.kind == SemanticSourceTargetKind::Newtype
+                        && (identity.declaration_name == *name
+                            || crate::body_ir::nominal_carrier_key(identity).as_ref() == Some(name))
+                }),
+                _ => false,
+            }
+    }
+
+    /// Whether each method-partial frame of a model or class is a uniquely named binding inside its owner whose frame
+    /// is the target method's own surface: the checked target is a method of this owner, and the frame carries that
+    /// method's identity, name, span and direct call id, with the owner's receiver first.
+    fn are_well_formed_method_partial_defaults(&self, declaration: &NominalDeclaration) -> bool {
+        let partials = &declaration.method_partial_defaults;
+        partials
+            .iter()
+            .map(|binding| &binding.name)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == partials.len()
+            && partials.iter().all(|binding| {
+                !binding.name.is_empty()
+                    && binding.span.start < binding.span.end
+                    && binding.span.start >= declaration.canonical.declaration_span.start
+                    && binding.span.end <= declaration.canonical.declaration_span.end
+                    && binding.target.kind == SemanticSourceTargetKind::Method
+                    && declares_member(&declaration.canonical, &binding.target)
+                    && binding.frame.canonical.as_ref() == Some(&binding.target)
+                    && binding.frame.name == binding.target.declaration_name
+                    && self.declaration_id_for_canonical(
+                        &binding.target,
+                        SymbolNamespace::Member,
+                        SemanticSourceTargetKind::Method,
+                    ) == Some(binding.frame.direct_call_id.clone())
+                    && binding
+                        .frame
+                        .params
+                        .first()
+                        .is_some_and(|receiver| receiver.ty == nominal_receiver_type(declaration))
+            })
     }
 
     /// Whether a retained fieldless enum is bound to this module, owner and members alike.
@@ -350,7 +904,7 @@ impl BodyIrModule {
 /// Return the declaration's open receiver type in its retained parameter order, never a concrete inferred use.
 fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
     if owner.type_parameters.is_empty() {
-        crate::IncanType::Named(owner.name.clone())
+        crate::IncanType::Named(owner.carrier_name())
     } else {
         crate::IncanType::Generic {
             base: owner.name.clone(),
@@ -364,7 +918,85 @@ fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
     }
 }
 
-/// Validate a literal payload against its exact primitive storage or list element carrier.
+/// Whether a static initializer's literals match its storage carrier: a primitive, or a list, dictionary or set of
+/// primitives whose hashed keys and members exclude floating point, as legacy hashed collections do. A computed
+/// initializer is a closed body with no parameters that returns exactly the storage carrier.
+fn static_initializer_matches_parts(ty: &IncanType, initial: &StaticInitializer) -> bool {
+    match initial {
+        StaticInitializer::Computed(body) => {
+            body.params.is_empty()
+                && body.param_locals.is_empty()
+                && body.type_parameters.is_empty()
+                && !body.is_async
+                && body.return_type == *ty
+        }
+        StaticInitializer::Literal(value) => literal_static_carrier_matches(ty, value),
+        StaticInitializer::List(values) => match collection_arguments(ty, CollectionTypeId::List) {
+            Some([element]) => {
+                primitive_static_carrier(element)
+                    && values
+                        .iter()
+                        .all(|value| literal_static_carrier_matches(element, value))
+            }
+            _ => false,
+        },
+        StaticInitializer::Dict(entries) => match collection_arguments(ty, CollectionTypeId::Dict) {
+            Some([key, value]) => {
+                hashed_static_carrier(key)
+                    && primitive_static_carrier(value)
+                    && entries.iter().all(|(entry_key, entry_value)| {
+                        literal_static_carrier_matches(key, entry_key)
+                            && literal_static_carrier_matches(value, entry_value)
+                    })
+            }
+            _ => false,
+        },
+        StaticInitializer::Set(members) => match collection_arguments(ty, CollectionTypeId::Set) {
+            Some([element]) => {
+                hashed_static_carrier(element)
+                    && members
+                        .iter()
+                        .all(|member| literal_static_carrier_matches(element, member))
+            }
+            _ => false,
+        },
+    }
+}
+
+/// The type arguments of a checked builtin collection type of the expected kind.
+fn collection_arguments(ty: &IncanType, expected: CollectionTypeId) -> Option<&[IncanType]> {
+    match ty {
+        IncanType::Generic { base, args } if collections::from_str(base) == Some(expected) => Some(args.as_slice()),
+        _ => None,
+    }
+}
+
+/// A primitive storage carrier a static literal may hold, even when an initializer has no element to validate.
+fn primitive_static_carrier(ty: &IncanType) -> bool {
+    matches!(
+        ty,
+        IncanType::Primitive(
+            IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Str
+        )
+    )
+}
+
+/// A primitive hash key or set member: floating point lacks the Eq and Hash legacy hashed collections require.
+fn hashed_static_carrier(ty: &IncanType) -> bool {
+    primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
+}
+
+/// Validate effect-free primitive or flat collection initialization; callers separately prove canonical storage
+/// ownership.
+///
+/// Local storage also admits checked computed bodies. Publication does not yet audit their executable dependencies, so
+/// its boundary retains only literal collections with checked primitive carriers.
+pub(crate) fn static_initializer_matches(declaration: &crate::body_ir::StaticDeclaration) -> bool {
+    !matches!(&declaration.initial, StaticInitializer::Computed(_))
+        && static_initializer_matches_parts(&declaration.ty, &declaration.initial)
+}
+
+/// Validate a literal payload against its exact primitive storage or collection element carrier.
 fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
     matches!(
         (ty, value),
@@ -385,22 +1017,65 @@ fn declares_member(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> boo
         && member.declaration_span.end <= owner.declaration_span.end
 }
 
+/// Validate the implicit immutable getter receiver independently of the member's owning nominal layout.
+/// This rejects forged static, mutable, generic-method or ordinary-parameter property bodies before scheduling.
+fn is_getter_frame(body: &Body, canonical: &CanonicalSymbolId) -> bool {
+    let Some(receiver) = body.locals.first() else {
+        return false;
+    };
+    let [parameter] = body.params.as_slice() else {
+        return false;
+    };
+    let Some(identity) = receiver.identity.as_ref() else {
+        return false;
+    };
+    !body.is_async
+        && body.type_parameters.is_empty()
+        && body.param_locals.as_slice() == [receiver.id]
+        && matches!(receiver.origin, LocalOrigin::Receiver { mutable: false })
+        && identity.namespace == SymbolNamespace::OrdinaryLexical
+        && identity.kind == SemanticSourceTargetKind::Receiver
+        && identity.origin == canonical.origin
+        && identity.declaration_name == "self"
+        && identity.declaration_span == body.span
+        && parameter.local == receiver.id
+        && parameter.ty == receiver.ty
+        && parameter.span == body.span
+        && receiver.span == body.span
+        && parameter.name == "self"
+        && !parameter.mutable
+        && matches!(parameter.default, CallableParamDefault::Required)
+}
+
 /// Whether a checked type names no open type: no type variable, `Self`, or uninferred placeholder at any depth.
 ///
 /// A trait default instantiated for a concrete adopter must receive closed type arguments; an open one would leave
 /// the default generic after specialization.
 fn is_closed_type(ty: &IncanType) -> bool {
+    is_owner_bound_type(ty, &[])
+}
+
+/// Validate one argument tree in a retained owner's declared parameter scope, without resolving names or inferring
+/// missing arguments. An empty scope preserves the closed-type contract used outside nominal templates.
+fn is_owner_bound_type(ty: &IncanType, parameters: &[String]) -> bool {
     match ty {
-        IncanType::TypeVar(_) | IncanType::SelfType | IncanType::Infer | IncanType::Unknown => false,
-        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().all(is_closed_type),
-        IncanType::Function { params, return_type } => {
-            params.iter().all(|param| is_closed_type(&param.ty)) && is_closed_type(return_type)
+        IncanType::TypeVar(name) => parameters.iter().any(|parameter| parameter == name),
+        IncanType::SelfType | IncanType::Infer | IncanType::Unknown | IncanType::Unsupported(_) => false,
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
+            args.iter().all(|argument| is_owner_bound_type(argument, parameters))
         }
-        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => is_closed_type(inner),
+        IncanType::Function { params, return_type } => {
+            params.iter().all(|param| is_owner_bound_type(&param.ty, parameters))
+                && is_owner_bound_type(return_type, parameters)
+        }
+        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+            is_owner_bound_type(inner, parameters)
+        }
         IncanType::Never
         | IncanType::Primitive(_)
         | IncanType::Named(_)
         | IncanType::Decimal { .. }
-        | IncanType::RustInteropPath(_) => true,
+        | IncanType::RustInteropPath(_)
+        | IncanType::NativeBuiltin(_) => true,
     }
 }

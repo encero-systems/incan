@@ -2,6 +2,8 @@
 
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use support::behavior_fixtures::{self as fixtures, BehaviorFixture, Expectation, FixtureLayout};
@@ -9,6 +11,168 @@ use support::behavior_fixtures::{self as fixtures, BehaviorFixture, Expectation,
 /// The driver's environment variable naming its refusal report, and the report's file name in a fixture's scratch.
 const REFUSAL_REPORT: &str = "INCAN_DIRECT_REFUSAL_REPORT";
 const REFUSAL_FILE: &str = "refusals.txt";
+
+/// Structured semantic failures are bound to an input and never substitute for unsupported-construct refusals.
+const SEMANTIC_REPORT: &str = "INCAN_DIRECT_SEMANTIC_REPORT";
+const SEMANTIC_FILE: &str = "semantic-outcome.json";
+
+/// An unselected feature main is a genuine CLI failure, compared as a Run outcome without inventing an executable.
+#[test]
+fn unselected_feature_main_preserves_cli_failure_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let fixture = fixtures::discover(&support::fixtures_dir().join("behavior/execution_calls_types_and_modules"))?
+        .into_iter()
+        .find(|fixture| fixture.name == "a_feature_gated_main_left_unselected")
+        .ok_or("missing original feature-unselected fixture")?;
+    let scratch = graph.scratch("unselected-feature-main-cli")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &scratch,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "pass", "{detail}");
+    assert!(
+        !scratch.join("native").exists(),
+        "a missing entry must produce no binary"
+    );
+    Ok(())
+}
+
+/// Semantic reports require the matching input and failed CLI status; unsupported gaps and existing binaries stay
+/// excluded.
+#[cfg(unix)]
+#[test]
+fn semantic_entrypoint_report_preserves_failure_guards() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("main.incn");
+    let report = root.path().join(SEMANTIC_FILE);
+    let binary = root.path().join("native");
+    let text = "def helper() -> None:\n    pass\n";
+    fs::write(&source, text)?;
+    let mut metadata = serde_json::json!({
+        "schema_version": 1,
+        "kind": "missing_entrypoint",
+        "source_digest": oven_model::digest::digest_content(text),
+    });
+    fs::write(&report, serde_json::to_vec(&metadata)?)?;
+    let mut output = Output {
+        status: std::process::ExitStatus::from_raw(1 << 8),
+        stdout: Vec::new(),
+        stderr: b"selected program has no main entrypoint\n".to_vec(),
+    };
+    assert!(semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+
+    metadata["source_digest"] = serde_json::Value::String("wrong source".into());
+    fs::write(&report, serde_json::to_vec(&metadata)?)?;
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    metadata["source_digest"] = serde_json::Value::String(oven_model::digest::digest_content(text));
+    metadata["kind"] = serde_json::Value::String("unsupported".into());
+    fs::write(&report, serde_json::to_vec(&metadata)?)?;
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    metadata["kind"] = serde_json::Value::String("missing_entrypoint".into());
+    fs::write(&report, serde_json::to_vec(&metadata)?)?;
+
+    output.status = std::process::ExitStatus::from_raw(0);
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    output.status = std::process::ExitStatus::from_raw(1 << 8);
+    output.stdout = b"unexpected output".to_vec();
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    output.stdout.clear();
+    output.stderr = b"unsupported Body IR construct".to_vec();
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    output.stderr.clear();
+
+    fs::write(&report, b"{partial report")?;
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    fs::write(&report, serde_json::to_vec(&metadata)?)?;
+    fs::write(&binary, b"an existing output cannot prove missing entry")?;
+    assert!(!semantic_entrypoint_failure(&source, &report, &binary, &output)?);
+    Ok(())
+}
+
+/// An unrelated unsupported construct stays refused even when its Run contract expects failure and a stale report
+/// matches.
+#[test]
+fn unsupported_run_failure_does_not_receive_semantic_credit() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let area = graph.scratch("unsupported-run-failure-area")?;
+    let text = "# behavior: an unsupported boolean main stays a route refusal\n# expect-stdout:\n# expect-exit: 1\n\ndef main() -> bool:\n    return true\n";
+    fs::write(area.join("unsupported.incn"), text)?;
+    let fixture = fixtures::discover(&area)?
+        .into_iter()
+        .next()
+        .ok_or("missing control fixture")?;
+    let scratch = graph.scratch("unsupported-run-failure-observation")?;
+    fs::write(
+        scratch.join(SEMANTIC_FILE),
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "kind": "missing_entrypoint",
+            "source_digest": oven_model::digest::digest_content(text),
+        }))?,
+    )?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &scratch,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "refused", "{detail}");
+    assert!(detail.contains("unsupported Body IR non-unit native main"), "{detail}");
+    assert!(!scratch.join("native").exists());
+    assert!(
+        !scratch.join(SEMANTIC_FILE).exists(),
+        "stale semantic evidence must be cleared"
+    );
+    Ok(())
+}
+
+/// A selected feature main still executes, while a declared diagnostic fixture remains a check-only observation.
+#[test]
+fn selected_entry_and_check_refusal_keep_their_observation_boundaries() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let selected = fixtures::discover(&support::fixtures_dir().join("behavior/execution_calls_types_and_modules"))?
+        .into_iter()
+        .find(|fixture| fixture.name == "a_feature_gated_main_selected_by_default")
+        .ok_or("missing original selected feature fixture")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let root = graph.scratch("selected-feature-main-preservation")?;
+    let (observed, detail) = measure(
+        &selected,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "pass", "{detail}");
+    assert!(root.join("native").is_file());
+
+    let refusal = fixtures::discover(&support::fixtures_dir().join("behavior/cli_dependencies"))?
+        .into_iter()
+        .find(|fixture| fixture.name == "refused_feature_gated_export_of_dependency")
+        .ok_or("missing original feature diagnostic fixture")?;
+    assert!(matches!(refusal.header.expectation, Expectation::Refused { .. }));
+    let root = graph.scratch("feature-diagnostic-preservation")?;
+    let (observed, detail) = measure(
+        &refusal,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "check-only", "{detail}");
+    assert!(!root.join("native").exists());
+    Ok(())
+}
 
 /// A fixture's exclusive census class and its independently retained observed result.
 ///
@@ -38,6 +202,219 @@ fn reported_refusals(scratch: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The materialized nested reflection fixture preserves its live legacy output through a closed decorator cache.
+/// Its original repository-path checking failure must not replace the census project's actual working outcome.
+#[test]
+fn nested_generic_reflection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("nested-reflection-pending")?;
+    let fixture = fixtures::discover(&support::fixtures_dir().join("behavior/codegen_modules_and_imports"))?
+        .into_iter()
+        .find(|fixture| fixture.name == "nested_decorated_generic_reflection")
+        .ok_or("missing nested generic reflection fixture")?;
+    fixtures::materialize(&fixture, &root)?;
+    let legacy = support::repo_command()
+        .current_dir(&root)
+        .env("INCAN_HOME", &graph.home)
+        .arg("build")
+        .arg(root.join("src/main.incn"))
+        .arg(root.join("legacy"))
+        .output()?;
+    fs::write(root.join("legacy-build.stdout"), &legacy.stdout)?;
+    fs::write(root.join("legacy-build.stderr"), &legacy.stderr)?;
+    success(&legacy, "nested reflection legacy compilation");
+    let expected = Command::new(root.join("legacy/oven/release/nested_decorated_generic_reflection"))
+        .current_dir(&root)
+        .output()?;
+    success(&expected, "nested reflection legacy execution");
+    assert_eq!(expected.stdout, b"Row:2:clone\nPoint:3:clone\n");
+    assert!(
+        fixture.header.pending.is_none(),
+        "a working legacy fixture must stay active"
+    );
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "pass", "{detail}");
+    Ok(())
+}
+
+/// Generic publication executes complete public closures and preserves named refusals for other unfinished boundaries.
+#[test]
+fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-generic-next-stages")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    for (area, name, expected_class, expected) in [
+        ("cli_dependencies", "compiled_generic_bounds", "pass", ""),
+        (
+            "codegen_dependencies",
+            "implied_generic_supertrait_adoption",
+            "pass",
+            "",
+        ),
+        (
+            "lowering_dependencies",
+            "provider_nominal_types_and_unions_issue892",
+            "pass",
+            "",
+        ),
+    ] {
+        let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
+            .into_iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing behavior fixture {area}/{name}"))?;
+        let scratch = root.join(name);
+        fs::create_dir_all(&scratch)?;
+        let (class, detail) = measure(
+            &fixture,
+            &scratch,
+            &graph.driver_binary("debug"),
+            &graph.sysroot,
+            &closure,
+            Duration::from_secs(180),
+        )?;
+        assert_eq!(class, expected_class, "{area}/{name}: {detail}");
+        assert_eq!(detail, expected, "{area}/{name}");
+    }
+    Ok(())
+}
+
+/// A checked SDK iterator chain reaches the remaining native generic template guard without an invalid-body failure.
+#[test]
+fn published_fallible_iterator_reaches_carrier_admission() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-fallible-carrier-next-stage")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let name = "fallible_iterator_chain_without_trait_import";
+    let fixture = fixtures::discover(&support::fixtures_dir().join("behavior/cli_dependencies"))?
+        .into_iter()
+        .find(|fixture| fixture.name == name)
+        .ok_or("missing published fallible iterator fixture")?;
+    let (class, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(class, "refused", "{detail}");
+    assert_eq!(detail, "unsupported Body IR open trait default type arguments");
+    Ok(())
+}
+
+/// Public Partials and both module-bound function-value spellings execute the complete original package fixture.
+#[test]
+fn published_partial_reaches_function_value_next_stage() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-partial-next-stage")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let name = "dependency_partial_and_function_value";
+    let fixture = fixtures::discover(&support::fixtures_dir().join("behavior/lowering_dependencies"))?
+        .into_iter()
+        .find(|fixture| fixture.name == name)
+        .ok_or("missing published Partial fixture")?;
+    let (class, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(class, "pass", "{detail}");
+    Ok(())
+}
+
+/// Codec publication reaches named default and union boundaries, while the admitted submodule executes correctly.
+#[test]
+fn published_codec_reaches_carrier_and_shared_read_admission() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-codec-next-stages")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    for (area, name, expected_class, expected) in [
+        (
+            "codegen_models_and_collections",
+            "compression_auto_decode",
+            "refused",
+            "unsupported Body IR default: stdlib default other than a literal or a const of the parameter's type",
+        ),
+        (
+            "snapshots_stdlib",
+            "std_compression",
+            "refused",
+            "unsupported Body IR stdlib union without admitted native representation",
+        ),
+        ("codegen_modules_and_imports", "std_submodule_single_import", "pass", ""),
+    ] {
+        let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
+            .into_iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing behavior fixture {area}/{name}"))?;
+        let scratch = root.join(name);
+        fs::create_dir_all(&scratch)?;
+        let (class, detail) = measure(
+            &fixture,
+            &scratch,
+            &graph.driver_binary("debug"),
+            &graph.sysroot,
+            &closure,
+            Duration::from_secs(180),
+        )?;
+        assert_eq!(class, expected_class, "{area}/{name}: {detail}");
+        if expected_class == "refused" {
+            assert_eq!(detail, expected, "{area}/{name}");
+        }
+    }
+    Ok(())
+}
+
+/// Public enum and storage publication reaches separate nested-pattern and decorated-body boundaries without failure.
+#[test]
+fn published_enum_and_static_context_reaches_named_frontiers() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-enum-and-static-frontiers")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    for (area, name, expected) in [
+        (
+            "cli_dependencies",
+            "dependency_reexported_type_identity",
+            "unsupported Body IR nested enum payload pattern",
+        ),
+        (
+            "emit_dependency_unions_and_surfaces",
+            "dependency_declaration_kinds",
+            "unsupported Body IR package executable representation: package `kinds` version 0.1.0 cannot satisfy the executable representation requirement: this package publishes no executable representation for `decorated`",
+        ),
+    ] {
+        let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
+            .into_iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing behavior fixture {area}/{name}"))?;
+        let scratch = root.join(name);
+        fs::create_dir_all(&scratch)?;
+        let (class, detail) = measure(
+            &fixture,
+            &scratch,
+            &graph.driver_binary("debug"),
+            &graph.sysroot,
+            &closure,
+            Duration::from_secs(180),
+        )?;
+        assert_eq!(class, "refused", "{area}/{name}: {detail}");
+        assert_eq!(detail, expected, "{area}/{name}");
+    }
+    Ok(())
 }
 
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
@@ -150,6 +527,7 @@ fn measure(
                 &["oven", "bake", "--project", "."],
             );
             support::configure_explicit_oven_bake_command(&mut bake)?;
+            super::configure_frozen_sdk_provider_command(&mut bake)?;
             let Some(output) = bounded(&mut bake, scratch, deadline)? else {
                 return Ok((
                     "driver-error".into(),
@@ -163,18 +541,64 @@ fn measure(
         scratch.join("src/main.incn")
     };
     let binary = scratch.join("native");
+    let semantic_report = scratch.join(SEMANTIC_FILE);
+    if semantic_report.exists() {
+        fs::remove_file(&semantic_report)?;
+    }
     let mut command = corpus::source_command(driver, &source, &binary, sysroot, closure);
+    // A standalone fixture's legacy oracle belongs to its materialized named project, not this repository package.
+    if fixture.layout == FixtureLayout::SingleFile {
+        command.arg("--package-name").arg(&fixture.name);
+    }
     command.current_dir(scratch);
     command.env(REFUSAL_REPORT, scratch.join(REFUSAL_FILE));
+    command.env(SEMANTIC_REPORT, &semantic_report);
     let Some(output) = bounded(&mut command, scratch, deadline)? else {
         return Ok(("driver-error".into(), "compile timeout".into()));
     };
     if !output.status.success() {
+        if semantic_entrypoint_failure(&source, &semantic_report, &binary, &output)? {
+            return compare_program_outcome(fixture, &output);
+        }
         return Ok(compile_failure(&output));
     }
     let Some(output) = bounded(Command::new(binary).current_dir(scratch), scratch, deadline)? else {
         return Ok(("driver-error".into(), "binary timeout".into()));
     };
+    compare_program_outcome(fixture, &output)
+}
+
+/// Accept only the driver's explicit missing-entrypoint result for this exact input, with no binary or unsupported gap.
+fn semantic_entrypoint_failure(
+    source: &Path,
+    report: &Path,
+    binary: &Path,
+    output: &Output,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if output.status.code() != Some(1)
+        || !output.stdout.is_empty()
+        || binary.exists()
+        || String::from_utf8_lossy(&output.stderr).contains("unsupported ")
+    {
+        return Ok(false);
+    }
+    let Ok(bytes) = fs::read(report) else { return Ok(false) };
+    let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(false);
+    };
+    let digest = oven_model::digest::digest_content(&fs::read_to_string(source)?);
+    Ok(
+        report.get("schema_version").and_then(serde_json::Value::as_u64) == Some(1)
+            && report.get("kind").and_then(serde_json::Value::as_str) == Some("missing_entrypoint")
+            && report.get("source_digest").and_then(serde_json::Value::as_str) == Some(digest.as_str()),
+    )
+}
+
+/// Compare an actual process outcome at the Run boundary, including genuine CLI failures before executable creation.
+fn compare_program_outcome(
+    fixture: &BehaviorFixture,
+    output: &Output,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
     let Expectation::Run {
         stdout,
         stderr_contains,
@@ -184,7 +608,7 @@ fn measure(
         return Err("run fixture lost its expectation".into());
     };
     Ok(
-        match fixtures::compare_run(stdout, stderr_contains, *exit_code, &output) {
+        match fixtures::compare_run(stdout, stderr_contains, *exit_code, output) {
             Ok(()) => ("pass".into(), String::new()),
             Err(detail) => ("wrong".into(), detail),
         },
@@ -252,7 +676,9 @@ fn validate_requested_fixture_names(known: &BTreeSet<String>, wanted: &BTreeSet<
 /// Require complete measurements and reject execution or diagnostic failures regardless of their display class.
 ///
 /// Pending semantic outcomes and named construction refusals remain visible; accepting their measurements does not
-/// establish complete native-route support. Pending status never excuses a driver failure or timeout.
+/// establish complete native-route support. A pending fixture declares behavior legacy does not have yet, so its
+/// different output, or the shared checker's different diagnostic, is legacy's own outcome at exact parity. Pending
+/// status never excuses a driver failure or timeout.
 fn census_acceptance(records: &[Record], expected: &BTreeSet<(String, String)>) -> Result<(), String> {
     if expected.is_empty() {
         return Err("census requested no fixtures".into());
@@ -266,7 +692,7 @@ fn census_acceptance(records: &[Record], expected: &BTreeSet<(String, String)>) 
         }
         let accepted = match record.observed.as_str() {
             "pass" | "refused" | "check-only" => true,
-            "wrong" => record.pending_reason.is_some(),
+            "wrong" | "diagnostic-mismatch" => record.pending_reason.is_some(),
             _ => false,
         };
         if !accepted {
@@ -371,7 +797,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("report"));
     fs::create_dir_all(&output)?;
-    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
     let driver = graph.driver_binary("debug");
     let sysroot = &graph.sysroot;
     let available_workers = std::thread::available_parallelism()?.get();
@@ -466,6 +893,150 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Require one original fixture to reach its measured next-stage refusal after a construct family advances.
+///
+/// This runs only the named fixture and retains the original source and expected observables. A later implementation
+/// must update the pin deliberately rather than silently skipping the unresolved frontier.
+pub(super) fn require_named_refusal(area: &str, name: &str, expected: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing next-stage fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("next-stage-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "refused", "{area}/{name}: {detail}");
+    assert!(detail.contains(expected), "{area}/{name}: {detail}");
+    Ok(())
+}
+
+/// Pin an original fixture's named refusal and verify its unchanged source through live legacy in the same fixture
+/// home. Package fixtures keep their prepared project; single files use a byte-preserving scratch copy with no project
+/// bake.
+pub(super) fn require_named_refusal_with_legacy(
+    area: &str,
+    name: &str,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing legacy handoff fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("legacy-next-stage-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "refused", "{area}/{name}: {detail}");
+    assert_eq!(detail, expected, "{area}/{name}");
+    let legacy_source = if fixture.layout == FixtureLayout::SingleFile {
+        let source = root.join("main.incn");
+        fs::copy(&fixture.path, &source)?;
+        source
+    } else {
+        let mut bake = support::cli_project::configured_incan_command(&root, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut bake)?;
+        success(&bake.output()?, "legacy consumer package closure import");
+        root.join("src/main.incn")
+    };
+    let legacy = support::repo_command()
+        .current_dir(&root)
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .arg("run")
+        .arg(&legacy_source)
+        .output()?;
+    fs::write(root.join("legacy.stdout"), &legacy.stdout)?;
+    fs::write(root.join("legacy.stderr"), &legacy.stderr)?;
+    let Expectation::Run {
+        stdout,
+        stderr_contains,
+        exit_code,
+    } = &fixture.header.expectation
+    else {
+        return Err("handoff fixture lost its runtime expectation".into());
+    };
+    fixtures::compare_run(stdout, stderr_contains, *exit_code, &legacy)
+        .map_err(|detail| format!("{area}/{name} legacy: {detail}"))?;
+    Ok(())
+}
+
+/// Require one original fixture to execute with all its declared output observables intact.
+pub(super) fn require_named_pass(area: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing original fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("completed-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "pass", "{area}/{name}: {detail}");
+    Ok(())
+}
+
+/// Require an unchanged original fixture to satisfy its declared observables and live legacy execution on both routes.
+/// The consumer uses the same debug profile as the shared provider preparation and the ordinary legacy run.
+pub(super) fn require_named_live_parity(area: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing original parity fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("live-parity-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "pass", "{area}/{name}: {detail}");
+    let mut prepare = support::cli_project::configured_incan_command(&root, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut prepare)?;
+    success(&prepare.output()?, "original fixture consumer preparation");
+    let expected = support::repo_command()
+        .current_dir(&root)
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
+        .env("INCAN_NO_BANNER", "1")
+        .args(["run", "src/main.incn"])
+        .output()?;
+    let actual = Command::new(root.join("native")).current_dir(&root).output()?;
+    success(&expected, "original fixture legacy execution");
+    success(&actual, "original fixture native execution");
+    assert_eq!(actual.status.code(), expected.status.code(), "{area}/{name}");
+    assert_eq!(actual.stdout, expected.stdout, "{area}/{name} stdout");
+    assert_eq!(actual.stderr, expected.stderr, "{area}/{name} stderr");
+    Ok(())
+}
+
 /// Different source payloads for one refused type belong to the same ranked construct.
 #[cfg(unix)]
 #[test]
@@ -525,17 +1096,20 @@ fn acceptance_record(name: &str, observed: &str, pending: bool) -> Record {
     }
 }
 
-/// Displaying an outcome as pending cannot hide driver, timeout, diagnostic or unknown-result failures.
+/// Displaying an outcome as pending cannot hide driver, timeout or unknown-result failures; a pending fixture's
+/// different output or diagnostic is accepted only while it stays pending.
 #[test]
 fn census_acceptance_rejects_suppressed_execution_failures() -> Result<(), Box<dyn std::error::Error>> {
     let expected = BTreeSet::from([("area".into(), "one".into())]);
-    for observed in ["driver-error", "diagnostic-mismatch", "unrecognized"] {
+    for observed in ["driver-error", "unrecognized"] {
         for pending in [false, true] {
             assert!(census_acceptance(&[acceptance_record("one", observed, pending)], &expected).is_err());
         }
     }
-    assert!(census_acceptance(&[acceptance_record("one", "wrong", false)], &expected).is_err());
-    census_acceptance(&[acceptance_record("one", "wrong", true)], &expected)?;
+    for observed in ["wrong", "diagnostic-mismatch"] {
+        assert!(census_acceptance(&[acceptance_record("one", observed, false)], &expected).is_err());
+        census_acceptance(&[acceptance_record("one", observed, true)], &expected)?;
+    }
     for observed in ["pass", "refused", "check-only"] {
         census_acceptance(&[acceptance_record("one", observed, false)], &expected)?;
     }
@@ -585,5 +1159,95 @@ fn census_selection_rejects_empty_or_unknown_fixture_names() -> Result<(), Box<d
     validate_requested_fixture_names(&known, &BTreeSet::from(["area/one".into()]))?;
     assert!(validate_requested_fixture_names(&known, &BTreeSet::new()).is_err());
     assert!(validate_requested_fixture_names(&known, &BTreeSet::from(["area/misspelled".into()])).is_err());
+    Ok(())
+}
+
+/// All owned original projects execute after each same-named nominal use retains its declaring module.
+#[test]
+fn qualified_nominal_projects_execute_original_fixtures() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("qualified-nominal-projects")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    for (area, name) in [
+        ("cli_dependencies", "dependency_same_named_declarations_in_two_modules"),
+        ("emit_declarations_and_modules", "private_default_fields_across_modules"),
+        (
+            "lowering_declarations",
+            "default_type_constructors_keep_module_identity",
+        ),
+        ("lowering_declarations", "trait_default_nested_module_identity"),
+        ("lowering_dependencies", "provider_nominal_types_and_unions_issue892"),
+    ] {
+        let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
+            .into_iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or("missing owned nominal fixture")?;
+        let scratch = root.join(name);
+        fs::create_dir_all(&scratch)?;
+        let (class, detail) = measure(
+            &fixture,
+            &scratch,
+            &graph.driver_binary("debug"),
+            &graph.sysroot,
+            &closure,
+            Duration::from_secs(180),
+        )?;
+        assert_eq!(class, "pass", "{area}/{name}: {detail}");
+    }
+    Ok(())
+}
+
+/// Require an unchanged original to satisfy its complete runtime header and match live legacy bytes and status.
+/// Legacy still runs when native compilation refuses, so a red assertion cannot conceal a broken reference.
+pub(super) fn require_named_parity(area: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing original parity fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("original-parity-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    let legacy_source = if fixture.layout == FixtureLayout::SingleFile {
+        let source = root.join("main.incn");
+        fs::copy(&fixture.path, &source)?;
+        source
+    } else {
+        let mut bake = support::cli_project::configured_incan_command(&root, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut bake)?;
+        success(&bake.output()?, "legacy original package closure import");
+        root.join("src/main.incn")
+    };
+    let legacy = support::repo_command()
+        .current_dir(&root)
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .arg("run")
+        .arg(&legacy_source)
+        .output()?;
+    fs::write(root.join("legacy.stdout"), &legacy.stdout)?;
+    fs::write(root.join("legacy.stderr"), &legacy.stderr)?;
+    let Expectation::Run {
+        stdout,
+        stderr_contains,
+        exit_code,
+    } = &fixture.header.expectation
+    else {
+        return Err("original parity fixture lost its runtime expectation".into());
+    };
+    fixtures::compare_run(stdout, stderr_contains, *exit_code, &legacy)
+        .map_err(|detail| format!("{area}/{name} legacy: {detail}"))?;
+    assert_eq!(observed, "pass", "{area}/{name}: {detail}");
+    let native = Command::new(root.join("native")).current_dir(&root).output()?;
+    assert_eq!(native.stdout, legacy.stdout, "{area}/{name} stdout");
+    assert_eq!(native.stderr, legacy.stderr, "{area}/{name} stderr");
+    assert_eq!(native.status.code(), legacy.status.code(), "{area}/{name} exit status");
     Ok(())
 }

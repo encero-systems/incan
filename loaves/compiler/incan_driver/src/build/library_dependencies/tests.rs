@@ -86,6 +86,7 @@ fn checked_package_with_requirements(
         requirements: &ProjectRequirements::default(),
         imports: &[],
         exports: &exports,
+        publication: None,
         version: "0.1.0",
         used_module_paths: BTreeSet::new(),
         source_modules: BTreeMap::from([("src/lib.incn".into(), vec!["lib".into()])]),

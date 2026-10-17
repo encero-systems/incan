@@ -25,7 +25,13 @@ pub fn collect_test_lock_inputs(
 ) -> CliResult<TestLockInputs> {
     let mut inline_imports = Vec::new();
     let mut project_requirement_modules = Vec::new();
-    let test_files = discover_project_test_files(project_root, workspace, session);
+    #[cfg(feature = "cli")]
+    let mut discovery_inputs = oven_model::observed_inputs::InputObservations::default();
+    #[cfg(feature = "cli")]
+    let observations = Some(&mut discovery_inputs);
+    #[cfg(not(feature = "cli"))]
+    let observations = None;
+    let test_files = discover_project_test_files_observed(project_root, workspace, session, observations);
     let source_root = project_root.join("src");
 
     for file_path in test_files {
@@ -83,18 +89,31 @@ pub fn collect_test_lock_inputs(
     }
 
     Ok(TestLockInputs {
+        #[cfg(feature = "cli")]
+        discovery_inputs,
         inline_imports,
         project_requirement_modules,
     })
 }
 
 /// Discover test files owned by one project, excluding descendant workspace members in rooted workspaces.
+#[cfg(test)]
 fn discover_project_test_files(
     project_root: &Path,
     workspace: Option<&WorkspaceGraph>,
     session: &CompilationSession,
 ) -> Vec<PathBuf> {
-    crate::testing::discover_test_files_with_compilation_session(project_root, session)
+    discover_project_test_files_observed(project_root, workspace, session, None)
+}
+
+/// Preserve the canonical test walk's inputs, including files that may gain inline tests and nested-project boundaries.
+fn discover_project_test_files_observed(
+    project_root: &Path,
+    workspace: Option<&WorkspaceGraph>,
+    session: &CompilationSession,
+    observations: Option<&mut oven_model::observed_inputs::InputObservations>,
+) -> Vec<PathBuf> {
+    crate::testing::discover_test_files_with_observations(project_root, session, observations)
         .into_iter()
         .filter(|path| {
             workspace.is_none_or(|graph| {

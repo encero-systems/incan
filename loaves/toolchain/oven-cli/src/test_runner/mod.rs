@@ -911,6 +911,9 @@ struct ActiveUnit {
     serial: bool,
 }
 
+/// Results from one scheduled unit, retaining its original index for stable report ordering.
+type CompletedExecutionUnit = (usize, Vec<(TestInfo, TestResult)>);
+
 /// Run one planned execution unit through the normal Oven native harness path.
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
@@ -1205,6 +1208,9 @@ fn batch_has_failure(results: &[(TestInfo, TestResult)]) -> bool {
 }
 
 /// Run planned execution units with a small resource-aware worker scheduler.
+///
+/// Workers can compile Incan harnesses, so they use the same stack contract as the compiler entrypoint (#2213).
+/// A failed worker startup stops new launches and drains existing workers before returning the error.
 #[allow(clippy::too_many_arguments)]
 fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
@@ -1218,9 +1224,8 @@ fn run_scheduled_execution_units(
     no_capture: bool,
     verbose: bool,
     output: TestOutputSink,
-) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
-    // A single compilation batch has no parallel work. Keep it on the owner thread, avoiding a worker allocation
-    // and its smaller default stack when compiling a large imported Incan module graph.
+) -> CliResult<Vec<CompletedExecutionUnit>> {
+    // A single compilation batch stays on the compiler-sized owner thread without another worker allocation.
     if jobs <= 1 || units.len() <= 1 {
         let mut completed = Vec::new();
         for unit in &units {
@@ -1241,7 +1246,7 @@ fn run_scheduled_execution_units(
                 break;
             }
         }
-        return completed;
+        return Ok(completed);
     }
 
     let total = units.len();
@@ -1252,6 +1257,7 @@ fn run_scheduled_execution_units(
     let mut launched = 0usize;
     let mut finished = 0usize;
     let mut stop_launching = false;
+    let mut spawn_error = None;
 
     while finished < total {
         while !stop_launching && active.len() < jobs {
@@ -1278,22 +1284,32 @@ fn run_scheduled_execution_units(
             });
             launched += 1;
             let trace_parent = tracing::Span::current();
-            thread::spawn(move || {
-                let _parent = trace_parent.enter();
-                let unit_index = unit.index;
-                let results = run_execution_unit(
-                    &unit,
-                    &cargo_policy,
-                    &cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    &command_context,
-                    no_capture,
-                    verbose,
-                    output,
-                );
-                let _ = sender.send((unit_index, results));
-            });
+            let worker = thread::Builder::new()
+                .name(format!("incan-test-{}", unit.index))
+                .stack_size(incan_frontend::compiler_stack::compiler_stack_bytes())
+                .spawn(move || {
+                    let _parent = trace_parent.enter();
+                    let unit_index = unit.index;
+                    let results = run_execution_unit(
+                        &unit,
+                        &cargo_policy,
+                        &cargo_features,
+                        cargo_no_default_features,
+                        cargo_all_features,
+                        &command_context,
+                        no_capture,
+                        verbose,
+                        output,
+                    );
+                    let _ = sender.send((unit_index, results));
+                });
+            if let Err(error) = worker {
+                active.pop();
+                launched -= 1;
+                stop_launching = true;
+                spawn_error = Some(error);
+                break;
+            }
         }
 
         if active.is_empty() && launched == finished {
@@ -1311,7 +1327,12 @@ fn run_scheduled_execution_units(
         completed.push((unit_index, results));
     }
 
-    completed
+    match spawn_error {
+        Some(error) => Err(CliError::failure(format!(
+            "could not start test compilation worker: {error}"
+        ))),
+        None => Ok(completed),
+    }
 }
 
 /// Owned collection inputs carried by the existing owner transport; no compiler authority crosses the socket.
@@ -1809,7 +1830,7 @@ pub(crate) fn execute_tests_with_owner(
         no_capture,
         verbose,
         output.clone(),
-    );
+    )?;
     if verbose {
         output.progress(TestProgress::ExecutionCompleted {
             elapsed: start_time.elapsed(),

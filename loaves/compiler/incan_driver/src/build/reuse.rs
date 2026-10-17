@@ -749,6 +749,16 @@ pub fn try_reuse_baked_project(
         selected_outputs.push(selected);
     }
     trace_reuse_timing(started, "output selection");
+    // The ordinary native publisher does not manufacture Cargo inspection authority for registry roots (#1698).
+    // Such an output still has exact checked/native owners, but this shortcut cannot validate its inspection
+    // capsule. Re-enter canonical preparation, which revalidates the complete current native requests and metadata.
+    if ordinary_library_identity.is_some()
+        && selected_outputs
+            .iter()
+            .any(|(_, output, _, _)| output.payload.inspection_authority.is_none())
+    {
+        return Ok(None);
+    }
     let authority_ref = selected_outputs
         .first()
         .and_then(|(_, output, _, _)| output.payload.inspection_authority.as_ref())

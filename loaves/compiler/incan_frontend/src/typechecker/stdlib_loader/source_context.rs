@@ -1,7 +1,8 @@
 //! Command-owned source inputs for the standard-library metadata cache (#1337/#1698).
 //!
 //! Legacy readers retain their existing ambient discovery. Genuine source publication retains its exact capability
-//! and member owners, checks freshness at checker/cache handoffs and never source-loads a foreign namespace.
+//! and member owners and checks freshness at checker/cache handoffs. A standard source publisher may also retain
+//! its genuine selected standard dependencies for inherited trait defaults; ordinary consumers stay metadata-only.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -17,7 +18,11 @@ enum StdlibSourceSelection {
     #[default]
     Legacy,
     OrdinaryCheckedOnly,
-    StandardSource(Arc<TrustedStandardSourcePublication>),
+    StandardSource {
+        own: Arc<TrustedStandardSourcePublication>,
+        dependencies: Vec<Arc<TrustedStandardSourcePublication>>,
+        plan_identity: u64,
+    },
 }
 
 /// Original member owners and refusal state shared by every cache clone within the same source context.
@@ -60,7 +65,29 @@ impl StdlibSourceInputs {
     /// Bind the original source Arc, invalidating metadata when authority changes and verifying reused member owners.
     pub(super) fn bind(&mut self, plan: &ProviderPlan) -> Result<bool, String> {
         let next = if let Some(source) = plan.standard_source_publication() {
-            StdlibSourceSelection::StandardSource(Arc::clone(source))
+            let mut dependencies = Vec::new();
+            for record in plan.active_sdk_records() {
+                if matches!(
+                    record.provenance,
+                    crate::provider::ProviderProvenance::StandardPublication { .. }
+                ) {
+                    let namespace = crate::provider::namespaces::SelectedProviderNamespace::from_plan(
+                        plan,
+                        &record.identity.stable_key(),
+                    )
+                    .map_err(|error| self.refuse_selection(error))?;
+                    dependencies.push(
+                        namespace
+                            .source_for_standard_publisher(source)
+                            .map_err(|error| self.refuse_selection(error))?,
+                    );
+                }
+            }
+            StdlibSourceSelection::StandardSource {
+                own: Arc::clone(source),
+                dependencies,
+                plan_identity: plan.semantic_projection_identity(),
+            }
         } else if plan.is_admitted_library_context() {
             StdlibSourceSelection::OrdinaryCheckedOnly
         } else {
@@ -69,9 +96,18 @@ impl StdlibSourceInputs {
         let same = match (&self.selection, &next) {
             (StdlibSourceSelection::Legacy, StdlibSourceSelection::Legacy)
             | (StdlibSourceSelection::OrdinaryCheckedOnly, StdlibSourceSelection::OrdinaryCheckedOnly) => true,
-            (StdlibSourceSelection::StandardSource(current), StdlibSourceSelection::StandardSource(next)) => {
-                Arc::ptr_eq(current, next)
-            }
+            (
+                StdlibSourceSelection::StandardSource {
+                    own: current,
+                    plan_identity: current_plan,
+                    ..
+                },
+                StdlibSourceSelection::StandardSource {
+                    own: next,
+                    plan_identity: next_plan,
+                    ..
+                },
+            ) => Arc::ptr_eq(current, next) && current_plan == next_plan,
             _ => false,
         };
         if !same {
@@ -85,10 +121,26 @@ impl StdlibSourceInputs {
         Ok(!same)
     }
 
+    /// A failed issuer transfer drops the previous selection, so even a legacy cache cannot leak ambient source.
+    fn refuse_selection(&mut self, error: String) -> String {
+        *self = Self {
+            selection: StdlibSourceSelection::OrdinaryCheckedOnly,
+            retained: Arc::new(Mutex::new(RetainedSourceMembers {
+                failure: Some(error.clone()),
+                ..RetainedSourceMembers::default()
+            })),
+            #[cfg(test)]
+            parses: 0,
+        };
+        error
+    }
+
     /// Revalidate exact original declaration/member bytes at a checker or cache handoff, without reparsing them.
     pub(super) fn verify(&self) -> Result<(), String> {
-        if let StdlibSourceSelection::StandardSource(source) = &self.selection {
-            source.verify().map_err(|error| error.to_string())?;
+        if let StdlibSourceSelection::StandardSource { own, dependencies, .. } = &self.selection {
+            for source in std::iter::once(own).chain(dependencies) {
+                source.verify().map_err(|error| error.to_string())?;
+            }
         }
         self.verify_members()
     }
@@ -130,7 +182,13 @@ impl StdlibSourceInputs {
                     .ok();
             }
             StdlibSourceSelection::OrdinaryCheckedOnly => return None,
-            StdlibSourceSelection::StandardSource(source) => Arc::clone(source),
+            StdlibSourceSelection::StandardSource { own, dependencies, .. } => {
+                Arc::clone(std::iter::once(own).chain(dependencies).find(|source| {
+                    module
+                        .get(1)
+                        .is_some_and(|root| source.namespace_roots().contains(&root.as_str()))
+                })?)
+            }
         };
         if module.first().map(String::as_str) != Some("std")
             || !module
@@ -153,6 +211,18 @@ impl StdlibSourceInputs {
             } else {
                 let member = match source.open_source_module(module) {
                     Ok(member) => Arc::new(member),
+                    Err(crate::provider::source_policy::TrustedStandardSourcePublicationError::Layout(
+                        oven_model::toolchain_layout::CompilerOwnedSourceLayoutError::Io { source: error, .. },
+                    )) if error.kind() == std::io::ErrorKind::NotFound
+                        && !incan_lang::lang::stdlib::is_known_stdlib_module(module)
+                        && !incan_lang::lang::stdlib::stdlib_prelude_module_namespace(module)
+                            .is_some_and(incan_lang::lang::stdlib::is_known_stdlib_module) =>
+                    {
+                        // Metadata resolution also probes declaration-qualified paths. An absent unregistered
+                        // candidate is a lookup miss, not a broken owned module. Real registered modules and all
+                        // invalid/symlinked coordinates retain the strict refusal below.
+                        return Ok(None);
+                    }
                     Err(error) => {
                         let error = error.to_string();
                         retained.failure = Some(error.clone());
@@ -163,14 +233,14 @@ impl StdlibSourceInputs {
                 member
             };
             let bytes = member.verified_bytes().map_err(|error| error.to_string())?;
-            String::from_utf8(bytes.to_vec()).map_err(|error| {
+            String::from_utf8(bytes.to_vec()).map(Some).map_err(|error| {
                 let error = error.to_string();
                 retained.failure = Some(error.clone());
                 error
             })
         })();
         match result {
-            Ok(text) => Some(text),
+            Ok(text) => text,
             Err(error) => {
                 tracing::debug!(module_path = %module.join("."), %error, "retained source read refused");
                 None
@@ -183,7 +253,16 @@ impl StdlibSourceInputs {
         let source = match &self.selection {
             StdlibSourceSelection::Legacy => return None,
             StdlibSourceSelection::OrdinaryCheckedOnly => return Some(false),
-            StdlibSourceSelection::StandardSource(source) => source,
+            StdlibSourceSelection::StandardSource { own, dependencies, .. } => {
+                let Some(source) = std::iter::once(own).chain(dependencies).find(|source| {
+                    module
+                        .get(1)
+                        .is_some_and(|root| source.namespace_roots().contains(&root.as_str()))
+                }) else {
+                    return Some(false);
+                };
+                source
+            }
         };
         let policy = module.get(1).and_then(|root| {
             incan_lang::lang::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES
@@ -201,7 +280,7 @@ impl StdlibSourceInputs {
     /// Count an actual parse demanded by retained source metadata, excluding legacy readers and cached lookups.
     pub(super) fn record_parse(&mut self) {
         #[cfg(test)]
-        if matches!(self.selection, StdlibSourceSelection::StandardSource(_)) {
+        if matches!(self.selection, StdlibSourceSelection::StandardSource { .. }) {
             self.parses += 1;
         }
     }

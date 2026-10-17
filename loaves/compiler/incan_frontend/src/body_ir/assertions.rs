@@ -1,6 +1,9 @@
 //! Lowering for `assert` forms and their explicit panic facts.
 
+use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::errors as runtime_errors;
+use incan_lang::lang::testing::{self, TestingAssertHelperId};
+use incan_semantics_core::SymbolOrigin;
 
 use super::match_::PatternReadScope;
 use super::refusals::*;
@@ -175,13 +178,157 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     );
                     return None;
                 };
-                let call = self.lower_expr_to_operand(call, scope, out);
+                let call = self.lower_deferred_raises_call(call, scope, out);
                 Some(bir::AssertionKind::Raises { call, expected_error })
             }
         }
     }
 
-    // ---- Callable defaults ----
+    /// Retain a checked zero-argument unit function as an item instead of executing it before its unwind boundary.
+    /// The checker need not type a callee as a value; project the verified call signature only onto this synthetic
+    /// read. Other call shapes keep their existing representation and remain refused by the direct assertion
+    /// consumer.
+    fn lower_deferred_raises_call(
+        &mut self,
+        call: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if let ast::Expr::Call(callee, type_args, args) = &call.node
+            && let ast::Expr::Ident(name) = &callee.node
+            && type_args.is_empty()
+            && args.is_empty()
+            && self
+                .declared_slots_for_direct_call(name, callee.span, call.span)
+                .is_ok_and(|declaration| {
+                    !declaration.is_async && declaration.slots.is_some_and(|slots| slots.is_empty())
+                })
+            && self.resolve_ty(call.span) == IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit)
+            && self
+                .type_info
+                .resolved_identity(callee.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        {
+            let key = (callee.span.start, callee.span.end);
+            let signature = IncanType::Function {
+                params: Vec::new(),
+                return_type: Box::new(self.resolve_ty(call.span)),
+            };
+            let previous = self.type_overrides.insert(key, signature);
+            let operand = self.lower_expr_to_operand(callee, scope, out);
+            match previous {
+                Some(previous) => {
+                    self.type_overrides.insert(key, previous);
+                }
+                None => {
+                    self.type_overrides.remove(&key);
+                }
+            }
+            return operand;
+        }
+        self.lower_expr_to_operand(call, scope, out)
+    }
+
+    /// Normalize only the canonical SDK testing helper into the same deferred assertion as the language form.
+    /// An omitted message uses its retained declaration constant; supplied messages remain literal-only here.
+    pub(super) fn lower_testing_raises_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let identity = self.type_info.resolved_identity(callee.span)?;
+        if !is_testing_raises_helper(identity) {
+            return None;
+        }
+        let [error_type] = type_args else {
+            return None;
+        };
+        let expected_error = expected_runtime_error(&error_type.node)?;
+        let [ast::CallArg::Positional(block), messages @ ..] = args else {
+            return None;
+        };
+        let text = match messages {
+            [ast::CallArg::Positional(message)] => {
+                let ast::Expr::Literal(ast::Literal::String(text)) = &message.node else {
+                    return Some(self.unsupported_operand(
+                        "computed raises Assert message".to_owned(),
+                        scope,
+                        hir_span(span),
+                        out,
+                    ));
+                };
+                text.clone()
+            }
+            [] => {
+                let Some(text) = self.testing_raises_default_message(identity) else {
+                    return Some(self.unsupported_operand(
+                        "testing raises helper without a retained default message".to_owned(),
+                        scope,
+                        hir_span(span),
+                        out,
+                    ));
+                };
+                text
+            }
+            _ => return None,
+        };
+        let call = self.lower_expr_to_operand(block, scope, out);
+        let span = hir_span(span);
+        self.panic_facts.push(bir::PanicFact {
+            span,
+            reason: bir::PanicReason::AssertFailure,
+        });
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assert {
+                kind: bir::AssertionKind::Raises { call, expected_error },
+                message: Some(bir::Operand::Constant(bir::Constant::Str(text))),
+                may_panic: true,
+            },
+            span,
+        });
+        Some(bir::Operand::Constant(bir::Constant::Unit))
+    }
+
+    /// Read the selected helper's inert source default; deferred statements and non-string results grant no message.
+    fn testing_raises_default_message(&self, identity: &CanonicalSymbolId) -> Option<String> {
+        let published = super::library_nominals::sdk_identity(identity)?;
+        let default = super::library_calls::collect(self.type_info)
+            .into_iter()
+            .find(|call| call.canonical == published)
+            .and_then(|call| call.parameter_defaults.get(1).cloned())?;
+        let bir::CallableParamDefault::Source(default) = default else {
+            return None;
+        };
+        if !default.stmts.is_empty() {
+            return None;
+        }
+        match default.result {
+            bir::Operand::Constant(bir::Constant::Str(text)) => Some(text),
+            _ => None,
+        }
+    }
+}
+
+/// Require the selected stdlib declaration's full source identity, so aliases work and same-spelled user calls do not.
+fn is_testing_raises_helper(identity: &CanonicalSymbolId) -> bool {
+    let Some(published) = super::library_nominals::sdk_identity(identity) else {
+        return false;
+    };
+    let SymbolOrigin::Package { module_path, .. } = &published.origin else {
+        return false;
+    };
+    let path = std::iter::once("std".to_owned())
+        .chain(module_path.iter().cloned())
+        .chain(std::iter::once(published.declaration_name.clone()))
+        .collect::<Vec<_>>();
+    published.kind == SemanticSourceTargetKind::Function
+        && testing::is_assert_helper_std_path(&path, TestingAssertHelperId::AssertRaises)
+        && StdlibAstCache::new().callable_source_identity(&published).is_some()
 }
 
 /// Resolve the type named after `raises` to its builtin-exception identity, or `None` when it is not one.

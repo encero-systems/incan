@@ -325,15 +325,31 @@ pub struct ProjectGenerator {
     pub(crate) sdk_artifact_projections: Vec<SdkArtifactProjection>,
     /// Checked public namespace facades keyed by their source-module path.
     pub(crate) public_namespace_facades: Option<BTreeMap<Vec<String>, BTreeSet<String>>>,
+    /// Exact root already carrying the ordinary publisher's verified own and dependency namespace facade.
+    projected_standard_namespace_root: Option<[u8; 32]>,
 }
 
-/// Cargo profile used for `incan run`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Executable compilation profile shared by preparation, completed-output selection and execution.
+///
+/// Build requests default to release for compatibility; Run callers select debug explicitly unless requested otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RunProfile {
-    /// `cargo build` (debug profile).
+    /// Unoptimized executable with debug information.
     Debug,
-    /// `cargo build --release` (optimized profile).
+    /// Optimized executable; the established default for Build requests.
+    #[default]
     Release,
+}
+
+impl RunProfile {
+    /// Return the canonical profile spelling used in existing Oven requests and output identities.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
 }
 
 impl ProjectGenerator {
@@ -375,6 +391,7 @@ impl ProjectGenerator {
             sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
             public_namespace_facades: None,
+            projected_standard_namespace_root: None,
         }
     }
 
@@ -590,6 +607,7 @@ impl ProjectGenerator {
     /// generated code without an authored import. Reuse their checked artifact facade without adding SDK paths or
     /// synthetic source imports. Legacy SDK catalogs keep their existing semantic link-root selection.
     pub fn set_provider_plan(&mut self, plan: &ProviderPlan) {
+        self.projected_standard_namespace_root = None;
         self.compiled_provider_modules.clear();
         self.compiled_sdk_modules = CompiledSdkModules::from_provider_plan(plan);
         self.sdk_dependency_rebindings = plan.sdk_dependency_rebindings().to_vec();
@@ -1402,11 +1420,12 @@ impl ProjectGenerator {
     /// An ordinary source publication owns its modules at crate root. Only its retained source capability can map
     /// those same emitted modules into the compiler's standard namespace; other local modules gain no such alias.
     pub(crate) fn project_owned_standard_namespace(
-        &self,
+        &mut self,
         crate_root: &mut String,
         modules: &HashMap<Vec<String>, String>,
         plan: &ProviderPlan,
     ) -> io::Result<()> {
+        self.projected_standard_namespace_root = None;
         let Some(source) = plan.standard_source_publication() else {
             return Ok(());
         };
@@ -1435,6 +1454,7 @@ impl ProjectGenerator {
         }
         crate_root.push('\n');
         crate_root.push_str(&self.compiled_provider_facade(&roots));
+        self.projected_standard_namespace_root = Some(Sha256::digest(crate_root.as_bytes()).into());
         Ok(())
     }
 
@@ -1822,6 +1842,7 @@ impl ProjectGenerator {
         sorted_top.sort();
         let consumer_stdlib_facade = self.links_compiled_standard_provider()
             && !(self.native_sdk_publication || is_sdk_provider_build())
+            && self.projected_standard_namespace_root != Some(Sha256::digest(main_code.as_bytes()).into())
             && !sorted_top.iter().any(|module| module == "__incan_std");
         if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };

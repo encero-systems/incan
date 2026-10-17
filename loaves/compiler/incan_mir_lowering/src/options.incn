@@ -1,13 +1,24 @@
 """Concrete standard Option and Result layouts shared with native enum operations."""
 
-from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind, generic
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
     Pattern as RustPattern,
     ResultVariantKind,
     Constant as RustConstant,
+    Block as RustBlock,
+    StatementKind as RustStatementKind,
+    Callee as RustCallee,
+    CallableTarget as RustCallableTarget,
+    NamedCallableTarget,
+    ArgumentElement as RustArgumentElement,
+    Place as RustPlace,
+    Operand as RustOperand,
+    StaticInitializer,
 )
+from lists import taking_iterator_locals
+from sdk_async_types import async_call_type_arguments
 from pub::incan_mir_plan import (
     BinaryOp,
     CalleeKind,
@@ -15,6 +26,7 @@ from pub::incan_mir_plan import (
     Constant,
     EnumDeclaration,
     EnumVariant,
+    FieldProjection,
     Operand,
     OperandKind,
     Place,
@@ -37,6 +49,7 @@ from frame import (
     track_rvalue_moves,
     terminate_call,
     place_type as frame_place_type,
+    appended_field,
 )
 from enums import validate_payload_patterns
 from layout_types import native_source_type
@@ -44,6 +57,8 @@ from tuples import tuple_fields, tuple_aggregate, tuple_has_owners, is_tuple_typ
 from text_plan import clone_text
 from numerics import numeric_carrier
 from unions import lower_union_declaration
+from type_parameters import substitute
+from nominal_frames import closed_arguments
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -101,6 +116,7 @@ pub def propagate_result(
     value = Place(local=source.local, projection=Projection.VariantField(0, 0, input.variants[0].fields[0]), span=span)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(value, true, span)), span))
     match frame_place_type(builder.locals, destination):
+        PlanType.ValidationError => builder.owned.append(destination.local)
         PlanType.String => builder.owned.append(destination.local)
         PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
         PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
@@ -142,8 +158,14 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 
 
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
-    """Collect concrete non-template carriers; checked function instances add their closed layouts when scheduled."""
+    """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
+    for delegation in module.stdlib_delegations:
+        if len(delegation.type_parameters) != 0:
+            continue
+        for parameter in delegation.parameters:
+            retain_carrier(module, declarations, parameter, file)?
+        retain_carrier(module, declarations, delegation.return_type, file)?
     for declaration in module.nominal_declarations:
         for ty in declaration.field_types:
             retain_carrier(module, declarations, ty, file)?
@@ -155,6 +177,11 @@ pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[
         if len(body.type_parameters) != 0:
             continue
         retain_body_carriers(module, declarations, body, file)?
+    for declaration in module.static_declarations:
+        retain_carrier(module, declarations, declaration.ty, file)?
+        match declaration.initial:
+            StaticInitializer.Computed(body) => retain_body_carriers(module, declarations, body, file)?
+            _ => pass
     return Ok(declarations)
 
 
@@ -164,14 +191,139 @@ pub def retain_body_carriers(
     body: &Body,
     file: str,
 ) -> Result[None, str]:
-    """Append closed frame carriers without renumbering earlier layouts; open instance payloads still refuse."""
-    retain_carrier(module, declarations, body.return_type, file)?
-    for local in body.locals:
-        retain_carrier(module, declarations, local.ty, file)?
+    """Append closed frame and poll carriers without renumbering layouts; refusal names its declaring frame position."""
+    match retain_carrier(module, declarations, body.return_type, file):
+        Ok(_value) => pass
+        Err(reason) => return Err(f"{reason} in {body.name} return carrier")
+    for index in range(len(body.locals)):
+        match retain_carrier(module, declarations, body.locals[index].ty, file):
+            Ok(_value) => pass
+            Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
+    retain_iteration_poll_carriers(module, declarations, body, body.block, taking_iterator_locals(body.block), file)?
     return Ok(None)
 
 
-def retain_carrier(
+def retain_iteration_poll_carriers(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    body: &Body,
+    block: &RustBlock,
+    taking: list[int],
+    file: str,
+) -> Result[None, str]:
+    """Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering."""
+    for statement in block.stmts:
+        retain_iteration_poll_statement(module, declarations, body, statement.kind, taking, file)?
+    return Ok(None)
+
+
+def retain_iteration_poll_statement(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    body: &Body,
+    kind: &RustStatementKind,
+    taking: list[int],
+    file: str,
+) -> Result[None, str]:
+    """Read one canonical statement through its explicit borrowed enum type, including nested consuming loops."""
+    match kind:
+        RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_panic) =>
+            match callee:
+                RustCallee.Function(callable) =>
+                    match callable:
+                        RustCallableTarget.Named(target) => retain_call_carriers(
+                            module,
+                            declarations,
+                            body,
+                            target,
+                            arguments,
+                            destination,
+                            file,
+                        )?
+                        _ => pass
+                _ => pass
+        RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=_protocol) =>
+            match iterator:
+                RustOperand.Place(read) =>
+                    match read.place.local_id():
+                        Some(local) =>
+                            index = int(local.index()) + 1
+                            if index in taking:
+                                match destination.local_id():
+                                    Some(item) =>
+                                        ty = body.locals[int(item.index())].ty
+                                        output = generic("Option", [ty])
+                                        retain_carrier(module, declarations, output, file)?
+                                    None => return Err("unsupported Body IR consuming iteration global item")
+                        None => pass
+                _ => pass
+        RustStatementKind.Loop(body=child) => retain_iteration_poll_carriers(
+            module,
+            declarations,
+            body,
+            child,
+            taking,
+            file,
+        )?
+        RustStatementKind.UnsafeRegion(acknowledgment=_receipt, body=child) => retain_iteration_poll_carriers(
+            module,
+            declarations,
+            body,
+            child,
+            taking,
+            file,
+        )?
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            retain_iteration_poll_carriers(module, declarations, body, then_body, taking, file)?
+            match else_body:
+                Some(child) => retain_iteration_poll_carriers(module, declarations, body, child, taking, file)?
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+def retain_call_carriers(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    body: &Body,
+    target: &NamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    file: str,
+) -> Result[None, str]:
+    """Retain closed published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Function:
+                return Ok(None)
+        None => return Ok(None)
+    if not closed_arguments(target.type_args):
+        return Ok(None)
+    for delegation in module.stdlib_delegations:
+        if target.canonical != Some(delegation.canonical.clone()):
+            continue
+        mut closed: list[RustType] = []
+        for argument in target.type_args:
+            closed.append(argument.clone())
+        if len(closed) != len(delegation.type_parameters) and len(closed) == 0 and body.is_async:
+            match target.receiver_type:
+                None =>
+                    match async_call_type_arguments(body, delegation, arguments, destination)?:
+                        Some(inferred) =>
+                            closed = inferred
+                        None => pass
+                Some(_receiver) => pass
+        if len(closed) != len(delegation.type_parameters):
+            return Err("unsupported Body IR SDK carrier type argument arity")
+        for parameter in delegation.parameters:
+            instantiated: RustType = substitute(parameter, delegation.type_parameters, closed)?
+            retain_carrier(module, declarations, instantiated, file)?
+        closed_result: RustType = substitute(delegation.return_type, delegation.type_parameters, closed)?
+        retain_carrier(module, declarations, closed_result, file)?
+    return Ok(None)
+
+
+pub def retain_carrier(
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     ty: &RustType,
@@ -214,15 +366,13 @@ def retain_carrier(
                     span=SourceSpan(file=file, line=1, column=1),
                     carrier=str(base),
                     source_type=str(ty),
+                    comparison_methods=[],
                 ),
             )
         RustType.Function(params=parameters, return_type=result) =>
             for parameter in parameters:
                 retain_carrier(module, declarations, parameter.ty, file)?
             retain_carrier(module, declarations, result, file)?
-        RustType.Tuple(elements) =>
-            for element in elements:
-                retain_carrier(module, declarations, element, file)?
         RustType.Ref(inner) => retain_carrier(module, declarations, inner, file)?
         RustType.RefMut(inner) => retain_carrier(module, declarations, inner, file)?
         _ => pass
@@ -300,7 +450,7 @@ pub def borrowed_runtime_value(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, ty), [read_place(reference, false, span)], output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], output, span)
     builder.owned.append(output.local)
     return output
 
@@ -327,9 +477,14 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
     ty = frame_place_type(builder.locals, place)
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return Ok(read_place(place, false, span))
+    match ty:
+        PlanType.FunctionPointer(_signature) => return Ok(read_place(place, false, span))
+        _ => pass
     mut reference_type = PlanType.StringRef
     match ty:
         PlanType.String => pass
+        PlanType.ValidationError =>
+            reference_type = PlanType.ValidationErrorRef
         PlanType.List(leaf, depth) =>
             reference_type = PlanType.ListRef(leaf, depth)
         PlanType.Set(leaf) =>
@@ -398,6 +553,13 @@ pub def lower_carrier_method_plan(
         None => return Err("unsupported Body IR carrier missing default")
 
 
+def carrier_payload_place(source: Place, variant: int, ty: PlanType, span: SourceSpan) -> Result[Place, str]:
+    """Project a carrier's payload where the carrier lives, keeping the field or reference path that reached it."""
+    if source.projection == Projection.Whole:
+        return Ok(Place(local=source.local, projection=Projection.VariantField(variant, 0, ty), span=span))
+    return appended_field(source, FieldProjection(slot=0, ty=ty, variant=variant), span)
+
+
 def lower_carrier_unwrap(
     mut builder: Builder,
     declaration: EnumDeclaration,
@@ -420,17 +582,13 @@ def lower_carrier_unwrap(
         unwrap_failure(builder, "unwrap_none", [], [], unit, span)
     else:
         error_type = declaration.variants[1 - present].fields[0]
-        error_place = Place(
-            local=source.local,
-            projection=Projection.VariantField(1 - present, 0, error_type),
-            span=span,
-        )
+        error_place = carrier_payload_place(source, 1 - present, error_type, span)?
         error = carrier_payload_value(builder, error_place, span)?
         unwrap_failure(builder, "unwrap_err", [error_type], [error], unit, span)
     builder.finish(TerminatorKind.Unreachable, span)
     builder.current = selected
     builder.owned = incoming
-    projected = Place(local=source.local, projection=Projection.VariantField(present, 0, payload_type), span=span)
+    projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
     track_rvalue_moves(builder, RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
@@ -458,10 +616,10 @@ def unwrap_failure(
             span=span,
         ),
     )
-    # A generic runtime function is called through its one explicit instantiation, as `list_call` does.
+    # Keep the full instantiation next to the signature that declares it, as `list_call` does.
     mut callee = CalleeKind.External(path)
-    if len(type_arguments) == 1:
-        callee = CalleeKind.Instantiated(path, type_arguments[0])
+    if len(type_arguments) != 0:
+        callee = CalleeKind.Instantiated(path, type_arguments)
     terminate_call(builder, callee, arguments, destination, span)
 
 
@@ -483,7 +641,7 @@ def lower_carrier_default(
     condition = variant_condition(builder, source, present, span)
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
     builder.current = selected
-    projected = Place(local=source.local, projection=Projection.VariantField(present, 0, payload_type), span=span)
+    projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
     track_rvalue_moves(builder, RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))

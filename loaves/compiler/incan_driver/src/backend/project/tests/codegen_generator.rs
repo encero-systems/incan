@@ -116,6 +116,17 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
         let package = layout.path().join("stdlib").join(policy.source_directory);
         std::fs::create_dir_all(&package)?;
         std::fs::write(package.join("loaf.toml"), policy.declaration)?;
+        let system_policy =
+            incan_lang::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_system")
+                .ok_or("missing pinned system policy")?;
+        let system = layout.path().join("stdlib").join(system_policy.source_directory);
+        std::fs::create_dir_all(&system)?;
+        std::fs::write(system.join("loaf.toml"), system_policy.declaration)?;
+        let data_policy = incan_lang::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_data")
+            .ok_or("missing pinned data policy")?;
+        let data = layout.path().join("stdlib").join(data_policy.source_directory);
+        std::fs::create_dir_all(&data)?;
+        std::fs::write(data.join("loaf.toml"), data_policy.declaration)?;
         let output = std::process::Command::new(executable)
             .args([
                 "--exact",
@@ -139,14 +150,271 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
         TrustedStandardSourcePublication::discover("incan_stdlib_core")?.ok_or("missing genuine core source")?,
     );
     let root = source.verified_package_root()?;
+    // Catalog-only control: the original source grants namespaces, never native execution authority.
+    let artifact = root.join("target/lib");
+    std::fs::create_dir_all(artifact.join("src"))?;
+    std::fs::write(
+        artifact.join("src/lib.rs"),
+        "// Catalog facade; no native execution claim.\n",
+    )?;
+    std::fs::write(
+        artifact.join("Cargo.toml"),
+        "[package]\nname='incan_stdlib_core'\nversion='0.6.0-dev.6'\n[lib]\npath='src/lib.rs'\n",
+    )?;
+    let mut manifest = incan_frontend::library_manifest::LibraryManifest::new("incan_stdlib_core", "0.6.0-dev.6");
+    manifest.contract_metadata.provider.namespace_claims =
+        vec![incan_frontend::library_manifest::ProviderModuleClaim {
+            module_path: vec!["traits".into(), "callable".into()],
+            required_features: Default::default(),
+        }];
+    manifest.write_to_path(&artifact.join("incan_stdlib_core.incnlib"))?;
+    let namespace = incan_frontend::provider::namespaces::SelectedProviderNamespace::from_source_publication(
+        Arc::clone(&source),
+        &artifact,
+    )?;
+    let index = incan_frontend::library_manifest_index::LibraryManifestIndex::from_entries(
+        [(
+            "core_alias".into(),
+            incan_frontend::library_manifest_index::load_provider_dependency_artifact("core_alias", &artifact),
+        )]
+        .into(),
+    );
+    let explicit = ProviderPlan::from_resolved_inputs(index.clone(), None, None, None, std::iter::empty())?;
+    let mut public_records = explicit.records().cloned().collect::<Vec<_>>();
+    public_records.push(namespace.record().clone());
+    assert!(matches!(
+        ProviderPlan::new(index.clone(), public_records, std::iter::empty()),
+        Err(incan_provider::ProviderPlanError::DuplicateIdentity { .. })
+    ));
+    let joined = ProviderPlan::from_admitted_libraries(index, &[namespace], std::iter::empty())?;
+    assert_eq!(joined.records().count(), 1);
+    assert_eq!(joined.active_sdk_records().count(), 1);
+    let owner = joined.records().next().ok_or("missing shared namespace owner")?;
+    for module in [
+        vec!["std".into(), "traits".into(), "callable".into()],
+        vec!["pub".into(), "core_alias".into(), "traits".into(), "callable".into()],
+    ] {
+        assert!(
+            matches!(joined.resolve_module(&module), incan_provider::ProviderModuleResolution::Active(record) if record.identity == owner.identity)
+        );
+    }
+    assert_eq!(
+        joined.public_artifact_route("core_alias", &owner.identity)?,
+        Vec::<String>::new()
+    );
+    assert!(joined.sdk_dependency_rebindings().is_empty());
+    assert!(joined.sdk_artifact_projections().is_empty());
+    joined.verify_namespace_grants()?;
+    // Ordinary consumers cannot recover source defaults from namespace metadata alone. A genuine standard source
+    // publisher retains the original dependency issuer and member, so lowering can expand inherited methods.
+    let error_path = vec!["std".into(), "traits".into(), "callable".into()];
+    let error_file = root.join("src/traits/callable.incn");
+    std::fs::create_dir_all(error_file.parent().ok_or("missing trait source parent")?)?;
+    std::fs::write(
+        &error_file,
+        "pub trait OriginalDefault:\n    def answer(self) -> int:\n        return 42\n",
+    )?;
+    let mut consumer_cache = incan_frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+    consumer_cache.bind_provider_plan(&joined);
+    assert!(
+        consumer_cache
+            .lookup_trait_decl(&error_path, "OriginalDefault")
+            .is_none()
+    );
+    let system_source = Arc::new(
+        TrustedStandardSourcePublication::discover("incan_stdlib_system")?.ok_or("missing genuine system source")?,
+    );
+    let system_plan = joined.clone().with_standard_source_publication(
+        Arc::clone(&system_source),
+        system_source.verified_package_root()?,
+        "incan_stdlib_system",
+        system_source.package_identity().1,
+    )?;
+    let mut publisher_cache = incan_frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+    publisher_cache.bind_provider_plan(&system_plan);
+    let inherited = publisher_cache
+        .lookup_trait_decl(&error_path, "OriginalDefault")
+        .ok_or("missing inherited source default")?;
+    assert!(
+        inherited
+            .methods
+            .first()
+            .is_some_and(|method| method.node.body.is_some())
+    );
+    let mut declaration_path = error_path.clone();
+    declaration_path.push("OriginalDefault".into());
+    assert!(publisher_cache.lookup_trait_decl(&declaration_path, "answer").is_none());
+    publisher_cache.verify_retained_sources()?;
+    let mut broken_registered = incan_frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+    broken_registered.bind_provider_plan(&system_plan);
+    assert!(
+        broken_registered
+            .lookup_trait_decl(&["std".into(), "derives".into(), "copying".into()], "Clone")
+            .is_none()
+    );
+    assert!(
+        broken_registered.verify_retained_sources().is_err(),
+        "a missing registered module remains a hard failure"
+    );
+    std::fs::write(
+        &error_file,
+        "pub trait OriginalDefault:\n    def answer(self) -> int:\n        return 43\n",
+    )?;
+    assert!(publisher_cache.verify_retained_sources().is_err());
+    // Keep the remaining independent generator controls on their own source-only core plan below.
+    // Parsed own-facet coverage permits exactly its inspected extern labels, without certifying a native owner.
+    let text = "rust.module(\"incan_std_core::errors\")\n@rust.extern\npub def raise_value_error(msg: str) -> None:\n    ...\n";
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(root.join("src/lib.incn"), text)?;
+    let tokens = incan_frontend::lexer::lex(text).map_err(|errors| format!("lex: {errors:?}"))?;
+    let ast = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+    let parsed = incan_frontend::ParsedModule {
+        name: "lib".into(),
+        path_segments: vec!["lib".into()],
+        file_path: root.join("src/lib.incn"),
+        source: text.into(),
+        ast,
+    };
     let plan = ProviderPlan::default().with_standard_source_publication(
         Arc::clone(&source),
         root,
         "incan_stdlib_core",
         "0.6.0-dev.6",
     )?;
+    let project = oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))?;
+    let queries = std::collections::BTreeSet::from(["incan_std_core::errors::raise_value_error".into()]);
+    let demands = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        &project,
+        std::slice::from_ref(&parsed),
+        &Default::default(),
+        &plan,
+        &queries,
+    )?;
+    demands.require_ordinary_source_inspection(None)?;
+    demands.require_ordinary_extern_paths(&["incan_std_core::errors::raise_value_error".into()])?;
+    assert!(
+        demands
+            .require_ordinary_extern_paths(&["incan_std_core::errors::foreign".into()])
+            .is_err()
+    );
+    assert!(demands.require_ordinary_extern_paths(&[]).is_err());
+    let missing = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        &project,
+        &[parsed],
+        &Default::default(),
+        &plan,
+        &Default::default(),
+    )?;
+    assert!(
+        missing
+            .require_ordinary_extern_paths(&["incan_std_core::errors::raise_value_error".into()])
+            .is_err()
+    );
+    // The compiler supplies the canonical JSON trait default through a real native helper, not a serde free
+    // function. Only the original Data member can bind that ABI; the human-readable extern label stays stable.
+    let data_source = Arc::new(
+        TrustedStandardSourcePublication::discover("incan_stdlib_data")?.ok_or("missing genuine data source")?,
+    );
+    let data_root = data_source.verified_package_root()?;
+    let json_file = data_root.join("src/serde/json.incn");
+    std::fs::create_dir_all(json_file.parent().ok_or("missing JSON source parent")?)?;
+    let json_text = "rust.module(\"incan_std_data::serde\")\npub trait Deserialize:\n    @rust.extern\n    def from_json(json_str: str) -> Result[Self, str]:\n        ...\n";
+    std::fs::write(&json_file, json_text)?;
+    let tokens = incan_frontend::lexer::lex(json_text).map_err(|errors| format!("JSON lex: {errors:?}"))?;
+    let ast = incan_frontend::parser::parse(&tokens).map_err(|errors| format!("JSON parse: {errors:?}"))?;
+    let json_module = incan_frontend::ParsedModule {
+        name: "serde.json".into(),
+        path_segments: vec!["serde".into(), "json".into()],
+        file_path: json_file,
+        source: json_text.into(),
+        ast,
+    };
+    let data_plan = ProviderPlan::default().with_standard_source_publication(
+        Arc::clone(&data_source),
+        data_root,
+        data_source.package_identity().0,
+        data_source.package_identity().1,
+    )?;
+    let contexts = crate::build::rust_extern::collect_rust_extern_contexts(std::slice::from_ref(&json_module));
+    let labels = crate::build::rust_extern::rust_extern_report_paths(&contexts);
+    let label = "incan_std_data::serde::from_json".to_string();
+    let helper = "incan_std_data::json::__private::parse_or_error".to_string();
+    assert_eq!(labels, std::slice::from_ref(&label));
+    assert_eq!(
+        crate::build::library_exports::collect_library_rust_abi_query_paths(
+            std::slice::from_ref(&json_module),
+            &contexts,
+        ),
+        std::slice::from_ref(&label),
+        "legacy ABI labels stay unchanged"
+    );
+    let queries = crate::build::library_exports::collect_ordinary_library_rust_abi_query_paths(
+        std::slice::from_ref(&json_module),
+        &contexts,
+        &data_plan,
+    )?;
+    assert_eq!(queries, [helper]);
+    assert_eq!(
+        crate::build::library_exports::collect_ordinary_library_rust_abi_query_paths(
+            std::slice::from_ref(&json_module),
+            &contexts,
+            &ProviderPlan::default(),
+        )?,
+        std::slice::from_ref(&label),
+        "same spelling without an original source issuer grants no mapping"
+    );
+    let data_project = oven_model::manifest::ProjectManifest::load(&data_root.join("loaf.toml"))?;
+    let demands = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        &data_project,
+        std::slice::from_ref(&json_module),
+        &Default::default(),
+        &data_plan,
+        &queries.iter().cloned().collect(),
+    )?;
+    demands.require_ordinary_source_inspection(None)?;
+    demands.require_ordinary_extern_paths(&labels)?;
+    let decoded: crate::build::library_metadata::requirements::CheckedNativeDemands =
+        serde_json::from_slice(&serde_json::to_vec(&demands)?)?;
+    decoded.require_ordinary_extern_paths(&labels)?;
+    let missing_helper = crate::build::library_metadata::requirements::capture_checked_native_demands(
+        &data_project,
+        std::slice::from_ref(&json_module),
+        &Default::default(),
+        &data_plan,
+        &[label].into(),
+    )?;
+    assert!(missing_helper.require_ordinary_source_inspection(None).is_err());
+    assert!(missing_helper.require_ordinary_extern_paths(&labels).is_err());
+    let mut foreign = contexts[0].clone();
+    foreign.file_path = data_root.join("src/foreign.incn");
+    assert_eq!(
+        crate::build::rust_extern::ordinary_rust_extern_abi_path(
+            &foreign,
+            std::slice::from_ref(&json_module),
+            &data_plan
+        )?,
+        labels[0],
+        "a foreign member cannot borrow the canonical helper ABI"
+    );
+    std::fs::write(
+        &json_module.file_path,
+        json_text.replace("Deserialize", "ForeignDeserialize"),
+    )?;
+    assert!(
+        crate::build::rust_extern::ordinary_rust_extern_abi_path(
+            &contexts[0],
+            std::slice::from_ref(&json_module),
+            &data_plan,
+        )
+        .is_err(),
+        "changed original source invalidates its helper binding"
+    );
     let output = tempfile::tempdir()?;
-    let generator = ProjectGenerator::new(output.path(), "ordinary_core", false);
+    let mut generator = ProjectGenerator::new(output.path(), "ordinary_core", false);
+    generator.compiled_provider_modules.insert(
+        "ordinary_dependency".into(),
+        std::collections::BTreeSet::from(["testing".into()]),
+    );
     let mut modules: HashMap<Vec<String>, String> = [
         (vec!["traits".into(), "callable".into()], "pub trait Callable {}".into()),
         (vec!["application".into()], "pub struct Unowned;".into()),
@@ -157,6 +425,9 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
     generator.project_owned_standard_namespace(&mut unowned, &modules, &ProviderPlan::default())?;
     assert_eq!(unowned, original);
 
+    generator
+        .compiled_provider_modules
+        .insert("published_dependency".into(), ["external".into()].into());
     let mut projected = original.to_string();
     generator.project_owned_standard_namespace(&mut projected, &modules, &plan)?;
     assert!(projected.contains("pub use crate::traits;"), "{projected}");
@@ -165,6 +436,15 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
     generator.generate_nested(&projected, &modules)?;
     let emitted = std::fs::read_to_string(generator.crate_root_path())?;
     assert!(emitted.contains("pub mod __incan_std"), "{emitted}");
+    assert_eq!(emitted.matches("pub mod __incan_std").count(), 1, "{emitted}");
+    assert!(
+        emitted.contains("pub use ordinary_dependency::__incan_std::*;"),
+        "{emitted}"
+    );
+    assert!(
+        emitted.contains("pub use published_dependency::__incan_std::*;"),
+        "{emitted}"
+    );
     assert!(emitted.contains("pub mod application;"), "{emitted}");
 
     modules.insert(vec!["__incan_std".into()], String::new());

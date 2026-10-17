@@ -1,0 +1,16 @@
+"""Native source races use the SDK's source-order polling and cancellation boundary."""
+
+import std.async
+from std.rust import Send, Static
+from rust::incan_std_async::task import RuntimeFuture
+from rust::incan_std_async::race import scoped_arm, scoped_race
+
+
+pub async def race_pair[T, U, R with (Send, Static), F with RuntimeFuture[T], G with RuntimeFuture[U]](
+    first: F,
+    on_first: (T) -> R,
+    second: G,
+    on_second: (U) -> R,
+) -> R:
+    """Poll two owned futures in source order and run the winning callback before dropping losing arms."""
+    return await scoped_race([scoped_arm(first, on_first), scoped_arm(second, on_second)])

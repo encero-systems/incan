@@ -709,6 +709,51 @@ fn list_equality_stays_a_primitive_because_that_is_what_the_other_backend_emits(
 
 /// Equality borrows collection operands while a later final use still transfers the original binding.
 #[test]
+fn bytes_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def buffers(left: bytes, right: bytes) -> bool:\n    return left == right\n\ndef retained_bytes() -> bytes:\n    values = b\"ab\"\n    same = values != b\"cd\"\n    return values\n",
+        &["byte_comparison_reads"],
+    )?;
+    for name in ["buffers", "retained_bytes"] {
+        let body = body_named(&module, name)?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or("byte comparison missing")?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err("byte comparison must retain a place".into());
+            };
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(!read.last_use);
+        }
+    }
+    let body = body_named(&module, "retained_bytes")?;
+    let returned = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("byte return missing")?;
+    assert_eq!(returned.fact, bir::OwnershipFact::Move);
+    Ok(())
+}
+
+/// Equality borrows collection operands while a later final use still transfers the original binding.
+#[test]
 fn collection_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
         "def lists(xs: list[int], ys: list[int]) -> bool:\n    return xs == ys\n\ndef sets(xs: Set[int], ys: Set[int]) -> bool:\n    return xs != ys\n\ndef maps(xs: dict[int, int], ys: dict[int, int]) -> bool:\n    return xs == ys\n\ndef retained() -> list[int]:\n    values = [1]\n    same = values == [1]\n    return values\n",
@@ -854,8 +899,9 @@ fn protocol_hook_operators_reach_lowering_as_resolved_method_calls() -> Result<(
     ] {
         let rendered = body_named(&module, body_name)?.render_snapshot();
         assert!(
-            rendered.contains(&format!("call method:{method} unbound(borrow(_0), move(_1, last_use))")),
-            "`{spelling}` must lower as the method the typechecker resolved, receiver borrowed: {rendered}"
+            rendered.contains(&format!("call method:{method}(borrow(_0), move(_1, last_use))")),
+            "`{spelling}` must lower as the method the typechecker resolved, receiver borrowed and argument bound to \
+             its declared parameter: {rendered}"
         );
         assert!(
             !rendered.contains("unsupported("),
@@ -1073,18 +1119,101 @@ fn a_user_defined_operator_lowers_to_the_method_the_typechecker_resolved() -> Re
     // method -- a wrong representation rather than an honest refusal, with no marker for a consumer to notice.
     let source = format!("{VEC2_SRC}def f(a: Vec2, b: Vec2) -> Vec2:\n  return a + b\n");
     let module = build(&source, &["m", "user_op"])?;
-    let rendered = body_named(&module, "f")?.render_snapshot();
+    let body = body_named(&module, "f")?;
+    let rendered = body.render_snapshot();
 
     assert!(
-        rendered.contains("call method:__add__ unbound(borrow(_0),"),
+        rendered.contains("call method:__add__(borrow(_0),"),
         "a user-defined operator must dispatch to its resolved method, with the left operand borrowed as the \
-             receiver: {rendered}"
+             receiver and bound to the declared parameter: {rendered}"
     );
     assert!(
         !rendered.contains("copy(_0) + copy(_1)") && !rendered.contains("move(_0, last_use) + "),
         "it must not also lower as a primitive operation: {rendered}"
     );
+    assert_eq!(
+        dunder_identity(body, "__add__"),
+        Some("__add__"),
+        "the dispatch must keep the method identity checking selected: {rendered}"
+    );
     Ok(())
+}
+
+/// Unary, index and index-assignment hooks call the dunder methods checking selected for them, in source order.
+#[test]
+fn unary_index_and_index_assignment_hooks_call_their_dunder_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Row:\n  value: int\n\n  def __getitem__(self, index: int) -> int:\n    return self.value + index\n\n  def __setitem__(self, index: int, value: int) -> None:\n    println(value)\n\n  def __invert__(self) -> Row:\n    return Row(value=0 - self.value)\n\ndef main() -> None:\n  row = Row(value=4)\n  item = row[3]\n  row[3] = 9\n  flipped = ~row\n  println(item + flipped.value)\n";
+    let module = build(source, &["m", "operator_hooks"])?;
+    let body = body_named(&module, "main")?;
+    let rendered = body.render_snapshot();
+
+    assert!(
+        !rendered.contains("unsupported("),
+        "every operator hook must lower: {rendered}"
+    );
+    for method in ["__getitem__", "__setitem__", "__invert__"] {
+        assert_eq!(dunder_identity(body, method), Some(method), "{method}: {rendered}");
+    }
+    let get = rendered.find("method:__getitem__(").ok_or("missing __getitem__ call")?;
+    let set = rendered.find("method:__setitem__(").ok_or("missing __setitem__ call")?;
+    let invert = rendered.find("method:__invert__(").ok_or("missing __invert__ call")?;
+    assert!(get < set && set < invert, "hooks must run in source order: {rendered}");
+    Ok(())
+}
+
+/// A hook on a generic owner's instance calls its dunder, whose f-string displays the type-parameter operand as generic
+/// code displays it, through its type argument's own display.
+#[test]
+fn an_operator_hook_on_a_generic_owner_calls_its_dunder() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Column[T with Display]:\n  sql: str\n\n  def __mul__(self, other: T) -> Column[T]:\n    return Column[T](sql=f\"({self.sql} * {other})\")\n\ndef main() -> None:\n  amount = Column[float](sql=\"amount\")\n  println((amount * 2.0).sql)\n";
+    let module = build(source, &["m", "generic_operator_owner"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(rendered.contains("call method:__mul__("), "{rendered}");
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let hook = body_named(&module, "__mul__")?.render_snapshot();
+    assert!(hook.contains(":type_parameter_display"), "{hook}");
+    assert!(hook.contains(".sql):display"), "{hook}");
+    Ok(())
+}
+
+/// A `println` or `print` argument whose checked type is a type parameter prints its type argument's own display,
+/// while a concretely typed argument keeps its ordinary display.
+#[test]
+fn printing_a_type_parameter_value_displays_it_generically() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def announce[T with Display](value: T, label: str) -> None:\n  println(value)\n  print(label)\n";
+    let module = build(source, &["m", "generic_print"])?;
+    let rendered = body_named(&module, "announce")?.render_snapshot();
+    assert!(rendered.contains(":type_parameter_display)"), "{rendered}");
+    assert_eq!(rendered.matches(":type_parameter_display").count(), 1, "{rendered}");
+    Ok(())
+}
+
+/// A generic owner's hook retains its checked dispatch once its type-parameter formatting has a Body IR fact.
+#[test]
+fn an_operator_hook_on_a_generic_owner_retains_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Column[T with Display]:\n  sql: str\n\n  def __mul__(self, other: T) -> Column[T]:\n    return Column[T](sql=f\"({self.sql} * {other})\")\n\ndef main() -> None:\n  amount = Column[float](sql=\"amount\")\n  println((amount * 2.0).sql)\n";
+    let module = build(source, &["m", "generic_operator_owner"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported"), "{rendered}");
+    assert_eq!(
+        dunder_identity(body_named(&module, "main")?, "__mul__"),
+        Some("__mul__")
+    );
+    Ok(())
+}
+
+/// Return the checked identity name of the first call of `method` in `body`, when it carries one.
+fn dunder_identity<'body>(body: &'body bir::Body, method: &str) -> Option<&'body str> {
+    body.block.stmts.iter().find_map(|statement| match &statement.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Method(target),
+            ..
+        } if target.name == method => target
+            .canonical
+            .as_ref()
+            .map(|identity| identity.declaration_name.as_str()),
+        _ => None,
+    })
 }
 
 #[test]

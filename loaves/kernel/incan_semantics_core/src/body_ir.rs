@@ -49,7 +49,10 @@ use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
-use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType};
+use crate::{
+    AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanCallableParamKind, IncanType,
+    SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
 
 // ============================================================================
 // Module / body containers
@@ -58,6 +61,17 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
+    #[serde(default)]
+    pub decorated_bindings: Vec<DecoratedBinding>,
+    /// Setup effects of this module's selected entrypoint, evaluated before its source body. Dependency modules do
+    /// not lend their effects to a different entry module.
+    #[serde(default)]
+    pub entrypoint_effects: Vec<EntrypointEffect>,
+    /// Consumer invocation's source-import union and authenticated linked conversion contract, retained only on its
+    /// final entry module. Ordinary source builders and published fragments leave this unselected.
+    #[serde(default)]
+    pub string_conversion_contract: StringConversionContract,
     /// Checker-evaluated scalar and text constants, addressed by their declaring canonical identity.
     #[serde(default)]
     pub constant_declarations: Vec<ConstantDeclaration>,
@@ -71,7 +85,14 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
-    /// Source-local statics with effect-free literal initializers; all other initializers must refuse.
+    /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
+    ///
+    /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
+    /// without this representation remains source-owned; a consumer must never infer SDK ownership from its hash.
+    #[serde(default)]
+    pub native_union_declarations: Vec<NativeUnionDeclaration>,
+    /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed
+    /// initialization.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
@@ -110,12 +131,45 @@ pub struct BodyIrModule {
     pub bodies: Vec<Body>,
 }
 
+/// Observable setup retained by the checked frontend for the selected entry module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EntrypointEffect {
+    /// Print the retained text with a trailing newline before evaluating the entrypoint body.
+    PrintText {
+        /// Authoritative text retained at compilation, independent of the consumer's working directory.
+        text: String,
+        /// Import declaration that requires this setup output.
+        span: HirSourceSpan,
+    },
+}
+
+/// Compilation-scoped authority for the frozen source-owned `TryFrom[str]` bridge.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub enum StringConversionContract {
+    /// Older metadata or a nonentry fragment supplies no consumer invocation authority.
+    #[default]
+    Unselected,
+    /// The consumer checked its complete source import union and found no activation.
+    Inactive,
+    /// The consumer activated the contract and authenticated the exact linked trait and callable slot.
+    Selected(Box<StringConversionSelection>),
+}
+
+/// Exact published identities authenticated against the selected source API and analysis cache.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StringConversionSelection {
+    /// SDK-owned trait used by compiled consumers, independent of source import aliases.
+    pub trait_identity: CanonicalSymbolId,
+    /// Published method identity selected by checked manifest-backed generic associated calls.
+    pub method_identity: CanonicalSymbolId,
+}
+
 /// Canonical immutable value evaluated by the declaring compilation, with no runtime storage or initialization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConstantDeclaration {
     /// Exact checker-selected declaration; aliases never mint another value identity.
     pub canonical: CanonicalSymbolId,
-    /// The checked scalar or text value retained by constant evaluation.
+    /// The checked scalar, text, or effect-free frozen aggregate retained by the declaring frontend.
     pub value: Constant,
 }
 
@@ -130,27 +184,103 @@ pub struct TypeAliasDeclaration {
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
-/// Canonical persistent storage with a checker-typed, effect-free initializer.
+/// Canonical persistent storage with a checker-typed initializer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticDeclaration {
     /// Exact checker-selected storage identity, independent of aliases at its uses.
     pub canonical: CanonicalSymbolId,
     /// Checked carrier type; initializer validation must preserve its exact element types.
     pub ty: IncanType,
-    /// Effect-free initialization value; repeated reads must not reinitialize an assigned cell.
+    /// Initialization value; repeated reads must not reinitialize an assigned cell.
     pub initial: StaticInitializer,
 }
 
-/// Checked effect-free storage initialization, independent of its eventual native representation.
+/// One checked decorator replacement and the source callable it receives during initialization.
+///
+/// The original and the visible wrapper share a source declaration, but are different runtime items. Only the
+/// replacement evaluation's explicit original-callable read may select this body; ordinary calls select the visible
+/// wrapper. Nongeneric replacements initialize in module declaration order. A closed generic replacement retains
+/// its checked initializer template for one initialization per closed instantiation. A replacement signature using
+/// its declaration's type parameters evaluates in the visible wrapper on every invocation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecoratedBinding {
+    /// Executable source body and original signature, before applying user-defined decorators.
+    pub original_body: Body,
+    /// Source-owned template required only by PerInstantiation; module storage and per-invocation wrappers retain
+    /// None. The template has the original's exact binders and declaration identity; consumers must close it
+    /// before use.
+    #[serde(default)]
+    pub initializer: Option<Box<Body>>,
+    /// Checked evaluation policy; consumers must not infer generic cache behavior from a storage lookup.
+    pub initialization: DecoratedInitialization,
+}
+
+/// Checked lifetime of a decorator replacement, preserving legacy's observable factory evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecoratedInitialization {
+    /// A callable without type parameters initializes its replacement once in module declaration order.
+    ModuleStorage,
+    /// A closed generic replacement initializes once for each checked instantiation, using its retained template.
+    PerInstantiation,
+    /// A replacement signature using declared type parameters evaluates its chain on every call.
+    PerInvocation,
+}
+
+/// Whether a checked replacement signature uses one of its own declaration's type parameters.
+/// A closed generic signature requires the independent per-instantiation cache policy rather than invocation admission.
+pub fn decorated_signature_uses_parameters(ty: &IncanType, parameters: &[String]) -> bool {
+    match ty {
+        IncanType::TypeVar(name) => parameters.contains(name),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .any(|parameter| decorated_signature_uses_parameters(&parameter.ty, parameters))
+                || decorated_signature_uses_parameters(return_type, parameters)
+        }
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
+            .iter()
+            .any(|argument| decorated_signature_uses_parameters(argument, parameters)),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
+            decorated_signature_uses_parameters(inner, parameters)
+        }
+        _ => false,
+    }
+}
+
+/// Checked storage initialization, independent of its eventual native representation.
+///
+/// Literal initializers are effect-free, so when they are evaluated is not observable. A computed initializer is
+/// evaluated as legacy evaluates its static (RFC 052): once, when its module's statics are initialized in declaration
+/// order on entry to the first function of that module, or earlier when a read reaches it first.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StaticInitializer {
     /// One primitive literal, interpreted in the storage declaration's checked carrier.
     Literal(Constant),
     /// An ordered list of primitive literals, each checked against the declaration's element type.
     List(Vec<Constant>),
+    /// Ordered primitive key and value literals; a later duplicate key replaces an earlier value, as in source.
+    Dict(Vec<(Constant, Constant)>),
+    /// Primitive member literals of a set, including the empty `Set()` constructor; duplicates collapse on insert.
+    Set(Vec<Constant>),
+    /// Any other checked initializer, as a body with no parameters that returns the storage carrier. A consumer runs
+    /// it at most once per program, at the point legacy's static initialization would.
+    Computed(Box<Body>),
+}
+
+/// One producer-owned anonymous union whose physical representation was admitted by the frontend provider plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeUnionDeclaration {
+    /// Consumer semantic type whose nominal leaves have already been matched to the admitted artifact.
+    pub ty: IncanType,
+    /// Exact qualified Rust item selected from the admitted producer's final emitted table.
+    pub rust_item: String,
+    /// Payload types in producer variant order; lowering must preserve this order even if local names differ.
+    pub members: Vec<IncanType>,
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
+///
+/// Every field is encoded, including empty vectors, because the executable representation uses positional records.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StdlibDelegation {
     /// Exact source declaration identity selected by checking, independent of the caller's spelling.
@@ -162,6 +292,23 @@ pub struct StdlibDelegation {
     pub parameters: Vec<IncanType>,
     /// The declared wrapper result type, verified against native metadata before execution.
     pub return_type: IncanType,
+    /// The callee's own type parameters in declaration order, which `parameters` and `return_type` name. A call
+    /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
+    /// Declaration-owned native instantiation for an explicit SDK trait implementation, Self first and then the
+    /// trait's arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the
+    /// existing function or owner-binder instantiation; consumers must not reconstruct these arguments from names.
+    #[serde(default)]
+    pub native_type_arguments: Vec<IncanType>,
+    /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
+    ///
+    /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
+    /// [`CallableParamDefault::Source`] computation without statements whose result is the constant the call passes,
+    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant. A record listing none admits no
+    /// omitted argument.
+    #[serde(default)]
+    pub parameter_defaults: Vec<CallableParamDefault>,
 }
 
 impl StdlibDelegation {
@@ -289,25 +436,73 @@ pub struct TraitTypeArgument {
     pub argument: IncanType,
 }
 
-/// The exact local declaration and canonical field layout for one direct-executable plain model or class.
+/// One checked trait adoption, including marker protocols that have no executable method slots.
 ///
-/// The record belongs to its declaring module and excludes enums and inheritance. Classes retain ordered type
-/// parameters for specialization from checked uses; models and newtypes in this profile remain concrete. Nominal
+/// The declaring trait identity and ordered semantic arguments survive aliases and derive-bundle expansion.
+/// This fact records source conformance only; a native consumer must independently select an admitted trait ABI
+/// and validate every implementing body before emitting a native implementation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TraitAdoption {
+    /// Canonical checked trait declaration, never the spelling of the adoption or import alias.
+    pub trait_identity: CanonicalSymbolId,
+    /// Checked arguments in the declaring trait's parameter order; marker protocols retain an empty vector.
+    pub arguments: Vec<IncanType>,
+    /// Complete checked method-slot identities, or `None` when metadata cannot prove every slot.
+    /// An authenticated marker protocol has `Some([])`; missing metadata cannot masquerade as an empty protocol.
+    #[serde(default)]
+    pub methods: Option<Vec<CanonicalSymbolId>>,
+}
+
+/// Immutable presentation values of one checked reflection-visible field, in declaration order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldMetadata {
+    /// Canonical written field name.
+    pub name: String,
+    /// Explicit field alias, including an explicitly empty string.
+    pub alias: Option<String>,
+    /// Explicit source description, absent when none is declared.
+    pub description: Option<String>,
+    /// Canonical Incan surface type name, independent of the native storage spelling.
+    pub type_name: String,
+    /// Whether the source declaration supplies a default for this field.
+    pub has_default: bool,
+}
+
+/// The exact local declaration and canonical field layout for one direct-executable model, class, or raw newtype.
+///
+/// The record belongs to its declaring module and excludes enums. Nominal owners retain ordered type parameters for
+/// specialization from checked uses, including a newtype's underlying tuple slot. Inherited classes retain ancestor
+/// field ownership and nearest method dispatch separately from their physical layout. Nominal
 /// methods and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
+    /// Checked explicit and derive-expanded adoptions; an absent older fact grants no native trait authority.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TraitAdoption>,
+    /// Exact foreign runtime item selected by the direct-route bridge. Empty keeps the ordinary source or SDK
+    /// declaration; consumers validate a nonempty item against its retained canonical owner before linking it.
+    #[serde(default)]
+    pub native_item: String,
+    /// Checked local class parent and nearest source method implementations; absent for noninherited carriers.
+    #[serde(default)]
+    pub class_inheritance: Option<ClassInheritance>,
+    /// Fixed runtime arguments for a nongeneric source surface, such as Html's String specialization. Generic
+    /// surfaces retain their checked instance arguments instead; ordinary source/SDK layouts carry none.
+    #[serde(default)]
+    pub native_type_arguments: Vec<IncanType>,
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
     /// RFC 120 identity minted by the checker for this declaration.
     pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name, checked again by consumers as a defense against malformed Body IR.
     pub name: String,
-    /// Canonical declared field names in declaration order; a plain newtype retains its sole tuple slot as `0`.
+    /// Canonical field names in checked constructor order, with inherited fields before local fields. A plain newtype
+    /// retains its sole tuple slot as `0`.
     pub fields: Vec<String>,
-    /// RFC 120 identities of [`Self::fields`] in the same declaration order. A newtype's sole generated tuple slot
+    /// RFC 120 identities of [`Self::fields`] in the same constructor order. A newtype's sole generated tuple slot
     /// retains its owner's identity, because that slot has no independent source declaration.
     ///
     /// The parallel layout is intentional: constructor binding and stored runtime values retain the compact field
@@ -318,6 +513,23 @@ pub struct NominalDeclaration {
     pub field_types: Vec<IncanType>,
     /// Checker-resolved public visibility, in the same order as the fields.
     pub field_public: Vec<bool>,
+    /// Checked RFC 021 field aliases in the same order, `None` where a field declares none. A serde form names an
+    /// aliased field by its alias, as legacy's `#[serde(rename)]` does. Older artifacts carry no aliases.
+    #[serde(default)]
+    pub field_aliases: Vec<Option<String>>,
+    /// Checked reflection-visible field slots in declaration order. None cannot authorize reflection; ordinary
+    /// private fields of a private model remain visible, while type-private fields are excluded.
+    #[serde(default)]
+    pub reflection_fields: Option<Vec<usize>>,
+    /// Complete immutable records of reflection-visible source fields. None grants no metadata hook; presentation
+    /// values do not change field types or access authority.
+    #[serde(default)]
+    pub reflection_metadata: Option<Vec<FieldMetadata>>,
+    /// Canonical source body selected for a model, class or newtype's standard Eq native equality slot. Carrier
+    /// admission may rely on this witness, but execution still requires that exact retained body and its validated
+    /// borrowed input ABI.
+    #[serde(default)]
+    pub comparison_equality: Option<CanonicalSymbolId>,
     /// Whether the source nominal declaration is public.
     pub public: bool,
     /// Whether any declared field has a default; missing executable default facts must refuse omitted fields.
@@ -327,17 +539,239 @@ pub struct NominalDeclaration {
     /// a checked constructor binding. Older artifacts without this frame must refuse omitted fields.
     #[serde(default)]
     pub field_default_body: Option<Box<Body>>,
+    /// Declaration-owned frames of the owner's method partials, one per partial binding, each selected at a call only
+    /// together with its exact target method identity.
+    #[serde(default)]
+    pub method_partial_defaults: Vec<MethodPartialDefaults>,
+    /// Checker-selected source method that renders this nominal: an explicit string method or an Error message
+    /// fallback. None retains the checked derived-Display path; consumers must prove a matching receiver and result
+    /// signature before calling this identity. Older publications cannot authorize a custom display call.
+    #[serde(default)]
+    pub display_method: Option<CanonicalSymbolId>,
+    /// Checked source reconstruction policy, distinguishing exact-hook validation from ordinary tuple Deserialize.
+    /// Consumers close the existing nominal field and selected Body facts using exact checked owner arguments;
+    /// this reference never authorizes a guessed hook, an unchecked payload, or ordinary derive reconstruction.
+    #[serde(default)]
+    pub newtype_deserialize: NewtypeDeserialize,
+    /// Direct-only producer attestation for raw closed automatic conversion candidates. The existing canonical
+    /// owner/layout remains authoritative; invocation activation and complete chain validation are separate.
+    #[serde(default)]
+    pub newtype_string_conversion: NewtypeStringConversion,
     /// Checked builtin and implicit nominal derives, retained in legacy normalization order. A selected `Default`
     /// over source field defaults requires a custom implementation rather than a Rust derive macro; consumers that
     /// cannot implement it must refuse that combination.
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
+    /// Project carrier keys name a complete canonical identity here, independently of the diagnostic source name.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Ordered checker-retained declaration parameters used to close nominal layouts at checked uses.
     #[serde(default)]
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
     pub type_parameter_count: usize,
+}
+
+/// Foreign runtime ownership for a compiler-known nominal with a checked builtin or stdlib source identity.
+/// This direct-route bridge does not alter source resolution or legacy emission. A user declaration, including one
+/// with the same name, never selects a foreign item; ordinary SDK layouts keep their compiled source item.
+pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
+    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin {
+        if identity.namespace != crate::SymbolNamespace::OrdinaryLexical
+            || identity.kind != crate::SemanticSourceTargetKind::RustItem
+            || identity.scope_discriminant.is_some()
+            || identity.declaration_span != crate::HirSourceSpan::new(0, 0)
+            || path.last() != Some(&identity.declaration_name)
+        {
+            return None;
+        }
+        let item = match path.as_slice() {
+            [root, name] if root == "axum" && name == "Json" => "incan_stdlib_web::web::response::Json",
+            [root, module, name] if root == "axum" && module == "extract" && name == "Query" => {
+                "incan_stdlib_web::web::request::Query"
+            }
+            [root, module, name] if root == "axum" && module == "extract" && name == "Path" => {
+                "incan_stdlib_web::web::request::Path"
+            }
+            [root, module, name] if root == "axum" && module == "response" && name == "Html" => {
+                "incan_stdlib_web::web::response::Html"
+            }
+            _ => return None,
+        };
+        return Some(item.to_owned());
+    }
+    if identity.origin == crate::SymbolOrigin::Builtin
+        && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
+        && identity.kind == crate::SemanticSourceTargetKind::Builtin
+        && identity.declaration_name == "ValidationError"
+        && identity.scope_discriminant.is_none()
+        && identity.declaration_span == crate::HirSourceSpan::new(0, 0)
+    {
+        return Some("incan_std_core::validation::ValidationError".to_owned());
+    }
+    let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
+        return None;
+    };
+    (library == "incan_stdlib_core"
+        && module_path == &["reflection".to_owned()]
+        && identity.declaration_name == "FieldInfo"
+        && identity.kind == crate::SemanticSourceTargetKind::Class)
+        .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
+}
+
+/// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
+/// This is a layout transport coordinate, not a replacement semantic identity or a change to legacy resolution.
+pub fn native_nominal_module(identity: &CanonicalSymbolId) -> Option<String> {
+    if identity.origin == crate::SymbolOrigin::Builtin && native_nominal_item(identity).is_some() {
+        return Some("builtin::native::ValidationError".to_owned());
+    }
+    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin
+        && native_nominal_item(identity).is_some()
+    {
+        return Some(format!("native::rust::{}", path.join("::")));
+    }
+    crate::canonical_module_identity(identity)
+}
+
+/// Exact opaque ABI declaration of the checked ValidationError builtin, retaining its runtime's four derived traits.
+/// This layout record grants no field, constructor or display operations; those require explicit Body IR runtime
+/// operations. Storage remains opaque through native frames.
+pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
+    if identity.origin != crate::SymbolOrigin::Builtin {
+        return None;
+    }
+    native_carrier_nominal(identity)
+}
+
+/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque; Json/Query/Path retain
+/// their public tuple payload and binder, while Html retains its fixed String specialization. Derive facts match the
+/// runtime implementations; field/constructor operations additionally require checker-owned use-site facts.
+pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
+    if !matches!(
+        identity.origin,
+        crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
+    ) {
+        return None;
+    }
+    let native_item = native_nominal_item(identity)?;
+    let module = native_nominal_module(identity)?;
+    let mut fields = Vec::new();
+    let mut field_identities = Vec::new();
+    let mut field_types = Vec::new();
+    let mut type_parameters = Vec::new();
+    let mut native_type_arguments = Vec::new();
+    let mut derives = vec!["Debug".to_owned(), "Clone".to_owned()];
+    if identity.origin == crate::SymbolOrigin::Builtin {
+        derives.extend(["PartialEq".to_owned(), "Eq".to_owned()]);
+    } else {
+        fields.push("0".to_owned());
+        field_identities.push(CanonicalSymbolId {
+            namespace: crate::SymbolNamespace::Member,
+            origin: identity.origin.clone(),
+            declaration_name: "0".to_owned(),
+            kind: crate::SemanticSourceTargetKind::Field,
+            scope_discriminant: None,
+            declaration_span: crate::HirSourceSpan::new(0, 0),
+        });
+        if identity.declaration_name == "Html" {
+            let string = IncanType::Primitive(crate::IncanPrimitiveType::Str);
+            field_types.push(string.clone());
+            native_type_arguments.push(string);
+        } else {
+            type_parameters.push("T".to_owned());
+            field_types.push(IncanType::TypeVar("T".to_owned()));
+        }
+    }
+    let field_public = vec![true; fields.len()];
+    let type_parameter_count = type_parameters.len();
+    Some(NominalDeclaration {
+        trait_adoptions: Vec::new(),
+        native_item,
+        class_inheritance: None,
+        native_type_arguments,
+        direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
+        canonical: identity.clone(),
+        name: identity.declaration_name.clone(),
+        fields,
+        field_identities,
+        field_types,
+        field_public,
+        field_aliases: Vec::new(),
+        reflection_fields: None,
+        reflection_metadata: None,
+        comparison_equality: None,
+        public: true,
+        has_field_defaults: false,
+        field_default_body: None,
+        method_partial_defaults: Vec::new(),
+        display_method: None,
+        newtype_deserialize: NewtypeDeserialize::Unselected,
+        newtype_string_conversion: NewtypeStringConversion::Unselected,
+        derives,
+        named_type_identities: Default::default(),
+        type_parameters,
+        type_parameter_count,
+    })
+}
+/// A checked local class inheritance edge and the nearest implementations of its ancestor source method slots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassInheritance {
+    /// The actual parent declaration identity; aliases cannot mint another class owner.
+    pub parent: CanonicalSymbolId,
+    /// Ancestor slots mapped to the implementation selected by checking, in canonical slot order.
+    pub methods: Vec<ClassMethodImplementation>,
+}
+
+/// One inherited source method slot and its nearest checked implementation for the concrete subclass.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassMethodImplementation {
+    /// Canonical ancestor method identity carried by checked calls of that slot.
+    pub method: CanonicalSymbolId,
+    /// Canonical source body to instantiate for this subclass; original bodies keep their own identities.
+    pub implementation: CanonicalSymbolId,
+}
+
+/// Exact reconstruction policy for a source newtype selecting serde Deserialize.
+/// A missing older record is unselected, so it cannot silently authorize raw reconstruction of a checked owner.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub enum NewtypeDeserialize {
+    /// No admitted reconstruction selection; Deserialize consumers must refuse source newtypes with this state.
+    #[default]
+    Unselected,
+    /// The source declaration is unchecked, so serde's ordinary tuple reconstruction is the complete contract.
+    Ordinary,
+    /// Validation requires the exact selected source hook; its Body owns parameter, result and binder facts.
+    Checked(CanonicalSymbolId),
+}
+
+/// Whether source checking authorized this raw owner as a possible automatic string conversion step.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub enum NewtypeStringConversion {
+    /// Missing support, binders, hooks, constraints, source adoptions or unproved storage grant no automatic step.
+    #[default]
+    Unselected,
+    /// The producer checked support and excluded every source override in the admitted raw nongeneric profile.
+    /// Consumers must still validate the exact underlying chain and the consumer invocation's selected contract.
+    Automatic,
+}
+
+/// The deferred defaults of one same-owner method partial (`short = partial label(prefix="x")`), without a second
+/// semantic method identity.
+///
+/// Checking gives a call of the partial the target method's identity, with each preset the call omits as a defaulted
+/// slot. The frame is the target method's parameter surface, receiver first, whose defaults are the partial's presets
+/// and the target's own remaining defaults. A consumer evaluates only the selected default computations, never the
+/// frame's empty block, and must match both [`Self::name`] and [`Self::target`] before using it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MethodPartialDefaults {
+    /// Source binding name of the partial within its nominal owner.
+    pub name: String,
+    /// Source span of the partial binding, inside its owner's declaration.
+    pub span: HirSourceSpan,
+    /// Exact canonical method the checker selected as the partial's target, through any method alias.
+    pub target: CanonicalSymbolId,
+    /// The target-shaped default frame: the target's identity, name, span and parameters, with the presets as
+    /// defaults.
+    pub frame: Box<Body>,
 }
 
 /// One source-local fieldless normal enum retained for direct identity comparison.
@@ -357,7 +791,7 @@ pub struct FieldlessEnumDeclaration {
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
 }
 
-/// Canonical layout of a normal source enum without methods, aliases, or generic substitution.
+/// Canonical payload layout of a checked source or SDK enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
     /// Exact source-local declaration identity derived from the enum's span.
@@ -368,10 +802,21 @@ pub struct EnumDeclaration {
     pub name: String,
     /// Checked source visibility.
     pub public: bool,
+    /// Ordered declaration binders selected by checking; payload placeholders close only at checked concrete uses.
+    /// Older publications retain an empty list and cannot authorize a generic payload layout.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
+    /// Concrete arguments of a specialized SDK enum alias, in declaration order. Source enums redeclare their closed
+    /// layout instead; only an SDK package owner and native metadata validation authorize this alias representation.
+    #[serde(default)]
+    pub native_type_arguments: Vec<IncanType>,
     /// Source-ordered variants; native discriminants use these exact indices.
     pub variants: Vec<EnumVariantDeclaration>,
     /// Explicit and automatic derives selected by the checker.
     pub derives: Vec<String>,
+    /// Checker-retained origins for named payload types; publication keeps only bindings the payloads require.
+    #[serde(default)]
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// One canonical variant and its checked positional payload layout.
@@ -631,10 +1076,10 @@ impl Body {
     /// enforces this), so this alone is already a reliable generator signal for a `Body` in isolation.
     ///
     /// The walk recurses into every statement kind that carries a nested [`Block`] -- [`StatementKind::If`],
-    /// [`StatementKind::Loop`], and each [`StatementKind::Race`] arm -- but does not recurse into a
-    /// [`Rvalue::Closure`]'s [`ClosureBody`] or a [`Rvalue::Generator`]'s [`GeneratorBody`]. A yield nested in either
-    /// value does not make the *enclosing* function body a generator, matching how the existing backend's own
-    /// `body_contains_yield` walker never descends into nested closure/function literals.
+    /// [`StatementKind::Loop`], [`StatementKind::UnsafeRegion`], and each [`StatementKind::Race`] arm -- but does not
+    /// recurse into a [`Rvalue::Closure`]'s [`ClosureBody`] or a [`Rvalue::Generator`]'s [`GeneratorBody`]. A yield
+    /// nested in either value does not make the *enclosing* function body a generator, matching how the existing
+    /// backend's own `body_contains_yield` walker never descends into nested closure/function literals.
     pub fn is_generator(&self) -> bool {
         block_contains_yield(&self.block)
     }
@@ -722,7 +1167,9 @@ fn statement_representation_gap(stmt: &Statement) -> Option<&str> {
                 .as_ref()
                 .and_then(|block| statements_representation_gap(&block.stmts))
         }),
-        StatementKind::Loop { body } => statements_representation_gap(&body.stmts),
+        StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+            statements_representation_gap(&body.stmts)
+        }
         StatementKind::Race { arms, .. } => arms
             .iter()
             .find_map(|arm| statements_representation_gap(&arm.body.stmts)),
@@ -780,7 +1227,7 @@ fn statement_contains_yield(stmt: &Statement) -> bool {
         StatementKind::If {
             then_block, else_block, ..
         } => block_contains_yield(then_block) || else_block.as_ref().is_some_and(block_contains_yield),
-        StatementKind::Loop { body } => block_contains_yield(body),
+        StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => block_contains_yield(body),
         // A race arm body is a nested block like any other. A body cannot currently be both async and a generator,
         // so this is unreachable today; walking it anyway keeps the traversal total over the statement vocabulary
         // rather than silently under-reporting if that ever changes.
@@ -1156,6 +1603,12 @@ pub struct PlaceOperand {
 /// A literal constant operand value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Constant {
+    /// A checked primitive type used as a value-level SDK marker; its represented type is retained without source-name
+    /// inference.
+    TypeToken(IncanType),
+    /// Static collection or tuple data with its checked carrier and source-ordered elements. A frozen dictionary
+    /// stores alternating keys and values; consumers must validate its arity before constructing storage.
+    FrozenAggregate(IncanType, Vec<Constant>),
     Int(i64),
     Float(String),
     /// A compiler-typed numeric constant whose canonical kind and full-width payload survived lowering.
@@ -1186,6 +1639,74 @@ pub enum Constant {
     Bytes(Vec<u8>),
     Unit,
     None,
+    /// A checked immutable sized-integer newtype value with its exact constructor and complete numeric payload.
+    NumericNewtype(Box<NumericNewtypeConstant>),
+}
+
+/// Pure newtype data accepted by the declaring const checker, without a runtime call or module initialization.
+/// This fact covers one sized-integer tuple slot, not model construction, defaults, hooks, or generic instances.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NumericNewtypeConstant {
+    /// Exact checked owning declaration, physical layout, and sole positional argument binding.
+    pub constructor: ConstructorTarget,
+    /// Full-width integer value already checked against the underlying numeric kind.
+    pub value: TypedNumericConstant,
+}
+
+impl NumericNewtypeConstant {
+    /// Validate the complete immutable value against one retained nominal before projection or materialization.
+    /// A same-spelled owner, changed address, shifted field, open instance, or mismatched numeric width grants no
+    /// value.
+    pub fn matches_layout(&self, layout: &NominalDeclaration) -> bool {
+        let Some(ty) = self.numeric_type() else {
+            return false;
+        };
+        let binding_matches = matches!(&self.constructor.binding,
+            ArgumentBinding::Resolved { arguments, defaulted_slots }
+                if arguments.len() == 1 && defaulted_slots.is_empty()
+                    && arguments.first().is_some_and(|bound| bound.slot == 0 && bound.written_position == 0));
+        layout.canonical.kind == crate::SemanticSourceTargetKind::Newtype
+            && layout.type_parameters.is_empty()
+            && layout.type_parameter_count == 0
+            && layout.class_inheritance.is_none()
+            && !layout.has_field_defaults
+            && layout.fields.as_slice() == ["0"]
+            && layout.field_identities.len() == 1
+            && layout.field_identities.first() == Some(&layout.canonical)
+            && layout.field_types.len() == 1
+            && layout.field_types.first() == Some(&ty)
+            && self.constructor.canonical.as_ref() == Some(&layout.canonical)
+            && self.constructor.direct_declaration_id.as_ref() == Some(&layout.direct_declaration_id)
+            && self.constructor.canonical_field_layout.as_deref() == Some(layout.fields.as_slice())
+            && binding_matches
+    }
+
+    /// Require a matching signed/unsigned kind and an in-range payload; other numeric families are absent.
+    fn numeric_type(&self) -> Option<IncanType> {
+        use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
+        let kind = match &self.value {
+            TypedNumericConstant::Signed { kind, value } => {
+                let IntegerBounds::Signed { minimum, maximum } = integer_bounds(*kind)? else {
+                    return None;
+                };
+                if *value < minimum || *value > maximum {
+                    return None;
+                }
+                *kind
+            }
+            TypedNumericConstant::Unsigned { kind, value } => {
+                let IntegerBounds::Unsigned { maximum } = integer_bounds(*kind)? else {
+                    return None;
+                };
+                if *value > maximum {
+                    return None;
+                }
+                *kind
+            }
+            _ => return None,
+        };
+        Some(IncanType::Primitive(crate::IncanPrimitiveType::Numeric(kind)))
+    }
 }
 
 /// One exact numeric constant retained in Body IR without collapsing its checked type or value domain.
@@ -1249,9 +1770,12 @@ impl Constant {
     /// text, so a snapshot can never read a `bytes` constant as the `str` constant it is not.
     fn render_snapshot(&self) -> String {
         match self {
+            Self::FrozenAggregate(ty, values) => format!("const<{ty}>({values:?})"),
+            Self::TypeToken(ty) => format!("const<Type[{ty}]>"),
             Self::Int(v) => format!("const({v})"),
             Self::Float(v) => format!("const({v})"),
             Self::TypedNumeric(value) => format!("const<{}>({value:?})", value.type_name()),
+            Self::NumericNewtype(value) => format!("const<newtype>({value:?})"),
             Self::Bool(v) => format!("const({v})"),
             Self::Str(v) => format!("const({v:?})"),
             Self::FrozenStr(v) => format!("const<FrozenStr>({v:?})"),
@@ -1629,14 +2153,22 @@ pub struct ResultVariant {
 }
 
 impl ResultVariant {
-    /// Require exactly one model, enum or newtype declaration identity for every named payload-type leaf before
-    /// execution.
+    /// Require exactly one declaration identity for every named payload-type leaf before execution. The exact
+    /// builtin ValidationError identity uses the same admitted runtime carrier boundary as nominal declarations;
+    /// arbitrary builtin names and malformed identities confer no executable layout.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
-        fn paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut std::collections::BTreeSet<Vec<usize>>) {
+        fn paths(
+            ty: &IncanType,
+            path: &mut Vec<usize>,
+            out: &mut std::collections::BTreeMap<Vec<usize>, Option<crate::RuntimeBuiltinType>>,
+        ) {
             match ty {
                 IncanType::Named(_) => {
-                    out.insert(path.clone());
+                    out.insert(path.clone(), None);
+                }
+                IncanType::NativeBuiltin(builtin) => {
+                    out.insert(path.clone(), Some(builtin.clone()));
                 }
                 IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
                     for (index, item) in items.iter().enumerate() {
@@ -1648,23 +2180,27 @@ impl ResultVariant {
                 _ => {}
             }
         }
-        let mut required = std::collections::BTreeSet::new();
+        let mut required = std::collections::BTreeMap::new();
         paths(&self.ok_type, &mut vec![0], &mut required);
         paths(&self.error_type, &mut vec![1], &mut required);
         required.len() == self.canonical_types.len()
-            && required.iter().all(|path| {
+            && required.iter().all(|(path, builtin)| {
                 self.canonical_types.get(path).is_some_and(|identity| {
+                    if let Some(builtin) = builtin {
+                        return crate::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(builtin);
+                    }
                     identity.scope_discriminant.is_none()
-                        && matches!(
+                        && ((matches!(
                             identity.kind,
                             crate::SemanticSourceTargetKind::Model
+                                | crate::SemanticSourceTargetKind::Class
                                 | crate::SemanticSourceTargetKind::Enum
                                 | crate::SemanticSourceTargetKind::Newtype
-                        )
-                        && matches!(
+                        ) && matches!(
                             identity.origin,
                             crate::SymbolOrigin::Module(_) | crate::SymbolOrigin::Package { .. }
-                        )
+                        )) || (identity.origin == crate::SymbolOrigin::Builtin
+                            && native_nominal_item(identity).is_some()))
                 })
             })
     }
@@ -1721,6 +2257,10 @@ pub struct CallableParam {
     pub name: String,
     /// Fully resolved parameter type.
     pub ty: IncanType,
+    /// Checked source role. Rest parameters own their packed list or dictionary, while ordinary collection
+    /// parameters retain their normal borrowed passing convention. `ty` is the packed frame type for a rest role.
+    #[serde(default = "ordinary_callable_parameter_kind")]
+    pub kind: IncanCallableParamKind,
     /// Original parameter span, retained for argument-binding diagnostics.
     ///
     /// The syntax AST currently retains no receiver-token range, so a synthetic method `self` parameter uses the
@@ -1733,6 +2273,11 @@ pub struct CallableParam {
     /// [`OwnershipFact::MutBorrow`], and the callee neither owns nor drops the parameter, as the emitted route's
     /// `&mut T` parameter does. For a `Copy` type it is a mutable local copy, so callers still pass a copy.
     pub mutable: bool,
+}
+
+/// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
+fn ordinary_callable_parameter_kind() -> IncanCallableParamKind {
+    IncanCallableParamKind::Normal
 }
 
 impl CallableParam {
@@ -1792,7 +2337,9 @@ impl CallableParamDefault {
     fn render_snapshot(&self) -> String {
         match self {
             Self::Required => String::new(),
-            Self::Source(computation) => format!(" = source_default({})", computation.render_snapshot()),
+            Self::Source(computation) => {
+                format!(" = source_default({})", computation.render_snapshot())
+            }
             Self::PartialPreset { capture } => format!(" = captured(_{})", capture.0),
             Self::Unsupported { span, description } => {
                 format!(
@@ -1859,11 +2406,20 @@ impl DefaultComputation {
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
+    /// Compiler-retained original callable read during RFC 036 initialization. This must resolve to exactly one
+    /// decorated binding, and is never inferred from a forwarding closure's source spelling.
+    #[serde(default)]
+    pub original_callable: Option<CanonicalSymbolId>,
     /// Whether this computation came from a named function read. Its canonical item identity lives once in the
     /// forwarding call. A source closure expression or partial remains distinct even when it forwards the same
     /// arguments without captures.
     #[serde(default)]
     pub function_item: bool,
+    /// Invocation consumes the owned environment because a proven captured iterator moves into deferred work.
+    /// Consumers must construct an FnOnce object and invoke it through a moved last-use operand; reusable Fn
+    /// borrowing or cloning the iterator for another invocation would change this contract.
+    #[serde(default)]
+    pub consumes_environment: bool,
     /// The closure's own captured-binding locals, in the same order as [`Rvalue::Closure::captured_operands`] --
     /// `capture_locals[i]` is where a read of the `i`-th captured operand's value is durably bound inside the
     /// closure body, so subsequent reads inside the body see it as an ordinary local rather than re-reading the
@@ -2213,7 +2769,9 @@ impl FormatPart {
     fn render_snapshot(&self) -> String {
         match self {
             Self::Literal(s) => format!("lit({s:?})"),
-            Self::Expr { operand, style } => format!("{}:{}", operand.render_snapshot(), style.as_str()),
+            Self::Expr { operand, style } => {
+                format!("{}:{}", operand.render_snapshot(), style.as_str())
+            }
         }
     }
 }
@@ -2226,6 +2784,12 @@ impl FormatPart {
 pub enum FormatStyle {
     /// User-facing display formatting (`{value}`).
     Display,
+    /// User-facing display formatting of a value whose checked type is a type parameter (`{value}` with `value: T`).
+    ///
+    /// Generic code formats such a value through its type argument's own display implementation, so a closed
+    /// instance must not apply the formatting a concrete value of that type receives; an integral float, for one,
+    /// keeps no fractional part.
+    TypeParameterDisplay,
     /// Structured debug formatting (`{value!r}`).
     Debug,
 }
@@ -2235,6 +2799,7 @@ impl FormatStyle {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Display => "display",
+            Self::TypeParameterDisplay => "type_parameter_display",
             Self::Debug => "debug",
         }
     }
@@ -2451,7 +3016,9 @@ impl DictEntry {
     /// Render a deterministic maintainer-facing spelling.
     fn render_snapshot(&self) -> String {
         match self {
-            Self::Pair(key, value) => format!("{}: {}", key.render_snapshot(), value.render_snapshot()),
+            Self::Pair(key, value) => {
+                format!("{}: {}", key.render_snapshot(), value.render_snapshot())
+            }
             Self::Spread(spread) => spread.render_snapshot(),
         }
     }
@@ -2560,18 +3127,21 @@ impl AggregateKind {
 ///
 /// Body IR keeps a call's operand vector in *resolved declaration order* — declared parameter order for a callable,
 /// declared field order for a nominal constructor — while the statements that compute those operands are emitted in
-/// *written source order*. The two orders differ whenever a caller writes named arguments out of declaration order,
-/// and both are part of the source contract: the binding decides which parameter receives which value, while the
-/// written order decides the order in which argument sub-expressions take effect.
+/// *written source order* for ordinary calls. [`Self::ResolvedFactory`] preserves the frozen route's declaration-order
+/// evaluation for an imported SDK type-constructor factory. The two orders differ whenever a caller writes named
+/// arguments out of declaration order, and both are explicit facts: the binding decides which parameter receives
+/// which value, while its variant records whether ordinary written order or the factory's frozen declaration order
+/// sequences the argument effects.
 ///
-/// # Ownership facts are sequenced by written order, not by operand index
+/// # Ordinary ownership facts are sequenced by written order, not by operand index
 ///
 /// This is the invariant a consumer is most likely to get wrong. Each operand's [`OwnershipFact`] and last-use
-/// marker were decided while lowering the arguments **in written source order**, so they are only coherent when read
-/// in that order. For `two(q=a, p=a)` the operand vector is `[move(_0, last_use), clone(_0)]`: read left to right
-/// that appears to move a local and then clone it, but `written_position` says the clone happened first. An executor
-/// that walks `args` in vector order will observe a use-after-move. Walk [`Self::Resolved::arguments`] by ascending
-/// `written_position` when evaluating, and by operand index only when passing already-evaluated values.
+/// marker for [`Self::Resolved`] were decided while lowering the arguments **in written source order**, so they are
+/// only coherent when read in that order. For `two(q=a, p=a)` the operand vector is `[move(_0, last_use), clone(_0)]`:
+/// read left to right that appears to move a local and then clone it, but `written_position` says the clone happened
+/// first. An executor that walks `args` in vector order will observe a use-after-move. Walk
+/// [`Self::Resolved::arguments`] by ascending `written_position` when evaluating, and by operand index only when
+/// passing already-evaluated values.
 ///
 /// This is the single binding mechanism for every call shape, replacing the per-target slot map #1124 introduced on
 /// [`LocalCallableTarget`]: local callables, direct named calls, method calls, and nominal construction all record
@@ -2585,10 +3155,9 @@ pub enum ArgumentBinding {
     /// a single value, a value written with a name, or a spread whose length is only known at runtime. Reading this
     /// as a positional argument vector is the mistake this variant exists to prevent.
     ///
-    /// This is the honest representation for a callee whose declared surface Body IR did not resolve — a builtin, a
-    /// compiler-synthesized collection-growth call, or a signature with a `*args`/`**kwargs` rest parameter — and
-    /// for any call carrying a spread, where a written argument does not correspond one-to-one with a declared
-    /// slot. Recording an identity slot map for those would assert a binding nobody checked.
+    /// A callee without a retained declared surface, or a call without a computed binding for its spread elements,
+    /// makes no slot claim. A rest-bearing call with explicitly retained physical packs uses [`Self::Resolved`]
+    /// instead: each owned pack occupies one declared slot.
     UnresolvedPositional,
     /// Arguments were resolved against the callee's declared parameters or the type's declared fields.
     Resolved {
@@ -2606,6 +3175,18 @@ pub enum ArgumentBinding {
         /// the declaration, and it is why no defaulted slot carries an [`OwnershipFact`]: this call site evaluates
         /// nothing for it. Making those defaults evaluable is
         /// #1172's own scope, and this fact is what tells it which slots need a value.
+        defaulted_slots: Vec<usize>,
+    },
+    /// A checked imported SDK type-constructor factory whose frozen route evaluates arguments in declaration order.
+    ///
+    /// The producer evaluates supplied expressions and decides ownership in ascending slot order. `written_position`
+    /// retains source coordinates, but does not sequence these ownership facts. Consumers pass the already evaluated
+    /// values by slot and must not reinterpret this as an ordinary written-order binding. Defaults remain owned by the
+    /// selected declaration. Unchecked targets, dynamic callables and unproven spreads cannot supply this fact.
+    ResolvedFactory {
+        /// One record per surrounding argument operand, in declaration order.
+        arguments: Vec<BoundArgument>,
+        /// Omitted declared slots, in ascending order, without an evaluated operand or ownership fact.
         defaulted_slots: Vec<usize>,
     },
 }
@@ -2634,14 +3215,21 @@ impl ArgumentBinding {
     /// and a non-trivial binding stands out. An unresolved binding always renders its own marker, so it can never be
     /// confused with a resolved identity binding.
     fn render_snapshot(&self) -> String {
-        let Self::Resolved {
-            arguments,
-            defaulted_slots,
-        } = self
-        else {
-            return " unbound".to_string();
+        let (arguments, defaulted_slots, factory) = match self {
+            Self::Resolved {
+                arguments,
+                defaulted_slots,
+            } => (arguments, defaulted_slots, false),
+            Self::ResolvedFactory {
+                arguments,
+                defaulted_slots,
+            } => (arguments, defaulted_slots, true),
+            Self::UnresolvedPositional => return " unbound".to_string(),
         };
         let mut out = String::new();
+        if factory {
+            out.push_str(" factory_order=declaration");
+        }
         if arguments
             .iter()
             .enumerate()
@@ -2717,6 +3305,30 @@ pub enum Callee {
     /// provider record, and one fact per input — while being the rarest. Inlining it would grow every
     /// [`StatementKind::Call`] in every body by that much.
     ProviderOperation(Box<ProviderOperationPlan>),
+    /// A pure compiler-generated operation on a checked type, preserving its binder until instantiation.
+    TypeMetadata(TypeMetadataTarget),
+}
+
+/// A generated type member selected by the checker, never a same-spelled source method.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TypeMetadataTarget {
+    /// Exact generated method identity selected at the source call.
+    pub member: CanonicalSymbolId,
+    /// Checked type or generic binder owning the generated member.
+    pub owner: CanonicalSymbolId,
+    /// Type to close using the active function's ordered type arguments.
+    pub receiver_type: IncanType,
+    /// Pure operation retained by the frontend.
+    pub operation: TypeMetadataOperation,
+}
+
+/// Metadata operations with no source-value receiver evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeMetadataOperation {
+    /// The source name exposed by the concrete model or class's generated class-name member.
+    ClassName,
+    /// The length of the generated reflection-visible field table; no table elements escape this operation.
+    FieldCount,
 }
 
 impl Callee {
@@ -2727,6 +3339,14 @@ impl Callee {
             Self::Method(target) => target.render_snapshot(),
             Self::Helper(op) => format!("helper:{}", op.as_str()),
             Self::ProviderOperation(plan) => plan.render_snapshot(),
+            Self::TypeMetadata(target) => format!(
+                "type-metadata:{}<{}>",
+                match target.operation {
+                    TypeMetadataOperation::ClassName => "class_name",
+                    TypeMetadataOperation::FieldCount => "field_count",
+                },
+                target.receiver_type
+            ),
         }
     }
 }
@@ -3034,6 +3654,14 @@ pub struct MethodTarget {
     /// Checked compiler-owned Option/Result receiver for intrinsic carrier methods; source methods retain no carrier.
     #[serde(default)]
     pub intrinsic_carrier: Option<String>,
+    /// Compiler-generated field reflection selected through the checker's generated-member ownership table.
+    /// Source methods and older publications carry None, so a spelling alone never grants reflection behavior.
+    #[serde(default)]
+    pub reflection: Option<ReflectionOperation>,
+    /// Exact SDK trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
+    /// Older publications and calls without checked trait dispatch retain None and grant no generic SDK dispatch.
+    #[serde(default)]
+    pub sdk_trait: Option<StdlibTraitCall>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -3042,12 +3670,33 @@ pub struct MethodTarget {
     /// Resolved explicit call-site type arguments, in declared type-parameter order. Empty when the call site wrote
     /// none.
     pub type_args: Vec<IncanType>,
+    /// SDK trait item and native instantiation selected at this exact checked call site. Declaration records alone
+    /// cannot distinguish two calls of one generic trait slot. A source implementation keeps dispatch priority;
+    /// consumers validate the entire recorded native signature before using this selection. Boxed so ordinary method
+    /// calls do not reserve the full native signature when no delegation is selected.
+    #[serde(default)]
+    pub native_trait_delegation: Option<Box<StdlibDelegation>>,
     /// Resolved binding of the surrounding call's arguments *after* the receiver to this method's declared
     /// parameters.
     pub binding: ArgumentBinding,
 }
 
 impl MethodTarget {
+    /// Validate the selected SDK signature's relation to this call without granting native execution. The driver
+    /// still authenticates the item, receiver implementation and fully instantiated signature against SDK metadata.
+    pub fn has_valid_native_trait_selection(&self) -> bool {
+        let Some(selection) = &self.native_trait_delegation else {
+            return true;
+        };
+        let self_type = IncanType::TypeVar("Self".to_owned());
+        self.canonical.as_ref() == Some(&selection.canonical)
+            && selection.type_parameters == ["Self"]
+            && selection.native_type_arguments.first() == Some(&self_type)
+            && matches!(selection.parameters.first(), Some(IncanType::Ref(inner) | IncanType::RefMut(inner)) if inner.as_ref() == &self_type)
+            && selection.parameter_defaults.is_empty()
+            && selection.rust_path().is_some()
+    }
+
     /// Build a method target for a compiler-synthesized positional call with no resolved declared signature.
     ///
     /// Used for calls a desugar introduces (a comprehension's `push`/`insert`, an iteration protocol's `__iter__`)
@@ -3057,8 +3706,11 @@ impl MethodTarget {
         Self {
             name: name.into(),
             intrinsic_carrier: None,
+            reflection: None,
+            sdk_trait: None,
             canonical: None,
             type_args: Vec::new(),
+            native_trait_delegation: None,
             binding: ArgumentBinding::UnresolvedPositional,
         }
     }
@@ -3072,6 +3724,38 @@ impl MethodTarget {
             self.binding.render_snapshot()
         )
     }
+}
+
+/// A checked SDK trait slot, separate from the method's own type arguments and the concrete receiver frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StdlibTraitCall {
+    /// Declaring SDK trait identity, authenticated against the exact method declaration.
+    pub trait_identity: CanonicalSymbolId,
+    /// Compiled SDK item path for that declaration, never inferred by the lowering from a method spelling.
+    pub native_item: String,
+    /// Checked trait instantiation in declaration order; Self comes from the concrete nominal frame or checked scalar
+    /// receiver.
+    pub type_arguments: Vec<IncanType>,
+    /// Checked explicit receiver before physical lowering, preserving lexical binders and decimal precision and scale.
+    /// Nominal hooks and older publications retain None; consumers must not infer a scalar Self from its physical
+    /// carrier.
+    #[serde(default)]
+    pub receiver_type: Option<IncanType>,
+}
+
+/// Checked reflection operation and its receiver-dependent result contract, retained before generic substitution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ReflectionOperation {
+    /// Return the declaring nominal's immutable metadata without consuming its receiver.
+    Metadata,
+    /// Lookup clones the concrete field into its checked typed overlay.
+    TypedValue,
+    /// Items clone concrete fields into checked typed tuples in declaration order.
+    TypedItems,
+    /// Lookup through a type parameter stringifies an eligible scalar field.
+    StringValue,
+    /// Items through a type parameter stringify eligible scalar fields in declaration order.
+    StringItems,
 }
 
 impl PartialEq<str> for MethodTarget {
@@ -3240,6 +3924,13 @@ pub enum HelperOp {
     /// Arguments are in source order, `(lhs, rhs)`: concatenation is not commutative, and unlike the membership
     /// helpers there is no receiver convention pulling the operands apart.
     ListConcat,
+    /// `list.repeat(value, count)`: a new list of `count` clones of `value`, raising `ValueError` for a negative
+    /// count.
+    ///
+    /// `list` here is the builtin collection's type surface, not a list value, so the typechecker resolves the call
+    /// to a compiler-owned collection helper rather than a method on any receiver. Arguments are in the helper's
+    /// declared order, `(value, count)`, whatever order the call site wrote them in.
+    ListRepeat,
     /// `v in xs` on a list: element containment, not substring containment.
     ///
     /// Membership is the one operator whose meaning genuinely changes with its operand types, so each collection
@@ -3278,6 +3969,28 @@ pub enum HelperOp {
     DictNotContainsKey,
     /// Validate normalized builtin range bounds and step using the runtime constructor's error contract.
     RangeValidate,
+    /// Fail-fast validation of a constrained newtype's saved input: checked predicates, target label, constraint label.
+    NewtypeConstraintValidate,
+    /// Extract a checker-selected source hook's successful wrapper or raise its legacy validation failure.
+    NewtypeHookExtract,
+    /// Extract a sole supplied local model field's hook result, retaining its canonical target and field labels.
+    ///
+    /// Arguments are the checked Result, target label, and field label. Multi-field collection and constrained or
+    /// chained ingress require separate retained computations and cannot use this operation.
+    NewtypeFieldHookExtract,
+    /// Construct the dependency-owned builtin validation error from its checked message.
+    ValidationErrorNew,
+    /// Construct the dependency-owned builtin validation error from its checked message and code.
+    ValidationErrorWithCode,
+    /// Add two retained numeric-newtype payloads with the frozen release summation bridge's wrapping arithmetic.
+    NewtypeSumAdd,
+    /// Extract the one post-exhaustion newtype hook result, retaining the frozen sum failure message.
+    NewtypeSumExtract,
+    /// Read the source name of one checked callable value. Type reflection and ordinary fields remain separate.
+    /// Consumers validate its concrete function-pointer signature and name-resolution profile before admission.
+    CallableName,
+    /// Invoke the canonical core ValueError primitive without a result; consumers must terminate the normal edge.
+    RaiseValueError,
 }
 
 impl HelperOp {
@@ -3310,6 +4023,15 @@ impl HelperOp {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RangeValidate => "range_validate",
+            Self::NewtypeConstraintValidate => "newtype_constraint_validate",
+            Self::NewtypeHookExtract => "newtype_hook_extract",
+            Self::NewtypeFieldHookExtract => "newtype_field_hook_extract",
+            Self::ValidationErrorNew => "validation_error_new",
+            Self::ValidationErrorWithCode => "validation_error_with_code",
+            Self::NewtypeSumAdd => "newtype_sum_add",
+            Self::NewtypeSumExtract => "newtype_sum_extract",
+            Self::CallableName => "callable_name",
+            Self::RaiseValueError => "raise_value_error",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",
@@ -3327,6 +4049,7 @@ impl HelperOp {
             Self::StrContains => "str_contains",
             Self::StrNotContains => "str_not_contains",
             Self::ListConcat => "list_concat",
+            Self::ListRepeat => "list_repeat",
             Self::ListContains => "list_contains",
             Self::ListNotContains => "list_not_contains",
             Self::SetContains => "set_contains",
@@ -3348,6 +4071,48 @@ pub struct Block {
     pub stmts: Vec<Statement>,
 }
 
+impl Block {
+    /// Check each direct acknowledgment against this block's existing scope before a consumer lowers its operations.
+    /// Nested control-flow blocks are checked when consumed, and nested acknowledgment regions recurse here.
+    pub fn unsafe_acknowledgments_valid(&self, module: &CompilerNodeId) -> bool {
+        self.stmts.iter().all(|statement| match &statement.kind {
+            StatementKind::UnsafeRegion { acknowledgment, body } => {
+                acknowledgment.matches_region(module, &statement.span, self.scope)
+                    && body.scope == self.scope
+                    && body.unsafe_acknowledgments_valid(module)
+            }
+            _ => true,
+        })
+    }
+}
+
+/// Source acknowledgment of one `unsafe:` region, binding its receipt to the module, byte span, and enclosing scope.
+///
+/// This records source syntax, not a capability grant or an authority decision. The enclosing
+/// [`StatementKind::UnsafeRegion`] retains the exact operations being acknowledged; a consumer must validate this
+/// receipt before admitting them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnsafeAcknowledgment {
+    /// Compiler-owned statement identity minted from the source module and the region's byte span.
+    pub receipt: CompilerNodeId,
+    /// Original region span; generated operations retain their individual spans inside this boundary.
+    pub span: HirSourceSpan,
+    /// Existing Incan scope containing the region; `unsafe:` introduces no separate binding scope.
+    pub scope: ScopeId,
+}
+
+impl UnsafeAcknowledgment {
+    /// Validate the source receipt against its owning module, enclosing scope, and statement span before admission.
+    ///
+    /// A matching receipt does not authorize a provider operation or admit an otherwise unsupported nested statement.
+    pub fn matches_region(&self, module: &CompilerNodeId, span: &HirSourceSpan, scope: ScopeId) -> bool {
+        module == &CompilerNodeId::module(module.path())
+            && self.span == *span
+            && self.scope == scope
+            && self.receipt == CompilerNodeId::statement_span(module.path(), span.start, span.end)
+    }
+}
+
 /// Render a block's statements at the given indentation depth (in two-space units).
 fn render_block(out: &mut String, block: &Block, depth: usize) {
     let indent = "  ".repeat(depth);
@@ -3359,6 +4124,14 @@ fn render_block(out: &mut String, block: &Block, depth: usize) {
 /// Render one statement, recursing into nested blocks for control-flow statements.
 fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usize) {
     match &stmt.kind {
+        StatementKind::UnsafeRegion { acknowledgment, body } => {
+            let _ = writeln!(
+                out,
+                "{indent}unsafe acknowledgment={} scope={}",
+                acknowledgment.receipt, acknowledgment.scope.0
+            );
+            render_block(out, body, depth + 1);
+        }
         StatementKind::Assign { place, rvalue } => {
             let _ = writeln!(
                 out,
@@ -3539,6 +4312,15 @@ pub struct Statement {
 /// represented as distinct statement kinds, so the canonical vocabulary has a single loop shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StatementKind {
+    /// An explicit source `unsafe:` acknowledgment, with its receipt and nested operations in the enclosing scope.
+    /// Consumers must validate the receipt and deliberately admit the region; ordinary statement flattening must not
+    /// erase it.
+    UnsafeRegion {
+        /// Source receipt identifying exactly this region, without granting unrelated operation capabilities.
+        acknowledgment: UnsafeAcknowledgment,
+        /// Operations covered by the acknowledgment; its scope is the enclosing block's scope.
+        body: Block,
+    },
     /// Assign an rvalue into a place.
     Assign { place: Place, rvalue: Rvalue },
     /// Call a function, method, locally stored callable value, or runtime helper, optionally storing its result.
@@ -3797,6 +4579,61 @@ impl PanicReason {
     }
 }
 
+/// Encode one checked source nominal's complete owning module and declaration into an identifier-safe carrier key.
+///
+/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. SDK and
+/// foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
+pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
+    if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
+        return None;
+    }
+    let kind = match identity.kind {
+        SemanticSourceTargetKind::Model => "model",
+        SemanticSourceTargetKind::Class => "class",
+        SemanticSourceTargetKind::Newtype => "newtype",
+        _ => return None,
+    };
+    match &identity.origin {
+        SymbolOrigin::Package { library, .. } if library.starts_with("incan_stdlib_") => return None,
+        SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std" || root == "__incan_std") => {
+            return None;
+        }
+        SymbolOrigin::Module(_) | SymbolOrigin::Package { .. } => {}
+        _ => return None,
+    }
+    let module = crate::canonical_module_identity(identity)?;
+    let encoded_module: String = module.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded_name: String = identity
+        .declaration_name
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Some(format!(
+        "__incan_carrier_{kind}_{}_{}_{}_{}_{}_{}",
+        module.len(),
+        encoded_module,
+        identity.declaration_name.len(),
+        encoded_name,
+        identity.declaration_span.start,
+        identity.declaration_span.end
+    ))
+}
+
+impl NominalDeclaration {
+    /// Read the producer-retained carrier key only when its complete identity agrees with this nongeneric layout.
+    ///
+    /// Older publications keep their source name and are still refused if project assembly finds an ambiguity.
+    /// Generic templates retain their existing specialization keys; a missing or altered carrier map grants nothing.
+    pub fn carrier_name(&self) -> String {
+        nominal_carrier_key(&self.canonical)
+            .filter(|key| {
+                self.type_parameter_count == 0 && self.named_type_identities.get(key) == Some(&self.canonical)
+            })
+            .unwrap_or_else(|| self.name.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// Named leaves keep structural identity paths while aliases remain diagnostic spelling.
@@ -3921,6 +4758,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    kind: IncanCallableParamKind::Normal,
                     local: local_x,
                     name: "x".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -3929,6 +4767,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    kind: IncanCallableParamKind::Normal,
                     local: local_y,
                     name: "y".to_string(),
                     ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -4181,6 +5020,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
                 name: "suffix".to_string(),
                 ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -4200,6 +5040,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
             name: "limit".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -4218,6 +5059,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
             name: "method".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Str),
@@ -4226,6 +5068,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
             name: "payload".to_string(),
             ty: IncanType::Primitive(IncanPrimitiveType::Bytes),
@@ -4465,6 +5308,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            kind: IncanCallableParamKind::Normal,
                             local: param_local,
                             name: "z".to_string(),
                             ty: IncanType::Primitive(IncanPrimitiveType::Int),
@@ -4477,7 +5321,9 @@ mod tests {
                             false,
                         )],
                         body: Box::new(ClosureBody {
+                            original_callable: None,
                             function_item: false,
+                            consumes_environment: false,
                             capture_locals: vec![capture_local],
                             stmts: Vec::new(),
                             result: Operand::place(
@@ -4638,10 +5484,14 @@ mod tests {
     #[test]
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
+            decorated_bindings: Vec::new(),
+            entrypoint_effects: Vec::new(),
+            string_conversion_contract: StringConversionContract::Unselected,
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),

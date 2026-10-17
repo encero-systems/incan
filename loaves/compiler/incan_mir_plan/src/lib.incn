@@ -10,11 +10,11 @@ location, including operands and places, so native diagnostics retain provenance
 @derive(Clone, PartialEq)
 pub enum TupleElement:
     """
-    One tuple element's layout: a scalar, owned text, an owned list, an enum carrier, or a nested tuple.
+    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function pointer, or a nested tuple.
 
     A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
     declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
-    does.
+    does. A model retains its declaration identity, and a function pointer retains its exact signature.
     """
 
     Int
@@ -23,8 +23,11 @@ pub enum TupleElement:
     Unit
     String
     List(ListLeaf, int)
+    Model(int, str)
     Enum(int, str)
     Tuple(list[TupleElement])
+    FunctionPointer(list[PlanType])
+    FrozenStr
 
 
 @derive(Clone, PartialEq)
@@ -38,7 +41,15 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority."""
+    """
+    Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority.
+
+    `List` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
+    list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
+    `FrozenStr` and `FrozenBytes` keep dependency-owned Copy wrappers; ordinary strings and bytes own their read data.
+    A variant cannot hold its own type directly, so `List` holds its element leaf as the only item of a list, and
+    `Dict` holds its key and value leaves, in that order, as the two items of one.
+    """
 
     Int
     Float
@@ -51,7 +62,10 @@ pub enum ListLeaf:
     Unit
     Decimal
     FrozenStr
+    FrozenBytes
     FunctionPointer(list[PlanType])
+    List(list[ListLeaf], int)
+    Dict(list[ListLeaf])
 
 
 @derive(Clone, PartialEq)
@@ -81,16 +95,19 @@ pub enum PlanType:
     EnumTag is rustc's native discriminant type and stays body-internal; TagToInt explicitly converts it to source int.
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
-    StringRef borrows an owned String, while StrRef is a string literal's shared str view.
+    StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
+    ScalarRef borrows exactly one numeric, Boolean, Decimal or frozen scalar carrier; nested references and non-scalar referents are refused before native MIR construction.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
-    ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
+    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleMutRef retains its referent's complete tuple layout.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
     FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
+    FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
-    Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
+    Generator retains the legacy lazy runtime wrapper, with depth zero for an immediate scalar or retained nominal leaf.
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
+    RangeValue retains a source range value's start, end, step, and inclusivity scalar fields in Body IR's declared range field order; its field projections use that order.
     FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
     Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. CallableArguments is the body-internal argument tuple; it preserves each input's exact type, including caller-owned collection references, independently of source tuple layouts.
     """
@@ -119,9 +136,26 @@ pub enum PlanType:
     CheckedInt
     Tuple(list[TupleElement])
     String
+    TupleMutRef(list[TupleElement])
     StringRef
+    # Exactly one numeric, Bool, Decimal or frozen scalar referent; the shared borrow owns no storage.
+    ScalarRef(list[PlanType])
+    StringMutRef
     Decimal
     FrozenStr
+    FrozenBytes
+    # Dependency-owned frozen collection and its exact static element types; dictionaries carry key then value.
+    FrozenCollection(str, list[PlanType])
+    # A shared view of the same baked storage; comparisons never consume or clone its elements.
+    FrozenCollectionRef(str, list[PlanType])
+    # The existing SDK's zero-sized marker with exactly one checked represented primitive type.
+    TypeToken(list[PlanType])
+    # Exact static string storage, including generic arguments; StrRef remains a body-local formatting view.
+    StaticText
+    StaticBytes
+    # Dependency-owned builtin validation storage; the reference borrows its message and optional code.
+    ValidationError
+    ValidationErrorRef
     StrRef
     StringArray(int)
     StrArray(int)
@@ -129,6 +163,7 @@ pub enum PlanType:
     StrArrayRef(int)
     Enum(int, str)
     EnumRef(int, str)
+    EnumMutRef(int, str)
     Model(int, str)
     ModelRef(int, str)
     ModelMutRef(int, str)
@@ -138,12 +173,17 @@ pub enum PlanType:
     List(ListLeaf, int)
     ListRef(ListLeaf, int)
     ListMutRef(ListLeaf, int)
+    # Concrete Vec::IntoIter owns the checked list's items; its mutable view polls without Clone.
+    ListIntoIter(ListLeaf, int)
+    ListIntoIterMutRef(ListLeaf, int)
     Set(ListLeaf)
     SetRef(ListLeaf)
     SetMutRef(ListLeaf)
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
+    # A source range value: four Copy scalar fields in declared range field order.
+    RangeValue
     # Lazy zip over independent owned list snapshots; references retain poll authority.
     ZipIterator(TupleElement, TupleElement)
     ZipIteratorRef(TupleElement, TupleElement)
@@ -156,8 +196,14 @@ pub enum PlanType:
     FunctionPointer(list[PlanType])
     FunctionItem(str, list[PlanType])
     Closure(list[PlanType])
+    # A one-argument SDK callable shares an immutable primitive-capture environment and implements its published Clone and Callable1 bounds.
+    SharedCallable(list[PlanType])
+    # An owned FnOnce object whose invocation transfers its environment instead of borrowing it.
+    ClosureOnce(list[PlanType])
     ClosureRef(list[PlanType])
     CallableArguments(list[PlanType])
+    # Exactly one output carrier; the owned pinned future executes only when polled.
+    Future(list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -174,7 +220,15 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Unit => return PlanType.Unit
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
+        ListLeaf.FrozenBytes => return PlanType.FrozenBytes
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
+        ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
+        ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
+
+
+pub def range_field_types() -> list[PlanType]:
+    """Return RangeValue's native field carriers in declared range field order: start, end, step, then inclusivity."""
+    return [PlanType.Int, PlanType.Int, PlanType.Int, PlanType.Bool]
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
@@ -186,8 +240,12 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String
         TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
+        TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
         TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
+        TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
+        TupleElement.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
+        TupleElement.FrozenStr => return PlanType.FrozenStr
 
 
 @derive(Clone, PartialEq)
@@ -319,7 +377,9 @@ pub enum RvalueKind:
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
 
     Tuple preserves the ordered operand layout of its destination type.
+    Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
     FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
+    FrozenBytes wraps exact unsigned literal bytes in the dependency-owned static byte carrier.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
@@ -329,6 +389,8 @@ pub enum RvalueKind:
     # Reify a validated zero-argument unit function for the canonical async entry bridge.
     UnitFunction(str)
     FrozenText(Operand)
+    FrozenBytes(list[int])
+    FrozenCollection(PlanType, list[FrozenValue])
     Binary(BinaryOp, Operand, Operand)
     Unary(UnaryOp, Operand)
     NumericCast(Operand, PlanType, PlanType)
@@ -341,6 +403,7 @@ pub enum RvalueKind:
     TagToInt(Operand)
     Model(int, list[Operand])
     Tuple(list[Operand])
+    Range(list[Operand])
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
@@ -348,6 +411,15 @@ pub enum RvalueKind:
     ReifyFunction(Operand)
     # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
     ClosureObject(Place)
+
+
+@derive(Clone, PartialEq)
+pub enum FrozenValue:
+    """Effect-free static data: scalars, raw bytes, and nested frozen collections in source order."""
+
+    Scalar(Constant)
+    Bytes(list[int])
+    Collection(PlanType, list[FrozenValue])
 
 
 @derive(Clone, PartialEq)
@@ -383,8 +455,10 @@ pub enum CalleeKind:
     External(str)
     CloneEnum(int, str)
     CloneModel(int, str)
-    Instantiated(str, PlanType)
-    InstantiatedPair(str, PlanType, PlanType)
+    # Every type argument in the external's checked parameter order, including callable arguments.
+    Instantiated(str, list[PlanType])
+    # A checked inherent SDK method future keeps owner arguments on its type path, not on its method segment.
+    FutureMethod(str, list[PlanType])
     # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
     # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
     SpawnGenerator(str, ListLeaf, int)
@@ -394,8 +468,26 @@ pub enum CalleeKind:
     # A synthesized constructor's boxed environment. Its closure forwards the leading captured parameters, then its own
     # inputs, to the named lifted function; the count says how many of that function's parameters are captures.
     ClosureBody(str, int)
+    # A validated bridge transfers a boxed callable into the SDK's cloneable immutable environment carrier.
+    SharedCallableBody(list[PlanType])
+    # The exact declaration owner and native FieldInfo carrier of a checked generated metadata hook.
+    FieldMetadata(int, int)
+    # A constructor and lifted body for a consuming environment, forwarded by value exactly once.
+    ClosureBodyOnce(str, int)
     # Invoke a borrowed callable object of this signature with one packed argument tuple.
     CallClosure(list[PlanType])
+    # Invoke the owned callable object by moving it with one packed argument tuple.
+    CallClosureOnce(list[PlanType])
+    # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
+    StaticLoad(int)
+    # Replace the value of computed static storage slot `n`.
+    StaticStore(int)
+    # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
+    StaticForce(int)
+    # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
+    StaticMethod(int, str)
+    # Clone the captured concrete environment behind an authenticated shared callable object.
+    CloneClosure(list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -430,6 +522,9 @@ pub enum TerminatorKind:
     Call(Callee, list[Operand], Place, int, Unwind)
     Drop(Place, int, Unwind)
     AssertOverflow(Operand, BinaryOp, Operand, Operand, int, Unwind)
+    # Polling and completed-future destruction have distinct owner cleanup states; cancellation drops suspended owners.
+    Await(Place, Place, int, int, Unwind, Unwind)
+    CoroutineDrop
     Return
     Unreachable
     UnwindResume
@@ -463,6 +558,10 @@ pub model Function:
     pub locals: list[Local]
     pub blocks: list[BasicBlock]
     pub span: SourceSpan
+    # A coroutine's constructor is native; its executable body still comes entirely from this plan.
+    pub is_async: bool = false
+    # Only the explicit boxing constructor retains native MIR for this callee.
+    pub future_callee: Option[Callee] = None
 
 
 @derive(Clone, PartialEq)
@@ -479,6 +578,59 @@ pub model Plan:
     pub functions: list[Function]
     pub externals: list[ExternalFunction]
     pub span: SourceSpan
+    # Computed static storage the adapter declares, each initialized by its planned initializer function.
+    pub statics: list[StaticCell] = []
+
+
+@derive(Clone, PartialEq)
+pub model StaticCell:
+    """
+    One computed module static's native storage: a lazily initialized cell holding a value of `ty`.
+
+    The adapter declares the cell and its load, store and force accessors; `initializer` names the planned function
+    with no parameters that computes the first value, run at most once, when the cell is first forced or read.
+    """
+
+    pub slot: int
+    pub ty: PlanType
+    pub initializer: str
+    pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model FieldMetadata:
+    """Immutable source field presentation values selected by the checked reflection visibility policy."""
+
+    pub name: str
+    pub alias: Option[str]
+    pub description: Option[str]
+    pub type_name: str
+    pub has_default: bool
+
+
+@derive(Clone, PartialEq)
+pub model IteratorMethods:
+    """Checked source poll and item carrier authorizing an ordinary native SDK iterator implementation."""
+
+    pub item: PlanType
+    pub next: str
+
+
+@derive(Clone, PartialEq)
+pub model FallibleIteratorMethods:
+    """Complete standard default selection and the source poll body authorizing one concrete native implementation."""
+
+    pub item: PlanType
+    pub error: PlanType
+    pub next: str
+
+
+@derive(Clone, PartialEq)
+pub enum MarkerTrait:
+    """An empty standard trait authorized by its checked adoption and existing serde derive."""
+
+    TomlSerialize
+    TomlDeserialize
 
 
 @derive(Clone, PartialEq)
@@ -497,6 +649,34 @@ pub model ModelDeclaration:
     pub span: SourceSpan
     # A specialized carrier keeps its source name for derived Debug and declaration metadata.
     pub source_name: str = ""
+    # A stdlib layout names the compiled SDK crate item that owns its storage; the plan never declares it. With no
+    # fields the layout is opaque: its values move and drop, but no field is read or written.
+    pub library_item: str = ""
+    # A closed SDK alias keeps the checked arguments of its declaring model's type parameters.
+    pub library_type_arguments: list[PlanType] = []
+    # Per field, the name a serde form uses where a checked alias renames it, as legacy's `#[serde(rename)]`
+    # does; an empty entry keeps the field name, and no entries means no field is renamed.
+    pub field_serde_names: list[str] = []
+    # A checked Deserialize forwards std String ingress to this exact planned root; empty keeps ordinary derives.
+    # The native boundary validates its standard Result<owner,str> signature before injecting the Rust TryFrom header.
+    pub checked_deserialize: str = ""
+    # None grants no generated hook; an empty list is an authorized empty metadata surface.
+    pub reflection_metadata: Option[list[FieldMetadata]] = None
+    # Exact source comparison symbols: equality alone, or equality followed by lt/le/gt/ge. Empty grants no bridge.
+    pub comparison_methods: list[str] = []
+    # A source adoption grants native authority only after every standard slot and the poll ABI are checked.
+    pub fallible_iterator: Option[FallibleIteratorMethods] = None
+    # Ordinary native Iterator needs only the selected poll; its sum default remains SDK-owned.
+    pub iterator: Option[IteratorMethods] = None
+    # A checked standard Callable1 member and its ordered owned input/output carriers; empty grants no bridge.
+    pub callable_method: str = ""
+    pub callable_signature: list[PlanType] = []
+    # Only a checked canonical standard adoption with its required serde derive authorizes an empty native impl.
+    pub marker_traits: list[MarkerTrait] = []
+    # A source SDK TryFrom[str] implementation forwards to the exact validated Incan conversion root.
+    # Empty paired fields grant no implementation, independently of serde's Rust TryFrom contract.
+    pub string_conversion_root: str = ""
+    pub string_conversion_trait: str = ""
 
 
 @derive(Clone, PartialEq)
@@ -634,6 +814,126 @@ pub def scalar_example(file: str, output_function: str, overflow: bool, dangling
     return Plan(enums=[], models=[], functions=[addition, entry], externals=[output], span=location)
 
 
+pub def consuming_closure_example(file: str, output_function: str) -> Plan:
+    """Exercise the native consuming environment boundary independently of source generator admission."""
+    location = SourceSpan(file=file, line=3, column=12)
+    capture = PlanType.Model(0, "OwnedCapture")
+    closure = PlanType.ClosureOnce([PlanType.Int])
+    field = Place(local=1, projection=Projection.Field(0, PlanType.Int), span=location)
+    lifted = Function(
+        name="consume_capture",
+        parameters=[Parameter(name="capture", ty=capture, span=location)],
+        return_type=PlanType.Int,
+        locals=[Local(ty=PlanType.Int, span=location), Local(ty=capture, span=location)],
+        blocks=[block(
+            [assign(place(0, location), RvalueKind.Use(Operand(kind=OperandKind.Copy(field), span=location)), location)],
+            TerminatorKind.Drop(place(1, location), 1, Unwind.Continue),
+            location,
+        ), block([], TerminatorKind.Return, location)],
+        span=location,
+    )
+    capture_declaration = ModelDeclaration(
+        name="OwnedCapture",
+        public=false,
+        fields=[Parameter(name="0", ty=PlanType.Int, span=location)],
+        field_public=[false],
+        derives=["Debug", "Clone"],
+        span=location,
+        marker_traits=[],
+    )
+    output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
+    return Plan(
+        enums=[],
+        models=[capture_declaration],
+        functions=[lifted, consuming_fixture_constructor(location, capture, closure), consuming_fixture_entry(
+            location,
+            capture,
+            closure,
+            output_function,
+        )],
+        externals=[output],
+        span=location,
+    )
+
+
+def consuming_fixture_constructor(location: SourceSpan, capture: PlanType, closure: PlanType) -> Function:
+    """Box one non-Copy capture with the consuming constructor contract the adapter validates."""
+    return Function(
+        name="capture_new",
+        parameters=[Parameter(name="capture", ty=capture, span=location)],
+        return_type=closure,
+        locals=[Local(ty=closure, span=location), Local(ty=capture, span=location)],
+        blocks=[block(
+            [],
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.ClosureBodyOnce("consume_capture", 1), span=location),
+                [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
+                place(0, location),
+                1,
+                Unwind.Continue,
+            ),
+            location,
+        ), block([], TerminatorKind.Return, location)],
+        span=location,
+    )
+
+
+def consuming_fixture_entry(location: SourceSpan, capture: PlanType, closure: PlanType, output: str) -> Function:
+    """Move a boxed environment into one packed invocation, then print the field its lifted body returned."""
+    return Function(
+        name="main",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=location), Local(ty=capture, span=location), Local(
+            ty=closure,
+            span=location,
+        ), Local(ty=PlanType.CallableArguments([]), span=location), Local(ty=PlanType.Int, span=location)],
+        blocks=[block(
+            [assign(place(1, location), RvalueKind.Model(0, [integer(42, location)]), location)],
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.Planned("capture_new"), span=location),
+                [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
+                place(2, location),
+                1,
+                Unwind.Continue,
+            ),
+            location,
+        ), block(
+            [assign(place(3, location), RvalueKind.Tuple([]), location)],
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.CallClosureOnce([PlanType.Int]), span=location),
+                [Operand(kind=OperandKind.Move(place(2, location)), span=location), Operand(
+                    kind=OperandKind.Move(place(3, location)),
+                    span=location,
+                )],
+                place(4, location),
+                2,
+                Unwind.Continue,
+            ),
+            location,
+        ), block(
+            [],
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.External(output), span=location),
+                [copy(4, location)],
+                place(0, location),
+                3,
+                Unwind.Continue,
+            ),
+            location,
+        ), block(
+            [assign(
+                place(0, location),
+                RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Unit), span=location)),
+                location,
+            )],
+            TerminatorKind.Return,
+            location,
+        )],
+        span=location,
+    )
+
+
 @derive(Clone, PartialEq)
 pub model EnumDeclaration:
     """Checked normal enum layout; variant indices follow source declaration order."""
@@ -646,6 +946,18 @@ pub model EnumDeclaration:
     # Standard carriers use their concrete type arguments from the variant fields.
     pub carrier: str = ""
     pub source_type: str = ""
+    # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
+    pub member_debug: bool = false
+    # A stdlib enum names the compiled SDK crate item that owns it; the plan never declares it.
+    pub library_item: str = ""
+    # Closed SDK alias arguments retained from the checked enum instance, in declaration order.
+    pub library_type_arguments: list[PlanType] = []
+    # A value enum's backing ("str" or "int") and its raw values in variant order, which its serde form writes and
+    # reads as legacy's hand-written impls do; empty for any other enum.
+    pub raw_kind: str = ""
+    pub raw_values: list[str] = []
+    # Checked source equality and ordering bodies; the adapter validates their exact enum input ABI before bridging.
+    pub comparison_methods: list[str] = []
 
 
 @derive(Clone, PartialEq)

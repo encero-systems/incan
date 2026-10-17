@@ -131,3 +131,47 @@ fn native_receipt_replacement_and_links_do_not_retarget_publication() -> TestRes
     assert!(RetainedOutputReceipt::publish(&mut retained, &receipt, &path)?);
     Ok(())
 }
+
+/// Existing callers and older owner messages preserve the release default.
+#[test]
+fn executable_profile_omission_preserves_release() -> TestResult {
+    let options = crate::build::BuildCommandOptions::default();
+    assert_eq!(options.executable_profile, crate::backend::project::RunProfile::Release);
+    let mut wire = serde_json::to_value(&options)?;
+    wire.as_object_mut()
+        .ok_or("build options are not an object")?
+        .remove("executable_profile");
+    let decoded: crate::build::BuildCommandOptions = serde_json::from_value(wire)?;
+    assert_eq!(decoded.executable_profile, crate::backend::project::RunProfile::Release);
+    Ok(())
+}
+
+/// Explicit profiles survive the owner boundary without depending on the SDK selection.
+#[test]
+fn executable_profiles_round_trip_independently_of_sdk() -> TestResult {
+    use crate::backend::project::RunProfile;
+    for profile in [RunProfile::Debug, RunProfile::Release] {
+        let options = crate::build::BuildCommandOptions {
+            executable_profile: profile,
+            sdk_profile: Some("all".to_string()),
+            ..Default::default()
+        };
+        let wire = serde_json::to_value(&options)?;
+        assert_eq!(wire["executable_profile"], profile.as_str());
+        let decoded: crate::build::BuildCommandOptions = serde_json::from_value(wire)?;
+        assert_eq!(decoded.executable_profile, profile);
+        assert_eq!(decoded.sdk_profile.as_deref(), Some("all"));
+    }
+    Ok(())
+}
+
+/// Unknown or incorrectly typed profile requests fail decoding instead of silently selecting release.
+#[test]
+fn executable_profile_rejects_invalid_wire_values() -> TestResult {
+    for invalid in [serde_json::json!("fast"), serde_json::json!(null), serde_json::json!(1)] {
+        let mut wire = serde_json::to_value(crate::build::BuildCommandOptions::default())?;
+        wire["executable_profile"] = invalid;
+        assert!(serde_json::from_value::<crate::build::BuildCommandOptions>(wire).is_err());
+    }
+    Ok(())
+}

@@ -1,0 +1,133 @@
+"""Consume checker-selected list items through the standard concrete Vec iterator, without Clone or eager polling."""
+
+from pub::incan_mir_plan import (
+    PlanType,
+    Place,
+    Projection,
+    Operand,
+    OperandKind,
+    Constant,
+    BinaryOp,
+    RvalueKind,
+    CalleeKind,
+    ExternalFunction,
+    SourceSpan,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, place_type, temporary, read_place, terminate_call, forget_owned, drop_owned
+from lists import list_element
+
+
+pub def is_owned_list_iterator(ty: PlanType) -> bool:
+    """Identify owned state; the mutable polling view never enters the drop ledger."""
+    match ty:
+        PlanType.ListIntoIter(_leaf, _depth) => return true
+        _ => return false
+
+
+def iterator_call(
+    mut builder: Builder,
+    path: str,
+    owner: PlanType,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> None:
+    """Call the public native trait with its exact concrete Self and metadata-validated signature."""
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[owner], parameters=parameters, return_type=result, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, [owner]), arguments, output, span)
+
+
+pub def initialize_owned_list_iterator(
+    mut builder: Builder,
+    target: Place,
+    source: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move an owned checked list into IntoIter; a caller-owned reference remains refused rather than cloned."""
+    match place_type(builder.locals, target):
+        PlanType.ListIntoIter(leaf, depth) =>
+            source_type = PlanType.List(leaf, depth)
+            if source.projection != Projection.Whole or place_type(builder.locals, source) != source_type:
+                return Err("unsupported Body IR consuming iteration of a borrowed or projected list")
+            iterator_call(
+                builder,
+                "core::iter::IntoIterator::into_iter",
+                source_type,
+                [source_type],
+                place_type(builder.locals, target),
+                [read_place(source, true, span)],
+                target,
+                span,
+            )
+            builder.owned.append(target.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR consuming list iterator destination")
+
+
+def iterator_poll_type(builder: Builder, element: PlanType) -> Result[PlanType, str]:
+    """Use the retained standard Option layout for Iterator::next's checked item type."""
+    for index in range(len(builder.intrinsics)):
+        carrier = builder.intrinsics[index]
+        if carrier.carrier == "Option" and len(carrier.variants) == 2 and carrier.variants[1].fields == [element]:
+            return Ok(PlanType.Enum(len(builder.enums) + index, carrier.name))
+    return Err("unsupported Body IR consuming iteration without retained Option output")
+
+
+pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, span: SourceSpan) -> Result[None, str]:
+    """Move one Some payload into the loop item, or take its existing exit on None; remaining items stay owned."""
+    match place_type(builder.locals, receiver):
+        PlanType.ListIntoIter(leaf, depth) =>
+            element = list_element(leaf, depth)
+            if place_type(builder.locals, target) != element:
+                return Err("unsupported Body IR consuming iteration item layout")
+            iterator_type = PlanType.ListIntoIter(leaf, depth)
+            reference_type = PlanType.ListIntoIterMutRef(leaf, depth)
+            reference = temporary(builder, reference_type, span)
+            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(receiver), span))
+            poll_type = iterator_poll_type(builder, element)?
+            poll = temporary(builder, poll_type, span)
+            iterator_call(
+                builder,
+                "core::iter::Iterator::next",
+                iterator_type,
+                [reference_type],
+                poll_type,
+                [read_place(reference, true, span)],
+                poll,
+                span,
+            )
+            builder.owned.append(poll.local)
+            raw = temporary(builder, PlanType.EnumTag, span)
+            tag = temporary(builder, PlanType.Int, span)
+            builder.emit(plan_assign(raw, RvalueKind.Discriminant(poll), span))
+            builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
+            available = temporary(builder, PlanType.Bool, span)
+            one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
+            builder.emit(
+                plan_assign(available, RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), one), span),
+            )
+            exhausted = builder.new_block(span)
+            selected = builder.new_block(span)
+            owners = builder.owned
+            builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
+            builder.current = exhausted
+            drop_owned(builder, poll.local, span)
+            if builder.owned != builder.loop_owners[-1]:
+                return Err("unsupported Body IR consuming poll with initialized loop-local owners")
+            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            builder.current = selected
+            builder.owned = owners
+            drop_owned(builder, target.local, span)
+            payload = Place(local=poll.local, projection=Projection.VariantField(1, 0, element), span=span)
+            builder.emit(plan_assign(target, RvalueKind.Use(read_place(payload, true, span)), span))
+            # Some's payload has moved; its empty shell cannot be dropped. The iterator stays owned until the common loop exit.
+            forget_owned(builder, poll.local)
+            builder.owned.append(target.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR consuming list poll receiver")

@@ -1499,6 +1499,32 @@ impl RustWorkspace {
         retained_project: Option<Box<dyn RetainedInspectionProject>>,
         progress: &(dyn Fn(String) + Sync),
     ) -> Result<Self, RustMetadataError> {
+        let retained_source = retained_project
+            .as_ref()
+            .map(|project| project.verified_project())
+            .transpose()?;
+        let retained_macros = retained_project
+            .as_ref()
+            .map(|project| project.verified_native_macros())
+            .transpose()?;
+        if let Some(expected) = &retained_source {
+            // Only the independently admitted macro adapter adds this one executable field. Every source, edge,
+            // cfg, sysroot and other graph fact must still equal the original producer's complete projection.
+            let mut source_graph = graph.clone();
+            if let Some(crates) = source_graph.get_mut("crates").and_then(serde_json::Value::as_array_mut) {
+                for krate in crates {
+                    if let Some(fields) = krate.as_object_mut() {
+                        fields.remove("proc_macro_dylib_path");
+                    }
+                }
+            }
+            if &source_graph != expected {
+                return Err(RustMetadataError::LoadWorkspace {
+                    path: manifest_dir.to_path_buf(),
+                    message: "retained source graph differs from its original producer".to_string(),
+                });
+            }
+        }
         let payload = serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {
             path: manifest_dir.to_path_buf(),
             message: error.to_string(),
@@ -1541,7 +1567,8 @@ impl RustWorkspace {
             });
         }
         if let Some(project) = &retained_project
-            && project.verified_project()? != graph
+            && (Some(project.verified_project()?) != retained_source
+                || Some(project.verified_native_macros()?) != retained_macros)
         {
             return Err(RustMetadataError::LoadWorkspace {
                 path: manifest_dir.to_path_buf(),

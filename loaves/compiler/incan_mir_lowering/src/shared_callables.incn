@@ -1,0 +1,85 @@
+"""SDK callable storage for locally proven immutable primitive-capture environments."""
+
+from pub::incan_mir_plan import (
+    Function,
+    Parameter,
+    Local,
+    PlanType,
+    Operand,
+    OperandKind,
+    SourceSpan,
+    Callee,
+    CalleeKind,
+    TerminatorKind,
+    Unwind,
+    Statement,
+)
+from frame import Builder, temporary, terminate_call
+from pub::incan_mir_plan import block as plan_block, place as plan_place
+
+
+pub def scalar_capture(ty: PlanType) -> bool:
+    """Admit only immutable builtin values whose cloning has no user-defined behavior."""
+    match ty:
+        PlanType.String => return true
+        PlanType.Int => return true
+        PlanType.Float => return true
+        PlanType.Bool => return true
+        PlanType.Unit => return true
+        _ => return false
+
+
+pub def record_scalar_closure(mut builder: Builder, local: int, safe: bool) -> None:
+    """Keep every assignment safe at a lexical slot; one unproven incoming environment closes it permanently."""
+    if not safe:
+        if local not in builder.unproven_closures:
+            builder.unproven_closures.append(local)
+        return
+    if local not in builder.scalar_closures:
+        builder.scalar_closures.append(local)
+
+
+pub def shared_sdk_operands(
+    mut builder: Builder,
+    types: list[PlanType],
+    values: list[Operand],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Transfer checked boxed inputs into a distinct cloneable SDK carrier, preserving ordinary argument slot order."""
+    if len(types) != len(values):
+        return Err("invalid Body IR shared callable argument slots")
+    mut result: list[Operand] = []
+    for index in range(len(types)):
+        match types[index]:
+            PlanType.SharedCallable(signature) =>
+                name = f"__incan_shared_callable_{builder.name}_{len(builder.synthesized)}"
+                builder.synthesized.append(shared_constructor(name, signature, span))
+                target = temporary(builder, types[index], span)
+                terminate_call(builder, CalleeKind.Planned(name), [values[index]], target, span)
+                builder.owned.append(target.local)
+                result.append(Operand(kind=OperandKind.Move(target), span=span))
+            _ => result.append(values[index])
+    return Ok(result)
+
+
+def shared_constructor(name: str, signature: list[PlanType], span: SourceSpan) -> Function:
+    """Describe the one transfer the native bridge implements; its Rust-owned body wraps without executing the callback."""
+    source = PlanType.Closure(signature)
+    result = PlanType.SharedCallable(signature)
+    value = Operand(kind=OperandKind.Move(plan_place(1, span)), span=span)
+    call = TerminatorKind.Call(
+        Callee(kind=CalleeKind.SharedCallableBody(signature), span=span),
+        [value],
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    empty: list[Statement] = []
+    return Function(
+        name=name,
+        parameters=[Parameter(name="__incan_callback", ty=source, span=span)],
+        return_type=result,
+        locals=[Local(ty=result, span=span), Local(ty=source, span=span)],
+        blocks=[plan_block(empty, call, span), plan_block(empty, TerminatorKind.Return, span)],
+        span=span,
+    )

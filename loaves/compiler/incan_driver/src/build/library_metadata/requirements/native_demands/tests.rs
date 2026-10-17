@@ -75,6 +75,7 @@ fn checked_source(
         requirements: &requirements,
         imports: &[],
         exports: &exports,
+        publication: None,
         version: "1.0.0",
         used_module_paths: BTreeSet::new(),
         source_modules: sources,
@@ -101,6 +102,13 @@ fn ordinary_native_checked_generic_and_model_source_roundtrip() -> TestResult {
     for (field, value) in [
         ("native_imports", serde_json::json!(["unbound::item"])),
         ("native_crates", serde_json::json!(["unbound"])),
+        ("rust_extern_paths", serde_json::json!(["unbound::item"])),
+        ("checked_abi_queries", serde_json::json!(["unbound::item"])),
+        (
+            "rust_extern_abi_paths",
+            serde_json::json!({"unbound::item": "unbound::item"}),
+        ),
+        ("rust_derive_paths", serde_json::json!(["unbound::Macro"])),
         ("schema_version", serde_json::json!(999)),
     ] {
         let mut changed = payload.clone();
@@ -130,6 +138,7 @@ fn ordinary_native_loaded_source_refuses_unbound_native_and_provider_demands() -
         "from rust::foreign import item\npub def answer() -> int:\n    return 42\n",
         "import std.prelude\npub def answer() -> int:\n    return 42\n",
         "import pub::other\npub def answer() -> int:\n    return 42\n",
+        "rust.module(\"incan_std_testing\")\n@rust.extern\npub def answer() -> int:\n    ...\n",
     ] {
         let parsed = module(root.path(), source)?;
         let demands = capture_checked_native_demands(
