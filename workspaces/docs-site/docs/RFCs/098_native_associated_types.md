@@ -16,6 +16,7 @@
     - RFC 101 (`std.collections.OrdinalMap`)
     - RFC 128 (one Callable trait and the shared signature model)
     - RFC 141 (type matching with infer and named type operations)
+    - RFC 144 (owner-qualified fields and constants)
 - **Issue:** [#580](https://github.com/encero-systems/incan/issues/580)
 - **Blocks:** [#596](https://github.com/encero-systems/incan/issues/596) (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
@@ -210,7 +211,23 @@ def encode_all[
     return output
 ```
 
-This sketch assumes a `TextEncodable` trait with `def encode(self) -> str`. The placement illustrates the ongoing generic constraint design; this RFC requires associated members to be usable in checked constraints but does not settle the full `where` grammar. A fully explicit generic formulation is also possible:
+This sketch assumes a `TextEncodable` trait with `def encode(self) -> str`. The placement illustrates the separate generic constraint design; this RFC does not settle the full `where` grammar. When every implementation of a trait must satisfy a capability, its inferred member may instead declare the bound directly, using the existing `with` bound spelling:
+
+```incan
+trait TextEncodable:
+    def encode(self) -> str: ...
+
+trait EncodedIterator[infer Item with TextEncodable]:
+    def next(mut self) -> Option[Self.Item]: ...
+
+def encode_items[I with EncodedIterator](mut source: I) -> list[str]:
+    mut output: list[str] = []
+    while let Some(item) = source.next():
+        output.append(item.encode())
+    return output
+```
+
+An adoption must supply an item type satisfying `TextEncodable`. Consumers recover that checked fact through `I.Item`; they do not repeat the bound after the return type. A fully explicit generic formulation for the original unbounded iterator is also possible:
 
 ```incan
 def encode_all[T with TextEncodable, I with PullIterator[T]](
@@ -236,13 +253,13 @@ pub class DualParser with TextParser[str], BinaryParser[bytes]:
         ...
 ```
 
-The adoption headers make both choices explicit without targeted body declarations. `DualParser.Value` is ambiguous because two distinct traits own that name. The proposed qualified projection, `DualParser.Value from TextParser`, selects `str`. `from` identifies the owning trait without repurposing comprehension syntax. Generic code bounded only by `TextParser` can use `P.Value` directly. Exact precedence and grouping remain Draft grammar questions, shared with RFC 144's value-level projections.
+The adoption headers make both choices explicit without targeted body declarations. `DualParser.Value` is ambiguous because two distinct traits own that name. The proposed qualified projection, `DualParser.Value from TextParser`, selects `str`. `from` identifies the owning trait without repurposing comprehension syntax. Generic code bounded only by `TextParser` can use `P.Value` directly. The projection grouping rule below is shared with RFC 144's value-level projections.
 
 ## Reference-level explanation
 
 ### Header declarations and scope
 
-A native trait header may contain ordinary type parameters followed by one or more `infer Name` entries. The ordinary parameters must form a prefix and the inferred members must form a suffix. An ordinary parameter after an inferred member, duplicate names, or an inferred member that collides with an ordinary parameter must produce a diagnostic. Header bounds may use the existing ordinary parameter bound syntax; a richer constraint syntax for inferred declarations is not introduced here.
+A native trait header may contain ordinary type parameters followed by one or more `infer Name` entries. The ordinary parameters must form a prefix and the inferred members must form a suffix. An ordinary parameter after an inferred member, duplicate names, or an inferred member that collides with an ordinary parameter must produce a diagnostic. An inferred declaration may use the existing bound syntax, such as `infer Item with TextEncodable`. Every supplied choice must satisfy that bound after substitution, and consumers of the selected trait must recover the bound as a checked requirement on the projected member. A generic adopting type must establish that requirement through its own checked bounds. This adds no separate `where` grammar or inference of omitted adoption choices.
 
 Each inferred member must have a checked identity owned by the trait. It must be available in type positions in that trait's body through `Self.Name`; its bare header name must denote that same type within the trait declaration. It must not create an instance field, runtime type object, alias declaration, or independent ordinary generic input.
 
@@ -272,7 +289,7 @@ Explicit inferred arguments in bounds must check equality rather than conversion
 
 A type projection must resolve to one trait-owned inferred member in one selected ordinary instantiation. `Self.Name` in a trait must resolve through that trait and its supertraits. `T.Name` in generic code must resolve through active bounds; on a concrete type, it must resolve through known conformance metadata. An ordinary trait parameter must not automatically become a projected member.
 
-Distinct owners or distinct ordinary instantiations exposing the same member name must make an unqualified projection ambiguous, even when their current bindings normalize to the same type. A compiler must not choose based on declaration order, imports, capitalization, or convenient equality of the resulting types. The proposed trait-qualified projection `T.Name from TraitExpression` must identify the owner and ordinary instantiation. The qualifier applies to a member projection, not an arbitrary expression. Its exact precedence and grouping must be settled before this RFC can advance beyond Draft, consistently with RFC 144's value-level projections.
+Distinct owners or distinct ordinary instantiations exposing the same member name must make an unqualified projection ambiguous, even when their current bindings normalize to the same type. A compiler must not choose based on declaration order, imports, capitalization, or convenient equality of the resulting types. The proposed trait-qualified projection `T.Name from TraitExpression` must identify the owner and ordinary instantiation. The qualifier applies to a member projection, not an arbitrary expression. The qualifier must bind to the immediately preceding member projection and form one primary type expression, consistently with RFC 144's value-level projections. The owning trait expression uses the existing type-name and generic-argument grammar; it must not consume a surrounding arithmetic, comparison, or comprehension clause. Delimited uses such as `Option[T.Item from Trait]` must not require extra parentheses. A further postfix operation on the selected result must parenthesize the projection, as in `(T.Item from Trait).Other`; the unparenthesized form must not be guessed to mean that result access. Any actual attachment ambiguity must produce a diagnostic requesting explicit parentheses. This rule does not change ordinary operator precedence.
 
 Projections must be accepted in type positions, including parameters, return types, generic arguments, type operations, and checked constraints. They must not be interpreted as value-field access. A generic projection that is justified by its bounds may remain symbolic until substitution; an unjustified projection must produce a diagnostic instead of becoming `Unknown` or `Any`.
 
@@ -361,6 +378,8 @@ These cases describe required behavior for a future implementation; they are not
 | A `Lines` value passed to a parameter bounded by `PullIterator[bytes]`              | Reject; an output requirement cannot change `Lines.Item` from `str`.          |
 | `Directory.Value` without selecting one of its lookup instantiations                | Reject as ambiguous, even when both bindings equal `User`.                    |
 | A trait header listing `infer Value` before an ordinary `K`                         | Reject; inferred members must form a suffix.                                  |
+| An `EncodedIterator` adoption whose item does not satisfy `TextEncodable`             | Reject at adoption; the inferred member must satisfy its declared bound.       |
+| A generic consumer of `EncodedIterator` calling `encode` on its projected item         | Accept the capability proved by the inferred member bound.                    |
 
 ## Alternatives considered
 
@@ -384,7 +403,7 @@ Separate traits for byte, 64-bit, and other digest shapes multiply helpers and a
 
 Readers must learn that bracket entries can have two roles and that a bound may omit only the inferred suffix, while a concrete adoption must supply it. The `infer` spelling may initially suggest that the compiler also fills missing implementation arguments; examples and diagnostics must explain that implementations supply their choices explicitly.
 
-The marker also has a distinct proposed use in RFC 141 type patterns. A shared intuition does not remove the need to explain each context. Traits with several ordinary instantiations or colliding member names still need disambiguation, whose final projection syntax remains open.
+The marker also has a distinct proposed use in RFC 141 type patterns. A shared intuition does not remove the need to explain each context. Traits with several ordinary instantiations or colliding member names still need disambiguation through the owner-qualified projection and grouping rule shared with RFC 144.
 
 The typechecker and tooling must preserve implementation identity, output uniqueness, substitutions, inherited requirements, visibility, and provenance. The surface is compact, but its semantic checks are substantial. Rust interop temporarily retains a separate source spelling, and migration of ordinary traits is a deliberate API change.
 
@@ -409,13 +428,8 @@ Inferred members should not be represented as runtime fields, synthetic methods,
 
 - Preserve the existing Non-Goals: no generic associated types, default associated types, specialization, or trait-object dispatch is introduced here. Required inferred choices and unique implementation bindings remain authoritative. Value-level associated constants belong to RFC 144.
 
-## Unresolved questions
-
-- What precedence and grouping should `T.Item from TraitExpression` use when composed with other type operations and RFC 144's value-level projections?
-- Should this revision admit declaration-time bounds on inferred members, and if so how should they compose with the separate generic constraint syntax?
-- Should an adopting subtrait offer a shorthand for supplying inherited inferred members without repeating the owning supertrait in the concrete adoption header?
-- Should inferred member names follow nominal type naming conventions only as style, or should any convention be enforced?
-- Should a future interop revision expose imported associated types through native header arguments, and what checked metadata and compatibility rules would that require?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Inferred declarations may carry ordinary `with` capability bounds, such as `infer Item with TextEncodable`. Adoptions must prove them and consumers inherit those checked facts through projections; omitted adoption choices are not inferred. The full generic `where` grammar remains separately scoped.
+- Owner-qualified type projections bind as primary member projections under the rule shared with RFC 144. Ordinary delimiters do not require redundant parentheses; further postfix access and actual attachment ambiguities require explicit grouping.
+- An unbound inferred supertrait requirement is supplied by explicitly adopting its owning supertrait. No additional shorthand is introduced; an already-bound supertrait retains its exact requirement.
+- Nominal-style capitalization is a style convention, not a typechecking restriction. Existing identifier rules govern validity, and source spelling remains part of the API.
+- RFC 043's imported Rust associated-type surface remains valid. A native-header facade for imported traits is outside this RFC; any later facade must use checked member identities and bindings rather than rendered type names.

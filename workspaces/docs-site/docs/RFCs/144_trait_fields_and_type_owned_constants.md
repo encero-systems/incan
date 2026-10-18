@@ -271,7 +271,7 @@ def reader_limit[T with (ReaderDefaults, WriterDefaults)]() -> int:
     return T.LIMIT from ReaderDefaults
 ```
 
-`from ReaderDefaults` identifies the owning trait contract. The same qualifier may select a constant reached through an instance, such as `value.LIMIT from ReaderDefaults`, when its checked type satisfies that contract. Exact precedence and grouping must be settled together with RFC 098 before planning.
+`from ReaderDefaults` identifies the owning trait contract. The same qualifier may select a constant reached through an instance, such as `value.LIMIT from ReaderDefaults`, when its checked type satisfies that contract. The shared grouping rule below applies consistently with RFC 098 type projections.
 
 ### Supply different constants for different traits
 
@@ -322,13 +322,19 @@ The alias is optional: `pub const LIMIT from ReaderDefaults: int = 100` supplies
 8. RFC 122 construction hooks and RFC 143 keyword cloning must use checked stored-field identities and ordinary local input names. For a value supporting keyword cloning, an override such as `job.clone(source=replacement)` must select the source slot and its declared construction behavior; it must not replace the destination slot solely because both satisfy a requirement named `settings`. Retained slots, validation results, and freezing must follow those RFCs without additional copying or validation bypasses. This binding syntax must not grant Clone or keyword reconstruction to otherwise ineligible values.
 9. Inherited stored fields must retain their slot identities, local names, visibility, and requirement bindings. A child must not override an inherited binding by redeclaring it under a different local name. Imports, aliases, and provider boundaries must preserve the same mapping rather than rediscovering storage by spelling.
 
+### Owner-qualified projection grouping
+
+`receiver.NAME from TraitExpression` must select the immediately preceding member projection and form one primary expression. The owner uses the existing trait name and generic-argument grammar. The qualifier must not consume a surrounding arithmetic, comparison, or comprehension clause, or apply to an unrelated whole expression. Ordinary call and collection delimiters do not require redundant parentheses; a further postfix operation on the selected result must parenthesize it, such as `(value.settings from Reader).database`. Any actual attachment ambiguity must produce a diagnostic requesting explicit grouping rather than choosing a meaning from imports or expected result types.
+
+This rule also governs RFC 098 type projections, including inside generic arguments. For values, `(Pipeline.LIMIT from ReaderDefaults) + 1` adds one to the selected reader constant. In a comprehension, `[(p.LIMIT from ReaderDefaults) for p in pipelines]` selects the reader constant for each receiver; `for` remains the comprehension keyword. Normal receiver evaluation occurs once. No other operator precedence changes.
+
 ### Constants and evaluation
 
 1. Models and classes must accept `const NAME [: Type] = expression`, with normal member visibility. Trait bodies must accept `const NAME: Type` as a required type-owned constant; the type is mandatory and an initializer is unsupported in this revision.
 2. Constant initialization must obey RFC 008. Existing frozen representations of strings, bytes, and collections must be preserved; a `str` annotation in const context must not produce a mutable string capability. Explicit `FrozenStr` in the guide makes that representation visible.
 3. Constants must be excluded from instance layout, constructor inputs, stored-field reflection, instance field cloning, and ordinary model serialization. This RFC does not add a reflection API for constants.
 4. Constant reads must accept concrete type, checked type-parameter, and instance member access, such as `JsonCodec.MEDIA_TYPE`, `C.MEDIA_TYPE`, and `codec.MEDIA_TYPE`. An instance read must resolve through its statically checked receiver type and available trait contracts; it must not create instance storage, dynamic dispatch, or new visibility permissions. Its receiver expression must be evaluated once under ordinary member-access rules even if the constant's value can be folded.
-5. Generic constant initializers may depend only on constants available through checked bounds and operations already permitted by RFC 008. Evaluation must occur when the dependencies are known; unresolved dependencies must not become runtime initialization. Cycles must be diagnosed across qualified declarations.
+5. Generic constant initializers may depend only on constants available through checked bounds and operations already permitted by RFC 008. Evaluation must occur when the dependencies are known; unresolved dependencies must not become runtime initialization. Cycles must be diagnosed across qualified declarations. Each concrete instantiation must evaluate its selected constant dependencies and initializer at compile time under the ordinary const-compatible rules. A valid generic definition may remain symbolic until its checked type arguments supply those constants; an unresolved, cyclic, unsupported, or runtime-dependent expression at required evaluation must produce an actionable diagnostic. No function-call interpreter, environment lookup, runtime fallback, or separate weaker generic-constant policy is introduced. Existing frozen string, byte, and collection results must retain their representations.
 6. The selected implementation must provide a compatible constant and visibility. Equal evaluated values must not substitute for conformance or declaration identity.
 7. Required constants of supertraits must propagate with their owners and ordinary generic instantiations. Omitting RFC 098 inferred arguments in a bound must not create another constant owner for the same implementation.
 8. A trait method's constant references must resolve against the requirements available when its body is checked. The selected owner must be retained when the method is adopted, inherited, imported, or instantiated; extra traits on an adopter must not reopen that lookup. Ambiguity already present in the declaring trait or generic body must require a qualifier, such as `self.LIMIT from ReaderDefaults`.
@@ -438,9 +444,5 @@ Conservative cross-kind collision rejection limits some combinations of independ
 - Separate trait-owned implementations may differ in value or type. Unqualified concrete reads remain ambiguous when no unique ordinary declaration or alias selects a constant, even if the implementations happen to have equal values. Generic reads under multiple owning contracts still require qualification.
 - Each requirement has one implementation source. Duplicate targeted declarations, ordinary-plus-targeted implementations of the same requirement, and colliding alias names are rejected rather than resolved by declaration order.
 
-## Unresolved questions
-
-- What precedence and grouping should the shared `from` qualifier use in type and value member projections, including within comprehensions and larger expressions?
-- Which generic constant dependencies can the initial evaluator support while preserving RFC 008's existing frozen representations and rejecting unresolved evaluation cleanly?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Type and value owner-qualified projections share the primary member-projection rule with RFC 098. Delimited uses stay compact; further postfix access and actual attachment ambiguities require explicit parentheses. Comprehension `for` keeps its existing role.
+- Generic constants obey the same compile-time compatibility rules as ordinary constants. Checked dependencies may remain symbolic in a generic definition but must resolve and evaluate for the required concrete use; unsupported or runtime-dependent evaluation is diagnosed without a runtime fallback. No separate initial evaluator subset or arbitrary compile-time function execution is introduced.
