@@ -81,7 +81,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css?v=20260911-oven-map-1
+  - /shared/incapunk/incapunk.css?v=20261014-whats-new-1
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -92,6 +92,7 @@ extra_javascript:
   - https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js
   - _snippets/javascripts/tablesort.js
   - _snippets/javascripts/rfc_table_filter.js
+  - _snippets/javascripts/incan_whats_new.js?v=20261014-1
 
 nav:
   - Home: index.md
@@ -350,8 +351,8 @@ nav:
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
           - Rust-source backend migration notes and freeze: contributing/reference/rust_source_backend_deprecation.md
-  - Release notes:
-      - Overview: release_notes/index.md
+  - What's New:
+      - What's New: release_notes/index.md
       - Release 0.6 (development): release_notes/0_6.md
       - Release 0.5: release_notes/0_5.md
       - Release 0.4: release_notes/0_4.md

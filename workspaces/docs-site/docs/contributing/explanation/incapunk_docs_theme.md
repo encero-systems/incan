@@ -61,3 +61,9 @@ When a visual detail does not scale cleanly to MkDocs Material, prefer the simpl
 - Keep rail and flair effects scoped to structural frames.
 - Run `make docs-build` after theme changes.
 - Restart `make docs` before visual review because CSS edits are not reliably live-reloaded.
+
+## Release journal
+
+The release-notes overview is a curated vertical journal. Maintain highlights in `docs/release_notes/index.md`, with `data-news-version` on each release section and `data-news-area` (`language` or `toolchain`) and `data-news-kind` (`new`, `improved`, `fixed`, or `breaking`) on each entry. Keep every highlight linked to its detailed release notes or authored user guide; the journal does not replace the complete release inventories. Preserve patch-version labels when a repair belongs to a patch rather than the initial minor release.
+
+The browser runtime in `docs/_snippets/javascripts/incan_whats_new.js` filters the authored content and keeps the selection in the URL. Without JavaScript, every release and highlight remains readable and the filter controls stay hidden. Language covers source-level behavior and the standard library; Toolchain covers compilation, Oven, packaging, and developer tooling. Development highlights must retain an explicit unshipped-release notice. When adding a release, update its navigation link, highlights, complete-notes link, and availability label together; move `data-news-default` to the latest released minor.
