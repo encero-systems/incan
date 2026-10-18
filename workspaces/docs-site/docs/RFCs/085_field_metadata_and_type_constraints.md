@@ -19,7 +19,7 @@
     - RFC 137 (named enum payload fields)
     - RFC 142 (shared failure-policy vocabulary)
     - RFC 143 (cloning with field overrides)
-- **Issue:** #472
+- **Issue:** [#472](https://github.com/encero-systems/incan/issues/472)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
