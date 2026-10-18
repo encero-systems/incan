@@ -91,7 +91,7 @@ The correct declaration must make the source-level domain fit the carrier:
 type Count = newtype int[ge=0, le=255, storage=u8]
 ```
 
-Using an unsigned carrier may be useful even when it does not save bytes. For example, `storage=u64` stores the same width as the default `i64`-shaped `int` carrier, but it can be a better backing representation for a non-negative domain that needs the full positive range. Compactness comes from smaller carriers such as `u8`, `u16`, and `u32`.
+Using an unsigned carrier may be useful even when it does not save bytes. For example, `storage=u64` stores the same width as the default `i64`-shaped `int` carrier, but it can be a suitable backing representation for the non-negative portion of the existing logical `int` domain. Selecting `u64` does not extend that logical domain to every value representable by `u64`. Compactness comes from smaller carriers such as `u8`, `u16`, and `u32`.
 
 ## Reference-level explanation
 
@@ -103,7 +103,7 @@ The source-level type of a storage-backed newtype remains the nominal newtype, n
 
 Integer literals flowing into a storage-backed newtype should receive precise compile-time diagnostics when their value is statically known to fail the declared constraints. Runtime integer values flowing into a storage-backed newtype must use the same validation behavior as other constrained newtypes. If the value fails validation, the failure mode must match RFC 017 for the relevant construction site. Operations that produce a storage-backed newtype must not use storage overflow semantics as the domain semantics. Reconstructing the newtype from an arithmetic result must validate the logical domain.
 
-Serialization, reflection, library manifests, and generated metadata should preserve both the logical constrained type and the storage carrier so that downstream compilation and tooling see the same contract. A storage carrier does not by itself promise stable C ABI layout or packed model layout.
+Checked reflection, library manifests, and generated type metadata must preserve both the logical constrained type and the storage carrier so that downstream compilation and tooling see the same contract. Serialized type descriptors must retain those facts when their owning format exposes them; ordinary value serialization retains its owning format contract, without a new wire object introduced by this RFC. Supported structured type reflection must expose the explicitly selected carrier by default as a representation fact beside the nominal type, logical underlying type, and checked constraints. The carrier must not replace those semantic facts or imply primitive substitutability, an implicit conversion, or a C ABI guarantee. The descriptor follows the owning reflection contract; this RFC does not add a separate runtime reflection API. A storage carrier does not by itself promise stable C ABI layout or packed model layout.
 
 ## Design details
 
@@ -160,7 +160,7 @@ Field-level storage metadata would let users write `month: int { storage=u8 }`, 
 
 This adds another dimension to constrained primitive syntax. Users must understand the difference between logical constraints and storage carriers.
 
-Storage carriers make generated layout more intentional, which means changing `storage` can become a compatibility concern for libraries that expose generated Rust or serialized representations.
+Storage carriers make generated layout more intentional, which means changing `storage` can become a compatibility concern for libraries that expose generated host projections or serialized representations.
 
 The compiler must prove representability from constraints. That proof is straightforward for integer comparison constraints, but it becomes more complex if future RFCs add richer numeric predicates.
 
@@ -175,7 +175,7 @@ This section is non-normative. The recommended shape is to keep the constrained 
 - **Parser / AST**: constrained primitive bracket syntax must accept one storage-carrier attribute alongside comparison constraints.
 - **Typechecker / Symbol resolution**: constrained integer newtypes must validate carrier names, duplicate storage attributes, constraint consistency, representability, and RFC 017 coercion behavior.
 - **IR Lowering**: storage-backed newtypes must carry the logical domain and the chosen backing carrier into lowered form.
-- **Emission**: generated Rust output must store the newtype using the selected exact-width carrier while preserving checked construction semantics.
+- **Backend representation**: the selected backend must store the newtype using the chosen exact-width carrier while preserving checked construction semantics; this contract must not depend on emitted Rust source.
 - **Stdlib / Runtime (`incan_stdlib`)**: validation error rendering and numeric conversion helpers may need to support storage-backed construction paths.
 - **Formatter**: constrained primitive formatting must preserve the storage attribute in a stable order.
 - **LSP / Tooling**: hover, completion, diagnostics, and metadata extraction should surface the logical constrained type and the storage carrier distinctly.
@@ -184,9 +184,4 @@ This section is non-normative. The recommended shape is to keep the constrained 
 
 - Storage carriers are the exact-width integer primitives enumerated in the reference contract. Target-dependent isize/usize and floating-point carriers are outside this proposal; expanding that set requires a separate contract. This records the existing reference rules and Non-Goals rather than selecting a new numeric policy.
 
-## Unresolved questions
-
-- Should reflection APIs expose the storage carrier by default, or should this remain compiler and manifest metadata only?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Supported structured reflection exposes an explicit storage carrier by default as a representation fact alongside the logical newtype and constraints. The carrier does not change assignability, conversion, domain bounds, or ABI guarantees. This incorporates the agreed reflection direction without selecting a new reflection entry point.
