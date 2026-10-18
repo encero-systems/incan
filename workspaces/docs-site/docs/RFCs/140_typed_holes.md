@@ -42,7 +42,7 @@ The first hole must convert a `ReadError` into the error type required by propag
 - Parse explicit expression holes as intentional incomplete source.
 - Report required types, unresolved constraints, and the reasons those requirements arise.
 - Expose in-scope values with their types and relevant known ownership facts.
-- Include deterministic checked in-scope callable candidates for callable holes, labelled separately from required facts and without selecting an implementation.
+- Include deterministic checked in-scope callable candidates for callable holes, labeled separately from required facts and without selecting an implementation.
 - Continue checking independent completed code without manufacturing successful checks.
 - Provide equivalent human-readable and structured hole information.
 - Prevent incomplete programs from becoming executable or distributable artifacts.
@@ -258,7 +258,7 @@ Each hole diagnostic must include its source location, enclosing declaration whe
 
 Available local values must be presented with their known types and applicable known ownership or mutation restrictions. Out-of-scope, inaccessible, or already moved values must not be described as immediately usable. A name available before the hole does not establish that using it inside the unknown implementation would preserve all later uses.
 
-For a callable-typed hole, the required report must also include deterministically ordered named callable candidates already in scope whose checked signatures satisfy the known callable requirement under ordinary type and ownership rules. A candidate must not be claimed compatible by guessing an unresolved overload or generic instantiation. Candidate search must not import or scan unrelated libraries, execute user code, invent call expressions, or select an implementation. Each candidate must remain identifiable by its declaration and must be labelled separately from compiler-established requirements.
+For a callable-typed hole, the required report must also include deterministically ordered named callable candidates already in scope whose checked signatures satisfy the known callable requirement under ordinary type and ownership rules. A candidate must not be claimed compatible by guessing an unresolved overload or generic instantiation. Candidate search must not import or scan unrelated libraries, execute user code, invent call expressions, or select an implementation. Each candidate must remain identifiable by its declaration and must be labeled separately from compiler-established requirements.
 
 Human-readable output may abbreviate large environments, provided it indicates that it has done so and tooling can request the relevant complete context within ordinary visibility and access limits. Diagnostic ordering should be deterministic for an unchanged source selection. A numeric label such as "Hole 1" is presentation within one report, not a persistent source identity.
 

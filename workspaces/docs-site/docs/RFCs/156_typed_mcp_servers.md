@@ -26,7 +26,7 @@ Propose `std.mcp` as an Incan-authored, typed server surface for Model Context P
 
 ## Core model
 
-1. A server receives an explicit checked catalogue of declarations; imports do not register handlers by side effect.
+1. A server receives an explicit checked catalog of declarations; imports do not register handlers by side effect.
 2. A declaration has one canonical identity and one checked input/output contract, shared by schema generation and invocation.
 3. Wire parsing, model construction, handler execution, and result encoding are separate observable boundaries.
 4. Each invocation is governed independently. A description or tool annotation is information, not authority.
@@ -82,7 +82,7 @@ def main() -> Result[None, McpError]:
     return server.serve_stdio()
 ```
 
-The candidate Server constructor accepts a checked tool catalogue; resources and prompts default to empty catalogues. `serve_stdio() -> Result[None, McpError]` owns the protocol loop. A malformed wire request does not call summarize_title. A valid call first constructs TitleArgs under the same field and validation rules as other typed JSON boundaries, then invokes the function and encodes TitleSummary.
+The candidate Server constructor accepts a checked tool catalog; resources and prompts default to empty catalogs. `serve_stdio() -> Result[None, McpError]` owns the protocol loop. A malformed wire request does not call summarize_title. A valid call first constructs TitleArgs under the same field and validation rules as other typed JSON boundaries, then invokes the function and encodes TitleSummary.
 
 The generated tool name is summarize_title unless explicit naming is selected later. Its input has a required string title; its output has a required string text. An advertised schema must not claim that arbitrary model validators are fully expressible in JSON Schema. Such checks still execute during canonical construction, with their limits described in the checked descriptor.
 
@@ -90,9 +90,9 @@ No ordinary println output belongs in this example's protocol loop. Protocol mes
 
 ## Reference-level explanation
 
-### Checked catalogue and schemas
+### Checked catalog and schemas
 
-- Every exposed declaration must appear in an explicit catalogue validated under RFC 113. Duplicate wire names must be rejected before serving.
+- Every exposed declaration must appear in an explicit catalog validated under RFC 113. Duplicate wire names must be rejected before serving.
 - A tool must have a checked argument contract and a checked output contract. Unsupported schema shapes must be diagnosed rather than exported as an unconstrained placeholder.
 - Input and output schemas must derive from RFC 086 metadata, preserving aliases, constraints, requiredness, and protected-field rules.
 - Model validation must follow RFC 122 and RFC 146. Schema acceptance must not bypass canonical validation.
@@ -103,7 +103,7 @@ No ordinary println output belongs in this example's protocol loop. Protocol mes
 
 The baseline is [MCP 2026-07-28 discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/discover), including server/discover and revision-appropriate self-contained request metadata. Required and recommended metadata fields must be distinguished; the framework must not infer requirements from abbreviated examples on another page.
 
-The [tools contract](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) requires tool input schemas and defines structured results, output schemas, and execution-error reporting. Incan must preserve the distinction between malformed protocol requests, argument/domain failures, and a successful domain result containing no usable answer. Discovery ordering must be deterministic for the same authorized catalogue. Result discriminators and list/read cache metadata must follow the selected revision; authorization-sensitive results must not be cached as public.
+The [tools contract](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) requires tool input schemas and defines structured results, output schemas, and execution-error reporting. Incan must preserve the distinction between malformed protocol requests, argument/domain failures, and a successful domain result containing no usable answer. Discovery ordering must be deterministic for the same authorized catalog. Result discriminators and list/read cache metadata must follow the selected revision; authorization-sensitive results must not be cached as public.
 
 The [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio) uses newline-delimited JSON-RPC over stdin/stdout. Diagnostic output must not corrupt that stream. The framework must bound incoming message size and reject invalid framing safely. EOF, transport failure, and handler failure must remain distinguishable.
 
@@ -135,9 +135,9 @@ Protocol revisions change and need explicit compatibility handling. Full schema 
 ## Layers affected
 
 - **Stdlib / interop:** Incan server declarations and conformant transport integration.
-- **Registry / schema adapters:** checked catalogues and JSON Schema emission.
+- **Registry / schema adapters:** checked catalogs and JSON Schema emission.
 - **Runtime authority / diagnostics:** per-invocation evidence and safe failures.
-- **Tooling / documentation:** inspectable catalogue, contract diagnostics, and conformance evidence.
+- **Tooling / documentation:** inspectable catalog, contract diagnostics, and conformance evidence.
 
 ## Unresolved questions
 

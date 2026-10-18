@@ -134,7 +134,7 @@ Application
     └── Upload documents       ← child
 ```
 
-Requesting cancellation of the backup job signals both uploads. Requesting cancellation of only the photos upload leaves the backup job and documents upload running. Requesting cancellation of the application signals the backup job and both uploads. Requests flow from parent to linked descendants, without automatically travelling upward or across to siblings.
+Requesting cancellation of the backup job signals both uploads. Requesting cancellation of only the photos upload leaves the backup job and documents upload running. Requesting cancellation of the application signals the backup job and both uploads. Requests flow from parent to linked descendants, without automatically traveling upward or across to siblings.
 
 These are explicit cancellation relationships, not relationships inferred merely because one function called another or spawned a task. A separate failure policy may decide that a failed upload should stop the backup job. A cooperative stop request still does not establish that a worker has terminated or reverse its completed effects.
 
@@ -544,7 +544,7 @@ Existing Incan JoinHandles detach on drop. The proposed task group instead owns 
 
 Task abortion and graceful shutdown serve different purposes. A shared cancellation request lets a worker stop accepting input, finish or abandon its current unit under an application contract, and await its own cleanup. The prior art is [tokio-util CancellationToken](https://docs.rs/tokio-util/latest/tokio_util/sync/struct.CancellationToken.html), which supports waiting for a cancellation request and deriving child tokens.
 
-Cancellation requests propagate downward through explicitly linked parent/child relationships, without automatically travelling upward or across to siblings. Incan still needs to choose the public token vocabulary, observation and lifecycle methods, interaction with race and deadlines, and the exact typed representation distinguishing cancellation from application failure. Requesting cancellation must not imply that a worker has finished. ErrorPolicy.Ignore must not suppress shutdown requests.
+Cancellation requests propagate downward through explicitly linked parent/child relationships, without automatically traveling upward or across to siblings. Incan still needs to choose the public token vocabulary, observation and lifecycle methods, interaction with race and deadlines, and the exact typed representation distinguishing cancellation from application failure. Requesting cancellation must not imply that a worker has finished. ErrorPolicy.Ignore must not suppress shutdown requests.
 
 #### Bounded concurrent processing
 
