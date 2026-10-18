@@ -6,10 +6,10 @@
 - **Related:**
     - RFC 015 (project lifecycle and CLI tooling)
     - RFC 031 (library system phase 1)
-    - RFC 034 (`incan.pub` registry)
+    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
     - RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)
     - RFC 079 (`incan.pub` artifact graph)
-- **Issue:** —
+- **Issue:** [#556](https://github.com/encero-systems/incan/issues/556)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -251,10 +251,13 @@ Packaging flows that already preserve RFC 048 metadata can enable artifact-time 
 - **Registry / package browser**: should consume checked documentation artifacts or regenerate docs from carried RFC 048 metadata rather than scraping source.
 - **Hosted site tooling**: should consume generated Markdown and documentation bundles as checked inputs for hosted site generation, navigation, search, and product presentation.
 
+## Design Decisions
+
+- Markdown is the required renderer. HTML and local preview remain optional projections of the same checked documentation model, as specified under Output formats; they must not introduce additional API facts.
+
 ## Unresolved questions
 
 - Should the accepted command spelling be `incan docs`, `incan docs build`, or a subcommand under a broader inspection namespace?
-- Is Markdown the only required renderer, or should local HTML preview also be required?
 - Should docstring drift be an error by default, a warning by default, or only hard-fail under `--check` or `--strict`?
 - Should packages ship generated documentation bundles, RFC 048 metadata only, or both when publishing?
 - What is the minimum cross-linking and search-index metadata that belongs in this RFC before hosted site tooling takes over site generation?

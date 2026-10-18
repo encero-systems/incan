@@ -13,8 +13,8 @@
     - RFC 091 (constrained integer newtype storage carriers)
     - RFC 098 (native associated types for traits)
     - RFC 101 (`std.collections.OrdinalMap`)
-- **Issue:** https://github.com/encero-systems/incan/issues/581
-- **Blocks:** https://github.com/encero-systems/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
+- **Issue:** <https://github.com/encero-systems/incan/issues/581>
+- **Blocks:** <https://github.com/encero-systems/incan/issues/596> (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -166,7 +166,7 @@ This RFC defines method-local `where` constraints only for generic trait-targete
 
 ### Storage-backed integer dispatch
 
-Storage-backed constrained integer newtypes may expose a trait-owned `StorageBackedInteger` capability. That capability should include an associated type named `Storage`, whose binding is the exact-width integer storage carrier declared by `storage=<integer-carrier>`, and a value-level method that lets already-validated values expose their storage representation for representation-oriented work. A type such as `type Month = newtype int[ge=1, le=12, storage=u8]` therefore satisfies `StorageBackedInteger` with `type Storage = u8`.
+Storage-backed constrained integer newtypes may expose a trait-owned `StorageBackedInteger` capability. That capability should include an associated type named `Storage`, whose binding is the exact-width integer storage carrier declared by `storage=<integer-carrier>`, and a value-level method that lets already-validated values expose their storage representation for representation-oriented work. A type such as `type Month = newtype int[ge=1, le=12, storage=u8]` therefore satisfies `StorageBackedInteger` with an inferred `Storage` binding of `u8` under RFC 098.
 
 Using `T.Storage` in a generic trait-targeted method must not create ambient primitive conversion. A `Month` remains a `Month`, a `u8` remains a `u8`, and a method that delegates through `value.to_storage()` is explicitly choosing a representation path for an already-validated value. Reconstructing a storage-backed newtype from storage data must continue to use the checked newtype construction path so storage carrier values that are representable but semantically invalid still fail validation.
 

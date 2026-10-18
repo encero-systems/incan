@@ -7,14 +7,14 @@
     - RFC 020 (Cargo offline and locked policy)
     - RFC 027 (incan-vocab and library metadata)
     - RFC 031 (Incan library system phase 1)
-    - RFC 034 (`incan.pub` package registry)
+    - RFC 125 (`incan.pub` Loaf registry; supersedes RFC 034)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 075 (starter profiles and capability packs)
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 080 (AI assets and agent metadata)
-- **Issue:** https://github.com/encero-systems/incan/issues/407
+- **Issue:** <https://github.com/encero-systems/incan/issues/407>
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -39,7 +39,7 @@ Read this RFC as seven foundations:
 
 npm's strength is not only that it stores packages; it makes packages discoverable, scriptable, auditable, and operationally useful. Cargo and crates.io make package identity, docs, versions, features, and lockfiles feel coherent. Hugging Face shows how model and dataset cards turn artifacts into documented, searchable ecosystem objects. Incan should combine those lessons without treating the registry as a remote project mutator.
 
-RFC 034 defines the package registry foundation. RFC 074, RFC 075, RFC 076, RFC 077, RFC 078, and RFC 080 all introduce related objects that need discovery and trust: templates, capabilities, policies, workspaces, actions, and AI assets. This RFC captures the long-term registry graph that connects them.
+RFC 125 defines the Loaf registry foundation, superseding RFC 034, while RFC 117 owns project and dependency authority. RFC 074, RFC 075, RFC 076, RFC 077, RFC 078, and RFC 080 all introduce related objects that need discovery and trust: templates, capabilities, policies, workspaces, actions, and AI assets. This RFC captures the long-term registry graph that connects them.
 
 ## Goals
 
@@ -55,7 +55,7 @@ RFC 034 defines the package registry foundation. RFC 074, RFC 075, RFC 076, RFC 
 
 - Defining the complete public registry protocol.
 - Defining commercial marketplace ranking, billing, telemetry, or recommendation algorithms.
-- Replacing RFC 034 package identity and transport semantics.
+- Replacing RFC 125 Loaf package identity, trust, or transport semantics, or RFC 117 project and dependency authority.
 - Letting `incan.pub` compute or apply receiver-side project mutation plans.
 - Requiring every artifact type to ship in the first `incan.pub` implementation.
 - Defining AI model execution semantics. RFC 080 owns AI asset metadata and execution constraints.
@@ -213,11 +213,11 @@ The event log should be append-only from the registry's perspective, with correc
 
 ## Design details
 
-### Relationship to RFC 034
+### Relationship to RFC 125
 
-RFC 034 owns core package registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.
+RFC 125 supersedes RFC 034 and owns core Loaf registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.
 
-This RFC inherits RFC 034's amended package artifact boundary: generated Rust source is not the public package compatibility path. Artifact graph nodes may describe generated implementation artifacts for inspection, provenance, compatibility reports, or migration, but package semantics must remain grounded in Incan manifests, semantic metadata, ABI/package metadata, and registry artifact relationships.
+This RFC consumes RFC 125's source-Loaf and baked-asset identity chain and RFC 117's checked package authority: generated Rust source is not the public package compatibility path. Artifact graph nodes may describe generated implementation artifacts for inspection, provenance, compatibility reports, or migration, but package semantics must remain grounded in Incan manifests, semantic metadata, ABI/package metadata, and registry artifact relationships.
 
 ### Relationship to RFC 074 and RFC 075
 

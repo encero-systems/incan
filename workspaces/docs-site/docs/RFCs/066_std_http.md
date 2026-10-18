@@ -12,7 +12,7 @@
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 103 (`std.secrets` secret strings and bytes)
-- **Issue:** https://github.com/encero-systems/incan/issues/84
+- **Issue:** <https://github.com/encero-systems/incan/issues/84>
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -315,7 +315,7 @@ This RFC intentionally does not hardcode one exact default timeout yet; see unre
 
 Timeouts may start as one total request timeout, but the API should not block later support for distinct connect, read, write, and overall timeout fields.
 
-### Protocol negotiation
+### Protocol-policy requirements
 
 The public contract should not assume that HTTP/1.1 is the only possible transport. It should standardize a small protocol-policy vocabulary, exact names pending:
 
@@ -351,7 +351,7 @@ Pipeline or workflow integrations should depend on `std.http` request/response m
 
 ### Redaction and debug-facing behavior
 
-Implementations should redact sensitive header values such as `Authorization`, `Proxy-Authorization`, and similarly sensitive token-bearing headers in debug-facing request or response displays.
+Implementations must preserve RFC 103 secret non-disclosure in debug-facing request and response displays, errors, retry records, logs, telemetry, and receipts. Sensitive header values such as Authorization, Proxy-Authorization, and similarly sensitive token-bearing headers must be omitted or redacted on those surfaces. The HTTP wire boundary may intentionally transmit a secret through RFC 103's trusted encoding contract; that authorization does not make the plaintext safe for diagnostic reuse.
 
 Header values constructed from RFC 103 `SecretStr` or `SecretBytes` must be treated as sensitive regardless of header name. Authentication helpers should accept secret value types directly so user code does not need to expose a token as a plain string before constructing a request.
 
@@ -405,23 +405,23 @@ This feature is additive. Existing Rust-interop HTTP wrappers remain valid, but 
 ## Alternatives considered
 
 - **Rust interop only**
-  - Rejected because it leaves a common boundary with Rust-shaped APIs, Rust-shaped errors, and inconsistent conventions.
+    - Rejected because it leaves a common boundary with Rust-shaped APIs, Rust-shaped errors, and inconsistent conventions.
 - **Shell out to `curl`**
-  - Rejected because it weakens safety, portability, and structured error handling.
+    - Rejected because it weakens safety, portability, and structured error handling.
 - **Only one-shot helpers, no `Client`**
-  - Rejected because real tooling and API clients need reusable policy and shared headers.
+    - Rejected because real tooling and API clients need reusable policy and shared headers.
 - **Only `Client`, no one-shot helpers**
-  - Rejected because it makes simple scripts too ceremonious.
+    - Rejected because it makes simple scripts too ceremonious.
 - **A pipeline-specific HTTP step as the primary API**
-  - Rejected because HTTP is a general-purpose stdlib capability. Step and workflow libraries should compose over `std.http`; they should not own the base transport contract.
+    - Rejected because HTTP is a general-purpose stdlib capability. Step and workflow libraries should compose over `std.http`; they should not own the base transport contract.
 - **Separate public sync and async client models**
-  - Rejected for now because Incan should keep one conceptual client contract. Implementations may still provide blocking convenience helpers or async-only methods where the runtime requires them.
+    - Rejected for now because Incan should keep one conceptual client contract. Implementations may still provide blocking convenience helpers or async-only methods where the runtime requires them.
 - **Mandatory HTTP/2 in v1**
-  - Rejected because the API should not block on backend coverage or target support. The important v1 contract is that protocol policy and negotiated protocol metadata have a place to live.
+    - Rejected because the API should not block on backend coverage or target support. The important v1 contract is that protocol policy and negotiated protocol metadata have a place to live.
 - **Hide protocol version entirely**
-  - Rejected because service-to-service clients, debugging, performance work, and policy checks sometimes need to know whether HTTP/1.x or HTTP/2 was actually used.
+    - Rejected because service-to-service clients, debugging, performance work, and policy checks sometimes need to know whether HTTP/1.x or HTTP/2 was actually used.
 - **Expose backend transport types directly**
-  - Rejected because it would reintroduce the `rust::reqwest`-shaped leakage this RFC is trying to remove.
+    - Rejected because it would reintroduce the `rust::reqwest`-shaped leakage this RFC is trying to remove.
 
 ## Drawbacks
 

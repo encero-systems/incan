@@ -9,7 +9,7 @@
     - RFC 058 (`std.datetime`)
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 088 (iterator adapter surface)
-- **Issue:** https://github.com/encero-systems/incan/issues/537
+- **Issue:** <https://github.com/encero-systems/incan/issues/537>
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -180,10 +180,12 @@ This section is non-normative. The recommended shape is to keep the constrained 
 - **Formatter**: constrained primitive formatting must preserve the storage attribute in a stable order.
 - **LSP / Tooling**: hover, completion, diagnostics, and metadata extraction should surface the logical constrained type and the storage carrier distinctly.
 
+## Design Decisions
+
+- Storage carriers are the exact-width integer primitives enumerated in the reference contract. Target-dependent isize/usize and floating-point carriers are outside this proposal; expanding that set requires a separate contract. This records the existing reference rules and Non-Goals rather than selecting a new numeric policy.
+
 ## Unresolved questions
 
-- Should `storage` support `isize` and `usize`, or should the first version intentionally restrict carriers to target-stable exact-width integer primitives?
-- Should storage carriers for constrained `float` newtypes be included in this RFC or left to a follow-up after integer carriers ship?
 - Should reflection APIs expose the storage carrier by default, or should this remain compiler and manifest metadata only?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.

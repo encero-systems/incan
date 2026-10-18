@@ -12,7 +12,7 @@
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
     - RFC 091 (constrained integer newtype storage carriers)
-- **Issue:** https://github.com/encero-systems/incan/issues/667
+- **Issue:** <https://github.com/encero-systems/incan/issues/667>
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -280,7 +280,7 @@ model Event:
     }
 ```
 
-The compiler must preserve each metadata entry's source location and provenance in checked metadata where the surrounding descriptor already records provenance.
+The compiler must preserve each metadata entry's source location and provenance in checked metadata where the surrounding descriptor already records provenance. Compiler-semantic validate, normalize, and default_factory entries retain the same checked callable/operation identities and construction obligations as RFC 085 and RFC 122; changing their spelling to a braced block must not execute them, create another validation engine, or make them descriptive adapter overrides. Composed source fields retain RFC 087's provenance and obligation rules rather than acquiring target-local precedence merely because their source spelling used a block.
 
 ### Merge and precedence
 
