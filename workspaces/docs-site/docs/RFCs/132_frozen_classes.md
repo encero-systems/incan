@@ -1,6 +1,6 @@
 # RFC 132: Frozen classes and models
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-09
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
     - RFC 129 (shared bindings and the `mut` parameter contract)
     - RFC 131 (immutable first-class error records)
     - RFC 133 (literal types and compile-time value sets)
-- **Issue:** —
+- **Issue:** [#2245](https://github.com/encero-systems/incan/issues/2245)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
