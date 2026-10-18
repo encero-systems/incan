@@ -383,6 +383,8 @@ The resulting target is a distinct model type. Composition must not imply nomina
 
 A source check must remain bound to its defining contract and required fields. The compiler must not reinterpret its self or helper lookup as arbitrary target-model inheritance. Normalized values must contribute to the actual target state; validating a temporary source instance and returning different unnormalized target values does not preserve the contract. Unsupported or incompatible retained construction requirements require a diagnostic rather than silently omitting a rule. These requirements apply equally to local models and models published by external loaves.
 
+RFC 132's Frozen model guarantee is part of the complete composed contract. A target composing any frozen source must explicitly retain Frozen for all its stored fields. A frozen target may compose ordinary sources while preserving their construction and behavior obligations; this creates no model inheritance or mixed field-level freeze mode.
+
 RFC 122 owns construction integration, including the detailed scheduling and binding questions still being reviewed there. This RFC selects the authoring syntax and the requirement to preserve contracts; it does not claim that source ordering alone resolves overlapping normalization or that the current compiler implements contract composition. Creating or extracting a declaration must not execute its checks, defaults, or factories.
 
 ### Named validation declarations

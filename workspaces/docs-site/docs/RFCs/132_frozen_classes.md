@@ -1,4 +1,4 @@
-# RFC 132: Frozen classes
+# RFC 132: Frozen classes and models
 
 - **Status:** Draft
 - **Created:** 2026-10-09
@@ -7,6 +7,9 @@
     - RFC 008 (const bindings and frozen values)
     - RFC 024 (extensible derive protocol)
     - RFC 027 (vocabulary registration and desugaring)
+    - RFC 087 (complete model contract composition)
+    - RFC 122 (canonical model construction and validation)
+    - RFC 143 (clone with checked field overrides)
     - RFC 129 (shared bindings and the `mut` parameter contract)
     - RFC 131 (immutable first-class error records)
     - RFC 133 (literal types and compile-time value sets)
@@ -17,7 +20,7 @@
 
 ## Summary
 
-Introduce frozen classes whose instance fields are fixed at construction, enforced by the compiler through methods, aliases, inheritance, and imported APIs. The authoring spelling is `@derive(Frozen)`. Freezing belongs to the class, so every instance is constructed frozen; a mutable binding can still be replaced with a new instance. Freezing is shallow and does not grant equality, hashing, copying, serialization, or deep immutability. RFC 131's native error records would use this mechanism internally without requiring an annotation in authored error declarations.
+Introduce frozen classes and models whose instance fields are fixed after successful construction, enforced by the compiler through methods, aliases, retained behavior, composition, and imported APIs. The authoring spelling is `@derive(Frozen)`. Freezing belongs to the declaration, so every completed instance is frozen; a mutable binding can still be replaced with a new instance. Freezing is shallow and does not grant equality, hashing, copying, serialization, or deep immutability. RFC 131's native error records would use this mechanism internally without requiring an annotation in authored error declarations.
 
 ## Motivation
 
@@ -29,7 +32,7 @@ Other classes benefit from the same guarantee: coordinates, operation descriptio
 
 ## Goals
 
-- Express fixed instance fields on ordinary classes with a concise declaration.
+- Express fixed instance fields on ordinary classes and models with a concise declaration.
 - Enforce the guarantee at compile time, including inside the declaring class and through aliases.
 - Preserve normal construction, field visibility, methods, and ownership rules.
 - Distinguish replacing a mutable binding from replacing a frozen instance's fields.
@@ -42,7 +45,7 @@ Other classes benefit from the same guarantee: coordinates, operation descriptio
 - Recursive conversion of retained objects or collections into deeply immutable values.
 - A read-only view type for otherwise mutable instances.
 - Automatic equality, hashing, thread safety, or new serialization capabilities.
-- Changing ordinary classes or extending this declaration to models, enums, or newtypes in this RFC.
+- Changing unmarked ordinary declarations, adding model inheritance, selecting mixed field-level freezing, or extending this marker to enums or newtypes.
 - Compiler implementation or a claim that the examples already compile.
 
 ## Guide-level explanation
@@ -171,7 +174,53 @@ RFC 133 separately proposes `Literal["atoms", "quarks"]` and `Literal[*INPUT_LAB
 
 ### Inheritance must preserve the guarantee
 
-Frozen classes are required throughout an inheritance chain:
+A frozen class may extend an ordinary base when the compiler can establish that all retained behavior preserves the frozen child's fields. The base need not adopt Frozen itself:
+
+```incan
+# point_lib.incn: ordinary application/library declaration.
+pub class Point:
+    x: int
+
+    pub def x_value(self) -> int:
+        return self.x
+```
+
+```incan
+# app.incn: imports the library declaration above.
+from point_lib import Point
+
+@derive(Frozen)
+class LocatedPoint extends Point:
+    y: int
+
+    def describe(self) -> str:
+        return f"({self.x_value()}, {self.y})"
+```
+
+LocatedPoint fixes all inherited and local fields. The checker must verify its retained inherited methods, aliases and trait contracts under that guarantee, using checked provider evidence when the base is imported. The ordinary Point remains unchanged. Inheritance remains behavior reuse, not nominal subtyping or permission to expose a writable base view of a frozen child.
+
+An inherited setter is a real conflict, rather than a reason to require the base's marker universally:
+
+```incan
+class MutablePoint:
+    x: int
+
+    def set_x(mut self, value: int) -> None:
+        self.x = value
+
+# Adding Frozen to a child retaining this setter is rejected.
+# An ordinary explicit safe override can instead construct a replacement:
+@derive(Frozen)
+class Snapshot extends MutablePoint:
+    y: int
+
+    def set_x(mut self, value: int) -> None:
+        self = Snapshot(x=value, y=self.y)
+```
+
+The override follows RFC 129's whole-receiver replacement contract; it does not edit a field of the old instance. It must satisfy ordinary override and inherited trait obligations. The compiler must not silently hide or rewrite an unsafe inherited method. If retained behavior cannot be verified or safely replaced, the frozen child declaration is rejected with a diagnostic identifying the operation, field and available source or provider evidence. Opaque imported behavior is not proof of safety.
+
+A descendant of a frozen base must still explicitly retain the marker:
 
 ```incan
 @derive(Frozen)
@@ -187,11 +236,63 @@ class ReadOperation extends NamedOperation:
 
     def describe(self) -> str:
         return f"{self.label()}: {self.path}"
+
+# An unmarked descendant of NamedOperation is rejected.
 ```
 
-`ReadOperation(name="load", path="rows.jsonl")` constructs all inherited and local fields before the instance becomes available. Parent methods retain ordinary access rules; the child uses `label()` to read the parent's private field. Inheritance remains behavior reuse and does not introduce subtyping.
+ReadOperation constructs all inherited and local fields before exposure. Its parent methods retain ordinary privacy rules. An ordinary base can therefore feed an independently frozen child, while an already frozen base cannot lose its explicit guarantee in a descendant.
 
-Requiring the marker on each declaration makes the child's contract explicit. A frozen child extending an ordinary base, or an ordinary child extending a frozen base, is rejected. An ordinary base with only read methods must still explicitly adopt freezing before it can be used as a frozen base; checking inherited behavior under a second mutation regime is not the selected policy.
+### Frozen models retain canonical construction
+
+The same marker applies to a model's stored fields. RFC 122 normalization and checks run against pending construction state before a successful frozen value becomes available:
+
+```incan
+const INPUT_LABELS: FrozenList[str] = ["atoms", "quarks"]
+
+@derive(Frozen, Clone)
+model InputSpec:
+    labels: FrozenList[str] = INPUT_LABELS
+    attempts: int = 1
+
+    @fieldmethod
+    def attempts(mod, value: int):
+        mod.attempts = value + 1
+
+def main() -> None:
+    mut spec = InputSpec(attempts=2)
+    assert spec.attempts == 3
+    updated = spec.clone(attempts=4)
+    assert updated.attempts == 5
+    spec = updated  # Whole mutable binding replacement remains allowed.
+    # spec.attempts = 6 is rejected: completed frozen model field.
+```
+
+The example uses the proposed fieldmethod contract and RFC 143 keyword cloning; all declarations are application-defined. Frozen does not itself derive Clone, change defaults into explicit inputs, or bypass normalization. If registered checks or fallible factories require `Result[InputSpec, ValidationError]`, every construction and keyword-clone spelling retains that result and returns a frozen value only on success. Decoders and generated constructors obey the same finalization boundary. The guarantee remains shallow; contained values keep their own mutation and capability rules.
+
+### Model composition preserves freezing
+
+Model from composition is distinct from class extends. A frozen target may compose ordinary model sources, but a source already promising Frozen requires an explicitly frozen target:
+
+```incan
+model ConnectionDefaults:
+    timeout: int = 10
+
+@derive(Frozen)
+model ImportSettings from ConnectionDefaults:
+    retries: int = 3
+
+@derive(Frozen)
+model FrozenDefaults:
+    timeout: int = 10
+
+@derive(Frozen)
+model ArchiveSettings from FrozenDefaults:
+    retries: int = 3
+
+# An unmarked model MutableArchive from FrozenDefaults is rejected.
+```
+
+RFC 087 complete contract composition must retain that declaration guarantee as well as stored fields, normalization and validation. Requiring Frozen on the target avoids a mixed field-level mode and preserves a simple whole-model contract. This does not introduce model inheritance, inherited utility methods, nominal subtyping, or implicit thawing.
 
 ### Native errors use freezing internally
 
@@ -210,9 +311,9 @@ Its candidate desugaring may mark the generated case class with `@derive(Frozen,
 
 ### Declaration and construction
 
-1. A class marked with the proposed built-in `Frozen` derive must produce only frozen instances, including generic instantiations and instances constructed by factory methods or supported generated constructors.
-2. Normal named constructor arguments, inherited fields, defaults, and access rules must continue to apply. Freezing must not introduce an authored initialization method or a publicly accessible construction phase with writable fields.
-3. Construction must establish all fields before exposing the completed instance. No subsequent authored operation may replace or remove one of those fields.
+1. A class or model marked with the proposed built-in `Frozen` derive must produce only frozen completed instances, including generic instantiations and instances constructed by factory methods or supported generated constructors.
+2. Normal named constructor arguments, inherited or composed fields, defaults, canonical normalization and validation, and access rules must continue to apply. Freezing must not introduce an authored initialization method or a publicly accessible construction phase with writable fields.
+3. Construction must establish all fields and fulfill its canonical finalization obligations before exposing a successful completed instance. Fallible model construction must retain its declared Result type; Frozen must not add an unchecked success path. No subsequent authored operation may replace or remove one of those fields.
 4. Freezing must be a checked declaration property, not an ordinary trait implementation that an author can override to regain write access. Applying a similarly named library derive must not impersonate the built-in marker.
 5. Repeated application of the built-in marker must have no additional effect. Applying it to an unsupported declaration kind must produce a source diagnostic.
 
@@ -223,7 +324,7 @@ Its candidate desugaring may mark the generated case class with `@derive(Frozen,
 3. A mutable binding or a `mut` parameter holding a whole frozen instance may be replaced with a new compatible instance where existing ownership and borrowing rules allow it. That replaces the containing place, not a field within the old instance.
 4. A `mut self` method must not replace a frozen field. Replacement of the whole receiver must follow the same existing whole-value assignment rules as other caller-visible `mut` parameters; freezing must not introduce a special receiver exception. Such a method may perform other permitted effects, subject to the contained-state rules below.
 5. Read access, read-only aliases, pattern inspection, and consumption of a whole value must retain existing semantics. Freezing must not introduce silent clones, allocation, or alias retargeting to make an otherwise invalid operation compile.
-6. Clone and copy operations, where independently supported, must preserve the frozen class property. Neither operation may produce a thawed instance of that class.
+6. Clone and copy operations, where independently supported, must preserve the frozen declaration property. Neither operation may produce a thawed instance of that type. Keyword cloning must construct and finalize a complete replacement under RFC 143 rather than assign into completed frozen fields.
 
 ### Contained state
 
@@ -236,11 +337,19 @@ Its candidate desugaring may mark the generated case class with `@derive(Frozen,
 
 ### Inheritance, traits, and providers
 
-1. A frozen class's direct base must be frozen, and a descendant of a frozen class must explicitly be frozen. A mismatched declaration must be rejected. All inherited and locally declared fields must be fixed.
+1. A frozen class may extend an ordinary base only when every retained inherited operation, alias and trait contract is verified to satisfy the frozen receiver restrictions. All inherited and local fields must be fixed. Unsafe retained behavior requires an explicit ordinary safe override satisfying its other obligations; otherwise the child declaration must be rejected. Unknown imported behavior must not be treated as safe. The compiler must not silently hide or rewrite inherited methods. A descendant of a frozen class must explicitly retain Frozen; an unmarked descendant must be rejected.
 2. Inherited methods, overrides, adopted trait methods, and trait default methods must satisfy the frozen field restrictions. Adoption of a trait requiring writable replacement of a field must be rejected.
 3. Privacy must remain an independent access rule. Freezing must not make private fields public or make existing public fields unreadable.
 4. Imports, aliases, and re-exports must preserve the declaration's frozen property. Provider metadata and generic checking must not erase it or permit a consumer to regain writable access to a frozen field.
 5. Interop must not expose a safe foreign API that replaces frozen fields of an existing instance. An unsupported operation must be refused at the Incan boundary rather than accepted and left to an incidental backend failure. This RFC does not define guarantees for foreign unsafe code that violates an API's contract.
+
+### Model composition
+
+1. Frozen must be accepted on models without adding model inheritance or changing their value and visibility contracts.
+2. A frozen target may compose ordinary sources through RFC 087 from composition, provided the complete retained construction and behavior contract satisfies freezing.
+3. Composing any frozen source must require an explicitly frozen target. An unmarked target must receive a diagnostic at the composition and source guarantee; neither schema metadata nor source ordering may erase it.
+4. The target guarantee applies to every stored field, including local fields and fields from ordinary sources. This RFC must not introduce a mixed field-level freezing mode.
+5. Model fieldmethods and canonical finalization operate on pending state before publication. Supported decoding, foreign construction and keyword cloning must preserve normalization, registered validation, fallibility and the frozen successful result. They must not publish an intermediate mutable or partially validated model.
 
 ### Derives and capabilities
 
@@ -248,9 +357,9 @@ Its candidate desugaring may mark the generated case class with `@derive(Frozen,
 
 ## Design details
 
-### Why a class property
+### Why a declaration property
 
-Freezing every instance at construction avoids mixed mutable and frozen states for one class, runtime freeze failures, and outstanding writable aliases during a transition. There is no need to spell a second frozen type at each use site. A mutable binding still serves its existing purpose when an algorithm replaces one complete value with another.
+Freezing every instance at construction avoids mixed mutable and frozen states for one type, runtime freeze failures, and outstanding writable aliases during a transition. There is no need to spell a second frozen type at each use site. A mutable binding still serves its existing purpose when an algorithm replaces one complete value with another.
 
 The selected `@derive(Frozen)` spelling reuses an existing declaration surface. It requires compiler enforcement beyond generated methods: ordinary trait adoption cannot prevent assignments or writable aliases. It is not Rust's `Freeze` marker, and it does not inherit that marker's semantics.
 
@@ -268,7 +377,7 @@ Rust's [interior mutability types](https://doc.rust-lang.org/std/cell/index.html
 
 ### Compatibility
 
-Existing unmarked classes retain their behavior. Adding freezing to a published class removes supported mutation operations and may break callers or descendants; it is an intentional API change. Moving a definition behind an alias or re-export must preserve freezing just as it preserves its other checked declaration properties.
+Existing unmarked classes and models retain their behavior. Adding freezing to a published declaration removes supported mutation operations and may break callers or descendants; it is an intentional API change. Moving a definition behind an alias or re-export must preserve freezing just as it preserves its other checked declaration properties.
 
 This RFC introduces no new reflection API and does not make classes into schema models. Serialization support, where independently available, must construct complete frozen values rather than expose a thawed result for post-construction field filling.
 
@@ -279,13 +388,14 @@ This RFC introduces no new reflection API and does not make classes into schema 
 - **Runtime `freeze(value)`:** permits a mutable construction workflow, but needs transition semantics for aliases, outstanding borrows, and mixed states. Construction-time freezing avoids those obligations.
 - **Deep freezing:** gives a stronger snapshot contract, but requires recursive treatment of collections, foreign objects, handles, and cycles. That is a separate feature rather than an implicit consequence of freezing fields.
 - **`frozen class` or `@frozen`:** may describe a checked property more directly than a derive, but would add another declaration form. The selected `@derive(Frozen)` spelling reuses the existing authoring surface while requiring compiler enforcement of the checked property.
-- **Freeze an ordinary base only when constructing a frozen child:** offers more reuse, but requires checking inherited code, trait behavior, and provider contracts under a second mutation regime. The selected uniform inheritance chain keeps the frozen guarantee explicit and consistent across declarations.
+- **Require every base of a frozen child to be frozen:** easier to check, but excludes ordinary library bases even when retained behavior is safe. The selected policy verifies retained behavior and requires explicit safe overrides or rejects the child; it does not promise every base can be frozen.
+- **Keep Frozen class-only:** narrower, but leaves model authors without the same fixed-field contract. The selected model extension preserves canonical construction and complete from composition rather than requiring models to stand in for classes or adding inheritance.
 
 ## Drawbacks
 
 Shallow freezing is weaker than a stable snapshot and can surprise authors retaining mutable state. Checked content-only access requires the compiler and imported method contracts to distinguish contained mutation from field replacement. A general writable alias remains rejected even when the author intended only a harmless nested mutation. These checks must preserve ordinary receiver and ownership requirements without silent copies or unrestricted writable field access.
 
-The inheritance rule limits reuse of existing ordinary bases. Diagnostics and documentation also need to distinguish a valid replacement of a complete value from a prohibited replacement of one of its fields.
+Freezing an ordinary base in a child requires checked inherited-behavior and provider evidence; not every mutable library base is usable. Frozen model composition also requires retaining the declaration guarantee alongside its field and construction contracts. Diagnostics and documentation also need to distinguish a valid replacement of a complete value from a prohibited replacement of one of its fields.
 
 The derive spelling may suggest generated trait methods even though enforcement belongs in the checker. Imported metadata and generated declarations must carry the property reliably; a declaration-only check would leave aliases and consumer APIs unprotected.
 
@@ -297,16 +407,18 @@ Ordinary backend structs may represent frozen classes; backend binding mutabilit
 
 ## Layers affected
 
-- **Declaration / derive protocol:** a checked frozen class property and its selected authoring spelling.
-- **Typechecker / ownership checking:** field replacement, receiver behavior, aliases, inherited and trait methods, contained access, and generic uses.
+- **Declaration / derive protocol:** a checked frozen class or model property and its selected authoring spelling.
+- **Typechecker / ownership checking:** field replacement, receiver behavior, aliases, checked inherited and trait methods, complete model composition, contained access, and generic uses.
 - **Provider metadata / symbol resolution:** preservation of freezing across compiled libraries, aliases, and re-exports.
 - **Vocabulary / lowering / emission:** frozen generated declarations, completed construction, and preserved restrictions at foreign boundaries.
-- **LSP / diagnostics / documentation:** visible class guarantees, source diagnostics for prohibited writes, and examples distinguishing field freezing from binding mutability.
+- **LSP / diagnostics / documentation:** visible declaration guarantees, source diagnostics for prohibited writes, and examples distinguishing field freezing from binding mutability.
 
 ## Design Decisions
 
-- The authoring spelling is `@derive(Frozen)`, using the proposed built-in Frozen marker alongside existing derives. The compiler enforces the class property; generated methods alone do not establish the guarantee. No separate `@frozen` decorator or `frozen class` form is introduced.
+- The authoring spelling is `@derive(Frozen)`, using the proposed built-in Frozen marker alongside existing derives. The compiler enforces the class or model property; generated methods alone do not establish the guarantee. No separate `@frozen` decorator or `frozen class` form is introduced.
 
-- Every declaration in a frozen inheritance chain must explicitly use the built-in Frozen marker. A frozen class cannot extend an ordinary base, and an ordinary class cannot extend a frozen base. This applies even when an ordinary base currently contains only read methods; compatible inherited behavior alone does not substitute for the declaration guarantee.
+- A frozen class may extend an ordinary base when checked inherited behavior, aliases and trait contracts preserve every frozen field. Unsafe retained operations need an explicit safe ordinary override or the child declaration is rejected. Unknown imported behavior is insufficient proof. Every descendant of a frozen base must explicitly retain Frozen.
+
+- Frozen also applies to models after successful canonical construction, preserving normalization, validation, fallibility, cloning and shallow contained-state semantics. A frozen target may compose ordinary model sources; a target composing a frozen source must explicitly retain Frozen. No model inheritance or mixed field-level freezing mode is introduced.
 
 - Shallow freezing permits mutation of ordinary list or child-object contents through checked access that cannot replace the containing field. Direct calls such as `self.rows.append(row)` retain familiar syntax, subject to ordinary receiver and ownership permissions. General writable aliases remain prohibited. The guarantee must survive trait calls and imported APIs through checked metadata; unknown behavior does not establish permission. FrozenList and other existing frozen value types retain their own read-only contracts.

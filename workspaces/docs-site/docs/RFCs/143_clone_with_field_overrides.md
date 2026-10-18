@@ -189,9 +189,9 @@ The generated reconstruction can retain private stored fields internally without
 
 RFC 087 and RFC 122's explicit single-field normalize pipelines follow the same supplied-input rule. For an Account whose name pipeline trims and then lowercases, `account.clone(minimum=2)` retains its stored normalized name without replaying either step. `account.clone(name=" BOB ")` runs the selected name pipeline once on the new input, then validates the complete resulting model. The pipeline's internal order is the explicit normalize list, while its activation belongs to the field-backed construction slot. Retained validation obligations remain mandatory in either case. RFC 122 additionally selects named-input binding for computed entries and resulting-target-value binding for following field-backed entries in explicit pipelines. Clone integration must preserve those bindings without replaying original inputs. Competing newly supplied inputs to the same composed pipeline step must receive the same diagnostic as direct construction. Retained baseline values are not newly supplied inputs, so an existing minutes field must not conflict with a newly supplied total_minutes input merely because the computed operation replaces it. Activation with an omitted virtual input and coordination of overlapping pipelines remain under review in RFC 122.
 
-### Frozen classes
+### Frozen classes and models
 
-1. Every replacement of an RFC 132 frozen class must have that same frozen class property, including through generic instantiations, factories, imports, and aliases.
+1. Every replacement of an RFC 132 frozen class or model must retain that same frozen declaration property, including through generic instantiations, factories, imports, and aliases.
 2. Construction must establish all fields before exposing the replacement. No authored or generated post-construction field assignment may be used to implement overrides.
 3. The receiver and returned instance must reject the same field replacement and writable-alias operations. Overrides must not introduce a thawed intermediate value available to authored code.
 4. Contained values must retain their declared types and independent capabilities. The operation must not implicitly convert `list[T]` to `FrozenList[T]`, imply deep freezing, or grant new mutation permissions.
