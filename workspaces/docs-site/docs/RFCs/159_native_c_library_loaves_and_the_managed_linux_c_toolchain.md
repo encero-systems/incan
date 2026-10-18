@@ -19,7 +19,7 @@
 
 ## Summary
 
-This RFC makes C libraries first-class Loaves, called **Cloves**, and gives every target one managed C compiler. A Clove carries a C library's sources, its public headers, and a declared build: the exact compile units, the preprocessor definitions of each named configuration, and the static archive they produce. Oven compiles it like any other unit, under RFC 124 identity, and `incan.pub` publishes its source and its compiled units like any other Loaf. A Rust crate whose build script compiles that library (`zstd-sys`, `aws-lc-sys`, `bzip2-sys` and their kind) no longer records its own C compiles: its build fact links the library Loaf's unit, and an Incan C binding under RFC 116 links the same unit. Every native unit, on every target, is compiled by one Clang toolchain that Incan builds and publishes; only the platform files differ. For Linux, Incan publishes those files too: a sysroot with glibc 2.28, the floor Python wheels use. Apple and Windows SDKs cannot be redistributed; units for those targets are compiled with the same managed Clang on registry builders that hold the SDK, and record the SDK identity they used.
+This RFC makes C libraries first-class Loaves, called **Cloves**, and gives every target one managed C compiler. A Clove carries a C library's sources, its public headers, and a declared build: the exact compile units, the preprocessor definitions of each named configuration, and the static archive they produce. Oven compiles it like any other unit, under RFC 124 identity, and `incan.pub` publishes its source and its compiled units like any other Loaf. A Rust crate whose build script compiles that library (`zstd-sys`, `aws-lc-sys`, `bzip2-sys` and their kind) no longer records its own C compiles: its build fact links the library Loaf's unit, and an Incan C binding under RFC 116 links the same unit. Every native unit, on every target, is compiled by one Clang toolchain that Incan builds and publishes; only the platform files differ. For Linux, Incan publishes those files too: a sysroot with glibc 2.28, the baseline selected for this RFC from Python packaging's `manylinux_2_28` environment. Apple and Windows SDKs cannot be redistributed; units for those targets are compiled with the same managed Clang on registry builders that hold the SDK, and record the SDK identity they used.
 
 ## Core model
 
@@ -136,7 +136,7 @@ The C compiler is not whatever a machine has installed. Incan builds Clang, its 
 
 What differs by target is the platform files:
 
-- **Linux.** Incan publishes the sysroot: glibc headers and startup objects at glibc 2.28, and the matching kernel headers, taken from the `manylinux_2_28` build environment that Python wheels are built in. A unit built against it runs on every glibc 2.28-or-newer distribution: RHEL 8 and 9, Debian 11 and 12, Ubuntu 22.04 and 24.04, and Amazon Linux 2023, the base of current AWS Lambda runtimes. Oven links final Linux executables against the same sysroot.
+- **Linux.** Incan publishes the sysroot: glibc headers and startup objects at glibc 2.28, and the matching kernel headers, taken from the `manylinux_2_28` build environment that Python wheels are built in. This selects glibc 2.28 as the minimum runtime version for the supported Linux targets; the target architecture and other declared runtime requirements must also match. It does not claim compatibility with every supported Linux distribution or every AWS Lambda runtime. Oven links final Linux executables against the same sysroot.
 - **Apple.** The Xcode SDK, used on machines licensed for it. The managed Clang compiles against it; Xcode's own Clang is not used.
 - **Windows.** The Windows SDK and the MSVC runtime headers and libraries, used on machines licensed for them. The managed toolchain's `clang-cl` driver compiles against them.
 
@@ -236,7 +236,7 @@ This is additive. Existing RFC 119 `link` records keep working until they are ha
 
 - **Chromium** builds every platform with its own Clang: against Debian-derived sysroots it publishes for Linux, against the Xcode SDK for macOS and iOS, and through `clang-cl` against the Windows SDK. This RFC adopts the same split between one owned compiler and per-platform files.
 - **Firefox** builds its own Clang toolchain for every platform it ships and pins the sysroots it builds against.
-- **Python's `manylinux` standard** fixes a glibc floor for every Linux wheel; `manylinux_2_28` is the floor and the build environment this RFC's Linux sysroot is taken from.
+- **Python's [`manylinux` compatibility tags](https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/#manylinux)** express a minimum glibc version for a particular architecture. Several baselines coexist; this RFC selects the [`manylinux_2_28` environment](https://github.com/pypa/manylinux#manylinux_2_28-almalinux-8-based) for its Linux sysroot rather than claiming it is the universal baseline of Python wheels.
 - **Rust** already ships its own LLVM for code generation on every platform, so Rust code is never compiled by a host compiler; this RFC extends that property to the C a Rust crate links.
 - **Zig** bundles Clang and libc headers for many targets in one download, showing that a portable cross toolchain is practical.
 
@@ -302,7 +302,7 @@ This is what RFC 116 selected. It leaves Apple with a second compiler, tied to e
 ## Design Decisions
 
 - **Name and scope.** A C-library Loaf is a **Clove**. Registry-adopted Cloves live under the scope `c/`, with the upstream library's name and version. An upstream project that publishes its own package later is pointed to by a supersession event; published `c/` versions are never renamed or taken over.
-- **glibc floor.** Linux targets use glibc 2.28, the `manylinux_2_28` floor Python wheels use. It covers every current long-term-support Debian, Ubuntu, RHEL and Amazon Linux 2023 image, including the AWS Lambda runtimes. No older floor is supported.
+- **glibc floor.** Linux targets use glibc 2.28, matching the selected `manylinux_2_28` baseline. Other Python wheel baselines continue to exist; this is an explicit Incan support choice, not a claim to cover every supported distribution or cloud runtime. No older glibc floor is supported by this RFC.
 - **musl.** musl-based Linux targets are out of scope; a musl target would be a separate target with its own sysroot.
 - **First Linux targets.** `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
 - **Cross-host identity.** A unit's identity names the toolchain release, not a host's build of it, because every release must pass the cross-host reproduction gate; a host that fails the gate gets its own identity.
