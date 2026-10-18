@@ -98,7 +98,6 @@
    "oven_interop",
    "oven_model",
    "oven_rustc",
-   "oven_store",
    "rust_inspect"
   ],
   "members_with_build_scripts": [],
@@ -2541,7 +2540,7 @@
       "kind": "third-party",
       "origin": "registry",
       "workspace_inherited": false,
-      "version_req": "36.0.17",
+      "version_req": "36.0.18",
       "features": [
        "cranelift",
        "runtime",
@@ -2555,7 +2554,7 @@
       "kind": "third-party",
       "origin": "registry",
       "workspace_inherited": false,
-      "version_req": "36.0.17",
+      "version_req": "36.0.18",
       "features": [
        "preview1"
       ],
@@ -3001,8 +3000,7 @@
      "std_decorators"
     ],
     "rust_inspect": [
-     "incan_frontend/rust_inspect",
-     "rust_inspect/inspector"
+     "incan_frontend/rust_inspect"
     ],
     "std_async": [
      "incan_frontend/std_async"
@@ -3127,10 +3125,22 @@
       "origin": "path",
       "workspace_inherited": true,
       "version_req": null,
-      "features": [],
+      "features": [
+       "inspector"
+      ],
       "default_features": false,
       "optional": false,
       "path": "loaves/compiler/rust_inspect"
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
      },
      "serde": {
       "package": "serde",
@@ -3184,12 +3194,22 @@
       "default_features": true,
       "optional": false
      },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "wasmtime": {
       "package": "wasmtime",
       "kind": "third-party",
       "origin": "registry",
       "workspace_inherited": false,
-      "version_req": "36.0.17",
+      "version_req": "36.0.18",
       "features": [
        "cranelift",
        "runtime",
@@ -4205,6 +4225,7 @@
     ],
     "inspector": [
      "dep:incan_lang",
+     "dep:oven_store",
      "dep:toml",
      "dep:semver",
      "dep:ra_ap_hir",
@@ -4245,6 +4266,17 @@
       "default_features": true,
       "optional": true,
       "path": "loaves/kernel/incan_lang"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": true,
+      "path": "loaves/oven/oven_store"
      },
      "proc-macro2": {
       "package": "proc-macro2",
@@ -4454,6 +4486,17 @@
      }
     },
     "dev": {
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
      "tempfile": {
       "package": "tempfile",
       "kind": "third-party",
@@ -5837,6 +5880,16 @@
       "default_features": true,
       "optional": false
      },
+     "libc": {
+      "package": "libc",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.2",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "oven_model": {
       "package": "oven_model",
       "kind": "workspace-internal",
@@ -5880,6 +5933,16 @@
       "default_features": true,
       "optional": false
      },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "thiserror": {
       "package": "thiserror",
       "kind": "third-party",
@@ -5899,20 +5962,19 @@
       "features": [],
       "default_features": true,
       "optional": false
-     }
-    },
-    "dev": {
-     "tempfile": {
-      "package": "tempfile",
+     },
+     "tracing": {
+      "package": "tracing",
       "kind": "third-party",
       "origin": "registry",
-      "workspace_inherited": false,
-      "version_req": "3",
+      "workspace_inherited": true,
+      "version_req": "0.1",
       "features": [],
       "default_features": true,
       "optional": false
      }
     },
+    "dev": {},
     "build": {},
     "target": {}
    },
@@ -7474,6 +7536,16 @@
       "default_features": true,
       "optional": false
      },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "tracing-subscriber": {
       "package": "tracing-subscriber",
       "kind": "third-party",
@@ -8113,6 +8185,16 @@
       "default_features": true,
       "optional": false
      },
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "incan_driver": {
       "package": "incan_driver",
       "kind": "workspace-internal",
@@ -8125,6 +8207,17 @@
       "default_features": false,
       "optional": false,
       "path": "loaves/compiler/incan_driver"
+     },
+     "incan_format": {
+      "package": "incan_format",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_format"
      },
      "incan_frontend": {
       "package": "incan_frontend",
@@ -8249,6 +8342,16 @@
       "default_features": true,
       "optional": false
      },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "serde": {
       "package": "serde",
       "kind": "third-party",
@@ -8301,6 +8404,29 @@
       "default_features": true,
       "optional": false
      },
+     "toml_edit": {
+      "package": "toml_edit",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.25",
+      "features": [
+       "parse",
+       "serde"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
      "tracing-subscriber": {
       "package": "tracing-subscriber",
       "kind": "third-party",
@@ -8328,6 +8454,39 @@
       "default_features": false,
       "optional": false,
       "path": "loaves/compiler/incan_driver"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
      }
     },
     "build": {},
