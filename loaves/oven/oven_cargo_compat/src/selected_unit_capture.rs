@@ -438,7 +438,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         unit.artifact_paths.dedup();
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
         unit.compiler_arguments = rustc_rebuild_arguments(&item.invocation.arguments)?;
-        unit.compiler_crate_type = observed_crate_types(item.invocation).into_iter().next();
+        unit.compiler_crate_type = consumed_crate_type(item.invocation);
         unit.compiler_paths = Some(captured_compiler_paths(item.invocation)?);
         unit.compile_environment = item.invocation.environment.clone();
         unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
@@ -942,6 +942,14 @@ fn invocation_artifact_paths(
                 };
                 emitted.push(out_dir.join(format!("{prefix}{stem}{suffix}")));
             }
+            "staticlib" if emitted_kind("link") => {
+                let (prefix, suffix) = if target.contains("windows") {
+                    ("", ".lib")
+                } else {
+                    ("lib", ".a")
+                };
+                emitted.push(out_dir.join(format!("{prefix}{stem}{suffix}")));
+            }
             _ => return None,
         }
     }
@@ -957,6 +965,20 @@ fn invocation_artifact_paths(
         return None;
     }
     Some(emitted)
+}
+
+/// Return the crate type the Oven rebuilds and links for one rustc invocation. Cargo compiles a library target that
+/// declares several crate types (for example `lib`, `cdylib` and `staticlib`) in a single invocation, but dependents
+/// consume only the rlib, so the rlib spelling wins whenever it is present; a single-type unit (`bin`, `proc-macro`)
+/// keeps its only type. Sorting alone would pick `cdylib` over `lib` and make the rebuild produce a shared object
+/// instead of the rlib the dependency graph expects.
+fn consumed_crate_type(invocation: &OvenLegacyRustcInvocation) -> Option<String> {
+    let crate_types = observed_crate_types(invocation);
+    crate_types
+        .iter()
+        .find(|crate_type| matches!(crate_type.as_str(), "lib" | "rlib"))
+        .cloned()
+        .or_else(|| crate_types.into_iter().next())
 }
 
 /// Return the exact physical crate output classes selected by one rustc invocation.
@@ -1398,7 +1420,8 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub target_is_explicit: Option<bool>,
     /// Exact non-feature rustc cfg arguments; Cargo features remain separately named by `effective_features`.
     pub cfg: Vec<String>,
-    /// Exact crate-type spelling from the joined rustc invocation.
+    /// Crate-type spelling the Oven rebuilds from the joined rustc invocation: the rlib spelling when Cargo compiled
+    /// several crate types at once, otherwise the unit's only type.
     #[serde(default)]
     pub compiler_crate_type: Option<String>,
     /// Portable paths produced by the joined invocation's captured remap flags.
@@ -2803,6 +2826,85 @@ mod tests {
         fs::write(&artifact.filenames[0], b"tampered alias bytes")?;
         assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_none());
         Ok(())
+    }
+
+    /// A library compiled as `lib`, `cdylib` and `staticlib` in one invocation joins all three Cargo outputs, and the
+    /// recorded compiler crate type is the rlib the dependency graph links.
+    #[test]
+    fn multi_crate_type_library_matches_every_cargo_output() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        fs::write(scratch.path().join("lib.rs"), b"pub fn checksum() {}\n")?;
+        let out_dir = scratch.path().join("target/x86_64-unknown-linux-gnu/debug/deps");
+        fs::create_dir_all(&out_dir)?;
+        let outputs = [
+            "libcrc_fast-sealed.rlib",
+            "libcrc_fast-sealed.so",
+            "libcrc_fast-sealed.a",
+        ]
+        .map(|name| out_dir.join(name));
+        for output in &outputs {
+            fs::write(output, b"exact library bytes")?;
+        }
+        let invocation = OvenLegacyRustcInvocation {
+            stdin_digest: None,
+            stdin_probe_output: None,
+            exit_code: Some(0),
+            reason: "incan-rustc-invocation".to_string(),
+            rustc: "/verified/rustc".to_string(),
+            working_directory: scratch.path().to_string_lossy().to_string(),
+            arguments: vec![
+                "--crate-name".to_string(),
+                "crc_fast".to_string(),
+                "--crate-type".to_string(),
+                "lib,cdylib,staticlib".to_string(),
+                "--emit".to_string(),
+                "dep-info,link".to_string(),
+                "-C".to_string(),
+                "extra-filename=-sealed".to_string(),
+                "--out-dir".to_string(),
+                out_dir.to_string_lossy().to_string(),
+                "--target".to_string(),
+                "x86_64-unknown-linux-gnu".to_string(),
+                "lib.rs".to_string(),
+            ],
+            environment: BTreeMap::from([
+                ("CARGO_PKG_NAME".to_string(), "crc-fast".to_string()),
+                ("CARGO_PKG_VERSION".to_string(), "1.0.0".to_string()),
+            ]),
+        };
+        let artifact = serde_json::from_value::<CargoCompilerArtifact>(serde_json::json!({
+            "reason": "compiler-artifact", "package_id": "crc-fast 1.0.0",
+            "target": {"name": "crc_fast", "kind": ["lib", "cdylib", "staticlib"], "crate_types": ["lib", "cdylib", "staticlib"], "src_path": scratch.path().join("lib.rs")},
+            "features": [], "filenames": outputs, "profile": {"test": false}
+        }))?;
+        let emitted = invocation_artifact_paths(&invocation, &artifact, "x86_64-unknown-linux-gnu")
+            .ok_or("multi-type library outputs were not matched")?;
+        let mut expected = outputs.to_vec();
+        expected.sort();
+        assert_eq!(emitted, expected);
+        assert_eq!(consumed_crate_type(&invocation).as_deref(), Some("lib"));
+        Ok(())
+    }
+
+    /// Single-type units keep their only crate type; the rlib preference never invents one.
+    #[test]
+    fn consumed_crate_type_keeps_single_type_units() {
+        let invocation = |crate_types: &str| OvenLegacyRustcInvocation {
+            stdin_digest: None,
+            stdin_probe_output: None,
+            exit_code: Some(0),
+            reason: "incan-rustc-invocation".to_string(),
+            rustc: "/verified/rustc".to_string(),
+            working_directory: "/fixture".to_string(),
+            arguments: vec!["--crate-type".to_string(), crate_types.to_string()],
+            environment: BTreeMap::new(),
+        };
+        assert_eq!(
+            consumed_crate_type(&invocation("proc-macro")).as_deref(),
+            Some("proc-macro")
+        );
+        assert_eq!(consumed_crate_type(&invocation("bin")).as_deref(), Some("bin"));
+        assert_eq!(consumed_crate_type(&invocation("cdylib,rlib")).as_deref(), Some("rlib"));
     }
 
     /// Cargo may rely on rustc's empty extra-filename default for an unsuffixed build-script executable.
