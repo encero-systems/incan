@@ -1,6 +1,6 @@
 # RFC 137: Named enum payload fields
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
     - RFC 120 (canonical source identity)
     - RFC 131 (dedicated error declarations)
     - RFC 134 (pattern bindings with exiting fallbacks)
-- **Issue:** —
+- **Issue:** [#2243](https://github.com/encero-systems/incan/issues/2243)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
