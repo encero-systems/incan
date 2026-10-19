@@ -228,6 +228,8 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
             declarations.push(declaration);
         }
     }
+    // Rust values the module holds are stored as their own items (DD-0006).
+    declarations.extend(super::rust_values::collect(type_info));
     declarations
 }
 

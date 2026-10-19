@@ -606,24 +606,13 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
             || identity.kind != crate::SemanticSourceTargetKind::RustItem
             || identity.scope_discriminant.is_some()
             || identity.declaration_span != crate::HirSourceSpan::new(0, 0)
+            || path.len() < 2
             || path.last() != Some(&identity.declaration_name)
         {
             return None;
         }
-        let item = match path.as_slice() {
-            [root, name] if root == "axum" && name == "Json" => "incan_stdlib_web::web::response::Json",
-            [root, module, name] if root == "axum" && module == "extract" && name == "Query" => {
-                "incan_stdlib_web::web::request::Query"
-            }
-            [root, module, name] if root == "axum" && module == "extract" && name == "Path" => {
-                "incan_stdlib_web::web::request::Path"
-            }
-            [root, module, name] if root == "axum" && module == "response" && name == "Html" => {
-                "incan_stdlib_web::web::response::Html"
-            }
-            _ => return None,
-        };
-        return Some(item.to_owned());
+        // A web extractor or response is stored as its stdlib carrier; any other Rust item is stored as itself.
+        return Some(web_carrier_item(path).map_or_else(|| path.join("::"), str::to_owned));
     }
     if let Some(builtin) = crate::RuntimeBuiltinType::from_identity(identity) {
         return Some(builtin.carrier_path().to_owned());
@@ -636,6 +625,18 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
         .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
+}
+
+/// The stdlib web carrier that stores an axum extractor or response, with its public tuple payload.
+fn web_carrier_item(path: &[String]) -> Option<&'static str> {
+    let path = path.iter().map(String::as_str).collect::<Vec<_>>();
+    match path.as_slice() {
+        ["axum", "Json"] => Some("incan_stdlib_web::web::response::Json"),
+        ["axum", "extract", "Query"] => Some("incan_stdlib_web::web::request::Query"),
+        ["axum", "extract", "Path"] => Some("incan_stdlib_web::web::request::Path"),
+        ["axum", "response", "Html"] => Some("incan_stdlib_web::web::response::Html"),
+        _ => None,
+    }
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
@@ -670,6 +671,11 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         identity.origin,
         crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
     ) {
+        return None;
+    }
+    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin
+        && web_carrier_item(path).is_none()
+    {
         return None;
     }
     let native_item = native_nominal_item(identity)?;
@@ -732,6 +738,77 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         type_parameter_count,
     })
 }
+
+/// Opaque storage of a Rust item a program holds as a value (DD-0006): the item itself, with `arity` written type
+/// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into.
+///
+/// Web carriers keep their payload shape through [`native_carrier_nominal`]; every other Rust item uses this one.
+pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Option<NominalDeclaration> {
+    let crate::SymbolOrigin::RustCrate(path) = &identity.origin else {
+        return None;
+    };
+    if web_carrier_item(path).is_some() {
+        return None;
+    }
+    let native_item = native_nominal_item(identity)?;
+    let module = native_nominal_module(identity)?;
+    let type_parameters = (0..arity).map(|index| format!("T{index}")).collect::<Vec<_>>();
+    Some(NominalDeclaration {
+        trait_adoptions: Vec::new(),
+        native_item,
+        class_inheritance: None,
+        native_type_arguments: Vec::new(),
+        direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
+        canonical: identity.clone(),
+        name: identity.declaration_name.clone(),
+        fields: Vec::new(),
+        field_identities: Vec::new(),
+        field_types: Vec::new(),
+        field_public: Vec::new(),
+        field_aliases: Vec::new(),
+        reflection_fields: None,
+        reflection_metadata: None,
+        comparison_equality: None,
+        public: true,
+        has_field_defaults: false,
+        field_default_body: None,
+        method_partial_defaults: Vec::new(),
+        display_method: None,
+        newtype_deserialize: NewtypeDeserialize::Unselected,
+        newtype_string_conversion: NewtypeStringConversion::Unselected,
+        derives: Vec::new(),
+        named_type_identities: Default::default(),
+        type_parameters,
+        type_parameter_count: arity,
+    })
+}
+
+/// The canonical identity of a Rust item named by its path (`std::sync::Arc`), as a program's Rust import records it.
+pub fn rust_item_identity(path: &str) -> Option<CanonicalSymbolId> {
+    let segments = path.split("::").map(str::to_owned).collect::<Vec<_>>();
+    let name = segments.last()?.clone();
+    if segments.len() < 2 || segments.iter().any(|segment| !is_rust_identifier(segment)) {
+        return None;
+    }
+    Some(CanonicalSymbolId {
+        namespace: crate::SymbolNamespace::OrdinaryLexical,
+        origin: crate::SymbolOrigin::RustCrate(segments),
+        declaration_name: name,
+        kind: crate::SemanticSourceTargetKind::RustItem,
+        scope_discriminant: None,
+        declaration_span: crate::HirSourceSpan::new(0, 0),
+    })
+}
+
+/// Whether `segment` is one Rust identifier (ASCII letters, digits and `_`, not starting with a digit).
+fn is_rust_identifier(segment: &str) -> bool {
+    segment
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && segment.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
 /// A checked local class inheritance edge and the nearest implementations of its ancestor source method slots.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClassInheritance {

@@ -1294,7 +1294,8 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .filter(|item| !item.is_empty());
     for item in library_items {
         let root = item.split("::").next().unwrap_or_default();
-        if !dependencies.externs.iter().any(|(name, _)| name == root) {
+        // The standard library's own crates are always linked, as for external calls below.
+        if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
             return Err(format!("unsupported Body IR native dependency `{root}` for stdlib layout `{item}`").into());
         }
     }

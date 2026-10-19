@@ -305,7 +305,8 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
             }
         }
-        for root in roots {
+        // `std` is already declared by the prelude injection; a second `extern crate std;` would collide with it.
+        for root in roots.into_iter().filter(|root| *root != "std") {
             krate
                 .items
                 .push(declarations::external_crate(root, krate.spans.inner_span));
@@ -425,7 +426,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         reason: reason.into(),
     };
     let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
-    if tcx.generics_of(def).count() != model.library_type_arguments.len() {
+    if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
         return Err(invalid(
             "unsupported stdlib layout type argument count differs from metadata",
         ));
@@ -631,7 +632,7 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
     for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
         let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
         let generics = tcx.generics_of(def);
-        let reason = if generics.count() != model.library_type_arguments.len() {
+        let reason = if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
             Some("stdlib layout type argument count differs from metadata")
         } else if generics.parent_count != 0
             || generics

@@ -242,7 +242,9 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
 /// refusal.
 pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
     match ty {
-        IncanType::RustInteropPath(path) => project_path(&path, facts).unwrap_or(IncanType::RustInteropPath(path)),
+        IncanType::RustInteropPath(path) => project_path(&path, facts)
+            .or_else(|| super::rust_values::project(&path, facts))
+            .unwrap_or(IncanType::RustInteropPath(path)),
         IncanType::Generic { base, args } => IncanType::Generic {
             base,
             args: args.into_iter().map(|arg| project_type(arg, facts)).collect(),

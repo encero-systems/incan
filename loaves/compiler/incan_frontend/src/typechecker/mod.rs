@@ -7463,6 +7463,28 @@ impl TypeChecker {
         self.type_info.declarations.named_type_identities = self.checked_nominal_type_identities();
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
+        self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
+    }
+
+    /// Map each imported Rust item's import and definition spellings to its public import path, once, from the
+    /// metadata import collection already attached; no extraction runs here.
+    fn checked_rust_item_public_paths(&self) -> HashMap<String, String> {
+        let mut paths = HashMap::new();
+        for symbol in self.symbols.all_symbols() {
+            let SymbolKind::RustItem(info) = &symbol.kind else {
+                continue;
+            };
+            let public = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
+            let metadata = info
+                .metadata
+                .clone()
+                .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+            if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path) {
+                paths.entry(definition).or_insert_with(|| public.clone());
+            }
+            paths.insert(public.clone(), public);
+        }
+        paths
     }
 
     /// Retain active native builtin owners once for opaque nominal storage and checked runtime operations, without

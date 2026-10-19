@@ -952,6 +952,10 @@ pub struct RustInteropArtifacts {
     /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
     /// paths without re-running import resolution.
     pub rusttype_canonical_paths: HashMap<String, String>,
+    /// Every spelling of an imported Rust item (its import path and its definition path) → the public path that names
+    /// it. Rust metadata spells a returned type by its definition (`std::sync::poison::mutex::Mutex`), an annotation by
+    /// its import (`std::sync::Mutex`); direct-route storage keys both on the one public path (DD-0006).
+    pub item_public_paths: HashMap<String, String>,
     /// Typechecker-approved mutable-reference projections for generic Rust type annotations.
     ///
     /// Keys are annotation spans. The frontend derives these from complete foreign generic metadata, so lowering
