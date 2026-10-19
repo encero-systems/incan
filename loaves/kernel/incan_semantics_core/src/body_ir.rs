@@ -625,14 +625,8 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         };
         return Some(item.to_owned());
     }
-    if identity.origin == crate::SymbolOrigin::Builtin
-        && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
-        && identity.kind == crate::SemanticSourceTargetKind::Builtin
-        && identity.declaration_name == "ValidationError"
-        && identity.scope_discriminant.is_none()
-        && identity.declaration_span == crate::HirSourceSpan::new(0, 0)
-    {
-        return Some("incan_std_core::validation::ValidationError".to_owned());
+    if let Some(builtin) = crate::RuntimeBuiltinType::from_identity(identity) {
+        return Some(builtin.carrier_path().to_owned());
     }
     let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;

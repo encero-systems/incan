@@ -3660,7 +3660,9 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
         ResolvedType::SelfType => IncanType::SelfType,
         ResolvedType::Ref(inner) => IncanType::Ref(Box::new(semantic_type_from_resolved(inner))),
         ResolvedType::RefMut(inner) => IncanType::RefMut(Box::new(semantic_type_from_resolved(inner))),
-        ResolvedType::RustPath(path) => IncanType::RustInteropPath(path.clone()),
+        // A builtin's own Rust carrier is that builtin, whichever spelling names it.
+        ResolvedType::RustPath(path) => incan_semantics_core::RuntimeBuiltinType::from_carrier_path(path)
+            .map_or_else(|| IncanType::RustInteropPath(path.clone()), IncanType::NativeBuiltin),
         ResolvedType::CallSiteInfer => IncanType::Infer,
         ResolvedType::Unknown => IncanType::Unknown,
     }
