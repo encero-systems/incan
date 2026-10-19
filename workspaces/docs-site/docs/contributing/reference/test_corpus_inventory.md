@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 4890 | 370 | 434 |
 | re-point | 1490 | 92 | 1062 |
 | retire | 1508 | 153 | 0 |
-| unaffected | 2200 | 229 | 5 |
+| unaffected | 2201 | 230 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **10088** | **844** | **1501** |
+| **Total** | **10089** | **845** | **1501** |
 
 - Retire-class tests: 1508, of which twinned 1022, dies 296, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -129,7 +129,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (1393 tests in 132 files: keep 942, re-point 22, retire 105, unaffected 324)
+### `loaves/compiler/incan_driver` (1394 tests in 133 files: keep 942, re-point 22, retire 105, unaffected 325)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -179,6 +179,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 3 | 657 | 91 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
 | `loaves/compiler/incan_driver/src/build/native_sdk_plan.rs` | 4 | 1180 | 420 | unaffected | - | - | - | #1698 | - | Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata. Host macro alias controls cover canonical .so/.dylib/.dll extension classification, implicit model support, renamed registry aliases and version/feature refusals; host rlibs remain supporting-only. These classification controls do not claim platform execution or Windows crate-name extraction support. |
 | `loaves/compiler/incan_driver/src/build/native_source_output.rs` | 1 | 440 | 173 | unaffected | - | - | - | #1337 | replacement 1 | Completed Body IR executable reuse through the shared project-output Store, with source/native argument freshness and caller projection integrity. |
+| `loaves/compiler/incan_driver/src/build/ordinary_library_native.rs` | 1 | 789 | 34 | unaffected | - | - | - | #2252 | - | Ordinary-route test envelope provider selection: standard packages named once with unique keys (#2252); independent of generated Rust. |
 | `loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs` | 7 | 174 | 174 | unaffected | - | - | - | #1337 | - | Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves. |
 | `loaves/compiler/incan_driver/src/build/output_materialization.rs` | 4 | 1469 | 512 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_paths.rs` | 8 | 1580 | 527 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |

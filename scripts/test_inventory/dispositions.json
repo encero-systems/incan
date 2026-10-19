@@ -416,6 +416,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/ordinary_library_native.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary-route test envelope provider selection: standard packages named once with unique keys (#2252); independent of generated Rust.",
+      "owner": 2252,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs": {
       "disposition": "unaffected",
       "notes": "Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves.",
