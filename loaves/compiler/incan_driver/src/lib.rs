@@ -26,7 +26,6 @@ pub mod build_unit;
 pub mod cargo_policy;
 pub mod diagnostics;
 pub mod error;
-pub mod generated_cache;
 pub mod inspect;
 pub mod interop_plan;
 pub mod lock;
@@ -39,12 +38,7 @@ pub mod rust_inspect_workspace;
 #[cfg(feature = "rust_inspect")]
 pub mod sdk_closure;
 pub mod session;
-#[cfg(test)]
-mod source_authority_stage_tests;
 pub mod testing;
 #[cfg(test)]
 mod tests;
 pub mod typecheck;
-
-pub use backend::IrCodegen;
-pub use backend::project::ProjectGenerator;

@@ -5,13 +5,10 @@
 //! (timings, report identity blocks, bake target identities) every one of them uses, so the same prepared project
 //! flows from selection through bake to the report the CLI renders.
 
-pub mod backend_selection;
 pub mod bake;
 pub mod caller_facet;
 pub mod caller_owned;
 pub mod check;
-pub mod checked_emission;
-pub mod cold_bootstrap;
 pub mod executable;
 mod file_freshness;
 pub mod inline_command;
@@ -31,7 +28,6 @@ pub mod native_sdk;
 pub(crate) mod native_sdk_plan;
 pub mod native_source_output;
 mod retained_inputs;
-pub mod test_generation;
 pub use native_sdk_plan::NativeSdkCommandContext;
 pub(crate) mod ordinary_library_native;
 pub(crate) mod ordinary_support;
@@ -43,8 +39,6 @@ pub mod oven_project;
 pub mod package_loafs;
 pub mod plan_authority;
 pub mod plan_selection;
-#[cfg(test)]
-pub mod prepare_project;
 pub mod provider_compilation;
 pub mod provider_metadata;
 pub mod publication;

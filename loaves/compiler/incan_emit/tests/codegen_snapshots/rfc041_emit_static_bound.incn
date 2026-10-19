@@ -1,4 +1,0 @@
-from std.rust import Static
-
-def pin[T with Static](value: T) -> T:
-  return value

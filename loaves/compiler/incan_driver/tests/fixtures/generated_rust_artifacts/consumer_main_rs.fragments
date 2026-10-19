@@ -1,5 +1,0 @@
-use widgets::Widget as PublicWidget;
----
-let w: PublicWidget = widgets::make_widget("ok".to_string());
----
-println!("{}", w.name);
