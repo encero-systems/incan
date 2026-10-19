@@ -36,7 +36,7 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_or_reuse_published_sdk_inventory, provider_source_used_module_paths, provider_used_module_paths,
+    discover_active_sdk_inventory, provider_source_used_module_paths, provider_used_module_paths,
     resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
@@ -891,10 +891,10 @@ impl CompilationSession {
                 // Without the build pipeline (the `cli` feature, #1479) nothing can prepare providers, so a session
                 // reuses the inventory a toolchain command published, as an Oven command does.
                 #[cfg(not(feature = "cli"))]
-                SdkInventorySource::PrepareNativeIfAbsent => discover_or_reuse_published_sdk_inventory()?,
+                SdkInventorySource::PrepareNativeIfAbsent => discover_active_sdk_inventory()?,
                 // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
                 // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
-                SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+                SdkInventorySource::DiscoverOnly => discover_active_sdk_inventory()?,
             }
         };
         drop(phase);
@@ -1583,7 +1583,7 @@ mod tests {
     #[test]
     #[ignore = "requires an explicitly selected matching native SDK publication"]
     fn native_sdk_component_uses_published_public_dependencies() -> Result<(), Box<dyn std::error::Error>> {
-        let inventory = discover_or_reuse_published_sdk_inventory()?.ok_or("matching SDK required")?;
+        let inventory = discover_active_sdk_inventory()?.ok_or("matching SDK required")?;
         let stdlib = oven_model::toolchain_layout::find_stdlib_root().ok_or("stdlib source required")?;
         let catalog =
             incan_provider::SdkSourceCatalog::read_from_path(&stdlib.join(incan_provider::SDK_SOURCE_CATALOG_FILE))?;

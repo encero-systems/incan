@@ -6,7 +6,7 @@ Provider and SDK contracts (manifest types, component catalog, inventory) and th
 
 ## Current sources
 
-- `loaves/compiler/incan_provider/src/` — the loaders: `inventory`, `requirements`, `sdk_store`, `sdk_build`, `sdk_native`, `vocab_extraction`, `effect_digest`, `lock_semantics`
+- `loaves/compiler/incan_provider/src/` — the loaders: `inventory`, `requirements`, `sdk_native`, `vocab_extraction`, `lock_semantics`
 - `loaves/compiler/incan_provider/src/compiled_sdk.rs`
 - `loaves/compiler/incan_provider/src/dependency_resolver.rs` — `requirements` reads it, so it sits here rather than in the driver
 

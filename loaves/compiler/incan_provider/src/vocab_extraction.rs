@@ -104,28 +104,9 @@ pub fn collect_native_sdk_vocab_metadata(
     rustc: &Path,
     desugarer_scratch: &Path,
 ) -> ProviderResult<Option<LibraryVocabExtraction>> {
-    let Some(vocab) = manifest.vocab() else {
+    let Some(companion) = vocab_companion_declaration(manifest, project_root)? else {
         return Ok(None);
     };
-    let crate_path = vocab
-        .crate_path
-        .as_deref()
-        .filter(|path| !path.is_empty())
-        .ok_or_else(|| ProviderError::failure("native SDK vocabulary has no source path"))?;
-    let companion = resolve_companion_crate_root(project_root, crate_path);
-    let project = manifest
-        .project
-        .as_ref()
-        .ok_or_else(|| ProviderError::failure("native vocabulary has no project identity"))?;
-    let name = project
-        .name
-        .as_deref()
-        .ok_or_else(|| ProviderError::failure("native vocabulary has no package name"))?;
-    let version = project
-        .version
-        .as_deref()
-        .ok_or_else(|| ProviderError::failure("native vocabulary has no package version"))?;
-    let package_name = format!("{name}_vocab");
     let mut externs = BTreeMap::new();
     let mut dependency_search_paths = Vec::new();
     for unit in closure.units() {
@@ -164,21 +145,14 @@ pub fn collect_native_sdk_vocab_metadata(
         externs,
         auxiliary_targets: BTreeMap::new(),
     };
-    let metadata = extract_vocab_metadata_with_direct_rustc_inputs(
-        &context,
-        &companion,
-        &package_name,
-        &companion.join("src/lib.rs"),
-        "2024",
-        version,
-    )?;
-    ensure_supported_vocab_metadata_version(&metadata, &companion)?;
+    let metadata = extract_vocab_metadata_with_direct_rustc(Some(&context), &companion)?;
+    ensure_supported_vocab_metadata_version(&metadata, &companion.crate_root)?;
     let pending_desugarer_artifact = match metadata.desugarer.as_ref() {
         Some(desugarer) => {
             let auxiliary = closure.auxiliary_targets().get(&desugarer.target).ok_or_else(|| {
                 ProviderError::failure(format!(
-                    "native SDK vocabulary {name} requires an admitted {} desugarer closure, and SDK preparation retained none",
-                    desugarer.target
+                    "vocabulary {} requires an admitted {} desugarer closure, and preparation retained none",
+                    companion.package_name, desugarer.target
                 ))
             })?;
             let mut auxiliary_targets = BTreeMap::new();
@@ -190,9 +164,7 @@ pub fn collect_native_sdk_vocab_metadata(
             build_pending_desugarer_artifact_with_direct_rustc(
                 &desugarer_context,
                 &companion,
-                &companion.join("Cargo.toml"),
                 desugarer_scratch,
-                &package_name,
                 desugarer,
             )?
         }
@@ -201,8 +173,8 @@ pub fn collect_native_sdk_vocab_metadata(
     Ok(Some(LibraryVocabExtraction {
         compatibility_activations: project_soft_keyword_activations(&metadata.keyword_registrations),
         payload: VocabExports {
-            crate_path: crate_path.to_string(),
-            package_name,
+            crate_path: companion.declared_crate_path,
+            package_name: companion.package_name,
             keyword_registrations: metadata.keyword_registrations,
             dsl_surfaces: metadata.dsl_surfaces,
             provider_manifest: metadata.library_manifest,
@@ -313,23 +285,11 @@ fn collect_library_vocab_metadata_with_mode(
     mode: VocabExtractionMode,
     direct_rustc: Option<&OvenVocabDirectRustcContext>,
 ) -> ProviderResult<Option<LibraryVocabExtraction>> {
-    let Some(vocab) = manifest.vocab() else {
+    let Some(companion) = vocab_companion_declaration(manifest, project_root)? else {
         return Ok(None);
     };
-
-    let declared_crate_path = vocab
-        .crate_path
-        .clone()
-        .ok_or_else(|| ProviderError::failure("`[vocab]` section requires a `crate` field in loaf.toml".to_string()))?;
-    let declared_crate_path = declared_crate_path.trim().to_string();
-    if declared_crate_path.is_empty() {
-        return Err(ProviderError::failure("`[vocab].crate` cannot be empty".to_string()));
-    }
-
-    let companion_crate_root = resolve_companion_crate_root(project_root, &declared_crate_path);
-    validate_companion_crate_root(&companion_crate_root)?;
-    let cargo_manifest_path = companion_crate_root.join("Cargo.toml");
-    let package_name = read_companion_package_name(&cargo_manifest_path)?;
+    let companion_crate_root = companion.crate_root.clone();
+    let package_name = companion.package_name.clone();
     let cache_context = vocab_companion_cache_context(
         project_root,
         &companion_crate_root,
@@ -353,7 +313,7 @@ fn collect_library_vocab_metadata_with_mode(
     let metadata = if let Some(cached) = cached.as_ref() {
         cached.metadata.clone()
     } else {
-        extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name, direct_rustc)?
+        extract_vocab_metadata_from_library_entrypoint(&companion, direct_rustc)?
     };
     ensure_supported_vocab_metadata_version(&metadata, &companion_crate_root)?;
     let mut pending_desugarer_artifact = cached
@@ -363,29 +323,17 @@ fn collect_library_vocab_metadata_with_mode(
         && let Some(desugarer) = metadata.desugarer.as_ref()
         && pending_desugarer_artifact.is_none()
     {
-        if let Some(context) = direct_rustc {
-            let desugarer_target_dir = cache_context.cache_dir.join("desugarer-target");
-            pending_desugarer_artifact = build_pending_desugarer_artifact_with_direct_rustc(
-                context,
-                &companion_crate_root,
-                &cargo_manifest_path,
-                &desugarer_target_dir,
-                &package_name,
-                desugarer,
-            )?;
+        let inherited = if direct_rustc.is_none() {
+            oven_compiler_suite_rustc_context()?
         } else {
-            ensure_companion_supports_cdylib(&cargo_manifest_path)?;
-            ensure_rust_target_installed(&desugarer.target)?;
-            let desugarer_target_dir = cache_context.cache_dir.join("desugarer-target");
-            run_cargo_build_for_target(
-                &cargo_manifest_path,
-                &desugarer_target_dir,
-                &desugarer.target,
-                &desugarer.profile,
-            )?;
-            pending_desugarer_artifact =
-                build_pending_desugarer_artifact(&desugarer_target_dir, &package_name, metadata.desugarer.as_ref())?;
-        }
+            None
+        };
+        let context = direct_rustc.or(inherited.as_ref()).ok_or_else(|| {
+            ProviderError::failure("building a vocab desugarer requires a prepared native compiler capability")
+        })?;
+        let desugarer_target_dir = cache_context.cache_dir.join("desugarer-target");
+        pending_desugarer_artifact =
+            build_pending_desugarer_artifact_with_direct_rustc(context, &companion, &desugarer_target_dir, desugarer)?;
     }
     if !cache_hit
         || (mode == VocabExtractionMode::PackageArtifacts
@@ -402,7 +350,7 @@ fn collect_library_vocab_metadata_with_mode(
 
     Ok(Some(LibraryVocabExtraction {
         payload: VocabExports {
-            crate_path: declared_crate_path,
+            crate_path: companion.declared_crate_path.clone(),
             package_name,
             keyword_registrations: metadata.keyword_registrations,
             dsl_surfaces: metadata.dsl_surfaces,
@@ -673,121 +621,71 @@ fn resolve_companion_crate_root(project_root: &Path, declared_crate_path: &str) 
     }
 }
 
-/// Refuse a `[vocab].crate` root that is missing, is not a directory, or lacks `Cargo.toml` or `src/lib.rs`.
-fn validate_companion_crate_root(crate_root: &Path) -> ProviderResult<()> {
-    if !crate_root.exists() {
-        return Err(ProviderError::failure(format!(
-            "`[vocab].crate` does not exist: {}",
-            crate_root.display()
-        )));
-    }
-    if !crate_root.is_dir() {
-        return Err(ProviderError::failure(format!(
-            "`[vocab].crate` must point to a directory: {}",
-            crate_root.display()
-        )));
-    }
-
-    let cargo_toml = crate_root.join("Cargo.toml");
-    if !cargo_toml.is_file() {
-        return Err(ProviderError::failure(format!(
-            "vocab companion crate is missing Cargo.toml: {}",
-            cargo_toml.display()
-        )));
-    }
-
-    let lib_rs = crate_root.join("src").join("lib.rs");
-    if !lib_rs.is_file() {
-        return Err(ProviderError::failure(format!(
-            "vocab companion crate is missing src/lib.rs: {}",
-            lib_rs.display()
-        )));
-    }
-
-    Ok(())
+/// A vocab companion: the Rust library a Loaf names in `[vocab].crate`, compiled directly by rustc.
+///
+/// The companion belongs to its enclosing Loaf and has no manifest of its own. Its package is `<project>_vocab` at
+/// the project's version, its source is `src/lib.rs` below the declared directory, and its edition is the project's
+/// `[rust].edition` (2024 when absent). Metadata extraction compiles it as an `rlib`, a desugarer build as a `cdylib`.
+struct VocabCompanionDeclaration {
+    declared_crate_path: String,
+    crate_root: PathBuf,
+    package_name: String,
+    version: String,
+    edition: String,
+    source: PathBuf,
 }
 
-/// Read the companion crate's package name from its Cargo manifest; the desugarer artifact is named after it.
-fn read_companion_package_name(cargo_manifest_path: &Path) -> ProviderResult<String> {
-    let content = std::fs::read_to_string(cargo_manifest_path)
-        .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
-    let cargo_toml = toml::from_str::<toml::Value>(&content)
-        .map_err(|err| ProviderError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
-
-    let package_name = cargo_toml
-        .get("package")
-        .and_then(toml::Value::as_table)
-        .and_then(|pkg| pkg.get("name"))
-        .and_then(toml::Value::as_str)
+/// Derive the companion a manifest's `[vocab]` section declares, refusing a missing project identity or source.
+fn vocab_companion_declaration(
+    manifest: &ProjectManifest,
+    project_root: &Path,
+) -> ProviderResult<Option<VocabCompanionDeclaration>> {
+    let Some(vocab) = manifest.vocab() else {
+        return Ok(None);
+    };
+    let declared_crate_path = vocab
+        .crate_path
+        .as_deref()
         .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| {
-            ProviderError::failure(format!(
-                "vocab companion crate {} is missing [package].name",
-                cargo_manifest_path.display()
-            ))
-        })?;
-
-    Ok(package_name.to_string())
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| ProviderError::failure("`[vocab]` section requires a non-empty `crate` field in loaf.toml"))?
+        .to_string();
+    let project = manifest
+        .project
+        .as_ref()
+        .ok_or_else(|| ProviderError::failure("a vocab companion's Loaf has no [project] identity"))?;
+    let name = project
+        .name
+        .as_deref()
+        .ok_or_else(|| ProviderError::failure("a vocab companion's Loaf has no package name"))?;
+    let version = project
+        .version
+        .clone()
+        .ok_or_else(|| ProviderError::failure("a vocab companion's Loaf has no package version"))?;
+    let edition = manifest
+        .rust_facet
+        .as_ref()
+        .and_then(|facet| facet.edition.clone())
+        .unwrap_or_else(|| "2024".to_string());
+    let crate_root = resolve_companion_crate_root(project_root, &declared_crate_path);
+    let source = crate_root.join("src/lib.rs");
+    if !source.is_file() {
+        return Err(ProviderError::failure(format!(
+            "vocab companion {} has no library source {}",
+            crate_root.display(),
+            source.display()
+        )));
+    }
+    Ok(Some(VocabCompanionDeclaration {
+        declared_crate_path,
+        crate_root,
+        package_name: format!("{name}_vocab"),
+        version,
+        edition,
+        source,
+    }))
 }
 
-/// Build one generated vocab companion for the requested Rust target and profile.
-fn run_cargo_build_for_target(
-    cargo_manifest_path: &Path,
-    target_dir: &Path,
-    target: &str,
-    profile: &str,
-) -> ProviderResult<()> {
-    let mut command = oven_cargo_compat::cargo_process::cargo_command();
-    oven_cargo_compat::cargo_process::configure_cargo_target(&mut command, target_dir);
-    command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
-    if profile == "release" {
-        command.arg("--release");
-    }
-    command.arg("--target").arg(target).arg("--quiet");
-
-    let output = command.output().map_err(|err| {
-        ProviderError::failure(format!("failed to run cargo build for vocab desugarer target: {err}"))
-    })?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(ProviderError::failure(format!(
-        "vocab companion crate failed to build desugarer target `{target}` profile `{profile}` ({}):\n{}",
-        cargo_manifest_path.display(),
-        stderr.trim()
-    )))
-}
-
-/// Refuse a companion crate whose manifest does not declare the `cdylib` crate type the desugarer build needs.
-fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> ProviderResult<()> {
-    let content = fs::read_to_string(cargo_manifest_path)
-        .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
-    let cargo_toml = toml::from_str::<toml::Value>(&content)
-        .map_err(|err| ProviderError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
-    let has_cdylib = cargo_toml
-        .get("lib")
-        .and_then(toml::Value::as_table)
-        .and_then(|lib| lib.get("crate-type"))
-        .and_then(toml::Value::as_array)
-        .map(|crate_types| {
-            crate_types
-                .iter()
-                .filter_map(toml::Value::as_str)
-                .any(|crate_type| crate_type == "cdylib")
-        })
-        .unwrap_or(false);
-    if has_cdylib {
-        Ok(())
-    } else {
-        Err(ProviderError::failure(format!(
-            "vocab companion crate `{}` must declare `[lib].crate-type` including `cdylib` to package a desugarer (example: `crate-type = [\"rlib\", \"cdylib\"]`)",
-            cargo_manifest_path.display()
-        )))
-    }
-}
 
 /// Require the Rust target the vocab desugarer builds for, asking the toolchain that will actually build it.
 ///
@@ -841,8 +739,7 @@ fn parse_installed_rust_targets(stdout: &str) -> HashSet<String> {
 /// Missing capabilities are refused before reading companion inputs or creating a helper workspace; extraction
 /// never constructs a Cargo package, copies a workspace lockfile or selects an ambient dependency graph.
 fn extract_vocab_metadata_from_library_entrypoint(
-    companion_crate_root: &Path,
-    package_name: &str,
+    companion: &VocabCompanionDeclaration,
     direct_rustc: Option<&OvenVocabDirectRustcContext>,
 ) -> ProviderResult<incan_vocab::VocabMetadata> {
     let inherited = if direct_rustc.is_none() {
@@ -850,7 +747,7 @@ fn extract_vocab_metadata_from_library_entrypoint(
     } else {
         None
     };
-    extract_vocab_metadata_with_direct_rustc(direct_rustc.or(inherited.as_ref()), companion_crate_root, package_name)
+    extract_vocab_metadata_with_direct_rustc(direct_rustc.or(inherited.as_ref()), companion)
 }
 
 /// Load the direct-Rustc capability exported by an active Oven compiler-suite scheduler.
@@ -1005,30 +902,26 @@ fn oven_vocab_auxiliary_target_context(
 
 /// Extract a companion's registration through the suite's receipt-bound direct-Rustc closure.
 ///
-/// This intentionally supports only dependencies already named by that closure. A companion that needs an arbitrary
-/// Cargo package fails as an unsupported direct compilation; the normal command never resolves or launches Cargo.
+/// This intentionally supports only dependencies already named by that closure; a companion that needs any other
+/// package fails as an unsupported direct compilation.
 fn extract_vocab_metadata_with_direct_rustc(
     context: Option<&OvenVocabDirectRustcContext>,
-    companion_crate_root: &Path,
-    package_name: &str,
+    companion: &VocabCompanionDeclaration,
 ) -> ProviderResult<incan_vocab::VocabMetadata> {
     let context = context.ok_or_else(|| {
-        ProviderError::failure(
-            "vocabulary extraction requires a prepared native compiler capability; Cargo fallback is forbidden",
-        )
+        ProviderError::failure("vocabulary extraction requires a prepared native compiler capability")
     })?;
-    let (source, edition, version) = vocab_companion_rustc_inputs(companion_crate_root)?;
     extract_vocab_metadata_with_direct_rustc_inputs(
         context,
-        companion_crate_root,
-        package_name,
-        &source,
-        &edition,
-        &version,
+        &companion.crate_root,
+        &companion.package_name,
+        &companion.source,
+        &companion.edition,
+        &companion.version,
     )
 }
 
-/// Extract metadata from explicit native source inputs without interpreting a Cargo companion declaration.
+/// Extract metadata from explicit native source inputs.
 fn extract_vocab_metadata_with_direct_rustc_inputs(
     context: &OvenVocabDirectRustcContext,
     companion_crate_root: &Path,
@@ -1104,47 +997,6 @@ fn extract_vocab_metadata_with_direct_rustc_inputs(
     })();
     let _ = fs::remove_dir_all(&extraction_dir);
     result
-}
-
-/// Read the direct-Rustc-relevant companion manifest fields without asking Cargo to interpret the package.
-fn vocab_companion_rustc_inputs(companion_crate_root: &Path) -> ProviderResult<(PathBuf, String, String)> {
-    let manifest_path = companion_crate_root.join("Cargo.toml");
-    let content = fs::read_to_string(&manifest_path)
-        .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", manifest_path.display())))?;
-    let manifest = toml::from_str::<toml::Value>(&content)
-        .map_err(|err| ProviderError::failure(format!("failed to parse {}: {err}", manifest_path.display())))?;
-    let package = manifest.get("package").and_then(toml::Value::as_table).ok_or_else(|| {
-        ProviderError::failure(format!(
-            "vocab companion crate {} is missing [package]",
-            manifest_path.display()
-        ))
-    })?;
-    let edition = package
-        .get("edition")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("2015")
-        .to_string();
-    let version = package
-        .get("version")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("0.0.0")
-        .to_string();
-    let source = manifest
-        .get("lib")
-        .and_then(toml::Value::as_table)
-        .and_then(|library| library.get("path"))
-        .and_then(toml::Value::as_str)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("src/lib.rs"));
-    let source = companion_crate_root.join(source);
-    if !source.is_file() {
-        return Err(ProviderError::failure(format!(
-            "vocab companion crate {} has no direct-Rustc library source {}",
-            companion_crate_root.display(),
-            source.display()
-        )));
-    }
-    Ok((source, edition, version))
 }
 
 /// Compile one temporary vocab companion/helper source through only the already selected Oven closure.
@@ -1247,10 +1099,8 @@ fn run_vocab_direct_rustc(
 /// Build a declared Wasm desugarer through the receipt-selected cross-target Oven closure.
 fn build_pending_desugarer_artifact_with_direct_rustc(
     context: &OvenVocabDirectRustcContext,
-    companion_crate_root: &Path,
-    cargo_manifest_path: &Path,
+    companion: &VocabCompanionDeclaration,
     target_dir: &Path,
-    package_name: &str,
     desugarer: &incan_vocab::DesugarerMetadata,
 ) -> ProviderResult<Option<PendingDesugarerArtifact>> {
     if !matches!(desugarer.artifact_kind, incan_vocab::DesugarerArtifactKind::WasmModule) {
@@ -1258,9 +1108,8 @@ fn build_pending_desugarer_artifact_with_direct_rustc(
             "unsupported vocab desugarer artifact kind (expected WasmModule)".to_string(),
         ));
     }
-    ensure_companion_supports_cdylib(cargo_manifest_path)?;
     ensure_rust_target_installed(&desugarer.target)?;
-    let (source, edition, version) = vocab_companion_rustc_inputs(companion_crate_root)?;
+    let package_name = companion.package_name.as_str();
     let artifact_file_name = desugarer
         .file_name
         .clone()
@@ -1271,13 +1120,13 @@ fn build_pending_desugarer_artifact_with_direct_rustc(
         .join(&artifact_file_name);
     run_vocab_direct_rustc(
         context,
-        companion_crate_root,
-        &source,
+        &companion.crate_root,
+        &companion.source,
         &package_name.replace('-', "_"),
         "cdylib",
-        &edition,
+        &companion.edition,
         package_name,
-        &version,
+        &companion.version,
         &output,
         None,
         Some(&desugarer.target),
@@ -1694,24 +1543,10 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
         Ok(())
     }
 
-    fn write_vocab_companion_crate(
-        project_root: &Path,
-        crate_dir: &str,
-        package_name: &str,
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    /// Write a manifest-free companion below `crate_dir`; its enclosing Loaf supplies the package identity.
+    fn write_vocab_companion_crate(project_root: &Path, crate_dir: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let crate_root = project_root.join(crate_dir);
         fs::create_dir_all(crate_root.join("src"))?;
-        fs::write(
-            crate_root.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
-                oven_model::toolchain_layout::development_root()
-                    .join(oven_model::toolchain_layout::development_support_crate_dir(
-                        "incan_vocab"
-                    ))
-                    .display()
-            ),
-        )?;
         fs::write(
             crate_root.join("src/lib.rs"),
             "pub fn library_vocab() -> incan_vocab::VocabRegistration {\n    incan_vocab::VocabRegistration::new().with_keyword_registration(\n        incan_vocab::KeywordRegistration {\n            activation: incan_vocab::KeywordActivation::OnImport {\n                namespace: \"widgets.dsl\".to_string(),\n            },\n            keywords: vec![incan_vocab::KeywordSpec::new(\n                \"await\",\n                incan_vocab::KeywordSurfaceKind::ControlFlow,\n            )],\n            valid_decorators: Vec::new(),\n        }\n    )\n}\n",
@@ -1759,70 +1594,51 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
         assert_eq!(resolved, project_root.join("crates/mylib_vocab"));
     }
 
-    #[test]
-    fn validate_companion_crate_root_rejects_missing_src_lib() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let crate_root = temp.path().join("vocab_companion");
-        fs::create_dir_all(&crate_root)?;
+    /// Parse a `widgets` Loaf manifest at `project_root` that declares `[vocab].crate = "vocab_companion"`.
+    fn widgets_vocab_manifest(project_root: &Path) -> Result<ProjectManifest, Box<dyn std::error::Error>> {
+        let manifest_path = project_root.join("loaf.toml");
         fs::write(
-            crate_root.join("Cargo.toml"),
-            "[package]\nname = \"vocab_companion\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            &manifest_path,
+            "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
         )?;
-
-        let err = validate_companion_crate_root(&crate_root)
-            .err()
-            .ok_or("expected validation failure")?;
-        assert!(err.to_string().contains("missing src/lib.rs"));
-        Ok(())
+        Ok(ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?)
     }
 
     #[test]
-    fn read_companion_package_name_reads_package_name() -> Result<(), Box<dyn std::error::Error>> {
+    fn vocab_companion_declaration_rejects_missing_src_lib() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let cargo_toml = temp.path().join("Cargo.toml");
-        fs::write(
-            &cargo_toml,
-            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\n",
-        )?;
+        fs::create_dir_all(temp.path().join("vocab_companion"))?;
+        let manifest = widgets_vocab_manifest(temp.path())?;
 
-        let package_name = read_companion_package_name(&cargo_toml)?;
-        assert_eq!(package_name, "widgets_vocab_companion");
-        Ok(())
-    }
-
-    #[test]
-    fn ensure_companion_supports_cdylib_accepts_cdylib_crate_type() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let cargo_toml = temp.path().join("Cargo.toml");
-        fs::write(
-            &cargo_toml,
-            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\n\n[lib]\ncrate-type = [\"rlib\", \"cdylib\"]\n",
-        )?;
-        ensure_companion_supports_cdylib(&cargo_toml)?;
-        Ok(())
-    }
-
-    #[test]
-    fn ensure_companion_supports_cdylib_rejects_missing_cdylib_crate_type() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let cargo_toml = temp.path().join("Cargo.toml");
-        fs::write(
-            &cargo_toml,
-            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n",
-        )?;
-        let err = match ensure_companion_supports_cdylib(&cargo_toml) {
-            Ok(()) => return Err("expected missing cdylib to fail".into()),
+        let err = match vocab_companion_declaration(&manifest, temp.path()) {
+            Ok(_) => return Err("expected a missing src/lib.rs to fail".into()),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("cdylib"));
+        assert!(err.to_string().contains("has no library source"));
+        Ok(())
+    }
+
+    #[test]
+    fn vocab_companion_declaration_names_the_package_after_its_loaf() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        write_vocab_companion_crate(temp.path(), "vocab_companion")?;
+        let manifest = widgets_vocab_manifest(temp.path())?;
+
+        let companion = vocab_companion_declaration(&manifest, temp.path())?.ok_or("expected a companion")?;
+        assert_eq!(companion.package_name, "widgets_vocab");
+        assert_eq!(companion.version, "0.1.0");
+        assert_eq!(companion.edition, "2024");
+        assert_eq!(companion.source, temp.path().join("vocab_companion/src/lib.rs"));
         Ok(())
     }
 
     #[test]
     fn extract_vocab_metadata_from_library_entrypoint_parses_valid_payload() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
-        let parsed = extract_vocab_metadata_from_library_entrypoint(&crate_root, "widgets_vocab_companion", None)?;
+        write_vocab_companion_crate(temp.path(), "vocab_companion")?;
+        let manifest = widgets_vocab_manifest(temp.path())?;
+        let companion = vocab_companion_declaration(&manifest, temp.path())?.ok_or("expected a companion")?;
+        let parsed = extract_vocab_metadata_from_library_entrypoint(&companion, None)?;
         assert_eq!(parsed.keyword_registrations.len(), 1);
         assert_eq!(
             parsed.keyword_registrations[0].activation,
@@ -1833,13 +1649,20 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
         Ok(())
     }
 
-    /// Missing native authority is refused before companion discovery or helper generation, without a Cargo route.
+    /// Missing native authority is refused before helper generation.
     #[test]
     fn vocabulary_extraction_refuses_missing_native_capability() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let missing_companion = temp.path().join("companion-not-created");
-        let error = match extract_vocab_metadata_with_direct_rustc(None, &missing_companion, "widgets_vocab_companion")
-        {
+        let companion = VocabCompanionDeclaration {
+            declared_crate_path: "companion-not-created".to_string(),
+            crate_root: missing_companion.clone(),
+            package_name: "widgets_vocab".to_string(),
+            version: "0.1.0".to_string(),
+            edition: "2024".to_string(),
+            source: missing_companion.join("src/lib.rs"),
+        };
+        let error = match extract_vocab_metadata_with_direct_rustc(None, &companion) {
             Ok(_) => return Err("missing native capability unexpectedly admitted extraction".into()),
             Err(error) => error,
         };
@@ -1848,7 +1671,6 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
                 .to_string()
                 .contains("requires a prepared native compiler capability")
         );
-        assert!(error.to_string().contains("Cargo fallback is forbidden"));
         assert_eq!(fs::read_dir(temp.path())?.count(), 0);
         Ok(())
     }
@@ -1857,21 +1679,10 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
     fn collect_library_vocab_metadata_requires_library_vocab_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project_root = temp.path().join("project");
-        fs::create_dir_all(&project_root)?;
         let crate_root = project_root.join("vocab_companion");
         fs::create_dir_all(crate_root.join("src"))?;
-        fs::write(
-            crate_root.join("Cargo.toml"),
-            "[package]\nname = \"widgets_vocab_companion\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
-        )?;
         fs::write(crate_root.join("src/lib.rs"), "pub fn register_vocab() {}\n")?;
-
-        let manifest_path = project_root.join("loaf.toml");
-        fs::write(
-            &manifest_path,
-            "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
-        )?;
-        let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
+        let manifest = widgets_vocab_manifest(&project_root)?;
 
         let err = collect_library_vocab_metadata(&manifest, &project_root, None, None)
             .err()
@@ -1886,19 +1697,13 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
         let temp = tempfile::tempdir()?;
         let project_root = temp.path().join("project");
         fs::create_dir_all(&project_root)?;
-        write_vocab_companion_crate(&project_root, "vocab_companion", "widgets_vocab_companion")?;
-
-        let manifest_path = project_root.join("loaf.toml");
-        fs::write(
-            &manifest_path,
-            "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
-        )?;
-        let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
+        write_vocab_companion_crate(&project_root, "vocab_companion")?;
+        let manifest = widgets_vocab_manifest(&project_root)?;
 
         let extraction = collect_library_vocab_metadata(&manifest, &project_root, None, None)?
             .ok_or("expected vocab metadata extraction to return payload")?;
         assert_eq!(extraction.payload.crate_path, "vocab_companion");
-        assert_eq!(extraction.payload.package_name, "widgets_vocab_companion");
+        assert_eq!(extraction.payload.package_name, "widgets_vocab");
         assert_eq!(extraction.payload.keyword_registrations.len(), 1);
         assert_eq!(
             extraction.compatibility_activations,
@@ -1916,18 +1721,12 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
         let temp = tempfile::tempdir()?;
         let root = temp.path().join("project");
         fs::create_dir_all(&root)?;
-        let companion =
-            write_vocab_companion_crate(&root, "companion", "dev7_checked_provider_metadata_companion_cached")?;
+        let companion = write_vocab_companion_crate(&root, "companion")?;
         let path = root.join("loaf.toml");
-        fs::write(&path, "[project]\nname='widgets'\n[vocab]\ncrate='companion'\n")?;
+        fs::write(&path, "[project]\nname='widgets'\nversion='0.1.0'\n[vocab]\ncrate='companion'\n")?;
         let manifest = ProjectManifest::from_str(&fs::read_to_string(&path)?, &path)?;
         let target = temp.path().join("cache");
-        let context = vocab_companion_cache_context(
-            &root,
-            &companion,
-            "dev7_checked_provider_metadata_companion_cached",
-            Some(&target),
-        )?;
+        let context = vocab_companion_cache_context(&root, &companion, "widgets_vocab", Some(&target))?;
         let metadata = incan_vocab::VocabMetadata {
             keyword_registrations: vec![incan_vocab::KeywordRegistration {
                 activation: incan_vocab::KeywordActivation::OnImport {
@@ -1970,7 +1769,7 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
     #[test]
     fn vocab_companion_fingerprint_changes_when_source_changes() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
+        let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion")?;
         let first = vocab_companion_fingerprint(&crate_root, "widgets_vocab_companion")?;
         fs::write(
             crate_root.join("src/lib.rs"),
@@ -1987,7 +1786,7 @@ printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
         let project_root = temp.path().join("project");
         let generated_target = temp.path().join("generated-target");
         fs::create_dir_all(&project_root)?;
-        let crate_root = write_vocab_companion_crate(&project_root, "vocab_companion", "widgets_vocab_companion")?;
+        let crate_root = write_vocab_companion_crate(&project_root, "vocab_companion")?;
 
         let fingerprint = vocab_companion_fingerprint(&crate_root, "widgets_vocab_companion")?;
         let cache_context = vocab_companion_cache_context(

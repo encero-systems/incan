@@ -880,7 +880,7 @@ mod tests {
     #[ignore = "requires an explicitly selected matching native SDK publication"]
     fn sdk_publication_dependencies_share_one_exact_core_owner() -> Result<(), Box<dyn std::error::Error>> {
         let inventory =
-            incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?.ok_or("SDK required")?;
+            incan_provider::inventory::discover_active_sdk_inventory()?.ok_or("SDK required")?;
         let stdlib = oven_model::toolchain_layout::find_stdlib_root().ok_or("stdlib source required")?;
         let catalog =
             incan_provider::SdkSourceCatalog::read_from_path(&stdlib.join(incan_provider::SDK_SOURCE_CATALOG_FILE))?;

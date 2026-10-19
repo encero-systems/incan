@@ -8,7 +8,6 @@
 pub use incan_frontend::provider::*;
 
 pub mod dependency_resolver;
-pub mod effect_digest;
 pub mod inventory;
 pub mod lock_semantics;
 pub mod requirements;

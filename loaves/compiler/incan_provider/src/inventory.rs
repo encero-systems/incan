@@ -1,6 +1,6 @@
 //! Discovering the active SDK inventory and projecting the selected components into project requirements.
 //!
-//! A command either finds a published inventory or prepares one (`sdk_build`), then narrows it to the components
+//! A command finds the active published inventory, then narrows it to the components
 //! the manifest and the program's imports actually use.
 
 #[cfg(test)]
@@ -71,20 +71,6 @@ pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory
         )
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(Some(Arc::new(inventory)))
-}
-
-/// Discover an installed SDK inventory, or reuse the one a source checkout already published, without ever building.
-///
-/// This is the resolution every command that must not launch the provider builder uses (the Oven `run`, `build`,
-/// `oven bake`, test collection and formatting). It finds what the driver-owned native publisher would return
-/// whenever that needs no build: an installed or explicitly named inventory first, then the source checkout's
-/// receipt-sealed source publication. A checkout with only a compatibility publication still yields `None`;
-/// consumers cannot replace sealed native authority with that publisher's Cargo-based identity.
-pub fn discover_or_reuse_published_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = discover_active_sdk_inventory()? {
-        return Ok(Some(inventory));
-    }
-    crate::sdk_build::find_published_sdk_provider_inventory()
 }
 
 /// Reject explicit component-aware selection when the active toolchain exposes only the legacy monolithic SDK.

@@ -100,22 +100,10 @@ pub fn digest_dependency_specs(
 
 /// The provider facts Oven asks the compiler for instead of reading them itself.
 ///
-/// The compat publisher stages the compiler's SDK provider tree and rewrites the staged providers' dependency
-/// digests; a dependency digest has to recognize a packaged Incan provider by its sealed artifact. Both are facts
-/// about Incan packages, so the compiler implements this and hands it in with every request that needs it; the Oven
-/// ring names no compiler crate.
+/// A dependency digest has to recognize a packaged Incan provider by its sealed artifact and an authored native Loaf
+/// by its source closure. Both are facts about Incan packages, so the compiler implements this and hands it in with
+/// every request that needs it; the Oven ring names no compiler crate.
 pub trait OvenProviderHooks: Send + Sync {
-    /// The root of the SDK provider tree to stage: the one an explicit inventory path describes, or the active
-    /// toolchain's when there is none. An error is a preparation miss the caller reports verbatim.
-    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError>;
-
-    /// The inventory file's name inside a provider root.
-    fn sdk_inventory_file(&self) -> &'static str;
-
-    /// Rewrite the dependency digests of the providers copied into `provider_root` so the staged tree is
-    /// self-consistent after its compiler-owned path dependencies were rebased.
-    fn refresh_staged_sdk_provider_digests(&self, provider_root: &Path) -> Result<(), OvenProviderHookError>;
-
     /// The sealed artifact digest of a packaged provider at `dependency_root`, or `None` when the path is an
     /// authored crate and the caller should digest its source tree instead.
     fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>>;
@@ -135,42 +123,10 @@ pub type OvenProviderHookSource = Box<dyn std::error::Error + Send + Sync + 'sta
 
 /// Why a provider hook could not answer.
 ///
-/// Each variant is the category Oven acts on — a missing inventory is a preparation miss, a digest that cannot be
-/// refreshed or read means the staged tree is not self-consistent — and carries the compiler's typed error as its
-/// source rather than a rendering of it, so nothing about the failure is lost at the ring boundary.
+/// Each variant carries the compiler's typed error as its source rather than a rendering of it, so nothing about the
+/// failure is lost at the ring boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum OvenProviderHookError {
-    /// The explicitly named SDK provider inventory could not be read.
-    #[error("failed to load explicit SDK provider inventory {path}: {source}")]
-    InventoryUnreadable {
-        /// The inventory file that was named.
-        path: PathBuf,
-        /// The compiler's error while reading it.
-        #[source]
-        source: OvenProviderHookSource,
-    },
-    /// Discovering the active toolchain's SDK provider inventory failed.
-    #[error("failed to discover active SDK provider inventory: {source}")]
-    InventoryDiscovery {
-        /// The compiler's error while looking for it.
-        #[source]
-        source: OvenProviderHookSource,
-    },
-    /// No SDK provider inventory is available to stage from; `guidance` says what would make one available.
-    #[error("{guidance}")]
-    InventoryUnavailable {
-        /// What the caller can do about it.
-        guidance: String,
-    },
-    /// The digests of the providers staged below `provider_root` could not be refreshed.
-    #[error("failed to refresh staged SDK provider digests below {provider_root}: {source}")]
-    DigestRefresh {
-        /// The staged provider tree.
-        provider_root: PathBuf,
-        /// The compiler's error while rewriting them.
-        #[source]
-        source: OvenProviderHookSource,
-    },
     /// The sealed digest of the packaged provider at `dependency_root` could not be read.
     #[error("failed to digest packaged provider at {dependency_root}: {source}")]
     PackagedDigest {
@@ -182,30 +138,13 @@ pub enum OvenProviderHookError {
     },
 }
 
-/// Hooks for a caller that has no compiler providers to speak of: no SDK to stage, nothing packaged, no refresh.
+/// Hooks for a caller that has no compiler providers to speak of: nothing packaged, no native source owner.
 ///
 /// Oven's own tests run under these; a real compiler hands in its own implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoProviderHooks;
 
 impl OvenProviderHooks for NoProviderHooks {
-    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
-        explicit_inventory
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .ok_or_else(|| OvenProviderHookError::InventoryUnavailable {
-                guidance: "no SDK provider inventory is available without a compiler".to_string(),
-            })
-    }
-
-    fn sdk_inventory_file(&self) -> &'static str {
-        "sdk-inventory.json"
-    }
-
-    fn refresh_staged_sdk_provider_digests(&self, _provider_root: &Path) -> Result<(), OvenProviderHookError> {
-        Ok(())
-    }
-
     fn packaged_provider_digest(&self, _dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>> {
         None
     }
@@ -1962,20 +1901,6 @@ mod tests {
     }
 
     impl super::OvenProviderHooks for FailingProviderHooks {
-        fn sdk_provider_root(&self, _explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
-            Err(OvenProviderHookError::InventoryDiscovery {
-                source: Box::new(CompilerSideFailure),
-            })
-        }
-
-        fn sdk_inventory_file(&self) -> &'static str {
-            "sdk-inventory.json"
-        }
-
-        fn refresh_staged_sdk_provider_digests(&self, _provider_root: &Path) -> Result<(), OvenProviderHookError> {
-            Ok(())
-        }
-
         fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>> {
             Some(Err(OvenProviderHookError::PackagedDigest {
                 dependency_root: dependency_root.to_path_buf(),
@@ -1995,18 +1920,6 @@ mod tests {
         }
 
         impl OvenProviderHooks for NativeHooks {
-            fn sdk_provider_root(&self, inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
-                super::NoProviderHooks.sdk_provider_root(inventory)
-            }
-
-            fn sdk_inventory_file(&self) -> &'static str {
-                super::NoProviderHooks.sdk_inventory_file()
-            }
-
-            fn refresh_staged_sdk_provider_digests(&self, root: &Path) -> Result<(), OvenProviderHookError> {
-                super::NoProviderHooks.refresh_staged_sdk_provider_digests(root)
-            }
-
             fn packaged_provider_digest(&self, _root: &Path) -> Option<Result<String, OvenProviderHookError>> {
                 None
             }
@@ -2061,22 +1974,6 @@ mod tests {
     #[test]
     fn provider_hook_errors_keep_the_compiler_failure_as_their_source() -> Result<(), Box<dyn std::error::Error>> {
         use std::error::Error as _;
-
-        let Err(error) = FailingProviderHooks.sdk_provider_root(None) else {
-            return Err("discovery failure was not reported".into());
-        };
-        assert!(
-            error
-                .to_string()
-                .starts_with("failed to discover active SDK provider inventory")
-        );
-        assert!(error.source().is_some_and(|source| source.is::<CompilerSideFailure>()));
-
-        let Err(error) = super::NoProviderHooks.sdk_provider_root(None) else {
-            return Err("the compiler-less hooks reported an inventory".into());
-        };
-        assert!(matches!(error, OvenProviderHookError::InventoryUnavailable { .. }));
-        assert!(error.source().is_none());
 
         let dependency = DependencySpec {
             crate_name: "packaged_provider".to_string(),
