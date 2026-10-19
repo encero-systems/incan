@@ -33,7 +33,8 @@ pub struct TypecheckedModules {
 /// Typecheck a collected graph in dependency-safe order against the program's Loaves, retaining one result for every
 /// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent). A library unit passes
 /// its `package`, the package identity of every declaration it checks (DD-0007). `visit` sees each module's checker
-/// after it checks cleanly, so publication reads the same pass.
+/// once it is checked, cleanly or not: publication reads the same pass and only uses one that succeeds, and an editor
+/// reads the facts of a module with errors too.
 ///
 /// Ordering is intentional: session analysis also needs an identity-keyed representation for synthetic modules that
 /// share a source file path.
@@ -92,11 +93,9 @@ pub fn typecheck_modules(
         );
         warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
 
+        visit(module, &checker);
         match check_result {
-            Ok(()) => {
-                visit(module, &checker);
-                type_infos.push(checker.type_info().clone());
-            }
+            Ok(()) => type_infos.push(checker.type_info().clone()),
             Err(errs) => {
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                     file_path: module.file_path.to_string_lossy().to_string(),

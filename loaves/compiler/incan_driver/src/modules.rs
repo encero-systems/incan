@@ -132,11 +132,23 @@ pub fn collect_modules_detailed_with_session_at_path(
     session: &CompilationSession,
     path_segments: Vec<String>,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    collect_document_modules(path, session, path_segments, &HashMap::new())
+}
+
+/// Collect an editor document's source graph: the document under its source-root-relative identity, with every
+/// module that has an unsaved buffer in `open_sources` read from that buffer instead of its file.
+pub fn collect_document_modules(
+    path: PathBuf,
+    session: &CompilationSession,
+    path_segments: Vec<String>,
+    open_sources: &HashMap<PathBuf, String>,
+) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let module_name = path_segments.join("_");
     collect_modules_detailed_from_seeds(
         path.clone(),
         session,
         vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
+        open_sources,
     )
 }
 
@@ -153,7 +165,7 @@ pub fn collect_library_modules_detailed_with_session(
             (source_file.to_string_lossy().to_string(), module_name, path_segments)
         })
         .collect();
-    let mut modules = collect_modules_detailed_from_seeds(path.clone(), session, seeds)?;
+    let mut modules = collect_modules_detailed_from_seeds(path.clone(), session, seeds, &HashMap::new())?;
     if let Some(entry_index) = modules.iter().position(|module| {
         module
             .file_path
@@ -198,11 +210,7 @@ pub fn library_source_seeds(
         if is_unselected_package_entrypoint(&session.source_root, &source_file, &entry_path) {
             continue;
         }
-        if own_roots.is_some_and(|roots| {
-            path_segments
-                .first()
-                .is_none_or(|root| !roots.contains(&root.as_str()))
-        }) {
+        if own_roots.is_some_and(|roots| path_segments.first().is_none_or(|root| !roots.contains(&root.as_str()))) {
             continue;
         }
         if let Some(existing) = logical_sources.insert(path_segments.clone(), canonical.clone()) {
@@ -256,11 +264,12 @@ pub(crate) fn source_identity_key(path: &str) -> String {
 /// Seeds are `(file path, module name, module segments)` triples. Each file is parsed once, its imports are resolved
 /// into further seeds, and the resulting edges drive a topological sort so a module is always parsed before the
 /// modules that depend on it. A `std.*` import is another Loaf's module, except one of a standard package's own
-/// roots, which names its physical source module.
+/// roots, which names its physical source module. A file with an entry in `open_sources` is read from it.
 fn collect_modules_detailed_from_seeds(
     path: PathBuf,
     session: &CompilationSession,
     mut to_process: Vec<(String, String, Vec<String>)>,
+    open_sources: &HashMap<PathBuf, String>,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let base_dir = path.parent().unwrap_or(Path::new("."));
     let mut modules = Vec::new();
@@ -274,7 +283,10 @@ fn collect_modules_detailed_from_seeds(
         processed.insert(file_key.clone());
         dependency_edges.entry(file_key.clone()).or_default();
 
-        let source = read_source_for_diagnostics(&file_path)?;
+        let source = match open_sources.get(Path::new(&file_path)) {
+            Some(source) => source.clone(),
+            None => read_source_for_diagnostics(&file_path)?,
+        };
         let file_path_obj = Path::new(&file_path);
         let ast = match session.parse_source(file_path_obj, &source, true) {
             Ok(a) => {
@@ -761,9 +773,10 @@ pub fn imported_module_deps_for<'m>(
     }
 
     let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
-    let mut pending: Vec<usize> = direct_local_dep_indexes(modules, module_index, module_idx_by_key, own_standard_package)
-        .into_iter()
-        .collect();
+    let mut pending: Vec<usize> =
+        direct_local_dep_indexes(modules, module_index, module_idx_by_key, own_standard_package)
+            .into_iter()
+            .collect();
     while let Some(dep_idx) = pending.pop() {
         if dep_idx == module_index || !dep_indexes.insert(dep_idx) {
             continue;
@@ -794,4 +807,3 @@ pub fn register_module_path_segments(checker: &mut typechecker::TypeChecker, mod
         checker.register_dependency_module_path_segments(&module.name, module.path_segments.clone());
     }
 }
-

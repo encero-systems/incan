@@ -8,16 +8,15 @@ description = "The Incan language server: diagnostics, hover, definitions and se
 [project.features]
 # The server ships the stdlib semantics packs and Rust inspection the way the toolchain does.
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["incan_frontend/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect"]
-std_testing = ["incan_frontend/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
-std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driver/std_async"]
-std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
+rust_inspect = ["incan_frontend/rust_inspect", "incan_driver/rust_inspect"]
+std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_driver/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_driver = { default-features = false, loaf = "incan_driver", path = "../../compiler/incan_driver" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
-incan_provider = { default-features = false, loaf = "incan_provider", path = "../../compiler/incan_provider" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab" }
