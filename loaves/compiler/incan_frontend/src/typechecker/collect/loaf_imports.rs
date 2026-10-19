@@ -148,6 +148,36 @@ impl TypeChecker {
             .map(|module| module.derivable_traits.clone())
     }
 
+    /// Record the standard `Registry` declarations when this module defines, imports or enters a registry, so lowering
+    /// selects the registry's reserved methods from the checked declaration.
+    pub(in crate::typechecker) fn record_standard_registry_types(&mut self) {
+        let registry = &self.type_info.registry;
+        if registry.definitions.is_empty() && registry.imported_definitions.is_empty() && registry.explicit_entries.is_empty()
+        {
+            return;
+        }
+        let module = vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_REGISTRY.to_string()];
+        let Some((library, rest)) = self.loaf_module(&module) else {
+            return;
+        };
+        let Some((SymbolKind::Type(TypeInfo::Class(registry_class)), _)) =
+            self.lookup_pub_library_module_symbol_member(&library, &rest, "Registry")
+        else {
+            return;
+        };
+        let (Some(registry), Some(entry)) = (
+            self.loaf_member_identity(&module, "Registry"),
+            self.loaf_member_identity(&module, "RegistryEntry"),
+        ) else {
+            return;
+        };
+        self.type_info.registry.standard = Some(crate::typechecker::StandardRegistryTypes {
+            registry,
+            registry_class,
+            entry,
+        });
+    }
+
     /// The standard declaration of the builtin trait `name` (`Eq`, `Ord`, …), read once from the standard package
     /// owning its module.
     pub(in crate::typechecker) fn standard_trait(&mut self, name: &str) -> Option<TraitInfo> {

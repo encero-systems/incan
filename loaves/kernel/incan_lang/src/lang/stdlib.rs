@@ -72,6 +72,8 @@ pub const STDLIB_JSON: &str = "json";
 pub const STDLIB_RESULT: &str = "result";
 /// `std.serde` module name.
 pub const STDLIB_SERDE: &str = "serde";
+/// The standard-library namespace declaring `Registry` and `RegistryEntry` (RFC 113).
+pub const STDLIB_REGISTRY: &str = "registry";
 /// Dynamic JSON value type exported by `std.json`.
 pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
 /// Runtime Rust path carried by `std.json.JsonValue`.

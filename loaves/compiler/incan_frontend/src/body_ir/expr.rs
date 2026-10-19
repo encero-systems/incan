@@ -275,7 +275,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .values()
             .filter(|owner| owner.declaration_name == *owner_name)
         {
-            let owner = super::library_nominals::sdk_identity(owner).unwrap_or_else(|| owner.clone());
+            let owner = owner.clone();
             if owner != declaration.canonical {
                 return None;
             }

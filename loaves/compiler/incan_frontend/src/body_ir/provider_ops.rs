@@ -1,7 +1,7 @@
 //! Lowering an admitted provider-service call into a checked [`bir::ProviderOperationPlan`] (#1213).
 //!
 //! Body IR does not decide what a provider operation *is*. It is told, by canonical identity, through a private
-//! [`ProviderOperationCatalog`] projected from the selected [`ProviderPlan`]. That direction is the point of this
+//! [`ProviderOperationCatalog`] projected from the compilation's Loaves. That direction is the point of this
 //! module rather than an implementation convenience: a lowering pass that recognized provider operations by module
 //! name, callee spelling, or emitted Rust name would be a second source-resolution mechanism competing with the one
 //! that already resolved the call, and it would make ordinary package-defined providers impossible to express.
@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use super::args::*;
 use super::refusals::*;
 use super::*;
-use crate::provider::ProviderPlan;
+use crate::loaf_index::LoafIndex;
 
 /// One checked provider operation the compiler will admit for execution, keyed elsewhere by canonical identity.
 ///
@@ -46,61 +46,42 @@ pub(super) struct ProviderOperationRecord {
 /// participates. An empty catalog is the ordinary case — a compilation with no provider operations lowers exactly
 /// as it did before, because no call can match an entry that does not exist.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct ProviderOperationCatalog {
+pub struct ProviderOperationCatalog {
     operations: BTreeMap<CanonicalSymbolId, ProviderOperationRecord>,
 }
 
 impl ProviderOperationCatalog {
     /// Build an empty catalog, which admits no call as a provider operation.
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    /// Build the lowering catalog from the compilation's checked provider plan.
+    /// Build the lowering catalog from the operations the compilation's Loaves publish.
     ///
-    /// Provider manifests are the only producer of these entries. This constructor deliberately takes no source
-    /// spelling inputs: selected provider records already carry the integrity-checked manifest and activation facts
-    /// for the current compilation.
-    pub(super) fn from_provider_plan(provider_plan: &ProviderPlan) -> Result<Self, String> {
+    /// Loaf manifests are the only producer of these entries, and every indexed Loaf is active: the index holds only
+    /// the Loaves this compilation links.
+    pub fn from_loaves(loaves: &LoafIndex) -> Result<Self, String> {
         let mut catalog = Self::new();
-        for provider in provider_plan.records() {
-            let Some(manifest) = provider.manifest.as_deref() else {
-                continue;
-            };
-            let state = if provider.enabled && provider.available {
-                bir::ProviderActivationState::Active
-            } else if provider.enabled {
-                bir::ProviderActivationState::Unavailable
-            } else {
-                bir::ProviderActivationState::Disabled
-            };
-            for descriptor in &manifest.contract_metadata.provider.operation_descriptors {
+        for entry in loaves.entries() {
+            let provider_key = entry.artifact.identity.stable_key();
+            for descriptor in &entry.artifact.manifest.contract_metadata.provider.operation_descriptors {
                 let Some(module_path) = descriptor.operation.module_path() else {
                     return Err(format!(
-                        "provider `{}` publishes an operation without a module declaration identity",
-                        provider.identity.stable_key()
+                        "Loaf `{provider_key}` publishes an operation without a module declaration identity"
                     ));
                 };
-                if !provider.namespace_claims.contains(module_path) {
-                    return Err(format!(
-                        "provider `{}` publishes operation `{}` outside its claimed module namespace",
-                        provider.identity.stable_key(),
-                        descriptor.operation.declaration_name
-                    ));
-                }
                 if !descriptor.has_expected_kinds() {
                     return Err(format!(
-                        "provider `{}` publishes an operation descriptor with unsupported declaration kinds",
-                        provider.identity.stable_key()
+                        "Loaf `{provider_key}` publishes an operation descriptor with unsupported declaration kinds"
                     ));
                 }
                 catalog.try_insert(
                     descriptor.operation.clone(),
                     ProviderOperationRecord {
                         provider: bir::ProviderActivation {
-                            provider_key: provider.identity.stable_key(),
+                            provider_key: provider_key.clone(),
                             module_path: module_path.to_vec(),
-                            state,
+                            state: bir::ProviderActivationState::Active,
                         },
                         required_capability: descriptor.required_capability.clone(),
                         runtime_requirements: descriptor.runtime_requirements.clone(),

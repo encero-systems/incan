@@ -64,15 +64,14 @@ pub struct ResolvedProgramSourceImport {
 
 /// Select the package origin used when minting declarations for one source module.
 ///
-/// A compiled library gives its own modules a package origin. Compiler-owned stdlib modules retain the module origin
-/// assigned at their declaration site even when a consumer package embeds them under the generated `__incan_std`
-/// namespace.
+/// A compiled library gives its own modules a package origin; a module spelled under `std` keeps the module origin
+/// assigned at its declaration site.
 pub fn declaration_package_identity(package_identity: Option<&str>, module_path: Option<&[String]>) -> Option<String> {
     package_identity
         .filter(|_| {
             !matches!(
                 module_path.and_then(|path| path.first()).map(String::as_str),
-                Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
+                Some(stdlib::STDLIB_ROOT)
             )
         })
         .map(str::to_owned)

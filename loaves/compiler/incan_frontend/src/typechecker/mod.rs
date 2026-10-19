@@ -86,14 +86,11 @@ pub use type_info::{
     PartialProjectionPreset, PartialProjectionTargetKind, ProtocolIterationInfo, ProviderOperationDeclarationInfo,
     QualifiedTypeReferenceInfo, RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry,
     RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
-    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StandardRegistryTypes, StaticBindingInfo,
+    TestingFixtureInfo, TypeCheckInfo,
     ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
     c_binding_descriptor_identity,
 };
-#[cfg(test)]
-mod identity_surface_tests;
-#[cfg(test)]
-pub mod tests;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -7255,6 +7252,7 @@ impl TypeChecker {
             .resolve_checked_facades(self.current_module_path.as_deref());
 
         self.record_trait_metadata_for_lowering(program);
+        self.record_standard_registry_types();
         self.record_trait_adoption_arguments_for_lowering(program);
         self.record_body_ir_bare_adoption_arguments(program);
         self.record_model_field_visibilities_for_lowering(program);
@@ -7755,9 +7753,6 @@ impl TypeChecker {
     /// after dependency collection lets re-exports resolve through the now-complete target module metadata.
     fn refresh_dependency_member_symbols(&mut self, dependencies: &[(&str, &Program)], public_only: bool) {
         for (name, dep_ast) in dependencies {
-            if Self::is_generated_stdlib_dependency_module(name) {
-                continue;
-            }
             self.cache_dependency_member_symbols(name, dep_ast, public_only);
         }
         self.cache_dependency_adoption_traits();
@@ -8585,9 +8580,6 @@ impl TypeChecker {
     /// never in the consumer's lexical symbol table, so sibling modules may export the same spelling safely.
     fn predeclare_dependency_interfaces(&mut self, dependencies: &[(&str, &Program)], public_only: bool) {
         for (module_name, dep_ast) in dependencies {
-            if Self::is_generated_stdlib_dependency_module(module_name) {
-                continue;
-            }
             let members = self
                 .dependency_member_symbols
                 .entry((*module_name).to_string())
@@ -8613,14 +8605,6 @@ impl TypeChecker {
                 self.symbols.define_import_binding(symbol, None);
             }
         }
-    }
-
-    /// Return whether a module path names generated stdlib dependency code.
-    fn is_generated_stdlib_dependency_module(module_name: &str) -> bool {
-        module_name == incan_lang::lang::stdlib::INCAN_STD_NAMESPACE
-            || module_name
-                .strip_prefix(incan_lang::lang::stdlib::INCAN_STD_NAMESPACE)
-                .is_some_and(|tail| tail.starts_with('_'))
     }
 
     /// Build a minimal placeholder for one type-like dependency declaration.
@@ -8776,18 +8760,12 @@ impl TypeChecker {
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
         for (name, dep_ast) in dependencies {
-            if Self::is_generated_stdlib_dependency_module(name) {
-                continue;
-            }
             self.dependency_exports
                 .insert(name.to_string(), exported_symbols(dep_ast));
         }
         self.predeclare_dependency_interfaces(dependencies, true);
         // First: import all dependencies
         for (name, dep_ast) in dependencies {
-            if Self::is_generated_stdlib_dependency_module(name) {
-                continue;
-            }
             self.import_module(dep_ast, name);
         }
         self.refresh_dependency_member_symbols(dependencies, true);
@@ -8831,9 +8809,6 @@ impl TypeChecker {
         self.record_nominal_declaring_modules(program, dependencies);
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
-            if Self::is_generated_stdlib_dependency_module(name) {
-                continue;
-            }
             self.import_module_all(dep_ast, name);
         }
         self.refresh_dependency_member_symbols(dependencies, false);

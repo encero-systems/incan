@@ -377,7 +377,6 @@ pub(super) fn lower_function_body(
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
-    builder.retain_sdk_tuple_context(&mut stmts);
 
     if builder
         .locals

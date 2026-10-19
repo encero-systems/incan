@@ -19,15 +19,15 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
         .values()
         .chain(type_info.calls.inferred_call_result_types.values())
     {
-        super::library_calls::named_leaves(&project_type(semantic_type_from_resolved(ty), type_info), &mut names);
+        named_leaves(&project_type(semantic_type_from_resolved(ty), type_info), &mut names);
     }
     for binding in type_info.declarations.function_bindings.values() {
-        super::library_calls::named_leaves(
+        named_leaves(
             &project_type(semantic_type_from_resolved(&binding.return_type), type_info),
             &mut names,
         );
         for parameter in &binding.params {
-            super::library_calls::named_leaves(
+            named_leaves(
                 &project_type(semantic_type_from_resolved(&parameter.ty), type_info),
                 &mut names,
             );
@@ -281,4 +281,26 @@ pub(crate) fn project_resolved_path(path: &str, facts: &TypeCheckInfo) -> Option
     let parser = crate::typechecker::TypeChecker::new();
     let argument = parser.resolved_type_from_rust_display(arguments[0]);
     Some(crate::symbols::ResolvedType::Generic(name.to_owned(), vec![argument]))
+}
+
+/// Collect the nominal names a type mentions, through generic arguments, tuples and references.
+fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
+    match ty {
+        IncanType::Named(name) => {
+            names.insert(name.clone());
+        }
+        IncanType::Generic { base, args } => {
+            names.insert(base.clone());
+            for arg in args {
+                named_leaves(arg, names);
+            }
+        }
+        IncanType::Tuple(args) => {
+            for arg in args {
+                named_leaves(arg, names);
+            }
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => named_leaves(inner, names),
+        _ => {}
+    }
 }

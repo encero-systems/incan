@@ -43,7 +43,7 @@
 //!
 //! Vocab and scoped-DSL surface nodes are deliberately *not* on that list. They are not unmodeled language
 //! constructs awaiting a lowering; the desugar pass resolves them before this module runs, and one reaching here
-//! means a caller skipped it. See [`build_body_ir_module_v0`]'s input contract (#1166) for what a caller owes and
+//! means a caller skipped it. See [`build_body_ir_module`]'s input contract (#1166) for what a caller owes and
 //! for how such a node is named when it arrives anyway.
 //!
 //! Source `unsafe:` regions retain an acknowledgment receipt, their source span, and the exact operations they
@@ -70,12 +70,22 @@ use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use crate::ast;
-use crate::provider::ProviderPlan;
 use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::{
     FixedUnpackPlan, IdentKind, ResolvedOperatorKind, TypeCheckInfo, ValidatedNewtypeCoercionInfo,
     semantic_type_from_resolved,
 };
+
+/// What one compilation lowers its modules against.
+pub struct BodyIrContext<'a> {
+    /// Body IR of the declarations a module reaches outside itself: the program's other modules and the declaration
+    /// records of the Loaves the program links (DD-0007).
+    pub modules: &'a [bir::BodyIrModule],
+    /// The provider operations the linked Loaves admit.
+    pub provider_operations: &'a ProviderOperationCatalog,
+    /// The compilation's package identity, which explicit registry subjects are keyed by.
+    pub registry_package: Option<&'a str>,
+}
 
 /// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a
 /// typechecked module.
@@ -116,388 +126,29 @@ use crate::typechecker::{
 /// Those refusals are a safety net, never the normal path; the desugar pass keeps ownership of the real diagnostic
 /// when a vocabulary's library manifest is unavailable.
 ///
-/// Manifest-free comparison helpers deliberately use [`apply_body_ir_input_contract`]'s empty feature projection. The
-/// direct replacement CLI instead receives an already desugared, feature-projected program and its checked lowering
-/// bridge from `CompilationSession`; it must not apply a second projection or recreate the typecheck authority here.
-pub fn build_body_ir_module_v0(
+/// The compilation session supplies an already desugared, feature-projected program and its checked facts; this
+/// boundary applies no second projection and recreates no typecheck authority.
+pub fn build_body_ir_module(
     program: &ast::Program,
     module_path: &[String],
     type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
-    build_body_ir_module_v0_with_provider_operations(
-        program,
-        module_path,
-        type_info,
-        &ProviderOperationCatalog::new(),
-        &[],
-        false,
-        None,
-    )
-}
-
-/// Lower one checked module with its original source authority and selected executable context.
-///
-/// Ordinary admitted libraries cannot discover ambient standard-library source. A genuine standard publisher may
-/// read only its original retained members. Clones share those member owners, so verification after lowering also
-/// checks files first consumed by a nested lowering helper. Selected artifact context supplies imported executable
-/// facts; this handoff grants no extra source namespace and leaves explicit compatibility entrypoints unchanged.
-pub fn build_body_ir_module_v0_with_checked_sources(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
-    source_cache: &crate::typechecker::stdlib_loader::StdlibAstCache,
-) -> Result<bir::BodyIrModule, String> {
-    source_cache.verify_retained_sources()?;
-    let mut snapshot = type_info.clone();
-    snapshot.body_ir_source_cache = Some(source_cache.clone());
-    let module = build_body_ir_module_v0_with_executable_context(program, module_path, &snapshot, context);
-    source_cache.verify_retained_sources()?;
-    Ok(module)
-}
-
-/// Lower local checked source with canonical type contexts decoded from its selected package artifacts.
-///
-/// Context only supplies the declaring compilation's type layout. References and argument bindings still come from
-/// the consumer's existing typecheck facts, and imported declarations are matched by canonical identity.
-/// Source nominal use sites retain a qualified carrier key beside that identity before this project is assembled.
-/// SDK factories authenticate their receiver after a selected package return supplies its canonical carrier binding.
-pub fn build_body_ir_module_v0_with_executable_context(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
-) -> bir::BodyIrModule {
-    let mut module = build_body_ir_module_v0_with_provider_operations(
-        program,
-        module_path,
-        type_info,
-        &ProviderOperationCatalog::new(),
-        context,
-        true,
-        None,
-    );
-    nominal_carriers::retain(&mut module, type_info, context);
-    library_opaque_returns::retain(&mut module, type_info);
-    module
-}
-
-/// Retain a compilation's manifest-or-entrypoint package identity only for checked explicit registry subjects.
-/// This context belongs to the invocation boundary; lowering must never derive a package from a module spelling.
-pub fn build_body_ir_module_v0_with_registry_package(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
-    package_identity: &str,
-) -> bir::BodyIrModule {
-    build_body_ir_module_v0_with_sdk_linkage_and_registry_package(
-        program,
-        module_path,
-        type_info,
-        context,
-        package_identity,
-    )
-    .0
-}
-
-/// Build a checked source module and its SDK linkage facts from the same private Body IR import snapshot.
-///
-/// The pinned driver consumes all three records together: context-retained call returns can reach SDK nominals
-/// absent from the frozen checker's unresolved imports. Re-reading that original snapshot at linkage would lose
-/// those layouts and calls. The caller's checker state remains immutable and legacy emission reads its own facts.
-pub fn build_body_ir_module_v0_with_sdk_linkage(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
-) -> (
-    bir::BodyIrModule,
-    Vec<bir::NominalDeclaration>,
-    Vec<bir::StdlibDelegation>,
-) {
-    build_body_ir_module_v0_with_sdk_context(program, module_path, type_info, context, None)
-}
-
-/// Build module and SDK linkage records from one checked snapshot while retaining the invocation's explicit registry
-/// package identity. The caller supplies the same manifest-or-entrypoint identity selected by project preparation; this
-/// boundary never infers a package from a module or import spelling. Canonical source carriers, authenticated SDK
-/// opaque returns, layouts and calls all use that snapshot, while the caller's legacy-visible facts remain immutable.
-pub fn build_body_ir_module_v0_with_sdk_linkage_and_registry_package(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
-    package_identity: &str,
-) -> (
-    bir::BodyIrModule,
-    Vec<bir::NominalDeclaration>,
-    Vec<bir::StdlibDelegation>,
-) {
-    build_body_ir_module_v0_with_sdk_context(program, module_path, type_info, context, Some(package_identity))
-}
-
-/// Keep module construction and its returned SDK layout/call inventory on one private checked import snapshot. An
-/// absent invocation package grants no registry subject authority; selected package context is forwarded without
-/// reconstructing it from source spelling.
-fn build_body_ir_module_v0_with_sdk_context(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
-    registry_package: Option<&str>,
-) -> (
-    bir::BodyIrModule,
-    Vec<bir::NominalDeclaration>,
-    Vec<bir::StdlibDelegation>,
-) {
-    let mut snapshot = sdk_imports::project(program, type_info);
-    nominal_carriers::project_imported_alias_identities(&mut snapshot, context);
-    let mut module = build_body_ir_module_v0_from_checked_facts(
-        program,
-        module_path,
-        &snapshot,
-        &ProviderOperationCatalog::new(),
-        context,
-        true,
-        registry_package,
-    );
-    nominal_carriers::retain(&mut module, &snapshot, context);
-    library_opaque_returns::retain(&mut module, &snapshot);
-    let layouts = library_nominal_declarations(&snapshot);
-    let calls = library_call_delegations(&snapshot);
-    (module, layouts, calls)
-}
-
-/// Checked layouts of the stdlib models and classes one module names, each owned by a compiled SDK package.
-///
-/// A consumer that links the SDK crates carries these as package layouts beside the module's own Body IR: every
-/// field keeps its declared identity on the owner's package origin, so the records validate like published package
-/// layouts, while the crate that compiled them keeps their storage, derives and methods.
-/// Concrete SDK constructors returned by selected trait defaults count even when legacy exposes only their trait
-/// interface; their source-verified layouts grant no permission to execute a missing default body.
-pub fn library_nominal_declarations(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
-    let mut layouts = library_nominals::collect(type_info);
-    for layout in library_opaque_returns::layouts(type_info) {
-        if !layouts.iter().any(|existing| existing.canonical == layout.canonical) {
-            layouts.push(layout);
-        }
-    }
-    for layout in &mut layouts {
-        for (selected, implications) in incan_lang::lang::derives::DERIVE_IMPLICATIONS {
-            if layout
-                .derives
-                .iter()
-                .any(|name| name == incan_lang::lang::derives::as_str(*selected))
-            {
-                for implied in *implications {
-                    let name = incan_lang::lang::derives::as_str(*implied).to_owned();
-                    if !layout.derives.contains(&name) {
-                        layout.derives.push(name);
-                    }
-                }
-            }
-        }
-    }
-    layouts
-}
-
-/// SDK enum contracts travel in declaration-only modules under their native owner's physical identity.
-/// Consumer bodies retain selected variant and payload facts but never claim ownership of the SDK declaration.
-pub fn library_enum_declarations(type_info: &TypeCheckInfo) -> Vec<bir::EnumDeclaration> {
-    runtime_enums::collect(type_info)
-}
-/// Source-validated stdlib constant values retained by the Body IR collector for this checked module.
-/// Native consumers use these exact identities to distinguish retained literals from constants requiring SDK
-/// publication. Missing values grant no permission to bypass publication or evaluate another source declaration.
-pub fn library_constant_declarations(type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
-    library_constants::collect(type_info)
-}
-
-/// Crate-call records for the stdlib functions and model or class methods one module calls, retaining their type
-/// parameters.
-///
-/// Each record names the compiled SDK crate item and the signature that crate compiled, with owned parameters and a
-/// shared or exclusive receiver. A consumer linking the SDK crates calls the item only after checking that signature
-/// against native metadata.
-pub fn library_call_delegations(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
-    library_calls::collect(type_info)
-}
-
-/// Exact SDK default factories whose own trait-interface result requires their authenticated executable body.
-/// A concrete constructor layout is context, not permission to substitute it for the crate method's opaque return ABI.
-pub fn library_factory_body_requirements(type_info: &TypeCheckInfo) -> std::collections::BTreeSet<CanonicalSymbolId> {
-    library_opaque_returns::body_requirements(type_info)
-}
-
-/// The package-origin models, classes, enums and newtypes one module uses, including those it reaches only through a
-/// stdlib signature, a checked expression type, or a selected trait default's concrete constructor. A consumer
-/// resolves the ones its linked SDK packages publish.
-pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbolId> {
-    let mut cache = type_info.body_ir_stdlib_cache();
-    let mut identities = library_nominals::type_identities(type_info, &mut cache);
-    identities.extend(library_opaque_returns::identities(type_info));
-    identities.into_iter().collect()
-}
-
-/// Project exact SDK union owner and payload records after source modules and their selected SDK layouts are joined.
-///
-/// Only the provider plan's admitted emitted-definition table grants a native alias; semantic shape or a plausible
-/// hash alone never establishes ownership. Missing or unsupported records remain absent for fail-closed lowering.
-pub fn library_native_union_declarations(
-    plan: &ProviderPlan,
-    modules: &[bir::BodyIrModule],
-) -> Result<Vec<bir::NativeUnionDeclaration>, String> {
-    library_unions::collect(plan, modules)
-}
-
-/// A type leaf whose retained canonical identity must survive Result-side settlement.
-enum RetainedTypeLeaf {
-    /// A source or package nominal binding.
-    Named(String),
-    /// A builtin runtime carrier with exact root binding proof.
-    NativeBuiltin(incan_semantics_core::RuntimeBuiltinType),
-}
-
-/// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and
-/// tuple items, as `ResultVariant::has_complete_canonical_types` walks them.
-fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, RetainedTypeLeaf)>) {
-    match ty {
-        IncanType::Named(name) => out.push((path.clone(), RetainedTypeLeaf::Named(name.clone()))),
-        IncanType::NativeBuiltin(builtin) => out.push((path.clone(), RetainedTypeLeaf::NativeBuiltin(builtin.clone()))),
-        IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
-            for (index, item) in items.iter().enumerate() {
-                path.push(index);
-                named_leaf_paths(item, path, out);
-                path.pop();
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
-///
-/// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller owes
-/// Body IR the same debt. The parity corpus and source-observable comparison route use this helper; a caller that skips
-/// it hands lowering a program the legacy path would never have produced, which is the divergence #1166 closes.
-///
-/// The legacy pipeline owes Body IR a desugared, feature-projected program, and it pays that debt at parse time:
-/// `CompilationSession::parse_source` (`loaves/compiler/incan_driver/src/session.rs`) parses, runs
-/// `vocab_desugar_pass::desugar_program_vocab_blocks`, then projects the result through the session's active
-/// package features — all before the program is typechecked or lowered. A manifest-free caller has no package
-/// feature graph, so it applies the same two steps with the empty feature projection. It must reject an explicit
-/// package-feature selection rather than using this helper to approximate one.
-///
-/// Ordering matters beyond the pair itself. The caller applies this immediately after parsing, ahead of the backend's
-/// `validate_direct_body_profile` and typechecking, because both of those must see the projected program: an import
-/// behind an inactive feature is not part of this compilation, and refusing it as an unsupported profile boundary would
-/// report a declaration the build does not contain.
-///
-/// # Errors
-///
-/// Returns the desugar pass's own diagnostics unchanged. A scoped-DSL surface whose owning library manifest is
-/// unavailable is refused there, at that boundary, and this deliberately adds no second diagnostic for it.
-pub fn apply_body_ir_input_contract(
-    mut program: crate::ast::Program,
-    entrypoint: &std::path::Path,
-) -> Result<crate::ast::Program, Vec<crate::diagnostics::CompileError>> {
-    let entrypoint_display = entrypoint.to_string_lossy();
-    crate::vocab_desugar_pass::desugar_program_vocab_blocks(
-        &mut program,
-        Some(entrypoint_display.as_ref()),
-        &crate::library_manifest_index::LibraryManifestIndex::default(),
-    )?;
-    Ok(program.projected_for_features(&std::collections::BTreeSet::new()))
-}
-
-/// Build Body IR using the checked provider-operation facts selected for this compilation.
-///
-/// The ordinary source-only replacement profile has no provider plan and continues to use
-/// [`build_body_ir_module_v0`]. Any provider-aware consumer must use this entry point so provider-operation admission
-/// is projected from an integrity-checked manifest rather than supplied as a handwritten lowering catalog.
-pub fn build_body_ir_module_v0_with_provider_plan(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    provider_plan: &ProviderPlan,
-) -> Result<bir::BodyIrModule, String> {
-    let provider_operations = ProviderOperationCatalog::from_provider_plan(provider_plan)?;
-    let mut cache = type_info.body_ir_stdlib_cache();
-    cache.bind_provider_plan(provider_plan);
-    cache.verify_retained_sources()?;
-    let mut snapshot = type_info.clone();
-    snapshot.body_ir_source_cache = Some(cache.clone());
-    let type_info = &snapshot;
-    let mut module = build_body_ir_module_v0_with_provider_operations(
-        program,
-        module_path,
-        type_info,
-        &provider_operations,
-        &[],
-        true,
-        None,
-    );
-    nominal_carriers::retain(&mut module, type_info, &[]);
-    cache.verify_retained_sources()?;
-    Ok(module)
-}
-
-/// Build Body IR v0 for a typechecked module, admitting the internally projected provider operations.
-///
-/// The catalog is deliberately private to this frontend bridge. Its entries must come from a selected checked
-/// [`ProviderPlan`], never from a backend-specific caller or a source-name convention.
-///
-/// The input contract on `program` and `type_info` is [`build_body_ir_module_v0`]'s, unchanged: a desugared,
-/// feature-projected, typechecked module. The catalog widens which *calls* lower, never which source surface is
-/// admitted, so a caller that skips the desugar pass violates the contract here exactly as it would there.
-fn build_body_ir_module_v0_with_provider_operations(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    provider_operations: &ProviderOperationCatalog,
-    context: &[bir::BodyIrModule],
-    retain_nominal_carriers: bool,
-    registry_package: Option<&str>,
-) -> bir::BodyIrModule {
-    let mut snapshot = sdk_imports::project(program, type_info);
-    if retain_nominal_carriers {
-        nominal_carriers::project_imported_alias_identities(&mut snapshot, context);
-    }
-    build_body_ir_module_v0_from_checked_facts(
-        program,
-        module_path,
-        &snapshot,
-        provider_operations,
-        context,
-        retain_nominal_carriers,
-        registry_package,
-    )
-}
-
-/// Build from the caller's already projected private SDK facts without projecting or changing them again. The SDK
-/// linkage entrypoint uses this same snapshot for its module, layouts and calls; ordinary callers enter through the
-/// projection wrapper. Registry identity and canonical carrier retention remain separate explicit inputs, never
-/// inferred authority.
-fn build_body_ir_module_v0_from_checked_facts(
-    program: &ast::Program,
-    module_path: &[String],
-    type_info: &TypeCheckInfo,
-    provider_operations: &ProviderOperationCatalog,
-    context: &[bir::BodyIrModule],
-    retain_nominal_carriers: bool,
-    registry_package: Option<&str>,
-) -> bir::BodyIrModule {
+    let mut facts = type_info.clone();
+    nominal_carriers::project_imported_alias_identities(&mut facts, context.modules);
+    let type_info = &facts;
+    let provider_operations = context.provider_operations;
+    let registry_package = context.registry_package;
+    let retain_nominal_carriers = true;
+    let context = context.modules;
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
     let local_nongeneric_functions = collect_local_nongeneric_function_identities(program, type_info);
     let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
-    let runtime_enum_declarations = runtime_enums::collect(type_info);
     let local_enum_declarations = enum_declarations
         .iter()
-        .chain(runtime_enum_declarations.iter())
         .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
         .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
         .collect::<HashMap<_, _>>();
@@ -506,7 +157,6 @@ fn build_body_ir_module_v0_from_checked_facts(
     newtype_string_conversion::finalize_candidates(&mut nominal_declarations);
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
-    let library_constants = library_constant_declarations(type_info);
     let published_constants = context
         .iter()
         .flat_map(|module| module.constant_declarations.iter())
@@ -516,7 +166,6 @@ fn build_body_ir_module_v0_from_checked_facts(
                 bir::Constant::Int(_) | bir::Constant::FrozenAggregate(..) | bir::Constant::NumericNewtype(_)
             )
         }))
-        .chain(library_constants.iter())
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
         .collect::<HashMap<_, _>>();
     let mut local_nominal_declarations = nominal_declarations
@@ -533,11 +182,6 @@ fn build_body_ir_module_v0_from_checked_facts(
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalValueEnumDeclarations>();
-    // Stdlib layouts are selected like package layouts: by the checked canonical identity of a construction, pattern or
-    // field, never by name. They stay out of this module's own declarations; the SDK crate owns their storage.
-    for declaration in library_nominal_declarations(type_info) {
-        local_nominal_declarations.insert(declaration.canonical.render_compact(), declaration);
-    }
     for module in context {
         for declaration in &module.nominal_declarations {
             local_nominal_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
@@ -550,6 +194,7 @@ fn build_body_ir_module_v0_from_checked_facts(
         }
     }
     let published_callable_returns = collect::collect_published_callable_returns(context);
+    let published_callable_defaults = collect::collect_published_callable_defaults(context);
     let published_newtype_returns = collect::collect_published_newtype_returns(context);
     let published_storage_types = collect::collect_published_storage_types(context);
     let local_trait_partials = trait_partials::collect(program, type_info);
@@ -561,6 +206,7 @@ fn build_body_ir_module_v0_from_checked_facts(
         local_enum_declarations: &local_enum_declarations,
         published_methods: &published_methods,
         published_callable_returns: &published_callable_returns,
+        published_callable_defaults: &published_callable_defaults,
         published_newtype_returns: &published_newtype_returns,
         published_storage_types: &published_storage_types,
         published_constants: &published_constants,
@@ -659,7 +305,7 @@ fn build_body_ir_module_v0_from_checked_facts(
             &enum_declarations,
         ),
         enum_declarations,
-        stdlib_delegations: stdlib_delegations::collect(type_info),
+        stdlib_delegations: Vec::new(),
         public_exports: public_exports::collect(program, type_info),
         native_union_declarations: Vec::new(),
         static_declarations,
@@ -671,12 +317,38 @@ fn build_body_ir_module_v0_from_checked_facts(
     };
     source_comparison::retain_equality_borrows(&mut module);
     let opaque_carriers = opaque_returns::collect(&module, type_info);
-    library_opaque_returns::retain(&mut module, type_info);
     // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
     trait_values::retain_inputs(&mut module, program, type_info, context);
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
+    nominal_carriers::retain(&mut module, type_info, context);
     module
+}
+
+
+/// A type leaf whose retained canonical identity must survive Result-side settlement.
+enum RetainedTypeLeaf {
+    /// A source or package nominal binding.
+    Named(String),
+    /// A builtin runtime carrier with exact root binding proof.
+    NativeBuiltin(incan_semantics_core::RuntimeBuiltinType),
+}
+
+/// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and
+/// tuple items, as `ResultVariant::has_complete_canonical_types` walks them.
+fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, RetainedTypeLeaf)>) {
+    match ty {
+        IncanType::Named(name) => out.push((path.clone(), RetainedTypeLeaf::Named(name.clone()))),
+        IncanType::NativeBuiltin(builtin) => out.push((path.clone(), RetainedTypeLeaf::NativeBuiltin(builtin.clone()))),
+        IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
+            for (index, item) in items.iter().enumerate() {
+                path.push(index);
+                named_leaf_paths(item, path, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Make a broken caller's raw top-level vocabulary declaration fail every executable body rather than disappearing.
@@ -753,6 +425,8 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
     /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
+    /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
+    published_callable_defaults: &'source HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>>,
     /// Checked provider-method newtype results; conflicting declarations retain an explicit denial.
     published_newtype_returns: &'source HashMap<CanonicalSymbolId, Option<collect::PublishedNewtypeReturn>>,
     /// Exact checked provider storage types; a conflicting declaration records `None` and cannot authorize a global
@@ -1247,6 +921,12 @@ fn has_direct_value_enum_method_shape(method: &ast::MethodDecl) -> bool {
         })
 }
 
+/// Whether a compiled Loaf declares `identity`: its origin names a package, so a consumer names the Loaf's item
+/// rather than declaring it (DD-0007).
+pub(crate) fn is_loaf_identity(identity: &CanonicalSymbolId) -> bool {
+    matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+}
+
 /// Render a module path into the same module identity spelling [`crate::hir`] uses, so declaration ids line up between
 /// the two representations.
 fn body_ir_module_identity(module_path: &[String]) -> String {
@@ -1272,6 +952,8 @@ struct BodyBuilder<'type_info, 'source> {
     local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
     /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
+    /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
+    published_callable_defaults: &'source HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>>,
     /// Exact provider-method return layouts, selected only by a checked method identity.
     published_newtype_returns: &'source HashMap<CanonicalSymbolId, Option<collect::PublishedNewtypeReturn>>,
     /// Owning declaration types for imported storage, selected only by the checked global identity.
@@ -1402,6 +1084,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             model_constants: lowering_facts.model_constants,
             local_enum_declarations: lowering_facts.local_enum_declarations,
             published_callable_returns: lowering_facts.published_callable_returns,
+            published_callable_defaults: lowering_facts.published_callable_defaults,
             published_newtype_returns: lowering_facts.published_newtype_returns,
             published_storage_types: lowering_facts.published_storage_types,
             type_info: lowering_facts.type_info,
@@ -2299,21 +1982,11 @@ mod nominal_carriers;
 
 mod calls;
 mod constructor_carriers;
-mod library_calls;
-mod library_constants;
-mod library_defaults;
-mod library_nominals;
-mod library_opaque_returns;
-mod library_unions;
-mod runtime_enums;
 pub(crate) mod runtime_nominals;
 mod runtime_storage;
 mod rust_values;
-mod sdk_imports;
-mod sdk_tuple_context;
 mod source_comparison;
 mod public_exports;
-mod stdlib_delegations;
 mod type_metadata;
 
 mod operators;
@@ -2371,11 +2044,10 @@ mod variadics;
 
 use bodies::*;
 use collect::*;
-use provider_ops::{ProviderOperationCatalog, ProviderOperationRecord};
+pub use provider_ops::ProviderOperationCatalog;
+use provider_ops::ProviderOperationRecord;
 use reads::*;
 
-#[cfg(test)]
-pub mod tests;
 
 #[cfg(test)]
 mod tuple_destructure_interop_tests {

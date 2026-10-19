@@ -79,9 +79,6 @@ impl TypeChecker {
             declaring_modules.entry(name).or_default().insert(root_path.clone());
         }
         for (module_name, dependency) in dependencies {
-            if Self::is_generated_stdlib_dependency_module(module_name) {
-                continue;
-            }
             let module_path = canonicalize_source_module_segments(
                 &self
                     .dependency_module_path_segments

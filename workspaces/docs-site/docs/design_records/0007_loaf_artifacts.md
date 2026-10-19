@@ -40,6 +40,14 @@ Until 0.6.0-dev.8 a compiled Incan library was a generated Rust crate: its artif
 
 One `LoafIndex` per compilation holds an entry per Loaf the project reaches: its key, its artifact directory, its manifest, and the namespace it owns. An ordinary dependency owns `pub::<key>`. A standard package owns the `std.*` roots that the compiler-pinned `STANDARD_PACKAGE_NAMESPACE_POLICIES` assign to it. A module path resolves to exactly one entry. The checker reads imported types from the entry's manifest, Body IR takes governed bodies from its `.incnbody`, and the driver links its rlib and native closure.
 
+### Calling into a Loaf
+
+A consumer names a Loaf's declarations and never declares them again. A type is its compiled item, `<crate>::<module path>::<Name>`. A function or method is its compiled item, whose name its canonical identity encodes. Both follow from the declaration's package identity, so neither needs a per-call record.
+
+The `.incnbody` carries a declaration record for every public callable beside the governed bodies: its parameters with the computation each default reduces to, and its type parameters. The consumer's Body IR and lowering complete an omitted argument and check a call from that record. The driver checks the call against the rlib's metadata.
+
+Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
+
 ### The standard library
 
 The standard packages are Loaves like any other. A project depends on the standard packages whose namespaces it imports, at the versions the compiler pins. Their artifacts come from the toolchain: built from `loaves/stdlib/*` by the dev.8 compiler in a checkout, and shipped in the local incan.pub cache by an installation. No source module of the standard library is collected into a consumer.

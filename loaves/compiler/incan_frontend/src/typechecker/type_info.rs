@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::ast::{Expr, ParamKind, Span, Spanned, Visibility};
 use crate::library_exports::{CheckedParamDefault, CheckedPresetValue};
 use crate::symbols::{
-    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo, NewtypePrimitiveConstraint,
+    CallableParam, ClassInfo, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo, NewtypePrimitiveConstraint,
     ResolvedType, TypeBoundInfo,
 };
 use crate::testing_markers::TestingFixtureScope;
@@ -52,8 +52,6 @@ use super::{ConstValue, const_eval};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
-    /// Original checked source authority retained only for Body IR lowering; compatibility callers leave it absent.
-    pub(crate) body_ir_source_cache: Option<super::stdlib_loader::StdlibAstCache>,
     /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
     pub traits: TraitArtifacts,
     /// Derive expansion metadata imported from dependency modules and manifests.
@@ -1420,6 +1418,20 @@ pub struct RegistryArtifacts {
     pub descriptions: Vec<RegistryDescriptionInfo>,
     /// Explicit compilation-unit and package entries in source order.
     pub explicit_entries: Vec<RegistryExplicitEntryInfo>,
+    /// The standard `Registry` class and `RegistryEntry` type, read from the standard package owning `std.registry`
+    /// when this module defines, imports or enters a registry. Lowering selects the registry's reserved methods here.
+    pub standard: Option<StandardRegistryTypes>,
+}
+
+/// The standard package's registry declarations a module's registry facts are checked against.
+#[derive(Debug, Clone)]
+pub struct StandardRegistryTypes {
+    /// The `Registry` class's identity.
+    pub registry: CanonicalSymbolId,
+    /// The `Registry` class, with its methods.
+    pub registry_class: ClassInfo,
+    /// The `RegistryEntry` type's identity.
+    pub entry: CanonicalSymbolId,
 }
 
 /// Type and subject contract declared by one `Registry.define(...)` static.
@@ -2328,12 +2340,6 @@ impl DeclarationArtifacts {
 }
 
 impl TypeCheckInfo {
-    /// Borrow the checked compilation's source authority through an existing cache clone. Only explicit compatibility
-    /// lowering, which has no checked source handoff, may discover ambient standard-library source.
-    pub(crate) fn body_ir_stdlib_cache(&self) -> super::stdlib_loader::StdlibAstCache {
-        self.body_ir_source_cache.clone().unwrap_or_default()
-    }
-
     /// Return the caller-visible `mut` parameter names of the callee the call at `span` resolved to, if any.
     pub fn caller_visible_mut_arguments(&self, span: Span) -> Option<&[String]> {
         self.calls

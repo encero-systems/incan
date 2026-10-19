@@ -4,8 +4,7 @@ use super::{IncanPrimitiveType, IncanType, TypeCheckInfo, ast, bir, parameter_ty
 use crate::{
     api_metadata::{ApiDeclaration, ApiTrait},
     library_manifest::{LibraryManifest, ParamKindExport, TypeRef},
-    symbols::ResolvedType,
-    typechecker::stdlib_loader::StdlibAstCache,
+    loaf_index::LoafIndex,
 };
 use incan_lang::lang::trait_capabilities;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
@@ -132,94 +131,48 @@ fn imports_string_conversion_contract(program: &ast::Program) -> bool {
     })
 }
 
-/// Authenticate the selected publication against the analysis source cache before retaining its exact trait slot.
+/// Retain the exact conversion trait slot the standard package publishes, checked against its manifest API.
 fn selected_string_conversion_contract(
     identity: &CanonicalSymbolId,
     manifest: &LibraryManifest,
-    cache: &mut StdlibAstCache,
 ) -> Option<bir::StringConversionContract> {
     let capability = trait_capabilities::string_try_from();
-    let source = cache.callable_source_identity(identity)?;
-    let SymbolOrigin::Module(path) = &source.origin else {
-        return None;
-    };
     if identity.kind != SemanticSourceTargetKind::Trait
         || identity.namespace != SymbolNamespace::OrdinaryLexical
         || identity.scope_discriminant.is_some()
         || identity.declaration_name != capability.trait_name
-        || !trait_capabilities::module_path_matches(capability, path)
         || !matches!(&identity.origin, SymbolOrigin::Package { .. })
     {
         return None;
     }
-    let declaration = cache.lookup_trait(path, capability.trait_name)?;
-    let syntax = cache.lookup_trait_decl(path, capability.trait_name)?;
-    if !exact_conversion_source(&syntax) {
-        return None;
-    }
-    let [binder] = declaration.type_params.as_slice() else {
-        return None;
-    };
-    let method = declaration.methods.get("try_from")?;
-    let [parameter] = method.params.as_slice() else {
-        return None;
-    };
-    let mut method_identity = method.identity.clone()?;
-    if declaration.methods.len() != 1
-        || !declaration.supertraits.is_empty()
-        || !declaration.requires.is_empty()
-        || !declaration.properties.is_empty()
-        || !declaration.method_aliases.is_empty()
-        || !method.type_params.is_empty()
-        || !method.type_param_bounds.is_empty()
-        || !method.type_param_bound_details.is_empty()
-        || method.trait_target.is_some()
-        || method.receiver.is_some()
-        || method.is_async
-        || method.has_body
-        || method.alias_of.is_some()
-        || parameter.kind != ast::ParamKind::Normal
-        || parameter.has_default
-        || parameter.is_mut
-        || parameter.ty != ResolvedType::TypeVar(binder.clone())
-        || method.return_type
-            != ResolvedType::Generic("Result".to_owned(), vec![ResolvedType::SelfType, ResolvedType::Str])
-        || method_identity.kind != SemanticSourceTargetKind::Method
-        || method_identity.namespace != SymbolNamespace::Member
-        || method_identity.origin != source.origin
-        || method_identity.scope_discriminant.is_some()
-        || method_identity.declaration_name != "try_from"
-        || method_identity.declaration_span.start < source.declaration_span.start
-        || method_identity.declaration_span.end > source.declaration_span.end
-    {
-        return None;
-    }
-    method_identity.origin = identity.origin.clone();
     let published = published_conversion_trait(identity, manifest)?;
     let [published_method] = published.methods.as_slice() else {
         return None;
     };
-    let actual_method = published_method
+    let method_identity = published_method
         .canonical
         .as_ref()
         .and_then(|canonical| canonical.hydrate())?;
-    if actual_method != method_identity || published_method.name != "try_from" {
+    if published_method.name != "try_from"
+        || method_identity.kind != SemanticSourceTargetKind::Method
+        || method_identity.namespace != SymbolNamespace::Member
+        || method_identity.origin != identity.origin
+    {
         return None;
     }
     Some(bir::StringConversionContract::Selected(Box::new(
         bir::StringConversionSelection {
             trait_identity: identity.clone(),
-            method_identity: actual_method,
+            method_identity,
         },
     )))
 }
 
-/// Retain the consumer's complete source import union once, authenticating only its active SDK publication.
-/// Missing active publication/API authority returns None; a freshly computed inactive union remains distinct.
+/// Retain the consumer's complete source import union once, selecting the conversion trait the standard package
+/// owning its module publishes. A missing publication returns None; an inactive union stays distinct.
 pub fn compilation_string_conversion_contract<'program>(
     programs: impl IntoIterator<Item = &'program ast::Program>,
-    providers: &crate::provider::ProviderPlan,
-    analysis_cache: &StdlibAstCache,
+    loaves: &LoafIndex,
 ) -> Option<bir::StringConversionContract> {
     if !programs.into_iter().any(imports_string_conversion_contract) {
         return Some(bir::StringConversionContract::Inactive);
@@ -230,9 +183,8 @@ pub fn compilation_string_conversion_contract<'program>(
         .iter()
         .map(|segment| (*segment).to_owned())
         .collect::<Vec<_>>();
-    let provider = providers.active_sdk_provider_for_module(&module)?;
-    let manifest = provider.manifest.as_deref()?;
-    let public_path = std::iter::once(provider.identity.name.clone())
+    let manifest = &loaves.owner_of(&module)?.artifact.manifest;
+    let public_path = std::iter::once(manifest.name.clone())
         .chain(module.into_iter().skip(1))
         .chain(std::iter::once(capability.trait_name.to_owned()))
         .collect::<Vec<_>>();
@@ -240,46 +192,7 @@ pub fn compilation_string_conversion_contract<'program>(
         .contract_metadata
         .identity_graph
         .canonical_for_public_path(&public_path)?;
-    selected_string_conversion_contract(&identity, manifest, &mut analysis_cache.clone())
-}
-
-/// Check source-only structure before using the cache's deliberately lightweight, name-indexed method summary.
-fn exact_conversion_source(declaration: &ast::TraitDecl) -> bool {
-    let [method] = declaration.methods.as_slice() else {
-        return false;
-    };
-    let [parameter] = method.node.params.as_slice() else {
-        return false;
-    };
-    let [decorator] = method.node.decorators.as_slice() else {
-        return false;
-    };
-    declaration.visibility == ast::Visibility::Public
-        && declaration.name == "TryFrom"
-        && declaration.decorators.is_empty()
-        && declaration.traits.is_empty()
-        && declaration.properties.is_empty()
-        && declaration.method_aliases.is_empty()
-        && declaration.method_partials.is_empty()
-        && method.node.name == "try_from"
-        && method.node.receiver.is_none()
-        && method
-            .node
-            .receiver_binding
-            .as_ref()
-            .is_some_and(|binding| binding.node == "cls")
-        && method.node.trait_target.is_none()
-        && method.node.type_params.is_empty()
-        && !method.node.is_async()
-        && method.node.body.is_none()
-        && parameter.node.kind == ast::ParamKind::Normal
-        && !parameter.node.is_mut
-        && parameter.node.default.is_none()
-        && decorator.node.path.segments == ["classmethod"]
-        && decorator.node.name == "classmethod"
-        && !decorator.node.is_call
-        && decorator.node.type_args.is_empty()
-        && decorator.node.args.is_empty()
+    selected_string_conversion_contract(&identity, manifest)
 }
 
 /// Join the selected canonical trait's direct source path to its unique checked API and require its owned ABI.

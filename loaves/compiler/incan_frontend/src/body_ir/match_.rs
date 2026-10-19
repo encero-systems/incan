@@ -643,8 +643,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .resolved_identity(name.span)
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)
-            .cloned()
-            .or_else(|| runtime_enums::pattern_identity(self.local_enum_declarations, &name.node, expected_ty));
+            .cloned();
         let payload_types = variant_identity
             .as_ref()
             .and_then(|identity| self.enum_payload_types(identity, expected_ty));

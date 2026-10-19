@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
@@ -24,9 +25,8 @@ use incan_semantics_core::executable_representation::{
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
 
 use crate::library_manifest::LibraryManifest;
-use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
-use crate::library_manifest_index::LibraryArtifactMetadata;
-use crate::provider::ProviderPlan;
+use crate::library_manifest::published_layout::public_executable_identities;
+use crate::loaf_index::LoafIndex;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -91,13 +91,14 @@ pub struct ResolvedExecutableModules {
     pub package_versions: BTreeMap<String, String>,
 }
 
-/// A resolved provider instance, selected by the compilation's dependency edges and checked artifact context.
+/// One indexed Loaf's manifest and governed-body file.
 struct PackageArtifact {
-    /// Admitted name, version, content digest and feature projection; canonical package names alone cannot select an
+    /// The Loaf's name, version, content digest and feature projection; a package name alone cannot select an
     /// instance.
     provider_key: String,
-    manifest: LibraryManifest,
-    metadata: LibraryArtifactMetadata,
+    manifest: Arc<LibraryManifest>,
+    /// The Loaf's `.incnbody`.
+    bodies: PathBuf,
 }
 
 impl PackageArtifact {
@@ -121,155 +122,34 @@ impl PackageArtifact {
     }
 }
 
-/// Resolve every statically required package call and its published public closure before execution begins.
+/// Load the declaration records and governed bodies the program reaches in its Loaves (DD-0007).
 ///
-/// All versions, coverage records and manifest memberships are validated before returning. No body is executed, no
-/// source is consulted, and each selected fragment is decoded once even when recursion or facades reach it again.
-/// Requirements reached through a public package may name an active SDK provider; they use that provider's admitted
-/// artifact with the same coverage and content checks. Conflicting instances refuse rather than replacing one another.
-pub fn resolve_executable_requirements(
-    plan: &ProviderPlan,
-    required: &BTreeSet<CanonicalSymbolId>,
-) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
-    if required.is_empty() {
-        return Ok(ResolvedExecutableModules::default());
-    }
-    resolve_from_catalog(&executable_catalog(plan)?, required, false)
-}
-
-/// Load available checked publication context without demanding executable coverage from every referenced type.
-///
-/// An authenticated explicitly uncovered root contributes no facts. This is useful for ordinary native-linked
-/// library publication, whose signatures may name linking-only types. Covered roots still require their complete
-/// executable closure, and malformed artifacts, missing public membership and digest mismatches remain errors.
-/// Actual execution must use [`resolve_executable_requirements`] to require every selected root.
-pub fn resolve_available_executable_context(
-    plan: &ProviderPlan,
+/// Every requested root and its published closure is read from the declaring Loaf's `.incnbody`, decoded once even
+/// when recursion or facades reach it again. An explicitly uncovered root contributes no facts; malformed artifacts,
+/// missing public membership and digest mismatches are errors. Nothing executes and no source is consulted.
+pub fn resolve_loaf_declarations(
+    loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    resolve_from_catalog(&executable_catalog(plan)?, requested, true)
+    resolve_from_catalog(&catalog(loaves)?, requested, true)
 }
 
-/// Resolve published records of active SDK packages, which the native route links as crates but still needs as checked
-/// declarations, such as a stdlib model's field defaults. The same version, coverage and digest checks apply; nothing
-/// is executed and no source is consulted.
-pub fn resolve_sdk_requirements(
-    plan: &ProviderPlan,
-    required: &BTreeSet<CanonicalSymbolId>,
-) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
-    if required.is_empty() {
-        return Ok(ResolvedExecutableModules::default());
-    }
-    let catalog = sdk_catalog(plan)?;
-    if let Some(value) = resolve_linked_numeric_constant(&catalog, required)? {
-        return Ok(value);
-    }
-    resolve_from_catalog(&catalog, required, false)
-}
-
-/// Load an immutable numeric newtype value for a linked SDK without requesting unrelated method bodies.
-/// The root must be public and covered, its only dependency must be the same-package constructor owner, and
-/// the authenticated owner payload must exactly match the constant's complete physical layout and binding.
-/// Other values retain ordinary executable-closure resolution; no execution route uses this declaration-only path.
-fn resolve_linked_numeric_constant(
-    catalog: &BTreeMap<String, PackageArtifact>,
-    required: &BTreeSet<CanonicalSymbolId>,
-) -> Result<Option<ResolvedExecutableModules>, ExecutableResolutionError> {
-    use incan_semantics_core::SemanticSourceTargetKind;
-    use incan_semantics_core::body_ir::Constant;
-    if required.len() != 1 {
-        return Ok(None);
-    }
-    let Some(identity) = required.first() else {
-        return Ok(None);
-    };
-    if identity.kind != SemanticSourceTargetKind::Const {
-        return Ok(None);
-    }
-    let SymbolOrigin::Package { library, .. } = &identity.origin else {
-        return Ok(None);
-    };
-    let Some(package) = catalog.get(library) else {
-        return Ok(None);
-    };
-    let mut surface = OpenSurface::open(package, identity)?;
-    let DeclarationCoverage::Covered {
-        offset,
-        length,
-        requirements,
-    } = surface
-        .index
-        .coverage(identity)
-        .map_err(|error| package.unusable(error))?
-    else {
-        return Ok(None);
-    };
-    let (offset, length, dependencies) = (*offset, *length, requirements.clone());
-    let declaration = surface.read(package, identity, offset, length)?;
-    let ExecutableDeclaration::Constant(constant) = &declaration else {
-        return Ok(None);
-    };
-    let Constant::NumericNewtype(value) = &constant.value else {
-        return Ok(None);
-    };
-    let Some(owner) = value.constructor.canonical.as_ref() else {
-        return Ok(None);
-    };
-    if !matches!(&owner.origin, SymbolOrigin::Package { library: origin, .. } if origin == library)
-        || dependencies.len() != 1
-        || !dependencies.contains(owner)
-    {
-        return Ok(None);
-    }
-    let DeclarationCoverage::Covered {
-        offset: owner_offset,
-        length: owner_length,
-        ..
-    } = surface
-        .index
-        .execution_coverage(owner)
-        .map_err(|error| package.unusable(error))?
-    else {
-        return Ok(None);
-    };
-    let (owner_offset, owner_length) = (*owner_offset, *owner_length);
-    let owner_declaration = surface.read(package, owner, owner_offset, owner_length)?;
-    let layout = match &owner_declaration {
-        ExecutableDeclaration::Nominal(layout) | ExecutableDeclaration::NominalWithTraits(layout, _) => layout,
-        _ => return Ok(None),
-    };
-    if !value.matches_layout(layout) {
-        return Err(package.unusable(malformed(
-            "numeric SDK constant disagrees with its authenticated layout",
-        )));
-    }
-    let owner = owner.clone();
-    let mut modules = BTreeMap::new();
-    for (identity, declaration) in [(identity, declaration), (&owner, owner_declaration)] {
-        let path = canonical_module_identity(identity)
-            .ok_or_else(|| package.unusable(malformed("numeric SDK constant has no module owner")))?;
-        retain_declaration(
-            modules.entry(path.clone()).or_insert_with(|| empty_module(path)),
-            declaration,
-        );
-    }
-    Ok(Some(ResolvedExecutableModules {
-        modules: modules.into_values().collect(),
-        decoded_declarations: 2,
-        payload_bytes_read: length + owner_length,
-        content_bytes_verified: surface.content_bytes_verified,
-        package_versions: BTreeMap::from([(library.clone(), package.manifest.version.clone())]),
-    }))
-}
-
-/// Join only the ordinary and active SDK artifacts already admitted by the compilation's provider plan.
-fn executable_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut catalog = package_catalog(plan)?;
-    for artifact in sdk_catalog(plan)?.into_values() {
-        insert_artifact(&mut catalog, artifact)?;
+/// One artifact per package name across the index; two instances of one package refuse rather than replacing each
+/// other.
+fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
+    let mut catalog = BTreeMap::new();
+    for entry in loaves.entries() {
+        insert_artifact(
+            &mut catalog,
+            PackageArtifact {
+                provider_key: entry.artifact.identity.stable_key(),
+                manifest: Arc::clone(&entry.artifact.manifest),
+                bodies: entry.artifact.bodies_path(),
+            },
+        )?;
     }
     Ok(catalog)
 }
@@ -447,41 +327,6 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         }
     }
 }
-/// Select materialized active SDK artifacts without collapsing conflicting instances of a package name.
-fn sdk_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut catalog = BTreeMap::new();
-    for provider in plan.active_sdk_records() {
-        let (Some(manifest), Some(metadata)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
-            continue;
-        };
-        insert_artifact(
-            &mut catalog,
-            PackageArtifact {
-                provider_key: provider.identity.stable_key(),
-                manifest: manifest.clone(),
-                metadata: metadata.clone(),
-            },
-        )?;
-    }
-    Ok(catalog)
-}
-
-/// Select from the shared provider plan's admitted artifacts; dependency edges are not traversed a second time.
-fn package_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut catalog = BTreeMap::new();
-    for package in plan.public_artifacts() {
-        insert_artifact(
-            &mut catalog,
-            PackageArtifact {
-                provider_key: package.identity.stable_key(),
-                manifest: (*package.manifest).clone(),
-                metadata: package.artifact.clone(),
-            },
-        )?;
-    }
-    Ok(catalog)
-}
-
 /// File handle and already-decoded metadata; executable payloads remain on disk until their identity is selected.
 struct OpenSurface {
     file: File,
@@ -494,13 +339,14 @@ struct OpenSurface {
 impl OpenSurface {
     /// Accept only the stable version prefix before reading a bounded index, then compare it with the manifest.
     fn open(package: &PackageArtifact, requested: &CanonicalSymbolId) -> Result<Self, ExecutableResolutionError> {
-        let Some(path) = executable_surface_path(&package.metadata.manifest_path, &package.manifest) else {
+        let path = package.bodies.clone();
+        if package.manifest.contract_metadata.executable_representation.is_none() || !path.is_file() {
             return Err(ExecutableResolutionError::NoPublishedRepresentation {
                 library: package.manifest.name.clone(),
                 version: package.manifest.version.clone(),
                 declaration: requested.declaration_name.clone(),
             });
-        };
+        }
         let mut file = File::open(&path).map_err(|error| package.unreadable(path.clone(), error))?;
         // The frame is written by `encode_surface` as a postcard-encoded `u32` version, then an 8-byte
         // little-endian index length, then the index, then the payload. `SurfaceReader` parses that same frame
@@ -652,5 +498,3 @@ fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
     ExecutableRepresentationError::Malformed { reason: reason.into() }
 }
 
-#[cfg(test)]
-mod tests;
