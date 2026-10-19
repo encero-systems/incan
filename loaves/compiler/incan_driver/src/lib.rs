@@ -30,6 +30,7 @@ pub mod error;
 pub mod features;
 pub mod inspect;
 pub mod interop_plan;
+pub mod loaf_publication;
 pub mod lock;
 pub mod metadata_packages;
 pub mod modules;

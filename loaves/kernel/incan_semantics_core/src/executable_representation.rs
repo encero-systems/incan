@@ -31,7 +31,9 @@ use crate::body_ir::{
 /// are positional: adding a serde-defaulted field does not authorize an older consumer to reinterpret that payload.
 /// Version 19 appends checked numeric newtype constants and their canonical constructor/layout requirements.
 /// Version 20 appends the canonical diverging ValueError helper operation.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 20;
+/// Version 21 is the Loaf representation (DD-0007): Loaf callables replace standard-library delegations, enum
+/// declarations name their compiled item, and modules no longer carry re-exported names.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 21;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -1199,7 +1201,6 @@ mod tests {
             trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module("lib"),
             loaf_callables: Vec::new(),
-            public_exports: Vec::new(),
             native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),

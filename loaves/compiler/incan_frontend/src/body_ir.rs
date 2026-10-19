@@ -306,7 +306,6 @@ pub fn build_body_ir_module(
         ),
         enum_declarations,
         loaf_callables: Vec::new(),
-        public_exports: public_exports::collect(program, type_info),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
@@ -324,7 +323,6 @@ pub fn build_body_ir_module(
     nominal_carriers::retain(&mut module, type_info, context);
     module
 }
-
 
 /// A type leaf whose retained canonical identity must survive Result-side settlement.
 enum RetainedTypeLeaf {
@@ -1986,7 +1984,6 @@ pub(crate) mod runtime_nominals;
 mod runtime_storage;
 mod rust_values;
 mod source_comparison;
-mod public_exports;
 mod type_metadata;
 
 mod operators;
@@ -2047,7 +2044,6 @@ use collect::*;
 pub use provider_ops::ProviderOperationCatalog;
 use provider_ops::ProviderOperationRecord;
 use reads::*;
-
 
 #[cfg(test)]
 mod tuple_destructure_interop_tests {

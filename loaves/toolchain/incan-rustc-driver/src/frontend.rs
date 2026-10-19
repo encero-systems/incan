@@ -3,8 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use incan_driver::features::FeatureSelection;
-use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
+use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
+use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
+use incan_driver::session::CompilationSession;
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
+use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
@@ -60,6 +64,10 @@ struct CheckedProgram {
     sources: Vec<String>,
     files: Vec<String>,
     entry: usize,
+    /// The first of the program's own modules; the Loaf declarations it reaches come before it.
+    own: usize,
+    /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
+    manifest: Option<LibraryManifest>,
 }
 
 /// Collect and analyze the original source through the CLI's compilation session, retaining canonical checked facts.
@@ -69,13 +77,27 @@ struct CheckedProgram {
 /// every module lowers against them. Private checked re-export calls add their exact package targets to the request
 /// without changing the ordinary reference graph. An explicit invocation package affects only checked registry
 /// materialization, independently of the native crate's symbol identity.
-fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -> Result<CheckedProgram, String> {
+///
+/// A library unit collects every authored module, checks each with its package identity and builds its manifest
+/// from the same pass.
+fn checked_modules(
+    path: &Path,
+    package_override: Option<&str>,
+    profile: &str,
+    library: bool,
+) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %path.display()).entered();
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     let session = CompilationSession::discover(&path, &FeatureSelection::default(), profile)
         .map_err(|error| error.to_string())?;
-    let modules =
-        collect_modules_detailed_with_session(path.clone(), &session).map_err(|failure| failure.render_human())?;
+    let modules = if library {
+        collect_library_modules_detailed_with_session(path.clone(), &session)
+    } else {
+        collect_modules_detailed_with_session(path.clone(), &session)
+    }
+    .map_err(|failure| failure.render_human())?;
+    let package_identity = package_override.unwrap_or_else(|| registry_package_identity(&session, &path));
+    let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let inspection = session
         .prepare_check_rust_inspection(&path, &modules)
         .map_err(|error| error.to_string())?;
@@ -85,7 +107,16 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
-            .analyze_modules(&modules, inspection.as_ref().map(|workspace| workspace.manifest_dir()))
+            .analyze_unit(
+                &modules,
+                library.then_some(package_identity),
+                &mut |module, checker| {
+                    if let Some(publication) = publication.as_mut() {
+                        publication.visit(module, checker, module.file_path == path);
+                    }
+                },
+                inspection.as_ref().map(|workspace| workspace.manifest_dir()),
+            )
             .map_err(|failure| failure.render_human())?
     };
     if let Some(workspace) = inspection.as_ref() {
@@ -95,6 +126,21 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
         .iter()
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
+    let manifest = match publication {
+        Some(publication) => {
+            let version = session
+                .manifest
+                .as_ref()
+                .and_then(|manifest| manifest.project.as_ref())
+                .and_then(|project| project.version.as_deref())
+                .unwrap_or("0.1.0");
+            let manifest = publication
+                .library_manifest(&modules, &modules[entry], version, &session.contract_model_bundles)
+                .map_err(|error| error.to_string())?;
+            Some(manifest)
+        }
+        None => None,
+    };
     let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
         modules.iter().map(|module| &module.ast),
         session.loaves(),
@@ -141,7 +187,6 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
 
     // ---- The program's own modules ----
     let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
-    let package_identity = package_override.unwrap_or_else(|| registry_package_identity(&session, &path));
     for module in modules {
         let type_info = analysis
             .type_info_for_path(&module.file_path)
@@ -163,19 +208,20 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
         files.push(module.file_path.to_string_lossy().into_owned());
     }
     // ---- Loaf declarations: named, not compiled here (DD-0007) ----
-    // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program calls
-    // the Loaf's compiled item. A governed body, one with type parameters, stays and is instantiated where it is called.
+    // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program
+    // calls the Loaf's compiled item. A governed body, one with type parameters, stays and is instantiated where it
+    // is called.
     let mut loaf_callables = Vec::new();
     for module in bodies.iter_mut().take(loaf_modules) {
         for declaration in &mut module.nominal_declarations {
             if declaration.native_item.is_empty()
-                && let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical, &declaration.name)
+                && let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical)
             {
                 declaration.native_item = item;
             }
         }
         for declaration in &mut module.enum_declarations {
-            if let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical, &declaration.name) {
+            if let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical) {
                 declaration.native_item = item;
             }
         }
@@ -200,6 +246,8 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
         sources,
         files,
         entry,
+        own: loaf_modules,
+        manifest,
     })
 }
 
@@ -617,7 +665,14 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             search_paths: &dependencies.directories,
         },
     )?;
-    if let Some(reuse) = &reuse
+    // A library unit is reused only together with its Loaf, whose manifest is written last.
+    let loaf_written = !dependencies.library
+        || dependencies
+            .package_identity
+            .as_ref()
+            .is_some_and(|name| output.with_file_name(format!("{name}.incnlib")).is_file());
+    if loaf_written
+        && let Some(reuse) = &reuse
         && reuse.try_reuse()?
     {
         return Ok(());
@@ -629,10 +684,16 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let checked_source = source_path.clone();
     let checked_package = dependencies.package_identity.clone();
     let checked_profile = dependencies.profile.clone();
+    let checked_library = dependencies.library;
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&checked_source, checked_package.as_deref(), &checked_profile)
+        checked_modules(
+            &checked_source,
+            checked_package.as_deref(),
+            &checked_profile,
+            checked_library,
+        )
     });
     let program = match checked {
         Ok(program) => program,
@@ -682,7 +743,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         let root = item.split("::").next().unwrap_or_default();
         // The standard library's own crates are always linked, as for external calls below.
         if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
-            return Err(format!("unsupported Body IR native dependency `{root}` for stdlib layout `{item}`").into());
+            return Err(format!("unsupported Body IR native dependency `{root}` for Loaf layout `{item}`").into());
         }
     }
     for external in &plan.externals {
@@ -715,6 +776,17 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             return Err("native link inputs changed during compilation; completed output was not published".into());
         }
         reuse.publish()?
+    }
+
+    // ---- The Loaf beside a library unit's rlib (DD-0007) ----
+    if let Some(manifest) = program.manifest {
+        let directory = output.parent().ok_or("library output has no directory")?;
+        let closure = LoafNativeClosure {
+            externs: dependencies.externs.clone(),
+            search: dependencies.directories.clone(),
+        };
+        write_loaf(directory, manifest, &program.modules[program.own..], &closure)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

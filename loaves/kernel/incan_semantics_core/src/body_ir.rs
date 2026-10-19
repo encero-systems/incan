@@ -85,10 +85,6 @@ pub struct BodyIrModule {
     /// A call of one names the Loaf's compiled item.
     #[serde(default)]
     pub loaf_callables: Vec<LoafCallable>,
-    /// Names this module re-exports with `pub from ... import`, each bound to the declaration it names. A library unit
-    /// publishes its entry module's re-exports under these names; its own declarations keep their source names.
-    #[serde(default)]
-    pub public_exports: Vec<PublicExport>,
     /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
     ///
     /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
@@ -282,18 +278,6 @@ pub struct NativeUnionDeclaration {
     pub members: Vec<IncanType>,
 }
 
-/// One name a module re-exports, bound to the declaration it names.
-///
-/// The target is the exported declaration's own identity: a source declaration in another module, or a Rust item
-/// imported through `rust::`. A library unit publishes the target under `name`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PublicExport {
-    /// The exported spelling: the import alias when one is written, otherwise the declaration's own name.
-    pub name: String,
-    /// The exported declaration's checked identity.
-    pub target: CanonicalSymbolId,
-}
-
 /// A callable a linked Loaf declares, as its declaration record states it (DD-0007). A consumer calls the Loaf's
 /// compiled item; the driver checks the signature recorded here against the rlib's metadata.
 ///
@@ -302,7 +286,7 @@ pub struct PublicExport {
 pub struct LoafCallable {
     /// Exact declaration identity selected by checking, independent of the caller's spelling.
     pub canonical: CanonicalSymbolId,
-    /// The compiled item path, `<crate>::<module path>::<item>`, which the declaration's identity encodes.
+    /// The compiled item, `<crate>::<encoded identity>` ([`loaf_item_path`]).
     pub item: String,
     /// Declaration-order parameter types; argument binding still belongs to the call site.
     pub parameters: Vec<IncanType>,
@@ -326,19 +310,37 @@ pub struct LoafCallable {
     pub parameter_defaults: Vec<CallableParamDefault>,
 }
 
-/// The compiled item a linked Loaf declares `canonical` as, `<crate>::<module path>::<item>` (DD-0007): `None` for
-/// an identity no Loaf declares.
-pub fn loaf_item_path(canonical: &CanonicalSymbolId, item: &str) -> Option<String> {
-    let crate::SymbolOrigin::Package { library, module_path } = &canonical.origin else {
+/// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
+/// letter or digit spelled `_`, and a leading `_` when the name would start with a digit.
+pub fn loaf_crate_name(package: &str) -> String {
+    let mut name = package
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if name.is_empty() || name.starts_with(|character: char| character.is_ascii_digit()) {
+        name.insert(0, '_');
+    }
+    name
+}
+
+/// The compiled item a linked Loaf declares `canonical` as (DD-0007): `<crate>::<encoded identity>`, the item the Loaf
+/// exports at its crate root under the encoding of the declaration's canonical identity. `None` for an identity no
+/// Loaf declares.
+pub fn loaf_item_path(canonical: &CanonicalSymbolId) -> Option<String> {
+    let crate::SymbolOrigin::Package { library, .. } = &canonical.origin else {
         return None;
     };
-    Some(
-        std::iter::once(library.as_str())
-            .chain(module_path.iter().map(String::as_str))
-            .chain(std::iter::once(item))
-            .collect::<Vec<_>>()
-            .join("::"),
-    )
+    Some(format!(
+        "{}::{}",
+        loaf_crate_name(library),
+        crate::encode_incan_symbol_identity(canonical)
+    ))
 }
 
 impl LoafCallable {
@@ -346,7 +348,7 @@ impl LoafCallable {
     /// compiled item its package identity names. `None` for a body no Loaf declares.
     pub fn from_body(body: &Body) -> Option<Self> {
         let canonical = body.canonical.clone()?;
-        let item = loaf_item_path(&canonical, &crate::encode_incan_symbol_identity(&canonical))?;
+        let item = loaf_item_path(&canonical)?;
         Some(Self {
             item,
             parameters: body.params.iter().map(|param| param.ty.clone()).collect(),
@@ -361,16 +363,6 @@ impl LoafCallable {
     /// The compiled item a call of this callable names.
     pub fn rust_path(&self) -> Option<String> {
         Some(self.item.clone())
-    }
-}
-
-impl PublicExport {
-    /// The Rust path of an exported `rust::` item; a source declaration has none and resolves to its planned item.
-    pub fn rust_path(&self) -> Option<String> {
-        match &self.target.origin {
-            crate::SymbolOrigin::RustCrate(path) => Some(path.join("::")),
-            _ => None,
-        }
     }
 }
 
@@ -527,9 +519,9 @@ pub struct NominalDeclaration {
     /// Checked explicit and derive-expanded adoptions; an absent older fact grants no native trait authority.
     #[serde(default)]
     pub trait_adoptions: Vec<TraitAdoption>,
-    /// The compiled item that owns this layout: a linked Loaf's item (DD-0007) or a foreign runtime item the direct-route
-    /// bridge selects. Empty for a layout this compilation declares; consumers validate a nonempty item against its
-    /// retained canonical owner before linking it.
+    /// The compiled item that owns this layout: a linked Loaf's item (DD-0007) or a foreign runtime item the
+    /// direct-route bridge selects. Empty for a layout this compilation declares; consumers validate a nonempty
+    /// item against its retained canonical owner before linking it.
     #[serde(default)]
     pub native_item: String,
     /// Checked local class parent and nearest source method implementations; absent for noninherited carriers.
@@ -5611,7 +5603,6 @@ mod tests {
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             loaf_callables: Vec::new(),
-            public_exports: Vec::new(),
             native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),

@@ -9,7 +9,6 @@ pub mod check;
 pub mod executable;
 mod file_freshness;
 pub mod inline_command;
-pub mod library_exports;
 mod inspection_snapshot;
 pub mod lock_preparation;
 pub mod native_loaf_plan;

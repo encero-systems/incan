@@ -158,6 +158,7 @@ pub fn check_path_report(
         session.manifest.as_ref(),
         session.loaves(),
         session.own_standard_package(),
+        None,
         c_abi_plan.as_ref(),
         &mut |_, _| {},
         #[cfg(feature = "rust_inspect")]

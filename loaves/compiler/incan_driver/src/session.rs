@@ -27,7 +27,7 @@ use incan_frontend::hir::build_semantic_module_snapshot_v0;
 use incan_frontend::loaf_index::{LoafEntry, LoafIndex, artifact_dir};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
-use incan_frontend::typechecker::TypeCheckInfo;
+use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_model::toolchain_layout::CompilerOwnedSourceLayout;
@@ -231,13 +231,32 @@ impl CompilationSession {
         modules: &[ParsedModule],
         #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
+        self.analyze_unit(
+            modules,
+            None,
+            &mut |_, _| {},
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir,
+        )
+    }
+
+    /// Analyze one unit's module graph exactly once. A library unit passes its `package`, the package identity of every
+    /// declaration it checks, and `visit` sees each module's checker so its publication reads the same pass.
+    pub fn analyze_unit(
+        &self,
+        modules: &[ParsedModule],
+        package: Option<&str>,
+        visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
+        #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
+    ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
         let type_infos = typecheck_modules(
             modules,
             self.manifest.as_ref(),
             &self.loaves,
             self.own_standard_package,
+            package,
             None,
-            &mut |_, _| {},
+            visit,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
         )?
@@ -265,7 +284,8 @@ impl CompilationSession {
         let Some(entry) = self.loaves.owner_of(&module) else {
             return Ok(None);
         };
-        testing_marker_semantics_from_manifest(&entry.artifact.manifest).map_err(|error| CliError::failure(error.to_string()))
+        testing_marker_semantics_from_manifest(&entry.artifact.manifest)
+            .map_err(|error| CliError::failure(error.to_string()))
     }
 
     /// Require `std.testing` marker semantics.

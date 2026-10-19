@@ -41,6 +41,7 @@ pub fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadata
         session.loaves(),
         session.own_standard_package(),
         None,
+        None,
         &mut |module, checker| {
             metadata_modules.push(collect_checked_api_metadata(
                 &module.ast,

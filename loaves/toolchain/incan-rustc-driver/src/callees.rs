@@ -120,8 +120,8 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
     let unknown = || PlanError::Invalid {
         function: path.into(),
         reason: match kind {
-            DefKind::Enum => "stdlib layout names no public enum",
-            _ => "stdlib layout names no public struct",
+            DefKind::Enum => "Loaf layout names no public enum",
+            _ => "Loaf layout names no public struct",
         }
         .into(),
     };

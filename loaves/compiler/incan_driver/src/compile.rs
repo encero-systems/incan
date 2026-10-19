@@ -17,6 +17,7 @@ use std::process::Command;
 
 use incan_frontend::loaf_index::artifact_dir;
 use incan_lang::lang::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES;
+use incan_semantics_core::body_ir::loaf_crate_name;
 use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_model::toolchain_layout::CompilerOwnedSourceLayout;
 use oven_rustc::plan::OvenStoredDirectRustcExecutionPlan;
@@ -72,7 +73,10 @@ pub struct UnitOutput {
 /// Compile one unit, first compiling every Loaf it reaches that has no artifact for the profile.
 pub fn compile_unit(request: &UnitRequest<'_>, progress: &mut impl FnMut(String)) -> CliResult<UnitOutput> {
     let source = fs::canonicalize(request.source).map_err(|error| {
-        CliError::failure(format!("cannot read the unit source {}: {error}", request.source.display()))
+        CliError::failure(format!(
+            "cannot read the unit source {}: {error}",
+            request.source.display()
+        ))
     })?;
     let manifest = discover_effective_project_manifest(&resolve_project_root(&source))?;
     prepare_loaves(manifest.as_ref(), request.profile, progress)?;
@@ -102,7 +106,10 @@ fn compile_prepared_unit(
     };
     if let Some(directory) = output.parent() {
         fs::create_dir_all(directory).map_err(|error| {
-            CliError::failure(format!("cannot create the output directory {}: {error}", directory.display()))
+            CliError::failure(format!(
+                "cannot create the output directory {}: {error}",
+                directory.display()
+            ))
         })?;
     }
 
@@ -114,7 +121,7 @@ fn compile_prepared_unit(
     let mut externs = runtime.externs.clone();
     let mut search = runtime.directories.iter().cloned().collect::<BTreeSet<_>>();
     for entry in session.loaves().entries() {
-        externs.push((crate_name(&entry.artifact.name), entry.artifact.rlib_path()));
+        externs.push((loaf_crate_name(&entry.artifact.name), entry.artifact.rlib_path()));
         let closure = entry
             .artifact
             .native_closure()
@@ -134,7 +141,7 @@ fn compile_prepared_unit(
     command
         .arg("--source")
         .arg(source)
-        .arg(crate_name(&name))
+        .arg(loaf_crate_name(&name))
         .arg(&output)
         .arg(&sysroot)
         .arg("--profile")
@@ -145,7 +152,9 @@ fn compile_prepared_unit(
         command.arg("--library");
     }
     for (crate_name, artifact) in &externs {
-        command.arg("--extern").arg(format!("{crate_name}={}", artifact.display()));
+        command
+            .arg("--extern")
+            .arg(format!("{crate_name}={}", artifact.display()));
     }
     for directory in &search {
         command.arg("--search").arg(directory);
@@ -236,7 +245,10 @@ pub fn library_entry(path: &Path) -> CliResult<PathBuf> {
         resolve_project_root(path)
     };
     let manifest = discover_effective_project_manifest(&start)?.ok_or_else(|| {
-        CliError::failure(format!("{} is not inside a Loaf project (no loaf.toml)", start.display()))
+        CliError::failure(format!(
+            "{} is not inside a Loaf project (no loaf.toml)",
+            start.display()
+        ))
     })?;
     Ok(resolve_source_root(manifest.project_root(), Some(&manifest)).join("lib.incn"))
 }
@@ -274,24 +286,6 @@ fn unit_name(manifest: Option<&ProjectManifest>, source: &Path) -> CliResult<Str
         .and_then(|stem| stem.to_str())
         .map(str::to_string)
         .ok_or_else(|| CliError::failure(format!("{} has no usable file name", source.display())))
-}
-
-/// A Rust crate name for a unit: ASCII alphanumerics and `_`, never starting with a digit.
-fn crate_name(name: &str) -> String {
-    let mut crate_name = name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    if crate_name.is_empty() || crate_name.starts_with(|character: char| character.is_ascii_digit()) {
-        crate_name.insert(0, '_');
-    }
-    crate_name
 }
 
 /// The toolchain's standard-library root: `ROOT/stdlib` installed, `ROOT/loaves/stdlib` in a checkout.

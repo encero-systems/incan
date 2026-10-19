@@ -31,8 +31,9 @@ pub struct TypecheckedModules {
 }
 
 /// Typecheck a collected graph in dependency-safe order against the program's Loaves, retaining one result for every
-/// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent). `visit` sees each
-/// module's checker after it checks cleanly, so publication reads the same pass.
+/// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent). A library unit passes
+/// its `package`, the package identity of every declaration it checks (DD-0007). `visit` sees each module's checker
+/// after it checks cleanly, so publication reads the same pass.
 ///
 /// Ordering is intentional: session analysis also needs an identity-keyed representation for synthetic modules that
 /// share a source file path.
@@ -41,6 +42,7 @@ pub fn typecheck_modules(
     manifest: Option<&ProjectManifest>,
     loaves: &Arc<LoafIndex>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+    package: Option<&str>,
     c_abi_plan: Option<&CAbiVerificationPlan>,
     visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
@@ -64,6 +66,7 @@ pub fn typecheck_modules(
             checker.set_declared_crate_names(names);
         }
         checker.set_current_module_path(Some(module.path_segments.clone()));
+        checker.set_current_package_identity(package.map(str::to_owned));
         register_module_path_segments(&mut checker, modules);
         checker.set_loaves(Arc::clone(loaves));
         if let Some(policy) = own_standard_package {
@@ -235,4 +238,3 @@ fn resolve_package_owned_c_binding_header(
         .into_owned();
     resolved
 }
-

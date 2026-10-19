@@ -95,7 +95,6 @@ from rust::incan_semantics_core import (
     CanonicalSymbolId as RustCanonicalSymbolId,
 )
 from rust::incan_semantics_core::body_ir import (
-    PublicExport,
     NominalDeclaration as RustNominalDeclaration,
     GlobalPlace as RustGlobalPlace,
     GlobalWritePolicy as RustGlobalWritePolicy,
@@ -197,12 +196,7 @@ from string_conversion import lower_string_conversions, string_conversion_callee
 from string_conversion_contracts import validate_conversion_placement
 from enum_instances import specialize_enums
 from display_methods import display_functions
-from comparison_methods import (
-    comparison_functions,
-    source_equality_value,
-    attach_enum_comparisons,
-    standard_comparison_slot,
-)
+from comparison_methods import comparison_functions, source_equality_value, attach_enum_comparisons
 from frozen_equality import compare_frozen, borrow_frozen_argument, frozen_reference_type
 from decorator_caches import (
     DecoratorFrame,
@@ -3699,10 +3693,6 @@ def instantiated_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
-        if deferred_sdk_default(module, body):
-            builder.instances.append(
-                Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false),
-            )
     return Ok(body)
 
 
@@ -3770,29 +3760,6 @@ def sdk_forwarded_type_arguments(
     if actual != expected:
         return Ok(closed)
     return Ok([candidate.clone()])
-
-
-def deferred_sdk_default(module: &BodyIrModule, body: &RustBody) -> bool:
-    """Generate a checked SDK default only when selected; implicit native comparison and display roots remain eager."""
-    match body.canonical:
-        None => return false
-        Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Method:
-                return false
-            match identity.origin:
-                SymbolOrigin.Package(library=library, module_path=_path) =>
-                    if not str(library).startswith("incan_stdlib_"):
-                        return false
-                _ => return false
-            if standard_comparison_slot(identity, str(identity.declaration_name)):
-                return false
-            for declaration in module.nominal_declarations:
-                if declaration.display_method == Some(identity.clone()):
-                    return false
-            for implementation in module.trait_implementations:
-                if implementation.method == identity and implementation.implementation == identity:
-                    return true
-    return false
 
 
 def method_ordinary_operands(
@@ -4834,7 +4801,7 @@ def lower_delegated_call(
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
-    mut operands = library_call_operands(builder, delegation, target.binding, arguments, parameters, span, 0, true)?
+    operands = library_call_operands(builder, delegation, target.binding, arguments, parameters, span, 0, true)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -4843,18 +4810,7 @@ def lower_delegated_call(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib delegation native identity")
         Some(published_path) =>
-            path = testing_comparison_path(delegation, published_path)?
-            if path != published_path:
-                if len(parameters) != 3 or parameters[0] != parameters[1] or parameters[2] != PlanType.String or result != PlanType.Unit or len(
-                    type_arguments,
-                ) != 1:
-                    return Err("unsupported Body IR canonical testing comparison signature")
-                match target.binding:
-                    RustArgumentBinding.Resolved(arguments=_slots, defaulted_slots=defaults) =>
-                        for slot in defaults:
-                            if int(slot) == 2:
-                                operands[2] = read_place(owned_literal(builder, "", span), true, span)
-                    _ => pass
+            path = published_path
             match result:
                 PlanType.Future(outputs) =>
                     if len(outputs) != 1:
@@ -4868,27 +4824,6 @@ def lower_delegated_call(
                 external_call(builder, path, parameters, result, operands, output, span)
                 return Ok(None)
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
-
-
-def testing_comparison_path(delegation: &RustLoafCallable, published_path: str) -> Result[str, str]:
-    """Select language assertion semantics only from the standard package slot and its exact published native symbol."""
-    identity = delegation.canonical
-    if identity.kind != SemanticSourceTargetKind.Function:
-        return Ok(published_path)
-    match identity.origin:
-        SymbolOrigin.Package(library=library, module_path=path) =>
-            if library == "incan_stdlib_testing" and len(path) == 1 and path[0] == "testing":
-                if identity.declaration_name not in ["assert_eq", "assert_ne"]:
-                    return Ok(published_path)
-                expected = f"incan_stdlib_testing::testing::{encode_incan_symbol_identity(identity)}"
-                if published_path != expected:
-                    return Err("unsupported Body IR canonical testing comparison native identity")
-                if identity.declaration_name == "assert_eq":
-                    return Ok("incan_native_runtime::assert_equal")
-                if identity.declaration_name == "assert_ne":
-                    return Ok("incan_native_runtime::assert_unequal")
-        _ => pass
-    return Ok(published_path)
 
 
 def library_function_arguments(
@@ -6757,7 +6692,7 @@ def lowered_plan(
         for body in context.bodies:
             if body_module_identity(body)? != str(checked[index].module_id.path()):
                 continue
-            if len(body.type_parameters) != 0 or deferred_sdk_default(context, body):
+            if len(body.type_parameters) != 0:
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue
@@ -6806,7 +6741,7 @@ def lowered_plan(
     validate_futures(context, intrinsics)?
     mut exports: list[PlanExport] = []
     if library:
-        exports = library_exports(context, checked[entry])?
+        exports = loaf_exports(context, emitted_frames)
     if not library and not has_main:
         if declares_main:
             return Err("unsupported Body IR selected main representation")
@@ -6826,43 +6761,56 @@ def lowered_plan(
     )
 
 
-def library_exports(context: &BodyIrModule, entry: &BodyIrModule) -> Result[list[PlanExport], str]:
+def loaf_exports(context: &BodyIrModule, emitted: &list[RustBody]) -> list[PlanExport]:
     """
-    Bind each public name of a library's entry module to the item its plan emits.
+    Export every body and public type a Loaf compiles at its crate root, under the encoding of its canonical identity:
+    the item its consumers name (DD-0007).
 
-    A `rust::` re-export keeps its Rust path. A source function, model or enum resolves by canonical identity to the
-    item the plan emits for it. Generic functions, constants, aliases and traits emit no item; dependents take them from
-    source, so they need no alias.
+    A body emitted in several frames under one identity, such as a trait default per receiver, has no single item, so
+    none is exported for it. A generic body emits no item; its consumers instantiate its governed body.
     """
     mut exports: list[PlanExport] = []
-    for export in entry.public_exports:
-        match export.rust_path():
-            Some(path) =>
-                exports.append(PlanExport(name=str(export.name), path=f"::{path}"))
-                continue
+    mut ambiguous: list[str] = []
+    for body in emitted:
+        match body.canonical:
+            Some(identity) =>
+                if is_package_identity(identity):
+                    name = encode_incan_symbol_identity(identity)
+                    if exports_name(exports, name):
+                        ambiguous.append(name)
+                    else:
+                        exports.append(PlanExport(name=name, path=f"crate::{function_name(context, body)}"))
             None => pass
-        match planned_export_item(context, export)?:
-            Some(item) => exports.append(PlanExport(name=str(export.name), path=f"crate::{item}"))
-            None => pass
-    return Ok(exports)
-
-
-def planned_export_item(context: &BodyIrModule, export: &PublicExport) -> Result[Option[str], str]:
-    """The planned item a source export names, None for a declaration that emits no item, or a refusal."""
-    for body in context.bodies:
-        if body.canonical == Some(export.target.clone()):
-            if len(body.type_parameters) != 0:
-                return Ok(None)
-            return Ok(Some(function_name(context, body)))
     for declaration in context.nominal_declarations:
-        if declaration.canonical == export.target:
-            return Ok(Some(str(declaration.name)))
+        if declaration.public and declaration.native_item == "" and is_package_identity(declaration.canonical):
+            exports.append(
+                PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
+            )
     for declaration in context.enum_declarations:
-        if declaration.canonical == export.target:
-            return Ok(Some(str(declaration.name)))
-    match export.target.kind:
-        SemanticSourceTargetKind.Const | SemanticSourceTargetKind.TypeAlias | SemanticSourceTargetKind.Trait => return Ok(None)
-        _ => return Err(f"unsupported Body IR library export {export.name}")
+        if declaration.public and declaration.native_item == "" and is_package_identity(declaration.canonical):
+            exports.append(
+                PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
+            )
+    mut unique: list[PlanExport] = []
+    for export in exports:
+        if export.name not in ambiguous:
+            unique.append(export)
+    return unique
+
+
+def exports_name(exports: &list[PlanExport], name: str) -> bool:
+    """Whether an export already takes `name`."""
+    for export in exports:
+        if export.name == name:
+            return true
+    return false
+
+
+def is_package_identity(identity: &RustCanonicalSymbolId) -> bool:
+    """Whether a package declares `identity`, so a Loaf compiles it."""
+    match identity.origin:
+        SymbolOrigin.Package(library=_library, module_path=_path) => return true
+        _ => return false
 
 
 def retains_emitted_frame(frames: list[RustBody], candidate: &RustBody) -> bool:
@@ -7027,7 +6975,7 @@ def body_refusals(
                 Err(error) =>
                     refusals.append(f"{body.name}: {error}")
                     continue
-            if len(body.type_parameters) != 0 or deferred_sdk_default(context, body):
+            if len(body.type_parameters) != 0:
                 continue
             match lower_function(
                 context,
@@ -7094,7 +7042,7 @@ def lower_concrete_module(
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
     for body in module.bodies:
-        if len(body.type_parameters) != 0 or deferred_sdk_default(module, body):
+        if len(body.type_parameters) != 0:
             continue
         for retained in functions:
             if retained.name == function_name(module, body):

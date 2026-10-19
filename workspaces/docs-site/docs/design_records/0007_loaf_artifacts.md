@@ -42,7 +42,7 @@ One `LoafIndex` per compilation holds an entry per Loaf the project reaches: its
 
 ### Calling into a Loaf
 
-A consumer names a Loaf's declarations and never declares them again. A type is its compiled item, `<crate>::<module path>::<Name>`. A function or method is its compiled item, whose name its canonical identity encodes. Both follow from the declaration's package identity, so neither needs a per-call record.
+A consumer names a Loaf's declarations and never declares them again. A Loaf exports every type and every compiled function or method at its crate root under the encoding of its canonical identity, so the item a consumer names is `<crate>::<encoded identity>`, where the crate is the package name in lowercase with every character other than an ASCII letter or digit spelled `_`. The item follows from the declaration's identity alone, so no call needs a per-call record.
 
 The `.incnbody` carries a declaration record for every public callable beside the governed bodies: its parameters with the computation each default reduces to, and its type parameters. The consumer's Body IR and lowering complete an omitted argument and check a call from that record. The driver checks the call against the rlib's metadata.
 

@@ -283,7 +283,6 @@ fn empty_module(owner: String) -> BodyIrModule {
         trait_implementations: Vec::new(),
         module_id: CompilerNodeId::module(owner),
         loaf_callables: Vec::new(),
-        public_exports: Vec::new(),
         native_union_declarations: Vec::new(),
         enum_declarations: Vec::new(),
         static_declarations: Vec::new(),
@@ -497,4 +496,3 @@ impl OpenSurface {
 fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
     ExecutableRepresentationError::Malformed { reason: reason.into() }
 }
-
