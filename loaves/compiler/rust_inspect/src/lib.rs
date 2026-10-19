@@ -28,6 +28,8 @@ mod loader;
 #[cfg(feature = "inspector")]
 mod mir_digest;
 #[cfg(feature = "inspector")]
+mod prelude_names;
+#[cfg(feature = "inspector")]
 mod receiver_contract;
 #[cfg(feature = "test_fixtures")]
 pub mod test_fixtures;

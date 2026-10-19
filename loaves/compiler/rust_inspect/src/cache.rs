@@ -34,6 +34,7 @@ use crate::cache_timing::{CallTrace, log_timing_stage, rust_inspect_timing_enabl
 use crate::error::RustMetadataError;
 use crate::extractor::{extract_rust_item, rust_type_implements_trait};
 use crate::generic_params::{SourceOwnerGenerics, source_owner_generics};
+use crate::prelude_names::prelude_type_module;
 use crate::loader::RustWorkspace;
 
 /// Cache for [`RustWorkspace`] instances and extracted [`RustItemMetadata`].
@@ -175,9 +176,11 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
+// 46: a module import shadows prelude names in both extraction routes and alias targets keep their own parameters,
+// so `std::thread::Result<T>` records `core::result::Result<T, Box<..>>` behind the alias path signatures name.
 // 43: terminal public functions retain their value namespace beside same-named modules. Older complete records
 // could publish module metadata for a function and cannot safely answer callable queries.
-const DISK_CACHE_FORMAT: u32 = 43;
+const DISK_CACHE_FORMAT: u32 = 46;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -1867,7 +1870,12 @@ fn source_type_path_display(path: &str, context: &SourceMetadataContext<'_>, typ
     if compact.is_empty() {
         return compact;
     }
-    if let Some(base) = generated_known_collection_base(compact.as_str()) {
+    // A module's own import shadows the prelude: after `use crate::thread::Result;` a bare `Result` names that alias.
+    let imported = compact
+        .split("::")
+        .next()
+        .is_some_and(|first| context.aliases.contains_key(first));
+    if !imported && let Some(base) = generated_known_collection_base(compact.as_str()) {
         return base.to_string();
     }
     if compact == RUST_NEVER_TYPE_DISPLAY {
@@ -2085,13 +2093,15 @@ fn rust_callable_bound_marker(ident: &str) -> bool {
 /// Normalize one identifier token inside a source alias target while preserving valid Rust `dyn Fn` syntax.
 fn source_alias_target_ident_display(
     ident: &str,
+    type_params: &[String],
     crate_name: &str,
     module_path: &[String],
     aliases: &HashMap<String, String>,
     preferred_external_paths: &HashMap<String, String>,
     source_public_reexports: &HashMap<String, String>,
 ) -> Option<String> {
-    if rust_callable_bound_marker(ident) {
+    // The alias's own parameters stay parameters; `T` in `Result<T, E>` is not an item of the owning module.
+    if rust_callable_bound_marker(ident) || type_params.iter().any(|param| param == ident) {
         return None;
     }
     if let Some(alias) = aliases.get(ident) {
@@ -2113,6 +2123,10 @@ fn source_alias_target_ident_display(
                 .unwrap_or(display),
         );
     }
+    // A prelude name the module does not import is the prelude item, not an item of the owning module.
+    if prelude_type_module(ident).is_some() {
+        return None;
+    }
     if ident.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
         let mut out = vec![crate_name.to_string()];
         out.extend(module_path.iter().cloned());
@@ -2125,6 +2139,7 @@ fn source_alias_target_ident_display(
 /// Normalize a Rust type-alias RHS from dependency source without parsing away callable trait-object syntax.
 fn source_alias_target_display(
     text: &str,
+    type_params: &[String],
     crate_name: &str,
     module_path: &[String],
     aliases: &HashMap<String, String>,
@@ -2158,6 +2173,7 @@ fn source_alias_target_display(
 
         if let Some(display) = source_alias_target_ident_display(
             ident.as_str(),
+            type_params,
             crate_name,
             module_path,
             aliases,
@@ -2426,10 +2442,11 @@ impl SourceMetadataContext<'_> {
             .collect()
     }
 
-    /// Normalize type-alias RHS syntax while preserving callable trait objects.
-    fn alias_target_display(&self, text: &str) -> String {
+    /// Normalize type-alias RHS syntax while preserving callable trait objects and the alias's own parameters.
+    fn alias_target_display(&self, text: &str, type_params: &[String]) -> String {
         source_alias_target_display(
             text,
+            type_params,
             self.crate_name,
             self.module_path,
             self.aliases,
@@ -2937,10 +2954,10 @@ fn source_type_alias_metadata(
     }
     let name = generated_source_name(alias.name()?.to_string().as_str());
     let definition = ctx.definition_path(name.as_str());
+    let generics = source_owner_generics(alias.generic_param_list());
     let alias_target = alias
         .ty()
-        .map(|ty| ctx.alias_target_display(ty.syntax().text().to_string().as_str()));
-    let generics = source_owner_generics(alias.generic_param_list());
+        .map(|ty| ctx.alias_target_display(ty.syntax().text().to_string().as_str(), &generics.type_params));
     let type_param_defaults = ctx.type_param_defaults(&generics);
     Some(RustItemMetadata {
         canonical_path: canonical_path.to_string(),
