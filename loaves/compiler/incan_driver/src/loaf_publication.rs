@@ -22,7 +22,7 @@ use incan_frontend::api_metadata::{
 use incan_frontend::contract_metadata::{CanonicalModelBundle, ContractMetadataPackage};
 use incan_frontend::diagnostics;
 use incan_frontend::library_exports::{CheckedNamedExport, checked_exports_by_name, collect_checked_public_exports};
-use incan_frontend::library_manifest::published_layout::public_executable_identities;
+use incan_frontend::library_manifest::public_identities::public_executable_identities;
 use incan_frontend::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_frontend::parsed_module::ParsedModule;

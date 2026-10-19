@@ -20,6 +20,12 @@ use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use crate::library_manifest::{ExportIdentity, ExportIdentityKind, LibraryManifest};
 
+/// The extension of a Loaf's library manifest, `<name>.incnlib`.
+pub const LIBRARY_MANIFEST_EXTENSION: &str = "incnlib";
+
+/// The extension of a Loaf's executable representation, `<name>.incnbody`.
+pub const EXECUTABLE_REPRESENTATION_EXTENSION: &str = "incnbody";
+
 /// The artifact directory of a Loaf rooted at `root`, for one profile: `<root>/target/incan/loaf/<profile>`.
 pub fn artifact_dir(root: &Path, profile: &str) -> PathBuf {
     root.join("target/incan/loaf").join(profile)
@@ -62,7 +68,7 @@ pub struct LoafArtifact {
 impl LoafArtifact {
     /// Read the Loaf `name` from its artifact directory.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        let path = dir.join(format!("{name}.incnlib"));
+        let path = dir.join(format!("{name}.{LIBRARY_MANIFEST_EXTENSION}"));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
             reason,
@@ -88,12 +94,13 @@ impl LoafArtifact {
 
     /// The library manifest file.
     pub fn manifest_path(&self) -> PathBuf {
-        self.dir.join(format!("{}.incnlib", self.name))
+        self.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", self.name))
     }
 
     /// The governed bodies file: the executable representation callers instantiate.
     pub fn bodies_path(&self) -> PathBuf {
-        self.dir.join(format!("{}.incnbody", self.name))
+        self.dir
+            .join(format!("{}.{EXECUTABLE_REPRESENTATION_EXTENSION}", self.name))
     }
 
     /// The library unit.
@@ -157,7 +164,8 @@ pub struct LoafEntry {
 }
 
 impl LoafEntry {
-    /// Whether this Loaf owns `module` (`["pub", key, ..]` for a dependency, `["std", root, ..]` for a standard package).
+    /// Whether this Loaf owns `module` (`["pub", key, ..]` for a dependency, `["std", root, ..]` for a standard
+    /// package).
     pub fn owns(&self, module: &[String]) -> bool {
         match (&self.namespace, module) {
             (LoafNamespace::Dependency { key }, [root, name, ..]) => root == "pub" && name == key,

@@ -9,9 +9,8 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION};
 use incan_driver::features::FeatureSelection;
-
+use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION};
 
 /// Output format for stable diagnostics commands.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +40,6 @@ pub fn check_path_with_features(
     check_path_with_interop_target_selection(path, format, feature_selection, None)
 }
 
-
 /// Run the canonical check pipeline with an explicit declared target for checked C ABI verification only.
 pub(crate) fn check_path_with_interop_target_selection(
     path: &Path,
@@ -49,7 +47,12 @@ pub(crate) fn check_path_with_interop_target_selection(
     feature_selection: &FeatureSelection,
     interop_target: Option<&str>,
 ) -> CliResult<ExitCode> {
-    let report = oven_cli::project_owner::check(path, feature_selection, None, interop_target)?;
+    let report = incan_driver::build::check::execute_request(&incan_driver::build::check::CheckRequest {
+        path: std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?,
+        features: feature_selection.clone(),
+        profile: None,
+        interop_target: interop_target.map(str::to_owned),
+    })?;
     render_check_report(report, format)
 }
 
@@ -161,4 +164,3 @@ fn format_explain_text(entry: &diagnostics::DiagnosticCatalogEntry) -> String {
     }
     text
 }
-

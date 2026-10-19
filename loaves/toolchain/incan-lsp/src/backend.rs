@@ -37,7 +37,7 @@ use incan_frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
 };
 use incan_frontend::diagnostics::{CompileError, DiagnosticPhase, phase_for_typecheck_span};
-use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use incan_frontend::loaf_index::LIBRARY_MANIFEST_EXTENSION;
 use incan_frontend::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
     ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,

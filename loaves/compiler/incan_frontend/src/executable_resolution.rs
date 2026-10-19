@@ -25,7 +25,7 @@ use incan_semantics_core::executable_representation::{
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
 
 use crate::library_manifest::LibraryManifest;
-use crate::library_manifest::published_layout::public_executable_identities;
+use crate::library_manifest::public_identities::public_executable_identities;
 use crate::loaf_index::LoafIndex;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.

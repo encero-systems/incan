@@ -1,76 +1,10 @@
-//! Manifest-selected immutable executable sidecars in the package's semantic artifact slot.
+//! The public identities a Loaf's executable representation is projected onto.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
 
 use incan_semantics_core::CanonicalSymbolId;
 
 use super::{CanonicalIdentityExport, FieldExport, FieldVisibilityExport, LibraryManifest};
-
-/// Stable package-artifact manifest that maps each provider profile to its sealed Loaf and direct library output.
-pub const OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH: &str = "oven/package-loafs.json";
-
-/// Return the package-owned Loaf index retained beside one generated public library artifact.
-pub fn packaged_library_loaf_manifest_path(artifact_root: &Path) -> PathBuf {
-    artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH)
-}
-
-/// Return whether a provider declares an explicit package-Loaf handoff.
-///
-/// The common command preflight uses this only to refuse an implicit provider rebuild. The consumer's Oven planner
-/// (the driver's `build::package_loafs`) immediately follows with full schema, receipt, artifact-digest, target,
-/// toolchain, and closure validation. Keeping those checks in one place avoids two subtly different package
-/// validators.
-pub fn oven_library_dependency_declares_package_loaf(dependency_root: &Path) -> bool {
-    let artifact_root = dependency_root.join(LIBRARY_ARTIFACT_DIRECTORY);
-    let manifest_path = packaged_library_loaf_manifest_path(&artifact_root);
-    manifest_path.is_file()
-}
-
-/// Project-relative directory a library build publishes its artifacts under.
-///
-/// Every reader of a published library — the frontend's dependency index, the lockfile's provider hashing, the
-/// representation inspector and the publication rollback — resolves the same directory, so it is spelled once.
-pub const LIBRARY_ARTIFACT_DIRECTORY: &str = "target/lib";
-
-/// Extension of a published library's checked manifest, `<package>.incnlib`.
-///
-/// Spelled once for the same reason as [`LIBRARY_ARTIFACT_DIRECTORY`]: the rollback path classifies a previous
-/// build's manifest as generated output by this extension, and a literal there would resurrect a stale manifest
-/// as a user file the moment the name changed here.
-pub const LIBRARY_MANIFEST_EXTENSION: &str = "incnlib";
-
-/// Directory reserved for executable semantic package fragments.
-pub const EXECUTABLE_SURFACE_DIRECTORY: &str = "semantic";
-
-/// Extension reserved for an executable semantic package fragment.
-///
-/// Paired with [`EXECUTABLE_SURFACE_DIRECTORY`] because the two together are the artifact namespace this module
-/// owns. A caller that needs to recognize generated surface output must use both rather than respelling either:
-/// the rollback path skips this namespace to avoid carrying a previous build's surface forward, and a literal
-/// there would stop matching the moment the name changed here.
-pub const EXECUTABLE_SURFACE_EXTENSION: &str = "incnsem";
-
-/// Locate the exact immutable surface selected by a finalized manifest.
-///
-/// Digest syntax is checked before path construction so manifest contents cannot escape their artifact root.
-pub fn executable_surface_path(manifest_path: &Path, manifest: &LibraryManifest) -> Option<PathBuf> {
-    let descriptor = manifest.contract_metadata.executable_representation.as_ref()?;
-    let digest = &descriptor.content_digest;
-    if digest.len() != 64
-        || !digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return None;
-    }
-    Some(
-        manifest_path
-            .parent()?
-            .join(EXECUTABLE_SURFACE_DIRECTORY)
-            .join(format!("{digest}.{EXECUTABLE_SURFACE_EXTENSION}")),
-    )
-}
 
 /// Canonical membership of the manifest's public surface: exported types plus their published public members.
 ///

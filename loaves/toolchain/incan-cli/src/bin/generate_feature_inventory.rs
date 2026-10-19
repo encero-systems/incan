@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     build_workspace_cli(&workspace_root)?;
     let source = workspace_root.join("loaves/stdlib/core/src/features.incn");
     let output = workspace_root.join("workspaces/docs-site/docs/language/reference/feature_inventory.md");
-    incan_cli::commands::tools::write_feature_inventory_reference_from_source(&source, &output)?;
+    oven_cli::commands::tools::write_feature_inventory_reference_from_source(&source, &output)?;
     Ok(())
 }
 

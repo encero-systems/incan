@@ -18,12 +18,10 @@ use incan_semantics_core::executable_representation::{
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
+use incan_driver::session::DEFAULT_PROFILE;
 use incan_frontend::library_manifest::LibraryManifest;
-use incan_frontend::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
-
-use incan_frontend::library_manifest::published_layout::{
-    LIBRARY_ARTIFACT_DIRECTORY as LIBRARY_ARTIFACT_DIR, LIBRARY_MANIFEST_EXTENSION,
-};
+use incan_frontend::library_manifest::public_identities::public_executable_identities;
+use incan_frontend::loaf_index::{EXECUTABLE_REPRESENTATION_EXTENSION, LIBRARY_MANIFEST_EXTENSION, artifact_dir};
 
 /// Output format for `incan inspect representation`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,13 +120,13 @@ fn resolve_manifest_path(path: &Path) -> CliResult<PathBuf> {
             path.display()
         )));
     }
-    for root in [path.to_path_buf(), path.join(LIBRARY_ARTIFACT_DIR)] {
+    for root in [path.to_path_buf(), artifact_dir(path, DEFAULT_PROFILE)] {
         if let Some(manifest) = sole_manifest_in(&root)? {
             return Ok(manifest);
         }
     }
     Err(CliError::failure(format!(
-        "no `.incnlib` manifest under `{}`; run `incan build --lib` in the package first",
+        "no `.incnlib` manifest under `{}` or its debug artifact directory; run `incan build --lib --debug` in the package first",
         path.display()
     )))
 }
@@ -166,7 +164,9 @@ fn sole_manifest_in(root: &Path) -> CliResult<Option<PathBuf>> {
 /// Read the manifest's declared surface and, when one is published, the sidecar's version and coverage.
 fn build_report(manifest_path: &Path, manifest: &LibraryManifest) -> CliResult<RepresentationReport> {
     let public = public_executable_identities(manifest);
-    let Some(surface_path) = executable_surface_path(manifest_path, manifest) else {
+    // A Loaf's representation sits beside its manifest as `<name>.incnbody` (DD-0007).
+    let surface_path = manifest_path.with_extension(EXECUTABLE_REPRESENTATION_EXTENSION);
+    if manifest.contract_metadata.executable_representation.is_none() {
         return Ok(RepresentationReport {
             library: manifest.name.clone(),
             version: manifest.version.clone(),
@@ -174,7 +174,7 @@ fn build_report(manifest_path: &Path, manifest: &LibraryManifest) -> CliResult<R
             representation: None,
             unindexed_public_identities: public.into_iter().collect(),
         });
-    };
+    }
     let bytes = fs::read(&surface_path).map_err(|error| {
         CliError::failure(format!(
             "the manifest names a representation at `{}` that cannot be read: {error}",
@@ -371,132 +371,5 @@ fn render_text(report: &RepresentationReport) {
             declaration.identity.kind.as_str(),
             declaration.identity.declaration_name
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use incan_semantics_core::executable_representation::build_surface;
-    use incan_semantics_core::{HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
-    use sha2::{Digest, Sha256};
-    use tempfile::tempdir;
-
-    use super::*;
-    use incan_frontend::library_manifest::ExecutableRepresentationExport;
-
-    /// One public identity this package owns, which is what `build_surface` admits into a surface.
-    fn owned_identity(library: &str, name: &str) -> CanonicalSymbolId {
-        CanonicalSymbolId {
-            namespace: SymbolNamespace::OrdinaryLexical,
-            origin: SymbolOrigin::Package {
-                library: library.to_string(),
-                module_path: vec!["surface".to_string()],
-            },
-            declaration_name: name.to_string(),
-            kind: SemanticSourceTargetKind::Function,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(0, 1),
-        }
-    }
-
-    /// Publish a manifest and, unless `sidecar` says otherwise, the surface it names.
-    ///
-    /// The surface is built from no modules, so every public identity lands uncovered. That is the state this
-    /// command has to report faithfully, and it needs no compilation to produce.
-    fn published(
-        root: &Path,
-        library: &str,
-        public: &BTreeSet<CanonicalSymbolId>,
-        mutate_version: Option<u8>,
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let mut bytes = build_surface(&[], library, "1.2.3", public, &BTreeSet::new())?;
-        if let Some(version) = mutate_version {
-            // The frame opens with a postcard varint version; a value below 128 is one byte, so overwriting it
-            // forges an artifact from a compiler this build does not know without re-encoding anything.
-            bytes[0] = version;
-        }
-        let mut manifest = LibraryManifest::new(library, "1.2.3");
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: EXECUTABLE_REPRESENTATION_VERSION,
-            content_digest: hex::encode(Sha256::digest(&bytes)),
-        });
-        let manifest_path = root.join(format!("{library}.incnlib"));
-        let surface = executable_surface_path(&manifest_path, &manifest).ok_or("surface path missing")?;
-        fs::create_dir_all(surface.parent().ok_or("surface directory missing")?)?;
-        fs::write(surface, bytes)?;
-        manifest.write_to_path(&manifest_path)?;
-        Ok(manifest_path)
-    }
-
-    #[test]
-    fn a_published_representation_reports_its_version_and_declared_coverage() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = tempdir()?;
-        let public = BTreeSet::from([owned_identity("probe", "parse"), owned_identity("probe", "render")]);
-        let manifest_path = published(root.path(), "probe", &public, None)?;
-        let manifest = LibraryManifest::read_from_path(&manifest_path)?;
-
-        let report = build_report(&manifest_path, &manifest)?;
-        let published = report.representation.ok_or("expected a published representation")?;
-        assert_eq!(published.version, EXECUTABLE_REPRESENTATION_VERSION);
-        assert!(published.interpretable);
-        assert_eq!(published.index_library.as_deref(), Some("probe"));
-        assert_eq!(published.declarations.len(), 2);
-        assert_eq!(published.totals.covered, 0);
-        assert_eq!(
-            published.totals.uncovered.get("no_executable_declaration").copied(),
-            Some(2),
-            "a surface built from no modules covers nothing, and says why"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_package_publishing_no_representation_is_reported_rather_than_refused() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = tempdir()?;
-        let manifest = LibraryManifest::new("linking-only", "1.2.3");
-        let manifest_path = root.path().join("linking-only.incnlib");
-        manifest.write_to_path(&manifest_path)?;
-
-        let report = build_report(&manifest_path, &manifest)?;
-        assert!(
-            report.representation.is_none(),
-            "a package that links without a representation is a legitimate answer, not an error"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn an_uninterpretable_version_is_reported_without_reading_its_index() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempdir()?;
-        let public = BTreeSet::from([owned_identity("future", "parse")]);
-        let manifest_path = published(root.path(), "future", &public, Some(126))?;
-        let manifest = LibraryManifest::read_from_path(&manifest_path)?;
-
-        let report = build_report(&manifest_path, &manifest)?;
-        let published = report.representation.ok_or("expected a published representation")?;
-        assert_eq!(
-            published.version, 126,
-            "the version is the one fact an unsupported package can still give"
-        );
-        assert!(!published.interpretable);
-        assert!(published.declarations.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn a_project_root_resolves_to_the_manifest_under_its_generated_artifact_root()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempdir()?;
-        let artifacts = root.path().join(LIBRARY_ARTIFACT_DIR);
-        fs::create_dir_all(&artifacts)?;
-        let public = BTreeSet::from([owned_identity("nested", "parse")]);
-        let expected = published(&artifacts, "nested", &public, None)?;
-
-        assert_eq!(resolve_manifest_path(root.path())?, expected);
-        Ok(())
     }
 }

@@ -46,7 +46,7 @@ pub struct CheckOutput {
 }
 
 /// Evaluate the single canonical check operation and transport its original diagnostics without native authority.
-pub(super) fn execute_request(request: &CheckRequest) -> CliResult<CheckOutput> {
+pub fn execute_request(request: &CheckRequest) -> CliResult<CheckOutput> {
     if !request.path.is_absolute() {
         return Err(CliError::failure("owner requires an absolute check path"));
     }

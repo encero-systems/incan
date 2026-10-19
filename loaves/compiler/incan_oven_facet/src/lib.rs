@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use incan_frontend::library_manifest::digest_provider_artifact;
-use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use incan_frontend::loaf_index::LIBRARY_MANIFEST_EXTENSION;
 use incan_lang::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 use oven_model::compiler_identity::CompilerIdentity;
 use oven_store::{OvenProviderHookError, OvenProviderHooks};

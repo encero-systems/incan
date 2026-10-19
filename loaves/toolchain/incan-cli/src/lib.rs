@@ -1,81 +1,41 @@
-//! CLI module for the Incan compiler
+//! The `incan` command line.
 //!
-//! This module provides the command-line interface for the compiler.
+//! - `build [FILE] [--lib]`: compile a program, or the project's Loaf as a library unit
+//! - `run [FILE] [-c CODE] [-- ARGS]`: compile and run a program, defaulting to `[project.scripts].main`
+//! - `check [PATH]`: check a file or project entrypoint, with optional stable JSON diagnostics
+//! - `test [PATH]`: run tests
+//! - `fmt [PATH]`, `new [NAME]`, `init [PATH]`, `version`, `env`, `explain CODE`
+//! - `inspect codegraph|features|bindings|representation`: compiler-backed projections
 //!
-//! ## Commands
-//!
-//! - `check <file>` - Type-check with optional stable JSON diagnostics
-//! - `explain <code>` - Explain stable diagnostic codes
-//! - `build <file>` - Compile to Rust and build executable
-//! - `build --lib` - Validate library-mode preconditions
-//! - `inspect codegraph <file|dir>` - Export compiler-backed codegraph records as JSONL
-//! - `run [file]` - Compile and run the program, defaulting to `[project.scripts].main`
-//! - `init [path]` - Create a starter project scaffold in an existing directory
-//! - `new [name]` - Create a new Incan project directory, prompting when no name is provided
-//! - `fmt <file|dir>` - Format Incan source files
-//! - `test [path]` - Run tests (pytest-style)
-//! - `version <bump>|--set <version>` - Update `[project].version` in `loaf.toml`
-//! - `env <subcommand>` - Inspect and run named project environments
-//! - `tools doctor` - Inspect local CLI/LSP/editor toolchain resolution
-//!
-//! ## Modules
-//!
-//! - `commands` - Command implementations
-//! - `test_runner` - Test discovery and execution
-//!
-//! ## Design
-//!
-//! The CLI uses clap for argument parsing with derive macros. Command functions return `CliResult<T>` instead of
-//! calling `process::exit`. Only the top-level `run()` function handles errors and exits.
+//! Every compilation goes through one unit (`incan_driver::compile::compile_unit`), which prepares the Loaves the unit
+//! reaches first. Command functions return `CliResult`; only [`run`] exits the process.
 
-// Enforce explicit error handling - no panicking in production code
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
 pub mod commands;
-/// Canonical project owner shared with Oven.
-pub use oven_cli::project_owner;
-/// Canonical test runner shared with Oven.
-pub use oven_cli::test_runner;
 
 use std::env;
 use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::binding_inspect::BindingInspectionFormat;
+use commands::build::BuildRequest;
 use commands::codegraph::CodegraphInspectionFormat;
 use commands::diagnostics::DiagnosticOutputFormat;
-use commands::interop_plan::InteropPlanInspectionFormat;
-use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::feature_inspect::FeatureInspectionFormat;
+use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::representation_inspect::RepresentationInspectionFormat;
-use commands::workspace::WorkspaceInspectFormat;
-use incan_driver::build_report::{BuildReportFormat, BuildReportOptions};
-use incan_driver::lock::policy::{LockPolicy, LockPolicyCliFlags};
 use incan_driver::features::FeatureSelection;
-use incan_provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
-use oven_cli::workspace_scope::{
-    resolve_workspace_command_scope, resolve_workspace_library_build_scope, workspace_member_relative_path,
-};
 use oven_model::manifest::ProjectManifest;
-use oven_model::workspace::WorkspaceMember;
-
-// ============================================================================
-// CLI Error handling
-// ============================================================================
 
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
-pub use oven_cli::cli::{
-    LockArgs, OvenCommand, OvenInteropAdapterArgument, OvenInteropCommand,
-    OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
-    PackageFeatureCliFlags, ToolsCommand, ToolsMetadataCommand,
-};
 /// Shared opt-in invocation diagnostics used by both CLI entrypoints.
 pub use oven_cli::invocation_trace;
 
-/// ASCII art logo - embedded at compile time from the package's assets/logo.txt
+/// ASCII art logo, embedded at compile time from the package's assets/logo.txt.
 const LOGO: &str = include_str!("assets/logo.txt");
 const VERSION: &str = incan_lang::version::INCAN_VERSION;
 
@@ -96,7 +56,6 @@ pub struct Cli {
     #[arg(value_name = "FILE")]
     pub file: Option<PathBuf>,
 
-    // Debug/development flags
     /// Tokenize only (debug)
     #[arg(long = "lex", value_name = "FILE", conflicts_with = "file")]
     pub lex_file: Option<PathBuf>,
@@ -109,7 +68,7 @@ pub struct Cli {
     #[arg(long = "check", value_name = "FILE", conflicts_with = "file")]
     pub check_file: Option<PathBuf>,
 
-    /// Output format for the legacy --check debug path
+    /// Output format for the --check debug path
     #[arg(long = "format", value_enum, default_value = "text", requires = "check_file")]
     pub check_format: DiagnosticOutputFormat,
 
@@ -129,56 +88,51 @@ pub enum ColorMode {
     Never,
 }
 
+/// The Incan package-feature selection a compiling command takes.
+#[derive(Args, Debug, Clone, Default)]
+pub struct PackageFeatureCliFlags {
+    /// Incan package features to enable (comma-separated)
+    #[arg(long = "features", value_delimiter = ',', value_name = "FEATURE")]
+    pub features: Vec<String>,
+    /// Disable the Incan package's default features
+    #[arg(long = "no-default-features")]
+    pub no_default_features: bool,
+    /// Enable every Incan package feature
+    #[arg(long = "all-features")]
+    pub all_features: bool,
+}
+
+impl From<PackageFeatureCliFlags> for FeatureSelection {
+    fn from(flags: PackageFeatureCliFlags) -> Self {
+        Self {
+            requested: flags.features.into_iter().collect(),
+            no_default_features: flags.no_default_features,
+            all_features: flags.all_features,
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Compile to Rust and build an executable through Oven Alpha direct-rustc
+    /// Compile a program, or the project's Loaf with `--lib` (release profile by default)
     Build {
-        /// Source file to compile
+        /// Program entry file (default: `[project.scripts].main`)
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-        /// Build the `src/lib.incn` library through Oven Alpha direct-rustc
-        #[arg(long = "lib", hide = true)]
+        /// Compile the project's `src/lib.incn` as a library unit
+        #[arg(long = "lib")]
         lib_mode: bool,
-        /// Output directory (default: `target/incan/<name>`)
+        /// Output directory (default: `target/incan/<name>/<profile>`)
         #[arg(value_name = "OUTPUT_DIR")]
         output_dir: Option<PathBuf>,
-        /// Select Incan package features for this compilation
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Require up-to-date oven.lock; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        locked: bool,
-        /// Disable INCAN_LOCKED for this invocation
-        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
-        no_locked: bool,
-        /// Require offline-compatible locked inputs; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        offline: bool,
-        /// Disable INCAN_OFFLINE for this invocation
-        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
-        no_offline: bool,
-        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        frozen: bool,
-        /// Disable INCAN_FROZEN for this invocation
-        #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
-        no_frozen: bool,
-        /// Explicitly request the release build profile. This is the default for `incan build` and exists for
-        /// first-contact command symmetry.
+        /// Compile with the debug profile
+        #[arg(long, conflicts_with = "release")]
+        debug: bool,
+        /// Compile with the release profile (the default for `incan build`)
         #[arg(long)]
         release: bool,
-        /// Emit a machine-readable build report
-        #[arg(long = "report", value_enum)]
-        report: Option<BuildReportFormat>,
-        /// Write the build report to this path instead of stdout
-        #[arg(long = "report-output", value_name = "PATH", requires = "report")]
-        report_output: Option<PathBuf>,
-        /// Select every member in the active workspace
-        #[arg(long, conflicts_with = "members")]
-        workspace: bool,
-        /// Select one workspace member by name or root-relative path; may be repeated
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
-        members: Vec<String>,
     },
 
     /// Type check a file or project entrypoint
@@ -189,19 +143,11 @@ pub enum Command {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: DiagnosticOutputFormat,
-        /// Select Incan package features for this check
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Verify checked C declarations against this declared Oven interop target; this does not cross-compile Rust
-        /// or package an app
+        /// Verify checked C declarations against this declared interop target; this does not cross-compile
         #[arg(long = "interop-target", value_name = "TRIPLE")]
         interop_target: Option<String>,
-        /// Select every member in the active workspace
-        #[arg(long, conflicts_with = "members")]
-        workspace: bool,
-        /// Select one workspace member by name or root-relative path; may be repeated
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
-        members: Vec<String>,
     },
 
     /// Explain a diagnostic code
@@ -214,45 +160,20 @@ pub enum Command {
         format: DiagnosticOutputFormat,
     },
 
-    /// Compile and run the program (debug profile by default; opt into release with `--release`)
+    /// Compile and run a program (debug profile by default)
     Run {
-        /// Source file to run
+        /// Program entry file (default: `[project.scripts].main`)
         #[arg(value_name = "FILE", conflicts_with = "command")]
         file: Option<PathBuf>,
         /// Run inline source code
         #[arg(short = 'c', long = "command", value_name = "CODE")]
         command: Option<String>,
-        /// Select Incan package features for this compilation
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Require up-to-date oven.lock; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        locked: bool,
-        /// Disable INCAN_LOCKED for this invocation
-        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
-        no_locked: bool,
-        /// Require offline-compatible locked inputs; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        offline: bool,
-        /// Disable INCAN_OFFLINE for this invocation
-        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
-        no_offline: bool,
-        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
-        #[arg(long, hide = true)]
-        frozen: bool,
-        /// Disable INCAN_FROZEN for this invocation
-        #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
-        no_frozen: bool,
-        /// Build and run with the optimized Oven release profile
+        /// Compile with the release profile
         #[arg(long)]
         release: bool,
-        /// Select every member in the active workspace (only valid when it resolves to one member)
-        #[arg(long, conflicts_with = "members")]
-        workspace: bool,
-        /// Select one workspace member by name or root-relative path
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
-        members: Vec<String>,
-        /// Arguments passed to the executed program after `--`
+        /// Arguments passed to the program after `--`
         #[arg(last = true, value_name = "PROGRAM_ARG")]
         program_args: Vec<String>,
     },
@@ -268,12 +189,6 @@ pub enum Command {
         /// Show diff of formatting changes
         #[arg(long)]
         diff: bool,
-        /// Select every member in the active workspace
-        #[arg(long, conflicts_with = "members")]
-        workspace: bool,
-        /// Select one workspace member by name or root-relative path; may be repeated
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
-        members: Vec<String>,
     },
 
     /// Update the project version in loaf.toml
@@ -293,12 +208,6 @@ pub enum Command {
         /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
-        /// Select every member in the active workspace (only valid when it resolves to one member)
-        #[arg(long, conflicts_with_all = ["members", "project"])]
-        workspace: bool,
-        /// Select one workspace member by name or root-relative path
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with_all = ["workspace", "project"])]
-        members: Vec<String>,
     },
 
     /// Run named project environment scripts
@@ -307,31 +216,13 @@ pub enum Command {
         command: EnvCommand,
     },
 
-    /// Inspect the validated RFC 077 workspace graph and selected command scope
-    Workspace {
-        #[command(subcommand)]
-        command: WorkspaceCommand,
-    },
-
-    /// Inspect local toolchain and editor integration state
-    Tools {
-        #[command(subcommand)]
-        command: ToolsCommand,
-    },
-
-    /// Run the explicit Oven Alpha receipt, bounded-store, and native direct-rustc workflow
-    Oven {
-        #[command(subcommand)]
-        command: OvenCommand,
-    },
-
-    /// Inspect compiler artifacts and semantic projections
+    /// Inspect compiler-backed projections of a project
     Inspect {
         #[command(subcommand)]
         command: InspectCommand,
     },
 
-    /// Run Incan tests through the shared Oven runner
+    /// Run Incan tests
     Test {
         #[command(flatten)]
         arguments: oven_cli::cli::TestArgs,
@@ -392,37 +283,10 @@ pub enum Command {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
-
-    /// Generate or update oven.lock for a project
-    Lock {
-        #[command(flatten)]
-        args: LockArgs,
-    },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum InspectCommand {
-    /// Inspect a backend-selection execution receipt (#986): requested/selected/executed backend, fallback outcome,
-    /// and shadow-comparison state for one build
-    BackendSelection {
-        /// Receipt written by a normal `incan build` (default `.incan/backend/receipt.json`)
-        #[arg(long, value_name = "PATH")]
-        receipt: PathBuf,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: commands::build::BackendSelectionInspectFormat,
-    },
-    /// Inspect an Oven receipt's reusable build unit, stored-plan selection, and bounded storage evidence
-    Oven {
-        /// Receipt written by normal Oven preparation or explicit import
-        #[arg(long, value_name = "PATH")]
-        receipt: PathBuf,
-        #[command(flatten)]
-        store: OvenStoreCliFlags,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: OvenOutputFormat,
-    },
     /// Export compiler-backed codegraph records
     Codegraph {
         /// Source file or directory to inspect
@@ -434,7 +298,6 @@ pub enum InspectCommand {
         /// Emit partial graph records and diagnostics for broken source
         #[arg(long = "allow-errors")]
         allow_errors: bool,
-        /// Select Incan package features for this graph projection
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
     },
@@ -457,46 +320,17 @@ pub enum InspectCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: BindingInspectionFormat,
-        /// Select Incan package features for this binding projection
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Optional locked Oven interop target to join into a redaction-safe binding-use receipt; requires `--format
-        /// receipt`
-        #[arg(long, value_name = "TRIPLE")]
-        target: Option<String>,
     },
-    /// Inspect a package's published executable representation: its version and the declarations it covers
+    /// Inspect a Loaf's executable representation: its version and the declarations it covers
     Representation {
-        /// Package manifest, generated artifact root, or project root to inspect
+        /// Loaf manifest or project root to inspect
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: RepresentationInspectionFormat,
-    },
-    /// Inspect one locked Oven interop deployment handoff
-    InteropPlan {
-        /// Project path containing the Oven interop declaration and canonical lock
-        #[arg(value_name = "PATH", default_value = ".")]
-        path: PathBuf,
-        /// Exact target triple to project
-        #[arg(long, value_name = "TRIPLE")]
-        target: String,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: InteropPlanInspectionFormat,
-    },
-    /// Inspect one complete compiler-checked typed registry without executing user modules
-    Registry {
-        /// Registry identity, such as `feature::functions` or the unambiguous `package::feature::functions`
-        #[arg(value_name = "CANONICAL_IDENTITY")]
-        identity: String,
-        /// Source project root; defaults to the current directory
-        #[arg(long, value_name = "PATH")]
-        project: Option<PathBuf>,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "json")]
-        format: commands::tools::RegistryInspectionFormat,
     },
 }
 
@@ -540,31 +374,11 @@ pub enum EnvCommand {
     },
 }
 
-/// Workspace-management commands.
-#[derive(Subcommand, Debug)]
-pub enum WorkspaceCommand {
-    /// Report the active workspace graph and resolved member scope
-    Inspect {
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: WorkspaceInspectFormat,
-        /// Select every member in the active workspace
-        #[arg(long, conflicts_with = "members")]
-        workspace: bool,
-        /// Select one member by name or root-relative path; may be repeated
-        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
-        members: Vec<String>,
-    },
-}
-
 // ============================================================================
 // CLI entry point
 // ============================================================================
 
-/// Main CLI entry point.
-///
-/// This is the only place where `process::exit` is called. All command implementations return `CliResult` and errors
-/// are handled here. Parse CLI arguments, execute the selected command, and exit the process.
+/// Parse the arguments, execute the selected command, and exit the process: the only place that exits.
 pub fn run() {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::run", input = ?std::env::args_os().skip(1).collect::<Vec<_>>()).entered();
     let cli = match Cli::try_parse() {
@@ -600,9 +414,8 @@ pub fn run() {
     }
 }
 
-/// Execute the CLI command and return result. Execute one already-parsed CLI request without terminating the process.
+/// Execute one already-parsed request without terminating the process.
 fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
-    // Handle debug flags first
     if let Some(file) = cli.lex_file {
         return commands::lex_file(&file.to_string_lossy());
     }
@@ -613,154 +426,58 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         return commands::check_path(&file, cli.check_format);
     }
 
-    // Handle subcommands
     match cli.command {
         Some(Command::Build {
             file,
             lib_mode,
             output_dir,
             package_features,
-            locked,
-            offline,
-            no_offline,
-            frozen,
-            no_frozen,
-            no_locked,
-            release,
-            report,
-            report_output,
-            workspace,
-            members,
-        }) => execute_build(
-            BuildCommandRequest {
-                file,
-                lib_mode,
-                output_dir: output_dir.map(|path| path.to_string_lossy().to_string()),
-                options: incan_driver::build::BuildCommandOptions {
-                    executable_profile: incan_driver::build::RunProfile::Release,
-                    lock_policy: LockPolicy::from_cli_and_env(LockPolicyCliFlags {
-                        offline,
-                        no_offline,
-                        locked,
-                        no_locked,
-                        frozen,
-                        no_frozen,
-                    }),
-                    package_features: package_features.into(),
-                },
-                report_options: BuildReportOptions {
-                    format: report,
-                    output_path: report_output,
-                },
-                release,
-                lock_controls_explicit: offline || no_offline || locked || no_locked || frozen || no_frozen,
+            debug,
+            release: _,
+        }) => commands::build::build(&BuildRequest {
+            source: if lib_mode {
+                file.unwrap_or_else(|| PathBuf::from("."))
+            } else {
+                main_script_entry(file, "build", "FILE unless `--lib` is set")?
             },
-            workspace,
-            members,
-        ),
+            library: lib_mode,
+            output_dir,
+            features: package_features.into(),
+            profile: if debug { "debug" } else { "release" },
+        }),
         Some(Command::Check {
             path,
             format,
             package_features,
             interop_target,
-            workspace,
-            members,
-        }) => execute_check(
-            path,
+        }) => commands::diagnostics::check_path_with_interop_target_selection(
+            &path,
             format,
-            package_features.into(),
-            interop_target,
-            workspace,
-            members,
+            &package_features.into(),
+            interop_target.as_deref(),
         ),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
-        Some(Command::Inspect { command }) => match command {
-            InspectCommand::BackendSelection { receipt, format } => {
-                commands::build::inspect_backend_selection(&receipt, format)
-            }
-            InspectCommand::Oven { receipt, store, format } => {
-                commands::inspect_oven_receipt(commands::OvenReceiptInspectCommandOptions {
-                    receipt,
-                    store: store.into(),
-                    format,
-                })
-            }
-            InspectCommand::Codegraph {
-                path,
-                format,
-                allow_errors,
-                package_features,
-            } => commands::inspect_codegraph(
-                &path,
-                format,
-                allow_errors,
-                &package_features.into(),
-            ),
-            InspectCommand::Registry {
-                identity,
-                project,
-                format,
-            } => commands::tools::inspect_registry(&identity, project.as_deref(), format),
-            InspectCommand::Features {
-                path,
-                format,
-                package_features,
-            } => commands::inspect_features(&path, format, &package_features.into()),
-            InspectCommand::Bindings {
-                path,
-                format,
-                package_features,
-                target,
-            } => commands::inspect_bindings(
-                &path,
-                format,
-                &package_features.into(),
-                target.as_deref(),
-            ),
-            InspectCommand::Representation { path, format } => commands::inspect_representation(&path, format),
-            InspectCommand::InteropPlan { path, target, format } => {
-                commands::inspect_interop_plan(&path, &target, format)
-            }
-        },
         Some(Command::Run {
             file,
             command,
             package_features,
-            locked,
-            offline,
-            no_offline,
-            frozen,
-            no_frozen,
-            no_locked,
             release,
-            workspace,
-            members,
             program_args,
-        }) => execute_workspace_run(
-            RunInput { file, code: command },
-            RunOptions {
-                lock_policy: LockPolicy::from_cli_and_env(LockPolicyCliFlags {
-                    offline,
-                    no_offline,
-                    locked,
-                    no_locked,
-                    frozen,
-                    no_frozen,
-                }),
-                package_features: package_features.into(),
-                release,
-                program_args,
-            },
-            workspace,
-            members,
-        ),
-        Some(Command::Fmt {
-            path,
-            check,
-            diff,
-            workspace,
-            members,
-        }) => execute_format(path, check, diff, workspace, members),
+        }) => {
+            let features = package_features.into();
+            let profile = if release { "release" } else { "debug" };
+            match command {
+                Some(code) if code.is_empty() => Err(CliError::failure("-c/--command requires source code")),
+                Some(code) => commands::build::run_inline_source(&code, &features, profile, &program_args),
+                None => commands::build::run_file(
+                    &main_script_entry(file, "run", "a file path or -c/--command")?,
+                    &features,
+                    profile,
+                    &program_args,
+                ),
+            }
+        }
+        Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
         Some(Command::Test { arguments }) => {
             oven_cli::test_command::run(arguments, use_color, oven_cli::test_runner::TestLanguages::Incan)
         }
@@ -770,19 +487,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             dry_run,
             keep_prerelease,
             project,
-            workspace,
-            members,
-        }) => execute_workspace_version(
-            commands::lifecycle::VersionCommandOptions {
-                bump,
-                set,
-                dry_run,
-                keep_prerelease,
-                project,
-            },
-            workspace,
-            members,
-        ),
+        }) => commands::version_project(commands::lifecycle::VersionCommandOptions {
+            bump,
+            set,
+            dry_run,
+            keep_prerelease,
+            project,
+        }),
         Some(Command::Env { command }) => match command {
             EnvCommand::List { format, project } => commands::env_list(format, project.as_deref()),
             EnvCommand::Show { env, format, project } => commands::env_show(env.as_deref(), format, project.as_deref()),
@@ -794,15 +505,25 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 project,
             } => commands::env_run(&env, &script, dry_run, &args, project.as_deref()),
         },
-        Some(Command::Workspace { command }) => match command {
-            WorkspaceCommand::Inspect {
+        Some(Command::Inspect { command }) => match command {
+            InspectCommand::Codegraph {
+                path,
                 format,
-                workspace,
-                members,
-            } => commands::workspace_inspect(format, workspace, members),
+                allow_errors,
+                package_features,
+            } => commands::inspect_codegraph(&path, format, allow_errors, &package_features.into()),
+            InspectCommand::Features {
+                path,
+                format,
+                package_features,
+            } => commands::inspect_features(&path, format, &package_features.into()),
+            InspectCommand::Bindings {
+                path,
+                format,
+                package_features,
+            } => commands::inspect_bindings(&path, format, &package_features.into(), None),
+            InspectCommand::Representation { path, format } => commands::inspect_representation(&path, format),
         },
-        Some(Command::Tools { command }) => oven_cli::run_tools_command(command),
-        Some(Command::Oven { command }) => oven_cli::run_oven_command(command),
         Some(Command::New {
             name,
             dir,
@@ -843,594 +564,29 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 detect,
             },
         ),
-        Some(Command::Lock { args }) => oven_cli::run_lock_command(args),
-        None => {
-            // Default: type check the file if provided
-            if let Some(file) = cli.file {
-                commands::check_path(&file, DiagnosticOutputFormat::Text)
-            } else {
-                // No command and no file - show help
-                Err(CliError::new(render_cli_help_text(), ExitCode::FAILURE))
-            }
-        }
+        None => match cli.file {
+            Some(file) => commands::check_path(&file, DiagnosticOutputFormat::Text),
+            None => Err(CliError::new(render_cli_help_text(), ExitCode::FAILURE)),
+        },
     }
 }
 
-/// Owned build inputs that can be applied once per compiler-selected workspace member.
-struct BuildCommandRequest {
-    file: Option<PathBuf>,
-    lib_mode: bool,
-    output_dir: Option<String>,
-    options: incan_driver::build::BuildCommandOptions,
-    report_options: BuildReportOptions,
-    release: bool,
-    lock_controls_explicit: bool,
-}
-
-impl BuildCommandRequest {
-    /// Preserve the existing single-project build behavior when workspace discovery is inactive.
-    fn run_single(self) -> CliResult<ExitCode> {
-        if self.lib_mode {
-            let file = self.file.as_ref().map(|path| path.to_string_lossy().to_string());
-            return commands::build::build_library(
-                file.as_deref(),
-                self.output_dir.as_ref(),
-                self.options,
-                self.report_options,
-            );
-        }
-        if self.file.is_none() {
-            let cwd = env::current_dir()
-                .map_err(|e| CliError::failure(format!("Error: failed to read current directory: {e}")))?;
-            if let Some(manifest) = incan_driver::project::discover_effective_project_manifest(&cwd)?
-                && let Some(exit) = build_toolchain_binaries_if_declared(&manifest, manifest.project_root(), &self)?
-            {
-                return Ok(exit);
-            }
-        }
-        let file = resolve_build_entry_file(self.file)?;
-        commands::build_file(
-            &file.to_string_lossy(),
-            self.output_dir.as_ref(),
-            self.options,
-            self.report_options,
-        )
+/// An explicit entry file, or the project's `[project.scripts].main`.
+fn main_script_entry(file: Option<PathBuf>, command_name: &str, explicit_target: &str) -> CliResult<PathBuf> {
+    if let Some(file) = file {
+        return Ok(file);
     }
-}
-
-/// Whether a plain `incan build` of this Loaf means its `[[rust.bin]]` roles rather than an Incan entrypoint.
-///
-/// A Loaf that declares Rust binary roles and no `[project.scripts].main` is a toolchain Loaf: its product is the
-/// declared executables. One that names a `main` script is an Incan project, with or without a Rust facet, and a
-/// plain build keeps building that script; its Rust roles are selected another way.
-fn builds_toolchain_binaries(manifest: &ProjectManifest) -> bool {
-    let has_main_script = manifest
-        .project
-        .as_ref()
-        .is_some_and(|project| project.scripts.contains_key("main"));
-    !manifest.rust_binary_roles().is_empty() && !has_main_script
-}
-
-/// Refuse a plain `incan build` of a toolchain Loaf until its `[[rust.bin]]` roles build through the direct route.
-///
-/// `None` keeps the ordinary entrypoint resolution: the Loaf declares no Rust binary role, or it names an Incan
-/// `main` script, in which case it is an Incan project with a Rust facet and its Incan entrypoint is what a plain
-/// `incan build` means. The stored compiler-suite plans these roles were baked from are gone with the Cargo-keyed
-/// suite, so a toolchain Loaf is refused by name rather than built some other way.
-fn build_toolchain_binaries_if_declared(
-    manifest: &ProjectManifest,
-    _workspace_root: &Path,
-    _request: &BuildCommandRequest,
-) -> CliResult<Option<ExitCode>> {
-    if !builds_toolchain_binaries(manifest) {
-        return Ok(None);
+    let cwd = env::current_dir().map_err(|e| CliError::failure(format!("failed to read current directory: {e}")))?;
+    let manifest = ProjectManifest::discover(&cwd).map_err(|e| CliError::failure(e.to_string()))?;
+    if let Some(manifest) = manifest
+        && let Some(project) = &manifest.project
+        && let Some(main) = project.scripts.get("main")
+    {
+        return Ok(manifest.project_root().join(main));
     }
     Err(CliError::failure(format!(
-        "{}: [[rust.bin]] roles do not build yet; toolchain binaries return as direct-route Rust units",
-        manifest.project_root().display()
+        "{command_name} requires {explicit_target} or [project.scripts].main"
     )))
-}
-
-/// Return whether this build should resolve and fan out an RFC 077 workspace scope.
-///
-/// Compiler-spawned dependency library builds target one dependency project even when it owns a workspace.
-///
-/// Artifact-only children and Oven direct-rustc children differ in what they emit, but neither may rediscover the
-/// default member scope: that would make a root package also build unrelated workspace members. Ordinary library and
-/// executable builds retain workspace selection semantics.
-fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool, dependency_preparation: bool) -> bool {
-    !lib_mode || !(artifact_only || dependency_preparation)
-}
-
-/// Attach compiler-owned workspace context to either a freshly prepared or sealed completed-output report.
-fn build_report_with_workspace_context(
-    mut report: serde_json::Value,
-    workspace: incan_driver::build_report::BuildWorkspaceContext,
-) -> CliResult<serde_json::Value> {
-    let workspace = serde_json::to_value(workspace)
-        .map_err(|error| CliError::failure(format!("failed to serialize workspace build context: {error}")))?;
-    report
-        .as_object_mut()
-        .ok_or_else(|| CliError::failure("workspace member build report is not a JSON object"))?
-        .insert("workspace".to_string(), workspace);
-    Ok(report)
-}
-
-/// Fan out builds after resolving the exact RFC 077 member set, producing one aggregate report when JSON is requested.
-///
-/// Internal artifact-only library children bypass workspace selection because their current directory is the exact
-/// dependency project selected by the parent compiler process.
-fn execute_build(
-    request: BuildCommandRequest,
-    select_workspace: bool,
-    member_selectors: Vec<String>,
-) -> CliResult<ExitCode> {
-    let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    let dependency_preparation =
-        env::var_os(INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV).is_some_and(|value| value == "1");
-    if !build_uses_workspace_scope(request.lib_mode, artifact_only, dependency_preparation) {
-        return request.run_single();
-    }
-
-    let scope = if request.lib_mode {
-        resolve_workspace_library_build_scope(select_workspace, &member_selectors)?
-    } else {
-        resolve_workspace_command_scope(select_workspace, &member_selectors)?
-    };
-    let Some(scope) = scope else {
-        return request.run_single();
-    };
-    if !scope.is_single_member() && request.output_dir.is_some() {
-        return Err(CliError::failure(
-            "an explicit OUTPUT_DIR requires exactly one workspace member; select one with --member <name-or-path>",
-        ));
-    }
-
-    let mut results = Vec::new();
-    let mut failures = Vec::new();
-    for member in scope.members() {
-        if request.report_options.enabled() {
-            eprintln!("workspace member {}: {}", member.name(), member.root().display());
-        } else {
-            println!("workspace member {}: {}", member.name(), member.root().display());
-        }
-
-        if !request.lib_mode && request.file.is_none() {
-            // A toolchain Loaf declares Rust binaries rather than an Incan main script; its build is the stored
-            // direct-rustc plan for those binaries (#1698). The workspace root is the compiler root every stored
-            // plan is relative to. A refusal is this member's failure, reported the way the fan-out reports every
-            // other member failure.
-            let member_manifest = incan_driver::project::discover_effective_project_manifest(member.root())?;
-            let toolchain_build = member_manifest
-                .as_ref()
-                .map(|manifest| build_toolchain_binaries_if_declared(manifest, scope.workspace_root(), &request))
-                .transpose()
-                .map(Option::flatten);
-            match toolchain_build {
-                Ok(None) => {}
-                Ok(Some(_)) => {
-                    results.push(serde_json::json!({
-                        "member": {
-                            "name": member.name(),
-                            "root": member.root().display().to_string(),
-                        },
-                        "ok": true,
-                    }));
-                    continue;
-                }
-                Err(error) => {
-                    if !error.message.is_empty() {
-                        eprintln!("{}", error.message);
-                    }
-                    failures.push(member.name().to_string());
-                    results.push(serde_json::json!({
-                        "member": {
-                            "name": member.name(),
-                            "root": member.root().display().to_string(),
-                        },
-                        "ok": false,
-                        "error": error.message,
-                    }));
-                    continue;
-                }
-            }
-        }
-        let target = if request.lib_mode {
-            match request.file.as_ref() {
-                Some(path) => workspace_member_relative_path(path, member.root()),
-                None => Ok(member.root().to_path_buf()),
-            }
-        } else {
-            match request.file.as_ref() {
-                Some(path) => workspace_member_relative_path(path, member.root()),
-                None => workspace_member_main_script_target(member, "build"),
-            }
-        };
-        let target = match target {
-            Ok(target) => target,
-            Err(error) => {
-                failures.push(member.name().to_string());
-                results.push(serde_json::json!({
-                    "member": {
-                        "name": member.name(),
-                        "root": member.root().display().to_string(),
-                    },
-                    "ok": false,
-                    "error": error.message,
-                }));
-                continue;
-            }
-        };
-
-        // A human-facing workspace build must enter the same no-report completed-output selector as a single-project
-        // build. Report reconstruction is reserved for commands that will actually emit the aggregate JSON.
-        if !request.report_options.enabled() {
-            let file = target.to_string_lossy().to_string();
-            let result = if request.lib_mode {
-                commands::build::build_library(
-                    Some(&file),
-                    request.output_dir.as_ref(),
-                    request.options.clone(),
-                    request.report_options.clone(),
-                )
-            } else {
-                commands::build::build_file(
-                    &file,
-                    request.output_dir.as_ref(),
-                    request.options.clone(),
-                    request.report_options.clone(),
-                )
-            };
-            match result {
-                Ok(_) => {
-                    results.push(serde_json::json!({
-                        "member": {
-                            "name": member.name(),
-                            "root": member.root().display().to_string(),
-                        },
-                        "ok": true,
-                    }));
-                }
-                Err(error) => {
-                    if !error.message.is_empty() {
-                        eprintln!("{}", error.message);
-                    }
-                    failures.push(member.name().to_string());
-                    results.push(serde_json::json!({
-                        "member": {
-                            "name": member.name(),
-                            "root": member.root().display().to_string(),
-                        },
-                        "ok": false,
-                        "error": error.message,
-                    }));
-                }
-            }
-            continue;
-        }
-
-        let workspace_context = incan_driver::build_report::BuildWorkspaceContext {
-            root: scope.workspace_root().display().to_string(),
-            scope_origin: scope.origin().as_str().to_string(),
-            member_name: member.name().to_string(),
-            member_root: member.root().display().to_string(),
-        };
-        let report: CliResult<serde_json::Value> = if request.lib_mode {
-            commands::build::build_library_report(
-                Some(target.to_string_lossy().as_ref()),
-                request.output_dir.as_ref(),
-                request.options.clone(),
-                &request.report_options,
-            )
-            .and_then(|report| build_report_with_workspace_context(report, workspace_context))
-        } else {
-            commands::build::build_file_report(
-                target.to_string_lossy().as_ref(),
-                request.output_dir.as_ref(),
-                request.options.clone(),
-                &request.report_options,
-            )
-            .and_then(|report| build_report_with_workspace_context(report, workspace_context))
-        };
-        match report {
-            Ok(report) => {
-                results.push(serde_json::json!({
-                    "member": {
-                        "name": member.name(),
-                        "root": member.root().display().to_string(),
-                    },
-                    "ok": true,
-                    "report": report,
-                }));
-            }
-            Err(error) => {
-                if !request.report_options.enabled() && !error.message.is_empty() {
-                    eprintln!("{}", error.message);
-                }
-                failures.push(member.name().to_string());
-                results.push(serde_json::json!({
-                    "member": {
-                        "name": member.name(),
-                        "root": member.root().display().to_string(),
-                    },
-                    "ok": false,
-                    "error": error.message,
-                }));
-            }
-        }
-    }
-
-    if !request.report_options.enabled() {
-        return if failures.is_empty() {
-            Ok(ExitCode::SUCCESS)
-        } else {
-            Err(CliError::new("", ExitCode::FAILURE))
-        };
-    }
-
-    let aggregate = serde_json::json!({
-        "schema_version": "incan.workspace.build.v1",
-        "workspace": {
-            "root": scope.workspace_root().display().to_string(),
-            "selected_scope": {
-                "origin": scope.origin().as_str(),
-                "members": scope.members().map(|member| serde_json::json!({
-                    "name": member.name(),
-                    "root": member.root().display().to_string(),
-                })).collect::<Vec<_>>(),
-            },
-        },
-        "ok": failures.is_empty(),
-        "results": results,
-    });
-    crate::commands::build_report::emit_workspace_build_report(&aggregate, &request.report_options)?;
-
-    if failures.is_empty() {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Err(CliError::new("", ExitCode::FAILURE))
-    }
-}
-
-/// One member result from the canonical owner, retaining its existing diagnostic envelope for workspace rendering.
-struct WorkspaceCheckMemberOutcome {
-    member: WorkspaceMember,
-    target: Option<PathBuf>,
-    report: Option<incan_driver::build::check::CheckOutput>,
-    error: Option<String>,
-}
-
-/// Run `incan check` across the compiler-selected workspace scope, preserving a single JSON document for tooling.
-fn execute_check(
-    path: PathBuf,
-    format: DiagnosticOutputFormat,
-    package_features: FeatureSelection,
-    interop_target: Option<String>,
-    select_workspace: bool,
-    member_selectors: Vec<String>,
-) -> CliResult<ExitCode> {
-    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
-        let path = if path == Path::new(".") {
-            resolve_main_script_entry_file(None, "check", "a file path")?
-        } else {
-            path
-        };
-        return commands::diagnostics::check_path_with_interop_target_selection(
-            &path,
-            format,
-            &package_features,
-            interop_target.as_deref(),
-        );
-    };
-
-    let mut outcomes = Vec::new();
-    for member in scope.members() {
-        let target = match workspace_member_check_target(&path, member) {
-            Ok(target) => target,
-            Err(error) => {
-                outcomes.push(WorkspaceCheckMemberOutcome {
-                    member: member.clone(),
-                    target: None,
-                    report: None,
-                    error: Some(error.message),
-                });
-                continue;
-            }
-        };
-        match oven_cli::project_owner::check(
-            &target,
-            &package_features,
-            None,
-            interop_target.as_deref(),
-        ) {
-            Ok(report) => {
-                for warning in &report.warnings {
-                    eprint!("{warning}");
-                }
-                outcomes.push(WorkspaceCheckMemberOutcome {
-                    member: member.clone(),
-                    target: Some(target),
-                    report: Some(report),
-                    error: None,
-                });
-            }
-            Err(error) => outcomes.push(WorkspaceCheckMemberOutcome {
-                member: member.clone(),
-                target: Some(target),
-                report: None,
-                error: Some(error.message),
-            }),
-        }
-    }
-
-    let ok = outcomes
-        .iter()
-        .all(|outcome| outcome.error.is_none() && outcome.report.as_ref().is_some_and(|report| report.exit_code == 0));
-
-    match format {
-        DiagnosticOutputFormat::Text => {
-            for outcome in &outcomes {
-                let target = outcome
-                    .target
-                    .as_ref()
-                    .map(|target| target.display().to_string())
-                    .unwrap_or_else(|| "<unresolved>".to_string());
-                println!("workspace member {}: {target}", outcome.member.name());
-                if let Some(report) = &outcome.report {
-                    if report.exit_code == 0 {
-                        println!("✓ Type check passed!");
-                    } else if report.json.is_none() {
-                        eprintln!(
-                            "{}",
-                            report
-                                .human_message
-                                .as_deref()
-                                .unwrap_or("type check failed without diagnostics")
-                        );
-                    } else {
-                        eprint!(
-                            "{}",
-                            report
-                                .human_message
-                                .as_deref()
-                                .unwrap_or("type check failed without diagnostics\n")
-                        );
-                    }
-                }
-                if let Some(error) = &outcome.error {
-                    eprintln!("{error}");
-                }
-            }
-        }
-        DiagnosticOutputFormat::Json => {
-            let results = outcomes
-                .iter()
-                .map(|outcome| {
-                    let mut result = serde_json::json!({
-                        "member": {
-                            "name": outcome.member.name(),
-                            "root": outcome.member.root().display().to_string(),
-                        },
-                        "target": outcome.target.as_ref().map(|target| target.display().to_string()),
-                    });
-                    if let Some(object) = result.as_object_mut() {
-                        if let Some(report) = &outcome.report {
-                            if let Some(json) = &report.json {
-                                let diagnostics = serde_json::from_str(json).map_err(|error| {
-                                    CliError::failure(format!("invalid member diagnostic report: {error}"))
-                                })?;
-                                object.insert("report".to_string(), diagnostics);
-                            } else {
-                                object.insert("ok".to_string(), serde_json::Value::Bool(false));
-                                object.insert(
-                                    "error".to_string(),
-                                    serde_json::Value::String(
-                                        report
-                                            .human_message
-                                            .clone()
-                                            .unwrap_or_else(|| "type check failed without diagnostics".to_string()),
-                                    ),
-                                );
-                            }
-                        }
-                        if let Some(error) = &outcome.error {
-                            object.insert("ok".to_string(), serde_json::Value::Bool(false));
-                            object.insert("error".to_string(), serde_json::Value::String(error.clone()));
-                        }
-                    }
-                    Ok(result)
-                })
-                .collect::<CliResult<Vec<_>>>()?;
-            let report = serde_json::json!({
-                "schema_version": "incan.workspace.check.v1",
-                "workspace": {
-                    "root": scope.workspace_root().display().to_string(),
-                    "selected_scope": {
-                        "origin": scope.origin().as_str(),
-                        "members": scope.members().map(|member| serde_json::json!({
-                            "name": member.name(),
-                            "root": member.root().display().to_string(),
-                        })).collect::<Vec<_>>(),
-                    },
-                },
-                "ok": ok,
-                "results": results,
-            });
-            let rendered = serde_json::to_string_pretty(&report)
-                .map_err(|error| CliError::failure(format!("failed to serialize workspace check report: {error}")))?;
-            println!("{rendered}");
-        }
-    }
-
-    if ok {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Err(CliError::new("", ExitCode::FAILURE))
-    }
-}
-
-/// Resolve one member's check target. An omitted path means the member's configured `main` script, never the
-/// workspace root, so a virtual workspace cannot accidentally compile a non-member directory.
-fn workspace_member_check_target(path: &Path, member: &WorkspaceMember) -> CliResult<PathBuf> {
-    if path != Path::new(".") {
-        return workspace_member_relative_path(path, member.root());
-    }
-    workspace_member_main_script_target(member, "check")
-}
-
-/// Resolve a member's configured `main` script without treating a virtual workspace root as a project entrypoint.
-fn workspace_member_main_script_target(member: &WorkspaceMember, command_name: &str) -> CliResult<PathBuf> {
-    let manifest = incan_driver::project::discover_effective_project_manifest(member.root())?.ok_or_else(|| {
-        CliError::failure(format!(
-            "workspace member `{}` has no project manifest available for `incan {command_name}`",
-            member.name()
-        ))
-    })?;
-    let main = manifest
-        .project
-        .as_ref()
-        .and_then(|project| project.scripts.get("main"))
-        .ok_or_else(|| {
-            CliError::failure(format!(
-                "workspace member `{}` has no [project.scripts].main; pass a member-relative PATH to `incan {command_name}`",
-                member.name()
-            ))
-        })?;
-    Ok(manifest.project_root().join(main))
-}
-
-/// Apply `incan fmt` to the deterministic RFC 077 member scope when a workspace is active.
-fn execute_format(
-    path: PathBuf,
-    check: bool,
-    diff: bool,
-    select_workspace: bool,
-    member_selectors: Vec<String>,
-) -> CliResult<ExitCode> {
-    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
-        return commands::format_files(&path.to_string_lossy(), check, diff);
-    };
-    let mut failures = Vec::new();
-    for member in scope.members() {
-        let target = workspace_member_relative_path(&path, member.root())?;
-        println!("workspace member {}: {}", member.name(), target.display());
-        if let Err(error) = commands::format_files(&target.to_string_lossy(), check, diff) {
-            let message = if error.message.is_empty() {
-                "formatting failed".to_string()
-            } else {
-                error.message
-            };
-            failures.push(format!("{}: {message}", member.name()));
-        }
-    }
-    if failures.is_empty() {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Err(CliError::failure(format!(
-            "workspace formatting failed\n{}",
-            failures.join("\n")
-        )))
-    }
 }
 
 /// Render top-level CLI help text.
@@ -1441,132 +597,6 @@ fn render_cli_help_text() -> String {
         String::from_utf8_lossy(&out).to_string()
     } else {
         "Run `incan --help` for usage.".to_string()
-    }
-}
-
-struct RunInput {
-    file: Option<PathBuf>,
-    code: Option<String>,
-}
-
-struct RunOptions {
-    lock_policy: LockPolicy,
-    package_features: FeatureSelection,
-    release: bool,
-    program_args: Vec<String>,
-}
-
-/// Resolve an explicit file or the project `main` script for project-aware commands.
-fn resolve_main_script_entry_file(
-    file: Option<PathBuf>,
-    command_name: &str,
-    explicit_target: &str,
-) -> CliResult<PathBuf> {
-    if let Some(file) = file {
-        return Ok(file);
-    }
-
-    let cwd =
-        env::current_dir().map_err(|e| CliError::failure(format!("Error: failed to read current directory: {e}")))?;
-    let manifest = ProjectManifest::discover(&cwd).map_err(|e| CliError::failure(e.to_string()))?;
-
-    if let Some(manifest) = manifest
-        && let Some(project) = &manifest.project
-        && let Some(main) = project.scripts.get("main")
-    {
-        return Ok(manifest.project_root().join(main));
-    }
-
-    Err(CliError::failure(format!(
-        "Error: {command_name} requires {explicit_target} or [project.scripts].main"
-    )))
-}
-
-/// Resolve the build target for `incan build`, falling back to project metadata when available.
-fn resolve_build_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
-    resolve_main_script_entry_file(file, "build", "FILE unless `--lib` is set")
-}
-
-/// Resolve the run target for `incan run`, falling back to project metadata when available.
-fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
-    resolve_main_script_entry_file(file, "run", "a file path, -c/--command")
-}
-
-/// Handle the `run` subcommand with its various forms. Resolve RFC 077 scope before delegating a file-backed run to the
-/// existing single-project pipeline.
-fn execute_workspace_run(
-    input: RunInput,
-    opts: RunOptions,
-    select_workspace: bool,
-    member_selectors: Vec<String>,
-) -> CliResult<ExitCode> {
-    if input.code.is_some() && (select_workspace || !member_selectors.is_empty()) {
-        return Err(CliError::failure(
-            "incan run -c/--command cannot select a workspace member; pass a member source file instead",
-        ));
-    }
-    if input.code.is_some() {
-        return execute_run(input, opts);
-    }
-    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
-        return execute_run(input, opts);
-    };
-    let member = scope
-        .require_single_member("incan run")
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let file = match input.file {
-        Some(path) => workspace_member_relative_path(&path, member.root())?,
-        None => workspace_member_main_script_target(member, "run")?,
-    };
-    execute_run(
-        RunInput {
-            file: Some(file),
-            code: None,
-        },
-        opts,
-    )
-}
-
-/// Resolve a single RFC 077 member before mutating its project version.
-fn execute_workspace_version(
-    mut options: commands::lifecycle::VersionCommandOptions,
-    select_workspace: bool,
-    member_selectors: Vec<String>,
-) -> CliResult<ExitCode> {
-    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
-        return commands::version_project(options);
-    };
-    let member = scope
-        .require_single_member("incan version")
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    options.project = Some(member.root().to_path_buf());
-    commands::version_project(options)
-}
-
-/// Compile and execute one run request.
-fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
-    // ---- Context: inline source execution (`incan run -c ...`) ----
-    if let Some(code) = input.code {
-        if code.is_empty() {
-            return Err(CliError::failure("Error: -c/--command requires source code string"));
-        }
-        commands::run_inline_source(
-            &code,
-            opts.lock_policy.clone(),
-            opts.package_features.clone(),
-            opts.release,
-            opts.program_args,
-        )
-    // ---- Context: file execution (`incan run path/to/file.incn`) ----
-    } else {
-        let file = resolve_run_entry_file(input.file)?;
-        commands::run_file(
-            &file.to_string_lossy(),
-            opts.lock_policy,
-            opts.package_features,
-            opts.release,
-            opts.program_args,
-        )
     }
 }
 
@@ -1648,1080 +678,4 @@ fn should_print_banner(cli: &Cli, _use_color: bool) -> bool {
     }
 
     true
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::OsString;
-
-    use clap::error::ErrorKind;
-    use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat};
-
-    fn parse_cli(args: impl IntoIterator<Item = &'static str>) -> Result<Cli, clap::Error> {
-        Cli::try_parse_from(args)
-    }
-
-    fn expected_command(name: &str) -> clap::Error {
-        clap::Error::raw(ErrorKind::InvalidSubcommand, format!("expected {name} command"))
-    }
-
-    #[test]
-    fn a_plain_build_means_the_rust_binaries_only_for_a_loaf_without_an_incan_entrypoint()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let path = Path::new("loaf.toml");
-        let toolchain_loaf = ProjectManifest::from_str(
-            "[project]\nname = \"incan-cli\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/main.rs\"\n",
-            path,
-        )?;
-        assert!(builds_toolchain_binaries(&toolchain_loaf));
-        let incan_project_with_rust_facet = ProjectManifest::from_str(
-            "[project]\nname = \"mixed\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[[rust.bin]]\nname = \"tool\"\npath = \"rust/src/main.rs\"\n",
-            path,
-        )?;
-        assert!(!builds_toolchain_binaries(&incan_project_with_rust_facet));
-        let plain = ProjectManifest::from_str("[project]\nname = \"plain\"\n", path)?;
-        assert!(!builds_toolchain_binaries(&plain));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_build() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "build", "test.incn"])?;
-        let Some(Command::Build { file, lib_mode, .. }) = cli.command else {
-            return Err(expected_command("build"));
-        };
-        assert_eq!(file, Some(PathBuf::from("test.incn")));
-        assert!(!lib_mode);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_build_lib() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "build", "--lib"])?;
-        let Some(Command::Build { file, lib_mode, .. }) = cli.command else {
-            return Err(expected_command("build"));
-        };
-        assert!(file.is_none());
-        assert!(lib_mode);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_oven_commands() -> Result<(), clap::Error> {
-        let bake = parse_cli([
-            "incan",
-            "oven",
-            "bake",
-            "--project",
-            "examples/library",
-            "--format",
-            "json",
-        ])?;
-        let Some(Command::Oven {
-            command: OvenCommand::Bake { project, format, .. },
-        }) = bake.command
-        else {
-            return Err(expected_command("oven bake"));
-        };
-        assert_eq!(project, PathBuf::from("examples/library"));
-        assert_eq!(format, OvenOutputFormat::Json);
-
-        let provider_identity = parse_cli([
-            "incan",
-            "oven",
-            "sdk-provider-store-identity",
-            "--compiler-root",
-            "compiler-source",
-        ])?;
-        let Some(Command::Oven {
-            command: OvenCommand::SdkProviderStoreIdentity { compiler_root, inputs },
-        }) = provider_identity.command
-        else {
-            return Err(expected_command("oven sdk-provider-store-identity"));
-        };
-        assert_eq!(compiler_root, PathBuf::from("compiler-source"));
-        assert!(!inputs, "the sealed store identity is the default");
-
-        let input_identity = parse_cli([
-            "incan",
-            "oven",
-            "sdk-provider-store-identity",
-            "--inputs",
-            "--compiler-root",
-            "compiler-source",
-        ])?;
-        let Some(Command::Oven {
-            command: OvenCommand::SdkProviderStoreIdentity { inputs, .. },
-        }) = input_identity.command
-        else {
-            return Err(expected_command("oven sdk-provider-store-identity --inputs"));
-        };
-        assert!(inputs, "--inputs selects the preparation-input identity");
-
-        let compiler_suite = parse_cli([
-            "incan",
-            "oven",
-            "compiler-libtests",
-            "--target",
-            "tests/rfc031_pub_import_integration_tests.rs",
-            "--exact",
-            "rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885",
-            "--exact",
-            "rfc031_pub_import_integration_tests::compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961",
-        ])?;
-        let Some(Command::Oven {
-            command: OvenCommand::CompilerLibtests {
-                targets, exact_names, ..
-            },
-        }) = compiler_suite.command
-        else {
-            return Err(expected_command("oven compiler-libtests"));
-        };
-        assert_eq!(targets, ["tests/rfc031_pub_import_integration_tests.rs"]);
-        assert_eq!(
-            exact_names,
-            [
-                "rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885",
-                "rfc031_pub_import_integration_tests::compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961",
-            ]
-        );
-
-        let compiler_suite_partition = parse_cli([
-            "incan",
-            "oven",
-            "compiler-libtests",
-            "--partition-index",
-            "2",
-            "--partition-count",
-            "4",
-        ])?;
-        let Some(Command::Oven {
-            command:
-                OvenCommand::CompilerLibtests {
-                    partition_index,
-                    partition_count,
-                    ..
-                },
-        }) = compiler_suite_partition.command
-        else {
-            return Err(expected_command("oven compiler-libtests partition"));
-        };
-        assert_eq!(partition_index, Some(2));
-        assert_eq!(partition_count, Some(4));
-        assert!(parse_cli(["incan", "oven", "compiler-libtests", "--partition-index", "0",]).is_err());
-
-        let import = parse_cli([
-            "incan",
-            "oven",
-            "import",
-            "--target",
-            "aarch64-apple-darwin",
-            "--toolchain",
-            "rustc 1.96.0",
-            "--source",
-            "generated=target/oven/test.rs",
-        ])?;
-        assert!(matches!(
-            import.command,
-            Some(Command::Oven {
-                command: OvenCommand::Import {
-                    target,
-                    toolchain,
-                    source_inputs,
-                    ..
-                }
-            }) if target == "aarch64-apple-darwin"
-                && toolchain == "rustc 1.96.0"
-                && source_inputs == ["generated=target/oven/test.rs"]
-        ));
-
-        let harvest = parse_cli([
-            "incan",
-            "oven",
-            "harvest",
-            "--project",
-            "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml",
-            "--target",
-            "aarch64-apple-darwin",
-            "--profile",
-            "debug",
-            "--cargo",
-            "/toolchain/bin/cargo",
-            "--rustc",
-            "/toolchain/bin/rustc",
-            "--cc",
-            "/toolchain/bin/clang",
-            "--cxx",
-            "/toolchain/bin/clang++",
-            "--c-sysroot",
-            "/toolchain/SDKs/MacOSX.sdk",
-            "--cargo-lock",
-            "Cargo.lock",
-            "--output",
-            "target/harvest",
-            "--format",
-            "json",
-        ])?;
-        let Some(Command::Oven {
-            command:
-                OvenCommand::Harvest {
-                    project,
-                    target,
-                    profile,
-                    cargo,
-                    rustc,
-                    cc,
-                    cxx,
-                    c_sysroot,
-                    cargo_lock,
-                    output,
-                    format,
-                },
-        }) = harvest.command
-        else {
-            return Err(expected_command("oven harvest"));
-        };
-        assert_eq!(
-            project,
-            PathBuf::from("loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml")
-        );
-        assert_eq!(target, "aarch64-apple-darwin");
-        assert_eq!(profile.as_str(), "debug");
-        assert_eq!(cargo, PathBuf::from("/toolchain/bin/cargo"));
-        assert_eq!(rustc, PathBuf::from("/toolchain/bin/rustc"));
-        assert_eq!(cc, PathBuf::from("/toolchain/bin/clang"));
-        assert_eq!(cxx, PathBuf::from("/toolchain/bin/clang++"));
-        assert_eq!(c_sysroot, PathBuf::from("/toolchain/SDKs/MacOSX.sdk"));
-        assert_eq!(cargo_lock, Some(PathBuf::from("Cargo.lock")));
-        assert_eq!(output, PathBuf::from("target/harvest"));
-        assert_eq!(format, OvenOutputFormat::Json);
-        let default_profile = parse_cli([
-            "incan",
-            "oven",
-            "harvest",
-            "--target",
-            "aarch64-apple-darwin",
-            "--cargo",
-            "cargo",
-            "--rustc",
-            "rustc",
-            "--cc",
-            "clang",
-            "--cxx",
-            "clang++",
-            "--c-sysroot",
-            "sdk",
-            "--output",
-            "harvest",
-        ])?;
-        assert!(matches!(
-            default_profile.command,
-            Some(Command::Oven {
-                command: OvenCommand::Harvest { profile, project, .. }
-            }) if profile.as_str() == "release" && project == Path::new(".")
-        ));
-        assert!(
-            parse_cli([
-                "incan",
-                "oven",
-                "harvest",
-                "--target",
-                "t",
-                "--profile",
-                "bench",
-                "--cargo",
-                "c",
-                "--rustc",
-                "r",
-                "--cc",
-                "clang",
-                "--cxx",
-                "clang++",
-                "--c-sysroot",
-                "sdk",
-                "--output",
-                "o",
-            ])
-            .is_err(),
-            "a fact record binds release or debug only"
-        );
-
-        let bake_loafs = parse_cli([
-            "incan",
-            "oven",
-            "legacy-cargo",
-            "bake-loafs",
-            "--output",
-            "loafs",
-            "--envelope",
-            "release",
-            "--sdk-inventory",
-            "sdk-inventory.json",
-            "--cargo",
-            "cargo",
-            "--rustc",
-            "rustc",
-            "--cc",
-            "clang",
-            "--cxx",
-            "clang++",
-            "--c-sysroot",
-            "sdk",
-            "--loaf-registry",
-            "incan.pub-index",
-            "--loaf-registry-commit",
-            "8d40e1d0000000000000000000000000000000000",
-            "--harvest-dir",
-            "harvest",
-        ])?;
-        let Some(Command::Oven {
-            command:
-                OvenCommand::LegacyCargo {
-                    command:
-                        OvenLegacyCargoCommand::BakeLoafs {
-                            loaf_registry,
-                            loaf_registry_commit,
-                            harvest_dir,
-                            ..
-                        },
-                },
-        }) = bake_loafs.command
-        else {
-            return Err(expected_command("oven legacy-cargo bake-loafs"));
-        };
-        assert_eq!(loaf_registry, Some(PathBuf::from("incan.pub-index")));
-        assert_eq!(
-            loaf_registry_commit.as_deref(),
-            Some("8d40e1d0000000000000000000000000000000000")
-        );
-        assert_eq!(harvest_dir, Some(PathBuf::from("harvest")));
-        assert!(
-            parse_cli([
-                "incan",
-                "oven",
-                "legacy-cargo",
-                "bake-loafs",
-                "--output",
-                "loafs",
-                "--envelope",
-                "release",
-                "--sdk-inventory",
-                "sdk-inventory.json",
-                "--cargo",
-                "cargo",
-                "--rustc",
-                "rustc",
-                "--cc",
-                "clang",
-                "--cxx",
-                "clang++",
-                "--c-sysroot",
-                "sdk",
-                "--loaf-registry-commit",
-                "abc",
-            ])
-            .is_err(),
-            "a pin without a registry checkout pins nothing"
-        );
-
-        let test = parse_cli([
-            "incan",
-            "oven",
-            "test",
-            "--receipt",
-            "receipt.json",
-            "--plan",
-            "sha256:plan",
-            "--rustc",
-            "rustc",
-            "--source",
-            "generated.rs",
-            "--output",
-            "native-tests",
-            "--crate-name",
-            "native_tests",
-            "--source-evidence",
-            "generated",
-            "--exact",
-            "smoke",
-            "--max-physical-bytes",
-            "1048576",
-        ])?;
-        let Some(Command::Oven {
-            command:
-                OvenCommand::Test {
-                    plan_identity,
-                    exact_names,
-                    store,
-                    ..
-                },
-        }) = test.command
-        else {
-            return Err(expected_command("oven test"));
-        };
-        assert_eq!(plan_identity, "sha256:plan");
-        assert_eq!(exact_names, ["smoke"]);
-        assert_eq!(store.max_physical_bytes, Some(1_048_576));
-
-        let store_prune = parse_cli([
-            "incan",
-            "oven",
-            "store",
-            "prune",
-            "--dry-run",
-            "--max-physical-bytes",
-            "1048576",
-        ])?;
-        assert!(matches!(
-            store_prune.command,
-            Some(Command::Oven {
-                command: OvenCommand::Store {
-                    command: OvenStoreCommand::Prune { dry_run: true, store, .. },
-                },
-            }) if store.max_physical_bytes == Some(1_048_576)
-        ));
-
-        let run = parse_cli([
-            "incan",
-            "oven",
-            "run",
-            "--receipt",
-            "receipt.json",
-            "--plan",
-            "sha256:plan",
-            "--rustc",
-            "rustc",
-            "--source",
-            "generated.rs",
-            "--output",
-            "native-run",
-            "--crate-name",
-            "native_run",
-            "--source-evidence",
-            "generated",
-            "--",
-            "--consumer-flag",
-        ])?;
-        let Some(Command::Oven {
-            command:
-                OvenCommand::Run {
-                    plan_identity,
-                    arguments,
-                    ..
-                },
-        }) = run.command
-        else {
-            return Err(expected_command("oven run"));
-        };
-        assert_eq!(plan_identity, "sha256:plan");
-        assert_eq!(arguments, [OsString::from("--consumer-flag")]);
-
-        let interop_stage = parse_cli([
-            "incan",
-            "oven",
-            "interop",
-            "stage",
-            "--project",
-            "examples/interop",
-            "--target",
-            "aarch64-apple-ios-sim",
-            "--base-receipt",
-            "runtime-receipt.json",
-            "--adapter",
-            "ios",
-            "--output",
-            "target/interop-stage",
-        ])?;
-        assert!(matches!(
-            interop_stage.command,
-            Some(Command::Oven {
-                command: OvenCommand::Interop {
-                    command: OvenInteropCommand::Stage {
-                        target,
-                        adapter: OvenInteropAdapterArgument::Ios,
-                        output,
-                        ..
-                    },
-                },
-            }) if target == "aarch64-apple-ios-sim" && output == Path::new("target/interop-stage")
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn internal_library_preparation_bypasses_workspace_scope_issue908() {
-        assert!(!build_uses_workspace_scope(true, true, false));
-        assert!(!build_uses_workspace_scope(true, false, true));
-        assert!(build_uses_workspace_scope(true, false, false));
-        assert!(build_uses_workspace_scope(false, true, true));
-    }
-
-    #[test]
-    fn test_cli_parse_build_cargo_policy_and_args() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "test.incn",
-            "--offline",
-            "--locked",
-            "--cargo-args",
-            "--timings",
-            "--color=always",
-        ])?;
-        let Some(Command::Build {
-            offline,
-            locked,
-            frozen,
-            no_offline,
-            no_locked,
-            no_frozen,
-            cargo_args,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("build"));
-        };
-        assert!(offline);
-        assert!(locked);
-        assert!(!frozen);
-        assert!(!no_offline);
-        assert!(!no_locked);
-        assert!(!no_frozen);
-        assert_eq!(cargo_args, vec!["--timings", "--color=always"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_keeps_incan_and_cargo_feature_flags_separate() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "test.incn",
-            "--features",
-            "json,http",
-            "--no-default-features",
-            "--cargo-features",
-            "serde,tokio",
-        ])?;
-        let Some(Command::Build {
-            package_features,
-            cargo_features,
-            cargo_no_default_features,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("build"));
-        };
-        assert_eq!(package_features.features, ["json", "http"]);
-        assert!(package_features.no_default_features);
-        assert!(!package_features.all_features);
-        assert_eq!(cargo_features, ["serde", "tokio"]);
-        assert!(!cargo_no_default_features);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_build_generated_cargo_target_dir() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "--lib",
-            "--generated-cargo-target-dir",
-            "target/generated-shared",
-        ])?;
-        let Some(Command::Build {
-            generated_cargo_target_dir,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("build"));
-        };
-        assert_eq!(
-            generated_cargo_target_dir,
-            Some(PathBuf::from("target/generated-shared"))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_policy_negative_flags() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "build",
-            "test.incn",
-            "--no-offline",
-            "--no-locked",
-            "--no-frozen",
-        ])?;
-        let Some(Command::Build {
-            no_offline,
-            no_locked,
-            no_frozen,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("build"));
-        };
-        assert!(no_offline);
-        assert!(no_locked);
-        assert!(no_frozen);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_run() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "run", "test.incn"])?;
-        let Some(Command::Run { release, .. }) = cli.command else {
-            return Err(expected_command("run"));
-        };
-        assert!(!release, "run should default to debug profile");
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_new() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "new",
-            "demo",
-            "--dir",
-            "apps/demo",
-            "--description",
-            "Demo app",
-            "--author",
-            "Danny <danny@example.com>",
-            "--license",
-            "MIT",
-            "-y",
-        ])?;
-        let Some(Command::New {
-            name,
-            dir,
-            description,
-            author,
-            license,
-            yes,
-            ..
-        }) = cli.command
-        else {
-            return Err(expected_command("new"));
-        };
-        assert_eq!(name.as_deref(), Some("demo"));
-        assert_eq!(dir, Some(PathBuf::from("apps/demo")));
-        assert_eq!(description.as_deref(), Some("Demo app"));
-        assert_eq!(author.as_deref(), Some("Danny <danny@example.com>"));
-        assert_eq!(license.as_deref(), Some("MIT"));
-        assert!(yes);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_new_without_name_for_interactive_mode() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "new"])?;
-        let Some(Command::New { name, dir, .. }) = cli.command else {
-            return Err(expected_command("new"));
-        };
-        assert!(name.is_none());
-        assert!(dir.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_new_rejects_unsupported_project_kind_flags() {
-        assert!(parse_cli(["incan", "new", "--bin"]).is_err());
-        assert!(parse_cli(["incan", "new", "--lib"]).is_err());
-    }
-
-    #[test]
-    fn test_cli_parse_run_release() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "run", "--release", "test.incn"])?;
-        let Some(Command::Run { release, .. }) = cli.command else {
-            return Err(expected_command("run"));
-        };
-        assert!(release, "run --release should enable release profile");
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_run_program_args_issue1883() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "run", "test.incn", "--", "--timings", "--color=always"])?;
-        let Some(Command::Run { program_args, .. }) = cli.command else {
-            return Err(expected_command("run"));
-        };
-        assert_eq!(program_args, vec!["--timings", "--color=always"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_run_with_code() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "run", "-c", "print(1)"])?;
-        let Some(Command::Run { command, .. }) = cli.command else {
-            return Err(expected_command("run"));
-        };
-        assert_eq!(command.as_deref(), Some("print(1)"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_fmt() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "fmt", "src/", "--check"])?;
-        let Some(Command::Fmt { check, .. }) = cli.command else {
-            return Err(expected_command("fmt"));
-        };
-        assert!(check);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_fmt_workspace_member_selection() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "fmt", "--member", "alpha", "--member", "packages/zebra"])?;
-        let Some(Command::Fmt { workspace, members, .. }) = cli.command else {
-            return Err(expected_command("fmt"));
-        };
-        assert!(!workspace);
-        assert_eq!(members, vec!["alpha", "packages/zebra"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_test() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "test", "-v", "-x", "-k", "unit"])?;
-        let Some(Command::Test {
-            arguments:
-                oven_cli::cli::TestArgs {
-                    verbose,
-                    stop_on_fail,
-                    filter,
-                    ..
-                },
-        }) = cli.command
-        else {
-            return Err(expected_command("test"));
-        };
-        assert!(verbose);
-        assert!(stop_on_fail);
-        assert_eq!(filter.as_deref(), Some("unit"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_test_collection_features() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "test", "tests/", "--feature", "known_bug", "--feature", "beta"])?;
-        let Some(Command::Test {
-            arguments: oven_cli::cli::TestArgs { test_features, .. },
-        }) = cli.command
-        else {
-            return Err(expected_command("test"));
-        };
-        assert_eq!(test_features, ["known_bug", "beta"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_test_cargo_policy() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "test", "tests/", "--frozen", "--cargo-args", "--timings"])?;
-        let Some(Command::Test {
-            arguments: oven_cli::cli::TestArgs { frozen, cargo_args, .. },
-        }) = cli.command
-        else {
-            return Err(expected_command("test"));
-        };
-        assert!(frozen);
-        assert_eq!(cargo_args, vec!["--timings"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_version() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "version", "patch", "--dry-run"])?;
-        let Some(Command::Version { bump, dry_run, .. }) = cli.command else {
-            return Err(expected_command("version"));
-        };
-        assert_eq!(bump, Some(VersionBumpArg::Patch));
-        assert!(dry_run);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_version_project_override() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "version", "--set", "1.2.3", "--project", "examples/greeter"])?;
-        let Some(Command::Version { set, project, .. }) = cli.command else {
-            return Err(expected_command("version"));
-        };
-        assert_eq!(set.as_deref(), Some("1.2.3"));
-        assert_eq!(project.as_deref(), Some(std::path::Path::new("examples/greeter")));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_env_run_passthrough_args() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "env", "run", "unit", "test", "--dry-run", "--", "-k", "greet"])?;
-        let Some(Command::Env {
-            command:
-                EnvCommand::Run {
-                    env,
-                    script,
-                    dry_run,
-                    args,
-                    ..
-                },
-        }) = cli.command
-        else {
-            return Err(expected_command("env run"));
-        };
-        assert_eq!(env, "unit");
-        assert_eq!(script, "test");
-        assert!(dry_run);
-        assert_eq!(args, vec!["-k".to_string(), "greet".to_string()]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_env_show_without_name() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "env", "show"])?;
-        let Some(Command::Env {
-            command: EnvCommand::Show { env, .. },
-        }) = cli.command
-        else {
-            return Err(expected_command("env show"));
-        };
-        assert!(env.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_env_list_json_with_project_override() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "env",
-            "list",
-            "--format",
-            "json",
-            "--project",
-            "examples/greeter",
-        ])?;
-        let Some(Command::Env {
-            command: EnvCommand::List { format, project },
-        }) = cli.command
-        else {
-            return Err(expected_command("env list"));
-        };
-        assert_eq!(format, EnvOutputFormat::Json);
-        assert_eq!(project.as_deref(), Some(std::path::Path::new("examples/greeter")));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_tools_doctor_json() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "tools", "doctor", "--format", "json"])?;
-        let Some(Command::Tools {
-            command: ToolsCommand::Doctor { format },
-        }) = cli.command
-        else {
-            return Err(expected_command("tools doctor"));
-        };
-        assert_eq!(format, ToolsDoctorFormat::Json);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_tools_metadata_api_json() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "tools", "metadata", "api", "src/lib.incn", "--format", "json"])?;
-        let Some(Command::Tools {
-            command:
-                ToolsCommand::Metadata {
-                    command: ToolsMetadataCommand::Api { path, format },
-                },
-        }) = cli.command
-        else {
-            return Err(expected_command("tools metadata api"));
-        };
-        assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
-        assert_eq!(format, ToolsMetadataFormat::Json);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_tools_metadata_api_markdown() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "tools",
-            "metadata",
-            "api",
-            "src/lib.incn",
-            "--format",
-            "markdown",
-        ])?;
-        let Some(Command::Tools {
-            command:
-                ToolsCommand::Metadata {
-                    command: ToolsMetadataCommand::Api { path, format },
-                },
-        }) = cli.command
-        else {
-            return Err(expected_command("tools metadata api"));
-        };
-        assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
-        assert_eq!(format, ToolsMetadataFormat::Markdown);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_workspace_inspect_scope_selectors() -> Result<(), clap::Error> {
-        let cli = parse_cli([
-            "incan",
-            "workspace",
-            "inspect",
-            "--format",
-            "json",
-            "--member",
-            "alpha",
-            "--member",
-            "packages/zebra",
-        ])?;
-        let Some(Command::Workspace {
-            command:
-                WorkspaceCommand::Inspect {
-                    format,
-                    workspace,
-                    members,
-                },
-        }) = cli.command
-        else {
-            return Err(expected_command("workspace inspect"));
-        };
-        assert_eq!(format, WorkspaceInspectFormat::Json);
-        assert!(!workspace);
-        assert_eq!(members, vec!["alpha", "packages/zebra"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_workspace_selectors_for_supported_commands() -> Result<(), clap::Error> {
-        let build = parse_cli(["incan", "build", "--workspace", "--report", "json"])?;
-        let Some(Command::Build { workspace, members, .. }) = build.command else {
-            return Err(expected_command("build"));
-        };
-        assert!(workspace);
-        assert!(members.is_empty());
-
-        let check = parse_cli(["incan", "check", "--member", "alpha"])?;
-        let Some(Command::Check { workspace, members, .. }) = check.command else {
-            return Err(expected_command("check"));
-        };
-        assert!(!workspace);
-        assert_eq!(members, vec!["alpha"]);
-
-        let run = parse_cli(["incan", "run", "--member", "packages/demo"])?;
-        let Some(Command::Run { workspace, members, .. }) = run.command else {
-            return Err(expected_command("run"));
-        };
-        assert!(!workspace);
-        assert_eq!(members, vec!["packages/demo"]);
-
-        let version = parse_cli(["incan", "version", "patch", "--member", "alpha"])?;
-        let Some(Command::Version { workspace, members, .. }) = version.command else {
-            return Err(expected_command("version"));
-        };
-        assert!(!workspace);
-        assert_eq!(members, vec!["alpha"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_check_interop_target() -> Result<(), clap::Error> {
-        let check = parse_cli([
-            "incan",
-            "check",
-            "--interop-target",
-            "aarch64-linux-android",
-            "src/main.incn",
-        ])?;
-        let Some(Command::Check {
-            interop_target, path, ..
-        }) = check.command
-        else {
-            return Err(expected_command("check"));
-        };
-        assert_eq!(interop_target.as_deref(), Some("aarch64-linux-android"));
-        assert_eq!(path, std::path::PathBuf::from("src/main.incn"));
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_inspect_interop_plan() -> Result<(), clap::Error> {
-        let inspect = parse_cli([
-            "incan",
-            "inspect",
-            "interop-plan",
-            "--target",
-            "aarch64-linux-android",
-            "--format",
-            "json",
-            ".",
-        ])?;
-        let Some(Command::Inspect {
-            command: InspectCommand::InteropPlan { path, target, format },
-        }) = inspect.command
-        else {
-            return Err(expected_command("inspect interop-plan"));
-        };
-        assert_eq!(path, std::path::PathBuf::from("."));
-        assert_eq!(target, "aarch64-linux-android");
-        assert_eq!(format, InteropPlanInspectionFormat::Json);
-        Ok(())
-    }
-
-    #[test]
-    fn test_cli_parse_debug_flags() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan", "--lex", "test.incn"])?;
-        assert!(cli.lex_file.is_some());
-
-        let cli = parse_cli(["incan", "--parse", "test.incn"])?;
-        assert!(cli.parse_file.is_some());
-
-        let cli = parse_cli(["incan", "--check", "test.incn"])?;
-        assert!(cli.check_file.is_some());
-        Ok(())
-    }
-
-    #[test]
-    fn test_banner_policy_prefers_run_and_build_only() -> Result<(), clap::Error> {
-        assert!(command_prefers_banner(&parse_cli(["incan", "run", "main.incn"])?));
-        assert!(command_prefers_banner(&parse_cli(["incan", "build", "main.incn"])?));
-        assert!(!command_prefers_banner(&parse_cli(["incan", "test"])?));
-        assert!(!command_prefers_banner(&parse_cli(["incan", "env", "list"])?));
-        assert!(!command_prefers_banner(&parse_cli(["incan", "version", "patch"])?));
-        assert!(!command_prefers_banner(&parse_cli(["incan", "new", "demo"])?));
-        assert!(!command_prefers_banner(&parse_cli(["incan", "--check", "main.incn"])?));
-        Ok(())
-    }
-
-    #[test]
-    fn test_execute_without_args_returns_help_text() -> Result<(), clap::Error> {
-        let cli = parse_cli(["incan"])?;
-        let result = execute(cli, false);
-        let Err(err) = result else {
-            return Err(expected_command("help failure"));
-        };
-        assert_eq!(err.exit_code, ExitCode::FAILURE);
-        assert!(
-            !err.message.trim().is_empty(),
-            "expected help text for no-arg invocation"
-        );
-        assert!(
-            err.message.contains("Usage:"),
-            "expected clap usage block in help output"
-        );
-        assert!(
-            err.message.contains("build") && err.message.contains("run"),
-            "expected top-level command tokens in help output"
-        );
-        Ok(())
-    }
 }

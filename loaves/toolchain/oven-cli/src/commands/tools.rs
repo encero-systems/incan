@@ -16,7 +16,7 @@ use incan_frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
 };
 use incan_frontend::feature_metadata::{PublicFeatureDescriptor, public_feature_descriptors};
-use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use incan_frontend::loaf_index::LIBRARY_MANIFEST_EXTENSION;
 use incan_frontend::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
 use incan_frontend::registry_metadata::{
     CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryDefinition, CheckedRegistryEntry,

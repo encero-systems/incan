@@ -9,7 +9,7 @@
 mod artifact;
 mod checked_replay;
 mod model;
-pub mod published_layout;
+pub mod public_identities;
 mod type_projection;
 mod type_refs;
 mod validation;
