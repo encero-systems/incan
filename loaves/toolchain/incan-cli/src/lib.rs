@@ -49,7 +49,7 @@ use commands::codegraph::CodegraphInspectionFormat;
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
-use commands::provider_inspect::ProviderInspectionFormat;
+use commands::feature_inspect::FeatureInspectionFormat;
 use commands::representation_inspect::RepresentationInspectionFormat;
 use commands::workspace::WorkspaceInspectFormat;
 use incan_driver::build_report::{BuildReportFormat, BuildReportOptions};
@@ -70,7 +70,7 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 pub use oven_cli::cli::{
     LockArgs, OvenCommand, OvenInteropAdapterArgument, OvenInteropCommand,
     OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
-    PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
+    PackageFeatureCliFlags, ToolsCommand, ToolsMetadataCommand,
 };
 /// Shared opt-in invocation diagnostics used by both CLI entrypoints.
 pub use oven_cli::invocation_trace;
@@ -192,9 +192,6 @@ pub enum Command {
         /// Select Incan package features for this check
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this check
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
         /// Verify checked C declarations against this declared Oven interop target; this does not cross-compile Rust
         /// or package an app
         #[arg(long = "interop-target", value_name = "TRIPLE")]
@@ -440,23 +437,6 @@ pub enum InspectCommand {
         /// Select Incan package features for this graph projection
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this graph projection
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
-    },
-    /// Inspect active SDK components and compiled providers
-    Providers {
-        /// Source file or project directory whose provider projection should be inspected
-        #[arg(value_name = "PATH", default_value = ".")]
-        path: PathBuf,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: ProviderInspectionFormat,
-        #[command(flatten)]
-        package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this provider projection
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
     },
     /// Inspect public package-feature roots, closure, edges, and conditioned facts
     Features {
@@ -465,12 +445,9 @@ pub enum InspectCommand {
         path: PathBuf,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
-        format: ProviderInspectionFormat,
+        format: FeatureInspectionFormat,
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this feature projection
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
     },
     /// Inspect compiler-checked C binding declarations
     Bindings {
@@ -483,9 +460,6 @@ pub enum InspectCommand {
         /// Select Incan package features for this binding projection
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this binding projection
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
         /// Optional locked Oven interop target to join into a redaction-safe binding-use receipt; requires `--format
         /// receipt`
         #[arg(long, value_name = "TRIPLE")]
@@ -688,7 +662,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             path,
             format,
             package_features,
-            sdk_profile,
             interop_target,
             workspace,
             members,
@@ -696,7 +669,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             path,
             format,
             package_features.into(),
-            sdk_profile.sdk_profile,
             interop_target,
             workspace,
             members,
@@ -718,42 +690,31 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 format,
                 allow_errors,
                 package_features,
-                sdk_profile,
             } => commands::inspect_codegraph(
                 &path,
                 format,
                 allow_errors,
                 &package_features.into(),
-                sdk_profile.profile(),
             ),
             InspectCommand::Registry {
                 identity,
                 project,
                 format,
             } => commands::tools::inspect_registry(&identity, project.as_deref(), format),
-            InspectCommand::Providers {
-                path,
-                format,
-                package_features,
-                sdk_profile,
-            } => commands::inspect_providers(&path, format, &package_features.into(), sdk_profile.profile()),
             InspectCommand::Features {
                 path,
                 format,
                 package_features,
-                sdk_profile,
-            } => commands::inspect_features(&path, format, &package_features.into(), sdk_profile.profile()),
+            } => commands::inspect_features(&path, format, &package_features.into()),
             InspectCommand::Bindings {
                 path,
                 format,
                 package_features,
-                sdk_profile,
                 target,
             } => commands::inspect_bindings(
                 &path,
                 format,
                 &package_features.into(),
-                sdk_profile.profile(),
                 target.as_deref(),
             ),
             InspectCommand::Representation { path, format } => commands::inspect_representation(&path, format),
@@ -1244,7 +1205,6 @@ fn execute_check(
     path: PathBuf,
     format: DiagnosticOutputFormat,
     package_features: FeatureSelection,
-    sdk_profile: Option<String>,
     interop_target: Option<String>,
     select_workspace: bool,
     member_selectors: Vec<String>,
@@ -1259,7 +1219,6 @@ fn execute_check(
             &path,
             format,
             &package_features,
-            sdk_profile.as_deref(),
             interop_target.as_deref(),
         );
     };
@@ -1281,7 +1240,7 @@ fn execute_check(
         match oven_cli::project_owner::check(
             &target,
             &package_features,
-            sdk_profile.as_deref(),
+            None,
             interop_target.as_deref(),
         ) {
             Ok(report) => {

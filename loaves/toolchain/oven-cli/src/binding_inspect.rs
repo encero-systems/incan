@@ -289,14 +289,12 @@ pub fn inspect_bindings(
     path: &Path,
     format: BindingInspectionFormat,
     feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
     target: Option<&str>,
 ) -> CliResult<ExitCode> {
     let request = BindingInspectionRequest {
         path: std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?,
         format,
         features: feature_selection.clone(),
-        sdk_profile: sdk_profile_override.map(str::to_owned),
         target: target.map(str::to_owned),
     };
     let rendered = crate::project_owner::inspect_bindings(request)?;
@@ -314,8 +312,6 @@ pub(crate) struct BindingInspectionRequest {
     pub(crate) format: BindingInspectionFormat,
     /// Current package feature selection.
     pub(crate) features: FeatureSelection,
-    /// Explicit provider profile, if requested.
-    pub(crate) sdk_profile: Option<String>,
     /// Lock-qualified target for the receipt format only.
     pub(crate) target: Option<String>,
 }
@@ -330,12 +326,10 @@ pub(crate) fn execute_request(
         path,
         format,
         features: feature_selection,
-        sdk_profile,
         target,
     } = request;
     let format = *format;
     let target = target.as_deref();
-    let sdk_profile_override = sdk_profile.as_deref();
     if !path.is_absolute() {
         return Err(CliError::failure("binding inspection requires an absolute path"));
     }
@@ -346,7 +340,7 @@ pub(crate) fn execute_request(
     }
     let entry_path = resolve_binding_entry_path(path)?;
     let root = incan_driver::project::resolve_project_root(&entry_path);
-    let session = owner.test_execution_session(&root, &entry_path, feature_selection, sdk_profile_override)?;
+    let session = owner.test_session(&entry_path, feature_selection, incan_driver::session::DEFAULT_PROFILE)?;
     let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     let analysis = session

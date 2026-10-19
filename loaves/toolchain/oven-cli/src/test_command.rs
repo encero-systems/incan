@@ -14,7 +14,6 @@ pub fn run(
     let crate::cli::TestArgs {
         path,
         package_features,
-        sdk_profile,
         verbose,
         stop_on_fail,
         slow,
@@ -68,7 +67,7 @@ pub fn run(
             seed,
             run_xfail,
             package_features: package_features.into(),
-            sdk_profile: sdk_profile.sdk_profile,
+            profile: None,
             lock_policy: LockPolicy::from_cli_and_env(LockPolicyCliFlags {
                 offline,
                 no_offline,
@@ -108,7 +107,7 @@ struct TestCommandOptions {
     seed: Option<u64>,
     run_xfail: bool,
     package_features: FeatureSelection,
-    sdk_profile: Option<String>,
+    profile: Option<String>,
     lock_policy: LockPolicy,
 }
 
@@ -133,7 +132,7 @@ impl TestCommandOptions {
             isolate: self.isolate,
             test_features: self.test_features.clone(),
             package_features: self.package_features.clone(),
-            sdk_profile: self.sdk_profile.clone(),
+            profile: self.profile.clone(),
             timeout: self.timeout.as_deref(),
             no_capture: self.no_capture,
             use_color: self.use_color,

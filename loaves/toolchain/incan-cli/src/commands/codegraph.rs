@@ -30,10 +30,9 @@ pub fn inspect_codegraph(
     format: CodegraphInspectionFormat,
     allow_errors: bool,
     feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
 ) -> CliResult<ExitCode> {
     let normalized = normalize_input_path(path).map_err(CliError::from)?;
-    let records = collect_codegraph_records(&normalized, allow_errors, feature_selection, sdk_profile_override)
+    let records = collect_codegraph_records(&normalized, allow_errors, feature_selection, incan_driver::session::DEFAULT_PROFILE)
         .map_err(CliError::from)?;
     match format {
         CodegraphInspectionFormat::Jsonl => {

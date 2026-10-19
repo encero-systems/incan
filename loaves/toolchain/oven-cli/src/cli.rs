@@ -81,21 +81,6 @@ impl From<PackageFeatureCliFlags> for FeatureSelection {
     }
 }
 
-/// Command-local SDK profile selection shared by compilation and inspection commands.
-#[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
-pub struct SdkProfileCliFlags {
-    /// Replace the project's SDK profile for this invocation without changing explicit additions or exclusions
-    #[arg(long = "sdk-profile", value_name = "PROFILE")]
-    pub sdk_profile: Option<String>,
-}
-
-impl SdkProfileCliFlags {
-    /// Return the command-local SDK profile override without changing persistent project selection.
-    pub fn profile(&self) -> Option<&str> {
-        self.sdk_profile.as_deref()
-    }
-}
-
 #[derive(Subcommand, Debug)]
 pub enum ToolsCommand {
     /// Inspect local `incan` / `incan-lsp` path resolution
@@ -490,9 +475,6 @@ pub struct LockArgs {
     /// Select Incan package features for the locked graph
     #[command(flatten)]
     pub package_features: PackageFeatureCliFlags,
-    /// Select a non-persistent SDK profile for the locked graph
-    #[command(flatten)]
-    pub sdk_profile: SdkProfileCliFlags,
 }
 
 /// Shared project test options used by both entry points.
@@ -504,9 +486,6 @@ pub struct TestArgs {
     /// Select Incan package features for collection and generated test batches
     #[command(flatten)]
     pub package_features: PackageFeatureCliFlags,
-    /// Select a non-persistent SDK profile for collection and generated test batches
-    #[command(flatten)]
-    pub sdk_profile: SdkProfileCliFlags,
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,

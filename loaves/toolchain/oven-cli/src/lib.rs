@@ -19,7 +19,7 @@ pub mod workspace_scope;
 
 pub use cli::{
     LockArgs, OvenCommand, OvenGateCommand, OvenInteropAdapterArgument, OvenInteropCommand, OvenLoafEnvelopeArgument,
-    OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand, PackageFeatureCliFlags, SdkProfileCliFlags,
+    OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand, PackageFeatureCliFlags,
     ToolsCommand, ToolsMetadataCommand,
 };
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
@@ -220,7 +220,6 @@ pub fn run_lock_command(args: LockArgs) -> CliResult<ExitCode> {
     let LockArgs {
         file,
         package_features,
-        sdk_profile,
     } = args;
-    commands::lock_project(file.as_ref(), &package_features.into(), sdk_profile.profile())
+    commands::lock_project(file.as_ref(), &package_features.into())
 }

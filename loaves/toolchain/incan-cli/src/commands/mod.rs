@@ -22,7 +22,7 @@ pub mod format;
 pub mod init;
 pub mod interop_plan;
 pub mod lifecycle;
-pub mod provider_inspect;
+pub mod feature_inspect;
 pub mod representation_inspect;
 pub mod stdlib_loader;
 pub mod workspace;
@@ -40,12 +40,12 @@ pub use build::{build_file, build_library, run_file, run_inline_source};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
 pub use debug::{check_file, lex_file, parse_file};
 pub use diagnostics::{
-    DiagnosticOutputFormat, check_path, check_path_with_features, check_path_with_selections, explain_diagnostic,
+    DiagnosticOutputFormat, check_path, check_path_with_features, explain_diagnostic,
 };
 pub use format::format_files;
 pub use init::init_project;
 pub use interop_plan::{InteropPlanInspectionFormat, inspect_interop_plan};
 pub use lifecycle::{env_list, env_run, env_show, version_project};
-pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
+pub use feature_inspect::{FeatureInspectionFormat, inspect_features};
 pub use representation_inspect::{RepresentationInspectionFormat, inspect_representation};
 pub use workspace::{WorkspaceInspectFormat, workspace_inspect};
