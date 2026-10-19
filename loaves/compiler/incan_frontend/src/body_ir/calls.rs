@@ -667,10 +667,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             {
                 Some(function.clone())
             }
+            // The checker records an import binding's proven identity at each call site that selects it, so an absent
+            // call-site identity stays absent rather than being recovered from the import's local name.
             _ => selected
                 .cloned()
-                .or_else(|| reexport.map(|call| call.canonical.clone()))
-                .or_else(|| imported.cloned()),
+                .or_else(|| reexport.map(|call| call.canonical.clone())),
         };
         let builtin = self.type_info.resolved_builtin_call(call_span);
         let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);

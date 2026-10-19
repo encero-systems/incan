@@ -717,14 +717,30 @@ fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Bo
     let module = build_body_ir_module_v0(&program, &path, checker.type_info());
     let targets = named_targets(&module, "main");
     let targets: Vec<_> = targets.iter().filter(|target| target.name == "pick").collect();
-    assert_eq!(targets.len(), 2);
-    for (target, arity) in targets.into_iter().zip([1, 2]) {
-        assert!(target.direct_call_id.is_none());
-        assert!(
-            matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == arity && defaulted_slots.is_empty()),
-            "{target:?}"
-        );
-    }
+    let [single, named] = targets.as_slice() else {
+        return Err(format!("expected two `pick` calls, found {}", targets.len()).into());
+    };
+    assert!(single.direct_call_id.is_none() && named.direct_call_id.is_none());
+    assert!(
+        matches!(&single.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 1 && defaulted_slots.is_empty()),
+        "{single:?}"
+    );
+    // Named arguments written out of declaration order keep the free-call declaration evaluation order.
+    let bir::ArgumentBinding::ResolvedDeclarationOrder {
+        arguments,
+        defaulted_slots,
+    } = &named.binding
+    else {
+        return Err(format!("named overload call lost its declaration-order binding: {named:?}").into());
+    };
+    assert!(defaulted_slots.is_empty());
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|argument| (argument.slot, argument.written_position))
+            .collect::<Vec<_>>(),
+        [(0, 1), (1, 0)]
+    );
     assert!(
         !module.render_snapshot().contains("unsupported("),
         "{}",
