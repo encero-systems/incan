@@ -1087,7 +1087,8 @@ fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Option<&'stat
     if item.properties.iter().any(|property| property.node.body.is_some()) {
         return Some("property defaults");
     }
-    if item.methods.iter().any(|method| !method.node.decorators.is_empty()) {
+    // Method markers follow the rule models and classes use: `@staticmethod`, `@classmethod`, lint suppressions.
+    if has_refused_method_decorator(&item.methods) {
         return Some("decorated methods");
     }
     None
