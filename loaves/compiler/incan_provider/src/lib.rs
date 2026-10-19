@@ -7,15 +7,12 @@
 #![deny(clippy::expect_used)]
 pub use incan_frontend::provider::*;
 
-pub mod compiled_sdk;
 pub mod dependency_resolver;
 pub mod effect_digest;
 pub mod inventory;
 pub mod lock_semantics;
 pub mod requirements;
-pub mod sdk_build;
 pub mod sdk_native;
-pub mod sdk_store;
 pub mod source_policy;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;

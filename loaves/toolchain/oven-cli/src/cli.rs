@@ -192,35 +192,6 @@ pub enum OvenCommand {
     },
     /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
     CompileClosure(CompileClosureArgs),
-    /// Prepare the fixed source bootstrap and build its receipt-bound compiler from an admitted SDK
-    #[command(hide = true)]
-    BootstrapCompiler {
-        /// Compiler checkout owning the fixed bootstrap source projects
-        #[arg(long)]
-        compiler_root: PathBuf,
-        /// Caller-owned directory for the first three generated bootstrap programs
-        #[arg(long)]
-        preparation_output: PathBuf,
-        /// Destination for the source-built compiler and its bound companions
-        #[arg(long)]
-        output: PathBuf,
-        /// Compiler and native dependency optimization profile; support engines retain their independent profiles
-        #[arg(long, default_value = "debug", value_parser = ["debug", "release"])]
-        profile: String,
-        /// Explicit Rust compiler executable for the native bootstrap
-        #[arg(long)]
-        rustc: PathBuf,
-        /// Existing Oven store used for preparation and the compiler build
-        #[arg(long)]
-        store: PathBuf,
-    },
-    /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
-    #[command(hide = true)]
-    SdkHandoff {
-        /// SDK handoff lifecycle operation
-        #[command(subcommand)]
-        command: SdkHandoffCommand,
-    },
     /// Retain compiler-suite reports and transcripts, then reclaim disposable output
     RetainSuiteOutput {
         /// Print the host clock in nanoseconds
@@ -260,16 +231,6 @@ pub enum OvenCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
-    },
-    /// Emit the compiler-owned SDK provider identity for repository automation.
-    #[command(hide = true)]
-    SdkProviderStoreIdentity {
-        /// Compiler source checkout that owns the built-in standard library
-        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
-        compiler_root: PathBuf,
-        /// Emit the identity of the preparation inputs instead of the sealed store, so it is known before preparation
-        #[arg(long = "inputs")]
-        inputs: bool,
     },
     /// Import frozen Cargo declarations as receipt evidence without launching Cargo
     Import {
@@ -597,50 +558,6 @@ pub struct CompileClosureArgs {
     /// Selected compiler; defaults to the active pinned compiler
     #[arg(long)]
     pub rustc: Option<PathBuf>,
-}
-
-/// CI-only SDK provider-store transport operations.
-#[derive(Subcommand, Debug)]
-pub enum SdkHandoffCommand {
-    /// Stage the exact selected provider for artifact upload
-    Stage {
-        /// Compiler source checkout
-        #[arg(long, value_name = "PATH", default_value = ".")]
-        workspace: PathBuf,
-        /// Matching compiler executable
-        #[arg(long, value_name = "PATH", default_value = "target/debug/incan")]
-        compiler: PathBuf,
-        /// Rust compiler used to establish the toolchain identity
-        #[arg(long, value_name = "COMMAND", default_value = "rustc")]
-        rustc: PathBuf,
-        /// Destination handoff directory
-        #[arg(long, value_name = "PATH")]
-        artifact: PathBuf,
-        /// Prepared SDK provider store
-        #[arg(long, value_name = "PATH")]
-        store: PathBuf,
-    },
-    /// Validate a downloaded provider before exposing consumer paths
-    Consume {
-        /// Compiler source checkout
-        #[arg(long, value_name = "PATH", default_value = ".")]
-        workspace: PathBuf,
-        /// Matching compiler executable
-        #[arg(long, value_name = "PATH", default_value = "target/debug/incan")]
-        compiler: PathBuf,
-        /// Rust compiler used to establish the toolchain identity
-        #[arg(long, value_name = "COMMAND", default_value = "rustc")]
-        rustc: PathBuf,
-        /// Downloaded handoff directory
-        #[arg(long, value_name = "PATH")]
-        artifact: PathBuf,
-        /// Consumer SDK provider path file
-        #[arg(long, value_name = "PATH")]
-        path_file: PathBuf,
-        /// Environment file appended for later CI steps
-        #[arg(long, value_name = "PATH")]
-        env_file: PathBuf,
-    },
 }
 
 /// Explicit Oven-owned native interop baking commands.

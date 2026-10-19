@@ -35,8 +35,6 @@ pub mod oven_store;
 pub mod project;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect_workspace;
-#[cfg(feature = "rust_inspect")]
-pub mod sdk_closure;
 pub mod session;
 pub mod testing;
 #[cfg(test)]

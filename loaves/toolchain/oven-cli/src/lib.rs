@@ -20,7 +20,7 @@ pub mod workspace_scope;
 pub use cli::{
     LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
     OvenLegacyCargoCommand, OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags,
-    OvenStoreCommand, PackageFeatureCliFlags, SdkHandoffCommand, SdkProfileCliFlags, ToolsCommand,
+    OvenStoreCommand, PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand,
     ToolsMetadataCommand,
 };
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
@@ -45,25 +45,9 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
         }
         OvenCommand::ConvertCargo { workspace, project } => commands::oven::convert_cargo::run(&workspace, &project),
         OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
-        OvenCommand::BootstrapCompiler {
-            compiler_root,
-            preparation_output,
-            output,
-            profile,
-            rustc,
-            store,
-        } => commands::oven::oven_bootstrap_compiler(
-            &compiler_root,
-            &preparation_output,
-            &output,
-            &rustc,
-            &store,
-            &profile,
-        ),
         OvenCommand::PrepareStandardPackages { native_graph_output } => {
             commands::oven::oven_prepare_standard_packages(&native_graph_output)
         }
-        OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),
         OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
         OvenCommand::ReconcilePartitions { reports, summary } => {
             commands::oven_reconcile_partitions(&reports, summary.as_deref())
@@ -74,15 +58,6 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             package_features,
             format,
         } => commands::oven_bake_project(project, target, package_features.into(), format),
-        OvenCommand::SdkProviderStoreIdentity { compiler_root, inputs } => {
-            let identity = if inputs {
-                incan_provider::sdk_store::sdk_provider_input_identity_for_compiler_root(&compiler_root)?
-            } else {
-                incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?
-            };
-            println!("{identity}");
-            Ok(ExitCode::SUCCESS)
-        }
         OvenCommand::Import {
             project,
             target,
