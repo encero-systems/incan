@@ -5,7 +5,6 @@
 //! runner in `cli` consumes it and the lock collector reads test imports through it without naming a command.
 
 pub mod discovery;
-pub mod module_graph;
 pub mod types;
 
 use std::path::{Path, PathBuf};
