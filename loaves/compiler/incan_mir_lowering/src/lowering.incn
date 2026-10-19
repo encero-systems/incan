@@ -72,7 +72,6 @@ from frozen_plan import (
 )
 from loop_exits import exits_to
 from trait_links import (
-    is_well_formed_module_implementation,
     is_well_formed_project_implementation,
     has_open_trait_arguments,
 )
@@ -212,7 +211,6 @@ from traits import (
     receiver_fills_slot,
     receiver_fills_source_slot,
     receiver_fills_retained_slot,
-    specialize_traits,
     validate_static_receiver,
 )
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
@@ -440,19 +438,6 @@ pub type BodyIrModule = rusttype RustBodyIrModule:
     """The frontend-owned canonical module, borrowed without conversion or duplication."""
 
 
-pub type BodyStatementKind = rusttype RustStatementKind:
-    """The real checked statement vocabulary used by borrowed boundary conformance tests."""
-
-
-pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
-    """Validate every retained declaration and body before consuming its facts."""
-    count = validate_declarations_and_bodies(module)?
-    for implementation in module.trait_implementations:
-        if not is_well_formed_module_implementation(module, implementation):
-            if has_open_trait_arguments(implementation):
-                return Err("unsupported Body IR open trait default type arguments")
-            return Err("invalid Body IR trait implementation identity")
-    return Ok(count)
 
 
 def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
@@ -501,29 +486,6 @@ def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
     return Ok(len(module.bodies))
 
 
-pub def count_continues(module: &BodyIrModule) -> Result[int, str]:
-    """
-    Match the retained statements after validating their owning bodies.
-
-    This boundary probe counts only top-level continue statements. It does not
-    construct a plan or infer executable coverage from the count.
-    """
-    _ = validate_module(module)?
-    mut count = 0
-    for body in module.bodies:
-        for statement in body.block.stmts:
-            match statement.kind:
-                RustStatementKind.Continue =>
-                    count += 1
-                _ => pass
-    return Ok(count)
-
-
-pub def is_continue(statement: &BodyStatementKind) -> bool:
-    """Read the real Body IR statement enum through a shared borrow."""
-    match statement:
-        BodyStatementKind.Continue => return true
-        _ => return false
 # =====================================================================================================================
 # Translating checked values
 # =====================================================================================================================
@@ -6610,18 +6572,6 @@ def display_receiver(mut builder: Builder, value: &RustOperand, span: SourceSpan
     return display_operand(builder, value, span)
 
 
-pub def lower_program(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> Result[Plan, str]:
-    """Require an executable entry after all checked bodies have lowered; library callers keep the named refusal."""
-    match program_plan(modules, sources, files, entry)?:
-        Some(plan) => return Ok(plan)
-        None => return Err("unsupported Body IR project without selected main entrypoint")
-
-
 pub def program_plan(
     modules: &list[BodyIrModule],
     sources: list[str],
@@ -6918,7 +6868,7 @@ pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files
     """
     Collect every body's first refusal rather than only the program's first, for the direct-route census.
 
-    The declaration context is prepared as `lower_program` prepares it, and a refusal there is the only one reported,
+    The declaration context is prepared as `program_plan` prepares it, and a refusal there is the only one reported,
     because no body lowers without that context. Each ordinary body then lowers independently, so a refusal in one body
     never hides another body's, and checked type-parameter instances follow once every body has been tried. Each
     refusal names the body it came from. The plan itself is discarded.
@@ -6939,7 +6889,7 @@ def body_refusals(
     entry: int,
 ) -> Result[list[str], str]:
     """
-    Prepare the declaration context exactly as `lower_program` does, refusing as it refuses, then lower each ordinary
+    Prepare the declaration context exactly as `program_plan` does, refusing as it refuses, then lower each ordinary
     body on its own and record the first refusal of every body that refuses.
     """
     _conversion_placement = validate_conversion_placement(modules, entry)?
@@ -7005,95 +6955,6 @@ def body_refusals(
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
     return Ok(refusals)
-
-
-pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
-    """Validate declarations first, then lower ordinary bodies and each checked type-parameter instance used by them."""
-    _ = validate_module(module)?
-    traits = specialize_traits(module)?
-    closed_context = close_async_types(traits)?
-    nominals, nominal_instances = specialize_nominals_with_instances(closed_context)?
-    specialized = specialize_enums(nominals)?
-    return lower_concrete_module(specialized, source, file, nominal_instances)
-
-
-def lower_concrete_module(
-    module: &BodyIrModule,
-    source: str,
-    file: str,
-    nominal_instances: list[NominalInstance],
-) -> Result[Plan, str]:
-    """Lower ordinary bodies, closed trait defaults, and the worklist of checker-selected function instances."""
-    unions = collect_unions(module)
-    mut intrinsics = intrinsic_declarations(module, file)?
-    checked_functions, checked_runtime, checked_instances = lower_checked_deserialize(
-        module,
-        nominal_instances,
-        file,
-        intrinsics,
-    )?
-    conversion_functions, conversion_runtime = lower_string_conversions(module, file, intrinsics)?
-    mut models = lower_model_declarations(module, file, intrinsics, nominal_instances)?
-    mut enums = lower_enum_declarations(module, file, intrinsics)?
-    attach_enum_comparisons(module, enums, intrinsics)?
-    mut functions = checked_functions
-    functions.extend(conversion_functions)
-    mut externals = checked_runtime
-    merge_externals(externals, conversion_runtime)
-    mut instances = checked_instances
-    for body in module.bodies:
-        if len(body.type_parameters) != 0:
-            continue
-        for retained in functions:
-            if retained.name == function_name(module, body):
-                return Err(f"unsupported Body IR overloaded function {body.name}")
-        function, runtime, pending, synthesized = lower_function(
-            module,
-            body,
-            unions,
-            source,
-            file,
-            intrinsics,
-            [],
-            DecoratorFrame.Normal,
-        )?
-        functions.append(function)
-        append_synthesized(functions, synthesized)?
-        if body.is_async and function_name(module, body) == "main":
-            entry_function, entry_constructor, entry_runtime = async_entry(function)
-            functions.append(entry_function)
-            functions.append(entry_constructor)
-            _ = merge_externals(externals, [entry_runtime])?
-        append_generator_constructor(functions, module, body, source, file, intrinsics)?
-        _ = merge_externals(externals, runtime)?
-        instances.extend(pending)
-    owners = [str(module.module_id.path())]
-    statics = lower_computed_statics(
-        module,
-        unions,
-        [source],
-        [file],
-        owners,
-        intrinsics,
-        functions,
-        externals,
-        instances,
-    )?
-    _ = lower_instances(module, instances, unions, [source], [file], owners, functions, externals, intrinsics)?
-    for declaration in intrinsics:
-        enums.append(declaration)
-    retain_factory_callable_storage(module, functions, models, externals)?
-    validate_futures(module, intrinsics)?
-    return Ok(
-        Plan(
-            enums=enums,
-            models=models,
-            functions=functions,
-            externals=externals,
-            span=SourceSpan(file=file, line=1, column=1),
-            statics=statics,
-        ),
-    )
 
 
 def append_generator_constructor(

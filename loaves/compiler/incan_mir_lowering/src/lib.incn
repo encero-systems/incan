@@ -4,13 +4,8 @@ from assertions import lower_assertion
 from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
-pub from lowering import BodyIrModule, BodyStatementKind
+pub from lowering import BodyIrModule
 from lowering import (
-    validate_module as validate_checked_module,
-    count_continues as count_checked_continues,
-    is_continue as checked_is_continue,
-    lower_module as lower_checked_module,
-    lower_program as lower_checked_program,
     program_plan as checked_program_plan,
     library_plan as checked_library_plan,
     program_refusals as checked_program_refusals,
@@ -57,39 +52,7 @@ pub from pub::incan_mir_plan import (
     TerminatorKind,
     UnaryOp,
     Unwind,
-    scalar_example,
-    consuming_closure_example,
 )
-
-
-pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
-    """Validate the frontend-owned module without converting or copying its facts."""
-    return validate_checked_module(module)
-
-
-pub def count_continues(module: &BodyIrModule) -> Result[int, str]:
-    """Preserve the borrowed statement-boundary probe at the caller entrypoint."""
-    return count_checked_continues(module)
-
-
-pub def is_continue(statement: &BodyStatementKind) -> bool:
-    """Inspect the real borrowed statement enum through the original caller surface."""
-    return checked_is_continue(statement)
-
-
-pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
-    """Delegate checked lowering while keeping a direct declaration for the native caller bridge."""
-    return lower_checked_module(module, source, file)
-
-
-pub def lower_program(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> Result[Plan, str]:
-    """Delegate project lowering while preserving the canonical caller boundary and source provenance."""
-    return lower_checked_program(modules, sources, files, entry)
 
 
 pub def program_plan(
