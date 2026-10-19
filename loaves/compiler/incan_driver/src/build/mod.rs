@@ -1,92 +1,61 @@
-//! Building a project: the options, prepared-project shapes, packaged-Loaf records and output payloads every
-//! stage of `incan build`, `run`, `test` and the explicit Oven bake exchange.
+//! Building a project: the options, project targets, completed-output payloads and report helpers every stage of
+//! `incan build`, `run` and `test` exchanges.
 //!
 //! The work is in the submodules; this module owns the types they pass between them, and the few small helpers
-//! (timings, report identity blocks, bake target identities) every one of them uses, so the same prepared project
-//! flows from selection through bake to the report the CLI renders.
+//! (timings, report identity blocks, target identities) every one of them uses.
 
 pub mod bake;
 pub mod caller_facet;
-pub mod caller_owned;
 pub mod check;
+mod direct_executable;
 pub mod executable;
 mod file_freshness;
 pub mod inline_command;
-mod inspection_snapshot;
-pub mod library_dependencies;
 pub mod library_exports;
-pub mod library_generation;
-pub mod library_metadata;
-pub mod library_outputs;
-pub mod library_project;
-pub mod library_publication;
+mod inspection_snapshot;
 pub mod lock_preparation;
 mod lock_reuse;
 pub mod native_loaf_plan;
 pub mod native_runtime_inputs;
 pub mod native_source_output;
-pub(crate) mod ordinary_library_native;
 pub(crate) mod ordinary_support;
+pub mod provider_metadata;
 pub mod output_materialization;
 pub mod output_paths;
 mod output_publication;
 pub mod output_selection;
-pub mod oven_project;
-pub mod package_loafs;
-pub mod plan_authority;
-pub mod plan_selection;
-pub mod provider_compilation;
-pub mod provider_metadata;
 pub mod publication;
 mod retained_inputs;
-pub mod reuse;
-mod rust_bake_reuse;
 pub mod rust_extern;
+pub(crate) mod source_dependencies;
 mod rust_source_freshness;
 pub mod source_authority;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;
 
 use std::collections::{BTreeMap, HashMap};
-use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::ProjectGenerator;
-use crate::backend::project::RunProfile;
-use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::build::output_paths::{project_relative_entrypoint, validated_project_output_relative_path};
-use crate::build_report::{BuildReportDraft, BuildReportProject, SourceFileReport};
-use crate::cargo_policy::CargoPolicy;
+use crate::build_report::{BuildReportProject, SourceFileReport};
 use crate::error::{CliError, CliResult};
-use incan_frontend::library_manifest::LibraryManifest;
-use incan_frontend::library_manifest_index::{LibraryArtifactMetadata, LibraryManifestIndex};
-use incan_frontend::{ParsedModule, typechecker};
-use incan_provider::{FeatureSelection, PackageFeaturePlan, ProviderPlan};
-use oven_cargo_compat::OvenCompilerMacroDependency;
+use crate::lock::policy::LockPolicy;
+use incan_frontend::ParsedModule;
+use incan_provider::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::{DependencySpec, ProjectManifest};
-use oven_rustc::plan::{OvenDirectRustcPlanSelection, OvenPackagedLibraryLoafEntry, PackagedProviderCandidate};
-use oven_rustc::rustc::{OvenCallerOwnedRustcLibrary, OvenProjectInspectionAuthorityRef, OvenRustcArtifactManifest};
+use oven_model::manifest::ProjectManifest;
+use oven_rustc::plan::OvenPackagedLibraryLoafEntry;
+use oven_rustc::rustc::OvenProjectInspectionAuthorityRef;
 use oven_store::digest_bytes;
-use oven_store::store::{OvenArtifactKind, OvenStoreLease};
+use oven_store::store::OvenStoreLease;
 
 pub const INLINE_COMMAND_PROJECT_PREFIX: &str = "incan_inline_command";
 
 pub const INLINE_COMMAND_OUTPUT_PARENT: &str = "target/incan/inline";
-
-/// Stable package-artifact location for immutable provider Loafs.
-pub const OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH: &str = "oven/loafs";
-
-/// Current wire schema for package-owned Oven Loaf handoff metadata.
-///
-/// Version 7 adds an immutable ordinary checked-metadata owner and its validated planning replay contract.
-/// Version 6 remains readable for native handoff, but has no checked metadata replay authority.
-pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 7;
 
 /// Current wire schema for completed receipt-bound project-output Loafs.
 ///
@@ -112,67 +81,38 @@ pub const OVEN_PROJECT_OUTPUT_PUBLICATION_RETRY: Duration = Duration::from_milli
 /// Portable path below one project-output Loaf's immutable artifact root.
 pub const OVEN_PROJECT_OUTPUT_ARTIFACT_PATH: &str = "output/native";
 
-/// Prepared source and immutable build-unit selection for the normal Oven Alpha executable path.
+
+/// Executable optimization profile for one build or run request.
 ///
-/// This deliberately contains no Cargo target path or command. Generated Rust and the final binary are caller-owned;
-/// the selected native closure retains its store lease until the direct-Rustc bake and any child execution complete.
-pub struct OvenPreparedProject {
-    /// Original ordinary language and native owners retained through compilation; no copied SDK authority.
-    pub(crate) ordinary_session: Option<Arc<crate::session::CompilationSession>>,
-    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
-    /// Command-owned native admission retained through compilation and child execution.
-    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
-    pub generator: ProjectGenerator,
-    pub project_root: PathBuf,
-    pub entrypoint: PathBuf,
-    pub provider_plan: Arc<ProviderPlan>,
-    pub receipt: oven_store::OvenReceipt,
-    pub plan_selection: OvenDirectRustcPlanSelection,
-    /// Same-generation policy foundation and rebuilt closure for a release ToolchainLoaf selection, held only when
-    /// the selected Loaf is the one the foundation was compiled against; the generation's other profile shares the
-    /// retained compiler without composing the closure.
-    pub runtime_foundation: Option<oven_rustc::loaf::OvenHeldReleaseRuntimeFoundation>,
-    /// Release-generation lease retained when its compiler runs the build but its closure must not be composed.
-    pub release_generation_guard: Option<oven_rustc::loaf::OvenHeldReleaseRuntimeFoundation>,
-    pub materialization: OvenToolchainMaterialization,
-    pub cargo_process_started: bool,
-    pub rustc: PathBuf,
-    pub crate_name: String,
-    pub rust_edition: String,
-    pub caller_owned_libraries: Vec<OvenCallerOwnedRustcLibrary>,
-    pub report: BuildReportDraft,
-    /// Per-phase laps of the prepare step, merged into the report's `timings_ms`.
-    pub prepare_timings: BTreeMap<String, u64>,
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_manifest_dir: Option<PathBuf>,
+/// Build requests default to release for compatibility; run callers select debug explicitly unless requested otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RunProfile {
+    /// Unoptimized executable with debug information.
+    Debug,
+    /// Optimized executable; the established default for build requests.
+    #[default]
+    Release,
 }
 
-/// One executable preparation request, shared by direct and retained-owner callers.
-///
-/// The executable profile selects both fresh compilation and completed-output reuse; it does not select SDK profiles.
+impl RunProfile {
+    /// Return the canonical profile spelling used in Oven requests and output identities.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
+}
+
+/// One executable build request, shared by direct and retained-owner callers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildCommandOptions {
     /// Requested executable profile. Older requests without this field retain the established release default.
     #[serde(default)]
     pub executable_profile: RunProfile,
-    pub cargo_policy: CargoPolicy,
+    pub lock_policy: LockPolicy,
     pub package_features: FeatureSelection,
-    pub sdk_profile: Option<String>,
-    pub cargo_features: Vec<String>,
-    pub cargo_no_default_features: bool,
-    pub cargo_all_features: bool,
-    pub generated_cargo_target_dir: Option<PathBuf>,
-}
-
-impl BuildCommandOptions {
-    /// Return the retired generated-Cargo target override for the explicit publisher boundary only.
-    pub fn effective_generated_cargo_target_dir(&self) -> Option<PathBuf> {
-        self.generated_cargo_target_dir.clone().or_else(|| {
-            env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
-                .filter(|raw| !raw.is_empty())
-                .map(PathBuf::from)
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,299 +120,6 @@ pub struct InlineCommandProject {
     pub source_path: PathBuf,
     pub project_name: String,
     pub output_dir: String,
-}
-
-/// A prepared library project after Incan validation and Rust source generation.
-///
-/// The legacy publisher may still retain Cargo-only preparation state. Normal `incan build --lib`, however, always
-/// carries an Oven selection and compiles through direct `rustc` without entering that state.
-pub struct PreparedLibraryProject {
-    /// Public declarations from the same fully inspected checking pass that produced the provider artifact.
-    pub checked_exports: Vec<incan_frontend::library_exports::CheckedNamedExport>,
-    pub generator: ProjectGenerator,
-    pub project_root: PathBuf,
-    pub entrypoint: PathBuf,
-    pub out_dir: PathBuf,
-    pub manifest_path: PathBuf,
-    pub library_manifest: LibraryManifest,
-    /// One identity-addressed public executable closure selected from the finalized manifest and the same checked
-    /// compilation.
-    pub executable_surface: Vec<u8>,
-    pub timings_ms: BTreeMap<String, u64>,
-    pub report: BuildReportDraft,
-    pub oven: Option<OvenPreparedLibrary>,
-    /// Original immutable checked metadata lease retained through publication and consumer use.
-    pub metadata_owner: Option<Arc<library_metadata::SelectedLibraryMetadata>>,
-    /// Source-current publication authority, consumed only after every checked sidecar is finalized.
-    pub(crate) pending_metadata: Option<library_project::metadata_replay::PendingMetadataPublication>,
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_manifest_dir: Option<PathBuf>,
-}
-
-/// Receipt-selected direct-rustc materialization state for a normal Oven library build.
-pub struct OvenPreparedLibrary {
-    pub rustc: PathBuf,
-    pub crate_name: String,
-    pub rust_edition: String,
-    pub profiles: BTreeMap<String, OvenPreparedLibraryProfile>,
-}
-
-/// One profile-specific direct-rustc library selection.
-///
-/// A normal library build publishes both debug and release caller-owned outputs. `incan run` defaults to debug while
-/// `incan build --lib` has historically produced a release artifact; retaining both avoids linking a library against
-/// a different profile's hashed Rust dependencies and never delegates that mismatch to Cargo.
-pub struct OvenPreparedLibraryProfile {
-    /// Shared admission used by all profiles of this library command.
-    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
-    /// Original complete ordinary requests retained through native compilation and output publication.
-    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
-    pub receipt: oven_store::OvenReceipt,
-    pub plan_selection: OvenDirectRustcPlanSelection,
-    pub materialization: OvenToolchainMaterialization,
-    pub provider_plan: Arc<ProviderPlan>,
-    pub caller_owned_libraries: Vec<OvenCallerOwnedRustcLibrary>,
-}
-
-/// Observable outcome of acquiring one receipt-compatible Oven closure.
-///
-/// `ToolchainLoaf` means the complete release-version standard-library closure was selected directly from the active
-/// immutable toolchain generation. It is intentionally not copied into every project store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OvenToolchainMaterialization {
-    Reused,
-    ToolchainLoaf,
-    CompatibilityBaked,
-}
-
-impl OvenToolchainMaterialization {
-    /// Return the stable report spelling for this caller-visible selection outcome.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Reused => "reused",
-            Self::ToolchainLoaf => "toolchain_loaf",
-            Self::CompatibilityBaked => "baked",
-        }
-    }
-}
-
-/// Decide whether preparation may cross the explicit project-bake boundary.
-///
-/// Normal commands consume an already selected closure and fail with actionable guidance on a miss. Only `incan oven
-/// bake --project` may invoke the bounded compatibility baker, so normal build, run, and test never regain a Cargo
-/// fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OvenProjectPlanMode {
-    ConsumeOnly,
-    ExplicitBake,
-    /// Explicitly prepare the Rust-only base plan for one later native interop bake.
-    ///
-    /// The interop baker is a separate authority because it selects native toolchain facts and seals package-owned
-    /// native artifacts. This mode may publish the pre-interop Rust closure, but never emits a caller-visible
-    /// executable or pretends the package already has a final interop plan.
-    InteropBootstrap,
-}
-
-impl OvenProjectPlanMode {
-    /// Return whether this caller may invoke Oven's named compatibility publisher.
-    pub const fn is_explicit_publisher(self) -> bool {
-        matches!(self, Self::ExplicitBake | Self::InteropBootstrap)
-    }
-}
-
-/// Receipt and sealed-plan evidence emitted by explicit `incan oven bake` for one project target/profile.
-#[derive(Debug, Clone, Serialize)]
-pub struct OvenProjectBakeProfileReport {
-    /// Project target whose generated Rust source this receipt authorizes.
-    pub project_target: String,
-    /// Profile whose source closure and intent were recorded.
-    pub profile: String,
-    /// Target selected from the active Rust toolchain.
-    pub target: String,
-    /// Exact Rust toolchain identity recorded by the receipt.
-    pub toolchain: String,
-    /// Project-local receipt that binds source, lock, SDK, provider, and package-closure evidence.
-    pub receipt: PathBuf,
-    /// Complete content identity of that receipt.
-    pub receipt_identity: String,
-    /// Reusable compiler/runtime/provider/dependency compatibility identity.
-    pub build_unit_identity: String,
-    /// Immutable direct-rustc plan or compiler-shipped Loaf selected for this profile.
-    pub plan_identity: String,
-    /// Whether this invocation reused, materialized, or explicitly baked the compatible closure.
-    pub action: &'static str,
-}
-
-/// Exact completed ProjectOutput selected or published by one explicit bake.
-#[derive(Debug, Clone, Serialize)]
-pub struct OvenProjectBakeOutputReport {
-    /// Immutable generic-store artifact identity passed to downstream release publication.
-    pub artifact_identity: String,
-    /// Portable target identity distinguishing declared scripts from conventional targets.
-    pub project_target: String,
-    /// Build profile of this completed output.
-    pub profile: String,
-    /// Exact Rust compilation target authorized by the output receipt.
-    pub target: String,
-    /// Receipt authorizing the completed output.
-    pub receipt_identity: String,
-    /// Receipt-bound compilation identity of the completed output.
-    pub build_unit_identity: String,
-}
-
-impl From<&OvenStoredProjectOutput> for OvenProjectBakeOutputReport {
-    /// Project the exact store and payload authorities while their execution lease is still held.
-    fn from(output: &OvenStoredProjectOutput) -> Self {
-        Self {
-            artifact_identity: output.identity.clone(),
-            project_target: output.payload.target_identity.clone(),
-            profile: output.profile.clone(),
-            target: output.intent.target.clone(),
-            receipt_identity: output.payload.receipt_identity.clone(),
-            build_unit_identity: output.payload.build_unit_identity.clone(),
-        }
-    }
-}
-
-/// Evidence emitted by explicit `incan oven bake` for one Incan project.
-#[derive(Debug, Clone, Serialize)]
-pub struct OvenProjectBakeReport {
-    /// Project root whose checked sources supplied the receipt evidence.
-    pub project: PathBuf,
-    /// Caller-visible generated Rust keyed by `library` or `executable`; exact replay copies are retained immutably in
-    /// the bounded project-output Loafs.
-    pub generated_sources: BTreeMap<String, PathBuf>,
-    /// Bounded local store that retains project-specific Loafs when this project needs one.
-    pub store: PathBuf,
-    /// One receipt and selection outcome for each discovered project target/profile.
-    pub profiles: Vec<OvenProjectBakeProfileReport>,
-    /// Exact completed outputs retained under leases through report construction.
-    pub outputs: Vec<OvenProjectBakeOutputReport>,
-}
-
-/// Immutable package-owned Loaf evidence written beside a baked public library.
-///
-/// A public provider's direct library output is meaningful only together with the sealed Rust closure it was
-/// compiled against. Keeping this compact index below the provider artifact lets a fresh consumer import and select
-/// that exact closure without resolving or recompiling the provider's third-party dependencies.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OvenPackagedLibraryLoafManifest {
-    pub schema_version: u32,
-    /// Complete authored root and transitive path-dependency authority that produced these package Loafs.
-    pub source_authority_digest: String,
-    /// Incan release that generated the sealed provider output.
-    ///
-    /// A release version is the compiler compatibility boundary for package Loafs. Hashing the complete compiler
-    /// executable again on each warm explicit bake would make a valid reuse reread hundreds of megabytes despite
-    /// the receipt already recording this release fact.
-    pub compiler_version: String,
-    /// Caller-visible checked metadata and manifest-declared sidecars authorized by this package handoff.
-    ///
-    /// Consumers read `.incnlib` before linking the native output, so sealing only the rlib would permit mutable
-    /// metadata to describe a different API, vocabulary surface, or desugarer than the explicit provider bake
-    /// produced. These records bind that complete public handoff without copying it into each profile.
-    pub metadata_files: Vec<OvenPackagedLibraryMetadataFile>,
-    /// Original immutable checked-metadata owner; absent legacy authority is a metadata preparation miss.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checked_metadata: Option<library_metadata::LibraryMetadataReference>,
-    /// Original immutable association of final package source authority and the exact checked generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checked_generation: Option<library_generation::LibraryGenerationReference>,
-    pub profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
-}
-
-/// One caller-visible provider metadata file sealed by a package Loaf handoff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenPackagedLibraryMetadataFile {
-    /// Safe path below the provider's generated artifact root.
-    pub relative_path: String,
-    /// Exact content digest published by the explicit provider bake.
-    pub digest: String,
-}
-
-/// One profile-specific public-library handoff record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenPackagedLibraryLoafProfile {
-    /// Original producer receipt whose source, provider, lock, and toolchain facts authorized the closure.
-    pub receipt: oven_store::OvenReceipt,
-    /// Every immutable entry whose closure the provider library links against.
-    ///
-    /// A package can depend on several independently baked public providers.  Retaining the entire compatible
-    /// collection here keeps the next consumer from silently recompiling one omitted upstream dependency.
-    #[serde(default)]
-    pub entries: Vec<OvenPackagedLibraryLoafEntry>,
-    /// Provider library path relative to its generated artifact root.
-    pub library_relative_path: String,
-    /// Digest of the direct-rustc provider library output.
-    pub library_digest: String,
-}
-
-/// One package profile admitted once for the duration of a single consumer preparation.
-///
-/// This is deliberately command-local rather than a persistent cache: provider source authority and sealed output
-/// bytes are checked once, then the same immutable facts flow through import and final selection.
-#[derive(Clone)]
-pub struct CheckedPackagedProviderProfile {
-    pub dependency_key: String,
-    pub artifact_root: PathBuf,
-    /// Whether the package artifact still belongs to a checked caller-owned source project that can be recompiled.
-    pub source_available: bool,
-    pub profile: String,
-    pub package: OvenPackagedLibraryLoafProfile,
-}
-
-/// Project the checked provider profiles for one build profile into the plan layer's package candidates.
-pub fn packaged_provider_candidates<'a>(
-    checked_profiles: &'a [CheckedPackagedProviderProfile],
-    profile: &str,
-) -> Vec<PackagedProviderCandidate<'a>> {
-    checked_profiles
-        .iter()
-        .filter(|checked| checked.profile == profile)
-        .map(|checked| PackagedProviderCandidate {
-            dependency_key: &checked.dependency_key,
-            receipt: &checked.package.receipt,
-            entries: &checked.package.entries,
-        })
-        .collect()
-}
-
-/// One provider index retained only while a single explicit project bake is running.
-pub struct MemoizedPackagedProviderAuthority {
-    pub artifact: LibraryArtifactMetadata,
-    pub manifest_path: PathBuf,
-    pub manifest_digest: String,
-    pub manifest: Arc<OvenPackagedLibraryLoafManifest>,
-    pub source_project_root: Option<PathBuf>,
-    pub source_authority_verified: bool,
-    pub admitted_profiles: BTreeMap<String, (String, String)>,
-}
-
-/// Source-authority state shared by every target/profile preparation inside one explicit project bake.
-///
-/// The context is stack-owned by `bake_oven_project_targets`; it deliberately has no static lifetime, timestamp-based
-/// invalidation, or representation outside this command invocation.
-#[derive(Default)]
-pub struct OvenProjectBakeAuthorityContext {
-    /// Native owners shared by all targets/profiles in this explicit bake invocation.
-    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
-    pub source_digester: ProjectSourceAuthorityDigester,
-    pub providers: HashMap<PathBuf, MemoizedPackagedProviderAuthority>,
-    pub initial_project_source_authority: Option<String>,
-    /// Caller-owned target override accepted only by explicit project bake.
-    pub requested_target: Option<String>,
-}
-
-impl OvenProjectBakeAuthorityContext {
-    /// Admit the native SDK once for this bake and revalidate retained authority before another target borrows it.
-    pub fn native_sdk_context(&mut self) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
-        if let Some(context) = &self.native_sdk_context {
-            context.verify()?;
-        } else {
-            self.native_sdk_context = NativeSdkCommandContext::discover()?;
-        }
-        Ok(self.native_sdk_context.clone())
-    }
 }
 
 /// One manifest-backed Incan entrypoint admitted by `incan oven bake`.
@@ -775,120 +422,32 @@ pub fn record_timing(timings: &mut BTreeMap<String, u64>, name: &str, start: Ins
     timings.insert(name.to_string(), elapsed_ms(start));
 }
 
-/// The complete checked Rust dependency surface used to select one project Loaf.
-///
-/// Source inspection happens before code generation through its own compiler session. This value instead covers
-/// every direct-Rustc root the generated program and its caller-owned public providers may re-materialize.
-pub struct OvenProjectDependencySurface<'a> {
-    pub selection: &'a [DependencySpec],
-    pub provider_compilations: &'a [OvenCompilerMacroDependency],
-}
-
-/// Receipt-selected dependency closure prepared once for every generated native-test batch in a project bake.
-pub struct PreparedOvenTestDependencyEnvelope {
-    /// Original ordinary native root map, sealed by the selected receipt; legacy envelopes leave this absent.
-    pub native_roots: Option<BTreeMap<String, String>>,
-    /// Receipt for the immutable non-package constituent selected by the authority.
-    pub receipt: oven_store::OvenReceipt,
-    /// Complete normal/dev/test surface, including roots owned by separately validated package Loafs.
-    pub dependency_surface_digest: String,
-    /// Complete dependency records retained for exact per-root authority checks.
-    pub dependencies: Vec<DependencySpec>,
-    pub dependency_root_digests: BTreeMap<String, String>,
-    /// Checked source-free package Loaf entries whose compiled closures must remain authoritative for generated tests.
-    pub provider_entries: Vec<(String, OvenPackagedLibraryLoafEntry)>,
-    /// Direct-Rustc plan for the non-package delta; public package libraries are attached from their own Loafs.
-    pub plan_selection: OvenDirectRustcPlanSelection,
-}
-
-/// Receipt-selected plan plus the explicit local-store decision that produced it.
-pub struct OvenDirectRustcPlanPreparation {
-    pub plan_selection: OvenDirectRustcPlanSelection,
-    pub materialization: OvenToolchainMaterialization,
-    pub cargo_process_started: bool,
-}
-
-/// Publish and lease the receipt-bound project inspection authority for the selected execution plan. The library's own
-/// receipt-bound direct-rustc plan, named by the project inspection authority as a constituent.
-///
-/// It is the only sealed artifact that carries the build-script output (`OUT_DIR`) Rust generated while compiling the
-/// library's dependencies — prost's `oneof` enums, for one. A test unit inspects the library's dependencies through
-/// the authority and never runs Cargo, so without this constituent it could not see those items at all.
-pub struct LibraryInspectionConstituent {
-    pub identity: String,
-    /// How the store holds the constituent: a self-contained direct-rustc plan, or a project payload that extends
-    /// the compiler Loaf named by `base_loaf_identity`. The authority records the same shape, because a consumer
-    /// validates every constituent against its sealed kind before trusting it.
-    pub artifact_kind: OvenArtifactKind,
-    pub base_loaf_identity: Option<String>,
-    pub receipt: oven_store::OvenReceipt,
-    pub artifacts: OvenRustcArtifactManifest,
-    /// The bake's rust-inspect workspace, whose Cargo bootstrap wrote the build-script output to seal.
-    pub rust_inspect_manifest_dir: Option<PathBuf>,
-    /// The generated project's selected Cargo target, where the bounded compatibility baker's unified Cargo
-    /// invocation wrote its build-script output when the closure was not loadable as independently compiled parts.
-    pub cargo_target_dir: Option<PathBuf>,
-    /// The generated project directory, beside which the compatibility build records which package version each
-    /// executed build script's output belongs to.
-    pub generated_project_dir: Option<PathBuf>,
-}
-
-/// One build-script output directory the explicit bake can seal for direct inspection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BakeGeneratedOutDir {
-    pub crate_name: String,
-    /// Build-unit path below the target's `build/` directory, in whichever layout the bootstrap used.
-    pub unit_relative_path: String,
-    pub out_dir: PathBuf,
-    /// Exact package version whose build script wrote the directory, when a package-keyed map named it.
-    pub version: Option<String>,
-}
-
 /// Normal-command policy that must be satisfied before a completed project output may be selected.
 pub struct CompletedOutputPolicy<'a> {
-    pub cargo_policy: &'a CargoPolicy,
+    pub lock_policy: &'a LockPolicy,
     pub package_features: &'a FeatureSelection,
-    pub sdk_profile: Option<&'a str>,
-    pub cargo_features: &'a [String],
-    pub cargo_no_default_features: bool,
-    pub cargo_all_features: bool,
 }
 
 impl CompletedOutputPolicy<'_> {
-    /// Reject Cargo feature controls before any completed-output lookup can bypass the normal Oven contract.
-    pub fn reject_cargo_feature_controls(&self, command_kind: &str) -> CliResult<()> {
-        if self.cargo_no_default_features || self.cargo_all_features || !self.cargo_features.is_empty() {
-            return Err(CliError::failure(format!(
-                "Oven Alpha normal {command_kind} do not accept Cargo feature controls; use Incan package features instead"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Return the normalized Cargo feature evidence used by canonical lock validation.
+    /// Return the dependency feature evidence canonical lock validation records; commands select none of their own.
     pub fn cargo_feature_selection(&self) -> CargoFeatureSelection {
-        CargoFeatureSelection {
-            cargo_features: self.cargo_features.to_vec(),
-            cargo_no_default_features: self.cargo_no_default_features,
-            cargo_all_features: self.cargo_all_features,
-        }
-        .normalized()
+        CargoFeatureSelection::default().normalized()
     }
 }
 
-/// Borrowed inputs needed to freeze checked provider facts into a library artifact.
+/// Borrowed inputs needed to freeze checked provider facts into a library's checked contract.
 ///
 /// The checked type information stays in the compiler pipeline until this projection. It carries the canonical
 /// callable-to-capability facts that provider operation lowering consumes through the selected manifest.
 pub struct CompiledProviderMetadataInputs<'a> {
     pub manifest: &'a ProjectManifest,
-    pub feature_plan: &'a PackageFeaturePlan,
-    pub provider_plan: &'a ProviderPlan,
-    pub library_manifest_index: &'a LibraryManifestIndex,
+    pub feature_plan: &'a incan_provider::PackageFeaturePlan,
+    pub provider_plan: &'a incan_provider::ProviderPlan,
+    pub library_manifest_index: &'a incan_frontend::library_manifest_index::LibraryManifestIndex,
     pub artifact_root: &'a Path,
     pub modules: &'a [ParsedModule],
     pub active_library_entrypoint: &'a ParsedModule,
-    pub checked_type_info_by_path: &'a BTreeMap<PathBuf, typechecker::TypeCheckInfo>,
+    pub checked_type_info_by_path: &'a BTreeMap<PathBuf, incan_frontend::typechecker::TypeCheckInfo>,
 }
 
 /// Command-local source-authority memo with observation-guarded typed inputs retained by serial owners.
@@ -916,79 +475,10 @@ pub struct ProjectSourceAuthorityDigester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::build::test_support::packaged_provider_authority_fixture;
-    use std::fs;
-
-    use oven_model::manifest::LOAF_MANIFEST_FILENAME;
 
     #[test]
     fn inline_command_uses_bounded_generated_project_prefixes() {
         assert_eq!(INLINE_COMMAND_PROJECT_PREFIX, "incan_inline_command");
         assert_eq!(INLINE_COMMAND_OUTPUT_PARENT, "target/incan/inline");
-    }
-
-    #[test]
-    fn explicit_bake_provider_authority_is_scanned_once_and_fresh_final_scan_rejects_an_edit()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (package, artifact) = packaged_provider_authority_fixture(&["debug", "release"])?;
-        let mut context = OvenProjectBakeAuthorityContext::default();
-
-        for profiles in [
-            &["debug", "release"][..],
-            &["debug"][..],
-            &["release"][..],
-            &["debug"][..],
-        ] {
-            let selected = context
-                .checked_packaged_library_loaf_profiles(&artifact, profiles, "aarch64-apple-darwin", "rustc fixture")?
-                .ok_or("fixture package profiles were not admitted")?;
-            assert_eq!(selected.len(), profiles.len());
-        }
-        assert_eq!(context.source_digester.project_scan_count(package.path()), 1);
-
-        let consumer = package.path().join("consumer");
-        fs::create_dir_all(consumer.join("src"))?;
-        fs::write(
-            consumer.join(LOAF_MANIFEST_FILENAME),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nprovider = { path = \"..\" }\n",
-        )?;
-        fs::write(consumer.join("src/main.incn"), "def main() -> None:\n    pass\n")?;
-        context.project_source_authority(&consumer)?;
-        assert_eq!(
-            context.source_digester.project_scan_count(package.path()),
-            1,
-            "the root scan must reuse the provider node already admitted by target/profile preparation"
-        );
-
-        fs::write(
-            package.path().join("src/lib.incn"),
-            "pub def provider() -> int:\n    return 2\n",
-        )?;
-        let error = context
-            .final_project_source_authority(&consumer)
-            .err()
-            .ok_or("a provider edit after memoized admission must fail final publication")?;
-        assert!(error.to_string().contains("source authority changed"));
-        Ok(())
-    }
-
-    #[test]
-    fn explicit_bake_missing_release_provider_profile_fails_before_deep_source_scan()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (package, artifact) = packaged_provider_authority_fixture(&["debug"])?;
-        let mut context = OvenProjectBakeAuthorityContext::default();
-
-        assert!(
-            context
-                .checked_packaged_library_loaf_profiles(
-                    &artifact,
-                    &["debug", "release"],
-                    "aarch64-apple-darwin",
-                    "rustc fixture",
-                )?
-                .is_none()
-        );
-        assert_eq!(context.source_digester.project_scan_count(package.path()), 0);
-        Ok(())
     }
 }

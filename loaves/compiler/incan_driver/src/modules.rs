@@ -94,12 +94,6 @@ fn resolve_session_stdlib_source(session: &CompilationSession, module_path: &[St
             .verified_module_source_path(module_path)
             .map_err(|error| CliError::failure(error.to_string()));
     }
-    if session.has_admitted_library_dependencies() {
-        return Err(CliError::failure(format!(
-            "ordinary session module `{}` lacks admitted checked dependency metadata",
-            module_path.join(".")
-        )));
-    }
     resolve_stdlib_module_source_path(module_path)
 }
 

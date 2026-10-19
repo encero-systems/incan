@@ -409,13 +409,7 @@ pub(super) fn project_outputs_with_source_authority(
     let Some(native_target) = native_project_output_target() else {
         return Ok(Vec::new());
     };
-    let ordinary_library = target == OvenBakeProjectTarget::Library
-        && super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_some();
-    let preparation_identity = if ordinary_library {
-        Some(super::source_authority::ordinary_library_preparation_identity_digest(
-            None,
-        )?)
-    } else if let Some((compiler, _dependencies)) = required_authority {
+    let preparation_identity = if let Some((compiler, _dependencies)) = required_authority {
         Some(super::source_authority::ordinary_preparation_identity_for_compiler(
             compiler.to_owned(),
         )?)
@@ -442,7 +436,7 @@ pub(super) fn project_outputs_with_source_authority(
                 payload.compiler_identity_digest.as_deref() == Some(compiler)
                     && payload.dependency_authority_digest.as_deref() == Some(dependencies)
             })
-            && project_output_preparation_matches(&payload, preparation_identity.as_deref(), ordinary_library)
+            && project_output_preparation_matches(&payload, preparation_identity.as_deref(), false)
             && payload.compiler_version == INCAN_VERSION
             && payload.entrypoint_relative_path == entrypoint_relative_path
             && payload.receipt_identity == manifest.receipt_identity
@@ -481,7 +475,7 @@ pub(super) fn project_outputs_with_source_authority(
             Some(preparation),
         )?);
     }
-    if !ordinary_library {
+    {
         keys.push(project_output_request_key(
             target.as_str(),
             &target_identity,

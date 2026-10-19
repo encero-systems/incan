@@ -104,14 +104,13 @@ pub fn prepare_rust_inspect_workspace_with_ordinary_native(
 
 /// Name the inspection root by everything that selects its native closure, so a changed selection gets a new root.
 fn selection_inputs(authority: &OvenRustInspectSourceAuthorityRequest<'_>) -> CliResult<BTreeMap<String, String>> {
-    let dependencies = serde_json::to_vec(authority.registry_dependencies)
-        .map_err(|error| CliError::failure(format!("failed to encode Rust inspection dependencies: {error}")))?;
+    let dependencies = format!("{:?}", authority.registry_dependencies);
     Ok(BTreeMap::from([
         ("target".to_string(), authority.target.to_string()),
         ("toolchain".to_string(), authority.toolchain.to_string()),
         ("profile".to_string(), authority.profile.to_string()),
         ("features".to_string(), authority.features.join(",")),
-        ("dependencies".to_string(), oven_store::digest_bytes(&dependencies)),
+        ("dependencies".to_string(), oven_store::digest_bytes(dependencies.as_bytes())),
     ]))
 }
 

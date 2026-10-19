@@ -1552,7 +1552,7 @@ mod tests {
             &FeatureSelection::default(),
             dependencies,
         )?;
-        let (manifest, _) = crate::build::library_project::checked_source_library_manifest(&session, &entry)?;
+        let (manifest, _) = crate::build::source_dependencies::checked_source_library_manifest(&session, &entry)?;
         manifest.to_json_string().map_err(|error| {
             format!(
                 "{error}; actual source-session identity graph: {:#?}",

@@ -131,12 +131,6 @@ pub fn collect_registry_metadata_with_dependencies(
     path: &Path,
 ) -> CliResult<(CheckedRegistryMetadataPackage, LibraryManifestIndex)> {
     let entry_path = resolve_metadata_entry_path(path)?;
-    #[cfg(feature = "cli")]
-    let session = match crate::build::library_project::discover_ordinary_metadata_session(&entry_path)? {
-        Some(session) => session,
-        None => CompilationSession::discover_for_collection(&entry_path)?,
-    };
-    #[cfg(not(feature = "cli"))]
     let session = CompilationSession::discover_for_collection(&entry_path)?;
     let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
@@ -195,10 +189,6 @@ pub fn collect_registry_metadata_with_dependencies(
     materialize_api_alias_projections(&mut api_metadata_modules);
     materialize_registry_reexport_projections(&mut metadata_modules, &api_metadata_modules);
     metadata_modules.sort_by(|left, right| left.module_path.cmp(&right.module_path));
-    #[cfg(feature = "cli")]
-    if let Some(dependencies) = session.admitted_library_dependencies() {
-        dependencies.verify()?;
-    }
     Ok((
         CheckedRegistryMetadataPackage {
             schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,

@@ -7,16 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use super::backend_selection::{default_backend_receipt_path, write_backend_receipt};
-use super::bake::{bake_oven_project, publish_ordinary_project_output, select_default_executable_project_output};
+use super::bake::select_default_executable_project_output;
 use super::output_materialization::{completed_executable_output_report, materialize_completed_executable_output};
-use super::output_paths::{normalized_project_entrypoint, project_root_for_completed_output};
-use super::oven_project::prepare_oven_project_with_session;
-use super::retained_inputs::{ModelInputs, RetainedExecutableDependencies, SessionPurpose};
-use super::source_authority::{digest_baked_project_source_authority, ordinary_preparation_identity_digest};
-use super::{BuildCommandOptions, OvenProjectPlanMode, ProjectSourceAuthorityDigester, elapsed_ms};
-use crate::build_report::artifact_report;
-use crate::cargo_policy::reject_normal_cargo_controls;
+use super::retained_inputs::{ModelInputs, SessionPurpose};
+use super::{BuildCommandOptions, ProjectSourceAuthorityDigester};
 use crate::error::{CliError, CliResult};
 use incan_provider::FeatureSelection;
 
@@ -254,33 +248,6 @@ impl ExecutableBuildOwner {
         self.test_session(root, entry, features, sdk_profile, SessionPurpose::Artifacts)
     }
 
-    /// Share the existing native dependency admission between build and test after session reconciliation.
-    /// The canonical lock/compiler/provider generation owns this state; standalone inputs keep canonical discovery.
-    pub fn native_dependency_context(
-        &mut self,
-        session: &std::sync::Arc<crate::session::CompilationSession>,
-    ) -> CliResult<Option<std::sync::Arc<super::NativeSdkCommandContext>>> {
-        let Some(manifest) = session.manifest.as_ref() else {
-            return super::NativeSdkCommandContext::discover();
-        };
-        let root =
-            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-        self.authority.retained_inputs.native_dependency_context(&root, session)
-    }
-
-    /// Borrow completed test generation from the existing artifact session; standalone sessions keep canonical work.
-    pub fn test_generation(
-        &self,
-        session: &std::sync::Arc<crate::session::CompilationSession>,
-    ) -> CliResult<Option<std::sync::Arc<super::test_generation::RetainedTestGeneration>>> {
-        let Some(manifest) = session.manifest.as_ref() else {
-            return Ok(None);
-        };
-        let root =
-            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
-        Ok(self.authority.retained_inputs.test_generation(&root, session))
-    }
-
     /// Select the original discovery mode for one reconciled test request without a second session cache.
     fn test_session(
         &mut self,
@@ -467,7 +434,10 @@ impl ExecutableBuildOwner {
         }))
     }
 
-    /// Build through the single driver lifecycle, retaining only inputs that revalidate their observations.
+    /// Build or reuse one executable through the direct route.
+    ///
+    /// A completed output whose source and preparation authority still match is materialized without frontend work;
+    /// otherwise the direct route compiles the program and publishes the result.
     pub fn build(
         &mut self,
         file_path: &str,
@@ -478,8 +448,6 @@ impl ExecutableBuildOwner {
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::build_executable", input = file_path)
                 .entered();
-        reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-        let profile = options.executable_profile.as_str();
         let total_start = Instant::now();
         self.authority.begin_request();
 
@@ -495,112 +463,8 @@ impl ExecutableBuildOwner {
             return completed_executable_output_report(&project_root, &selected, &backend_receipt, total_start);
         }
 
-        // ---- Source-aware preparation: capture authority before entering the frontend ----
-        let authority_trace =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::capture_build_authority").entered();
-        let completed_authority = if output_dir.is_none()
-            && options.package_features == FeatureSelection::default()
-            && options.sdk_profile.is_none()
-        {
-            project_root_for_completed_output(&normalized_project_entrypoint(file_path)?)?
-                .map(|root| -> CliResult<_> {
-                    Ok((
-                        digest_baked_project_source_authority(&root)?,
-                        ordinary_preparation_identity_digest()?,
-                    ))
-                })
-                .transpose()?
-        } else {
-            None
-        };
-        drop(authority_trace);
-        let prepare_start = Instant::now();
-        let entry = normalized_project_entrypoint(file_path)?;
-        let retained_root = project_root_for_completed_output(&entry)?;
-        let session = retained_root
-            .as_ref()
-            .map(|root| {
-                self.authority.compilation_session(
-                    root,
-                    &entry,
-                    &options.package_features,
-                    options.sdk_profile.as_deref(),
-                    SessionPurpose::Artifacts,
-                )
-            })
-            .transpose()?;
-        let dependencies = retained_root
-            .as_ref()
-            .map(|root| self.authority.take_executable_dependencies(root))
-            .transpose()?
-            .flatten();
-        let native_context = session
-            .as_ref()
-            .map(|session| self.native_dependency_context(session))
-            .transpose()?
-            .flatten();
-        let (prepared, mut dependency_inputs) = prepare_oven_project_with_session(
-            file_path,
-            output_dir.map(String::as_str),
-            &options.cargo_policy,
-            &options.package_features,
-            options.sdk_profile.as_deref(),
-            options.cargo_features,
-            options.cargo_no_default_features,
-            options.cargo_all_features,
-            profile,
-            OvenProjectPlanMode::ConsumeOnly,
-            None,
-            session,
-            dependencies,
-            native_context,
-            None,
-        )?;
-        if let Some(inputs) = dependency_inputs.as_mut()
-            && !inputs.observe_plan(&prepared)?
-        {
-            dependency_inputs = None;
-        }
-        let prepare_ms = elapsed_ms(prepare_start);
-        progress(format!(
-            "Generated Rust project in: {}",
-            prepared.generator.output_dir().display()
-        ));
-        progress("Building with Oven Alpha...".to_string());
-        let oven_build_start = Instant::now();
-        let bake = bake_oven_project(&prepared, profile, None)?;
-        let oven_build_ms = elapsed_ms(oven_build_start);
-        progress("✓ Oven build successful!".to_string());
-        progress(format!("Binary: {}", bake.output.display()));
-
-        // ---- Successful publication: preserve the existing receipt and portable report ----
-        let report_trace =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::construct_build_report").entered();
-        let mut report_draft = prepared.report.clone();
-        report_draft.artifacts.push(artifact_report("binary", &bake.output));
-        if let Some(backend_receipt) = report_draft.backend.as_ref() {
-            write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
-        }
-        let mut timings_ms = prepared.prepare_timings.clone();
-        timings_ms.insert("prepare".to_string(), prepare_ms);
-        timings_ms.insert("oven_build".to_string(), oven_build_ms);
-        timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-        let report = report_draft.finish(timings_ms);
-        drop(report_trace);
-        if let Some((source_authority, preparation_identity)) = completed_authority {
-            publish_ordinary_project_output(&prepared, &bake, &source_authority, &preparation_identity, &report)?;
-        }
-        let _serialization =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::serialize_build_report").entered();
-        let report = serde_json::to_value(report)
-            .map_err(|error| CliError::failure(format!("failed to serialize Oven build report: {error}")))?;
-        if let Some(inputs) = dependency_inputs
-            && let Some(dependencies) = RetainedExecutableDependencies::completed(inputs, prepared)
-            && let Some(root) = retained_root
-        {
-            self.authority.remember_executable_dependencies(&root, dependencies)?;
-        }
-        Ok(report)
+        // ---- Direct route ----
+        super::direct_executable::build(file_path, output_dir, &options, &mut progress)
     }
 }
 

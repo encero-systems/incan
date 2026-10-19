@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use incan_provider::FeatureSelection;
 
-use crate::cargo_policy::CargoPolicy;
+use crate::lock::policy::LockPolicy;
 
 /// Output format for `incan test` results.
 ///
@@ -250,10 +250,7 @@ pub struct TestRunConfig<'a> {
     pub sdk_profile: Option<String>,
     pub timeout: Option<&'a str>,
     pub no_capture: bool,
-    pub cargo_policy: CargoPolicy,
-    pub cargo_features: Vec<String>,
-    pub cargo_no_default_features: bool,
-    pub cargo_all_features: bool,
+    pub lock_policy: LockPolicy,
     /// Compiler-owned workspace identity attached to every observable test result for a fan-out invocation.
     pub workspace_context: Option<WorkspaceTestContext>,
 }

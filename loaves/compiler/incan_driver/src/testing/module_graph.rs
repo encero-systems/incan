@@ -16,7 +16,6 @@ use incan_frontend::vocab_desugar_pass;
 use incan_frontend::{diagnostics, lexer, parser};
 use incan_lang::lang::stdlib;
 use incan_provider::ProviderPlan;
-use incan_provider::compiled_sdk::CompiledSdkModules;
 
 /// Resolve and queue an emitted Incan stdlib source module for recursive test dependency collection.
 ///
@@ -26,16 +25,10 @@ use incan_provider::compiled_sdk::CompiledSdkModules;
 /// - avoids re-queueing modules that have already been processed
 fn queue_incan_stdlib_source_module(
     module_path: &[String],
-    compiled_sdk_modules: &CompiledSdkModules,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
 ) -> Result<Option<PathBuf>, String> {
-    // The compiled artifact owns this module's generated Rust implementation. Its checked manifest is loaded by the
-    // test preparation path, so materializing source here would create a second `__incan_std` tree in the harness.
-    if compiled_sdk_modules.contains_source_path(module_path) {
-        return Ok(None);
-    }
     let stdlib_key = module_path.join(".");
     let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
         cached_path.clone()
@@ -56,7 +49,6 @@ fn queue_incan_stdlib_source_module(
 /// Queue one canonical source-import resolution for test dependency collection.
 fn queue_resolved_source_import(
     resolution: SourceModuleImportResolution,
-    compiled_sdk_modules: &CompiledSdkModules,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
@@ -66,7 +58,6 @@ fn queue_resolved_source_import(
             if stdlib::stdlib_stub_path(&module_path).is_some() {
                 return queue_incan_stdlib_source_module(
                     &module_path,
-                    compiled_sdk_modules,
                     incan_source_stdlib_module_paths,
                     processed,
                     to_process,
@@ -102,7 +93,6 @@ fn queue_resolved_source_import(
 /// Queue implicit source stdlib helper modules that generated Rust may reference without a source import.
 fn queue_implicit_stdlib_helpers(
     program: &Program,
-    compiled_sdk_modules: &CompiledSdkModules,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
@@ -115,7 +105,6 @@ fn queue_implicit_stdlib_helpers(
                 "derives".to_string(),
                 "collection".to_string(),
             ],
-            compiled_sdk_modules,
             incan_source_stdlib_module_paths,
             processed,
             to_process,
@@ -126,7 +115,6 @@ fn queue_implicit_stdlib_helpers(
     if uses_result_combinator_surface(program)
         && let Some(path) = queue_incan_stdlib_source_module(
             &[stdlib::STDLIB_ROOT.to_string(), "result".to_string()],
-            compiled_sdk_modules,
             incan_source_stdlib_module_paths,
             processed,
             to_process,
@@ -161,18 +149,16 @@ pub fn collect_source_modules_for_test(
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
-    provider_plan: &ProviderPlan,
+    _provider_plan: &ProviderPlan,
 ) -> Result<Vec<ParsedModule>, String> {
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
     let mut to_process: Vec<(PathBuf, String, Vec<String>)> = Vec::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
-    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(provider_plan);
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
 
     queue_implicit_stdlib_helpers(
         test_ast,
-        &compiled_sdk_modules,
         &mut incan_source_stdlib_module_paths,
         &processed,
         &mut to_process,
@@ -182,7 +168,6 @@ pub fn collect_source_modules_for_test(
     for resolved in resolve_program_source_imports(test_ast, source_root, Some(source_root)) {
         let _ = queue_resolved_source_import(
             resolved.resolution,
-            &compiled_sdk_modules,
             &mut incan_source_stdlib_module_paths,
             &processed,
             &mut to_process,
@@ -241,7 +226,6 @@ pub fn collect_source_modules_for_test(
 
         for dependency_path in queue_implicit_stdlib_helpers(
             &ast,
-            &compiled_sdk_modules,
             &mut incan_source_stdlib_module_paths,
             &processed,
             &mut to_process,
@@ -257,7 +241,6 @@ pub fn collect_source_modules_for_test(
         for resolved in resolve_program_source_imports(&ast, current_base, Some(source_root)) {
             if let Some(dependency_path) = queue_resolved_source_import(
                 resolved.resolution,
-                &compiled_sdk_modules,
                 &mut incan_source_stdlib_module_paths,
                 &processed,
                 &mut to_process,

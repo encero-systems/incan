@@ -18,7 +18,7 @@ use oven_rustc::rustc::{
 use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
 use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 
-use super::retained_inputs::{ModelInputs, RetainedExecutableDependencies};
+use super::retained_inputs::ModelInputs;
 use crate::error::{CliError, CliResult};
 
 const DOMAIN: &str = "ordinary-native-consumer-plan";
@@ -141,9 +141,49 @@ pub(super) struct RetainedNativeLoafPlan {
     plans: BTreeMap<PathBuf, RetainedNativeConsumerPlan>,
 }
 
+/// One original leased plan under the same build-unit and intent match used by canonical Store selection.
+struct RetainedNativePlan {
+    inputs: ModelInputs,
+    build_unit: String,
+    intent: oven_store::OvenBuildIntent,
+    selection: Arc<OvenDirectRustcPlanSelection>,
+}
+
+impl RetainedNativePlan {
+    /// Retain a canonical native selection with its existing metadata observations.
+    /// The caller has already reconciled its declared native closure; unsupported plans keep canonical selection.
+    fn admitted(receipt: &OvenReceipt, selection: OvenDirectRustcPlanSelection) -> CliResult<Self> {
+        let mut inputs = ModelInputs::default();
+        let supported = selection
+            .visit_retained_inputs(&mut |path| inputs.observe(path))
+            .map_err(failure)?;
+        if !supported {
+            inputs.disable_retention();
+        }
+        Ok(Self {
+            inputs,
+            build_unit: receipt.build_unit_identity.clone(),
+            intent: receipt.intent.clone(),
+            selection: Arc::new(selection),
+        })
+    }
+
+    /// Apply the existing selector's identity contract to a freshly generated source receipt.
+    fn matches_receipt(&self, receipt: &OvenReceipt) -> bool {
+        self.build_unit == receipt.build_unit_identity && self.intent == receipt.intent
+    }
+
+    /// Reconcile original plan inputs before reuse and after successful execution, preserving the same leases.
+    /// This observation is not dependency authority: the existing native producer reconciles that independently.
+    fn native_inputs_current(&self) -> bool {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::match_retained_native_plan", metadata_checks = self.inputs.len()).entered();
+        self.inputs.supports_retention() && self.inputs.current()
+    }
+}
+
 /// The original consumer plan and its already selected immutable forward graph share one owner entry.
 struct RetainedNativeConsumerPlan {
-    plan: RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>>,
+    plan: RetainedNativePlan,
     consumer: Option<RetainedNativeConsumerClosure>,
 }
 
@@ -254,7 +294,7 @@ impl RetainedNativeLoafPlan {
             Some(plan) => plan,
             None => {
                 let selection = select_native_loaf_plan_for_receipt(store, &receipt, closure)?;
-                RetainedExecutableDependencies::admitted_native_plan(&receipt, selection)?.into_shared()
+                RetainedNativePlan::admitted(&receipt, selection)?
             }
         };
         let report = serde_json::to_string(prepared.report()).map_err(failure)?;

@@ -6,22 +6,19 @@ use std::time::Instant;
 use std::{fs, io};
 
 use crate::backend::selection::BackendExecutionReceipt;
-use crate::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
-use crate::build::library_exports::{resolve_library_project_root, validate_library_entrypoint};
-use crate::build::library_outputs::library_publication_receipts;
+use crate::backend::selection::{default_backend_receipt_path, write_backend_receipt};
 use crate::build::output_paths::{normalized_project_entrypoint, validated_project_output_relative_path};
 use crate::build::output_selection::{
     current_project_output_receipt, has_stale_baked_project_output,
     matching_baked_project_outputs_with_source_authority, restore_project_output_report_paths,
 };
-use crate::build::plan_authority::explicit_bake_profiles;
 use crate::build::source_authority::{
     baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority,
 };
 use crate::build::{
     CompletedOutputPolicy, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OVEN_PROJECT_OUTPUT_PROJECTION_SCHEMA_VERSION,
     OVEN_PROJECT_OUTPUT_REPORT_SCHEMA_VERSION, OvenBakeProjectTarget, OvenProjectOutputProjection,
-    OvenProjectOutputProjectionFile, OvenStoredProjectOutput, elapsed_ms, library_publication, manifest_project_report,
+    OvenProjectOutputProjectionFile, OvenStoredProjectOutput, elapsed_ms, manifest_project_report,
 };
 use crate::build_report::{
     BUILD_REPORT_SCHEMA_VERSION, BuildOvenReport, BuildReportDraft, BuildReportMode, artifact_report,
@@ -176,109 +173,6 @@ pub fn completed_executable_output_report(
     Ok(report)
 }
 
-/// Reconstruct the machine-readable library result from completed Loaf authority without re-entering compiler work.
-pub fn completed_library_output_report(
-    project_root: &Path,
-    outputs: &[OvenStoredProjectOutput],
-    total_start: Instant,
-) -> CliResult<crate::build_report::BuildReport> {
-    let Some(manifest) = discover_effective_project_manifest(project_root)? else {
-        return Err(CliError::failure(format!(
-            "completed Oven library output has no project manifest at {}",
-            project_root.display()
-        )));
-    };
-    let entrypoint = validate_library_entrypoint(&manifest)?;
-    let project_name = manifest
-        .project
-        .as_ref()
-        .and_then(|project| project.name.clone())
-        .or_else(|| {
-            project_root
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "incan_library".to_string());
-    // Prefer the release output, but accept the profile this project actually baked: a bake narrowed by
-    // `explicit_bake_profiles` has no release output, and this only names the reused library for the report.
-    let release = outputs
-        .iter()
-        .find(|output| output.profile == "release")
-        .or_else(|| outputs.first())
-        .ok_or_else(|| CliError::failure("completed Oven library output has no profile to report"))?;
-    let mut artifacts = Vec::new();
-    for output in outputs {
-        let native = output
-            .payload
-            .files
-            .iter()
-            .find(|file| file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH)
-            .ok_or_else(|| CliError::failure("completed Oven library output has no native artifact"))?;
-        artifacts.push(artifact_report(
-            format!("rust_library_{}", output.profile),
-            &caller_project_output_path(project_root, &native.caller_relative_path)?,
-        ));
-    }
-    let backend_receipt = completed_output_default_backend_receipt(release).ok_or_else(|| {
-        CliError::failure("completed Oven library output has no verified implicit-default backend receipt")
-    })?;
-    if outputs
-        .iter()
-        .any(|output| completed_output_default_backend_receipt(output).as_ref() != Some(&backend_receipt))
-    {
-        return Err(CliError::failure(
-            "completed Oven library outputs disagree on their verified implicit-default backend receipt",
-        ));
-    }
-    let report = BuildReportDraft {
-        mode: BuildReportMode::Library,
-        profile: release.profile.clone(),
-        project: manifest_project_report(Some(&manifest), &project_name, project_root),
-        entrypoint: Some(entrypoint.to_string_lossy().to_string()),
-        library_root: Some(project_root.to_string_lossy().to_string()),
-        source_files: Vec::new(),
-        generated: oven_generated_project_report(
-            &project_root.join("target/lib"),
-            &project_root.join("target/lib/src/lib.rs"),
-            &project_root.join("target/lib/oven"),
-        ),
-        artifacts,
-        dependencies: crate::build_report::BuildDependencyReport {
-            rust: Vec::new(),
-            rust_dev: Vec::new(),
-            incan: Vec::new(),
-            stdlib_facets: Vec::new(),
-        },
-        semantic: crate::build_report::BuildSemanticReport {
-            sdk: None,
-            packages: Vec::new(),
-            feature_edges: Vec::new(),
-            providers: Vec::new(),
-        },
-        cargo: None,
-        oven: Some(BuildOvenReport {
-            receipt_identity: release.payload.receipt_identity.clone(),
-            build_unit_identity: release.payload.build_unit_identity.clone(),
-            plan_identity: release.payload.plan_identity.clone(),
-        }),
-        interop: crate::build_report::BuildInteropReport {
-            rust_imports: Vec::new(),
-            rust_externs: Vec::new(),
-            rust_abi_query_paths: Vec::new(),
-        },
-        notes: vec![
-            "Reused a completed Oven project-output Loaf; source, dependency, semantic, and interop details were verified at explicit bake time and are intentionally not recomputed during this replay."
-                .to_string(),
-        ],
-        backend: Some(backend_receipt),
-    };
-    let mut timings_ms = BTreeMap::new();
-    timings_ms.insert("completed_project_output_reuse".to_string(), elapsed_ms(total_start));
-    timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-    Ok(report.finish(timings_ms))
-}
-
 /// Return the caller-owned path that an exact project-output Loaf may materialize. The baked relative path is a
 /// portability contract, never an arbitrary store-controlled destination.
 pub fn caller_project_output_path(project_root: &Path, relative_path: &str) -> CliResult<PathBuf> {
@@ -327,18 +221,6 @@ pub(super) fn executable_projection_publication_paths<'a>(
         metadata.push(project_output_projection_marker_path(project_root, output)?);
     }
     Ok((artifacts, metadata))
-}
-
-/// Capture the markers a library replay can replace alongside its artifact and receipt pointers.
-pub(super) fn library_projection_publication_receipts<'a>(
-    project_root: &Path,
-    outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
-) -> CliResult<Vec<PathBuf>> {
-    let mut receipts = library_publication_receipts(project_root)?;
-    for output in outputs {
-        receipts.push(project_output_projection_marker_path(project_root, output)?);
-    }
-    Ok(receipts)
 }
 
 /// Return the stable small projection descriptor expected beside one caller-owned native output.
@@ -516,8 +398,7 @@ pub(super) fn select_default_project_output_with_inputs(
     profile: &str,
     authority: &mut super::ProjectSourceAuthorityDigester,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
-    policy.reject_cargo_feature_controls("build and run")?;
-    if policy.package_features != &FeatureSelection::default() || policy.sdk_profile.is_some() {
+    if policy.package_features != &FeatureSelection::default() {
         return Ok(None);
     }
     let entrypoint = normalized_project_entrypoint(file_path)?;
@@ -612,7 +493,7 @@ fn validate_completed_output_lock_policy(
     entrypoint: &Path,
     policy: &CompletedOutputPolicy<'_>,
 ) -> CliResult<()> {
-    if !policy.cargo_policy.locked && !policy.cargo_policy.frozen {
+    if !policy.lock_policy.strict() {
         return Ok(());
     }
     let cargo_features = policy.cargo_feature_selection();
@@ -621,9 +502,9 @@ fn validate_completed_output_lock_policy(
         Some(manifest),
         entrypoint,
         &cargo_features,
-        policy.cargo_policy,
+        policy.lock_policy,
         policy.package_features,
-        policy.sdk_profile,
+        None,
     )
 }
 
@@ -679,134 +560,6 @@ pub(super) fn warn_for_completed_output_lock_fingerprint_drift_with_current<'a>(
         );
     }
     Ok(())
-}
-
-/// Select both profile outputs required by a normal `build --lib` without entering the library frontend. A partial hit
-/// is deliberately ignored: the historical command contract publishes debug and release rlibs together.
-pub fn select_default_library_project_outputs(
-    file_path: Option<&str>,
-    policy: &CompletedOutputPolicy<'_>,
-) -> CliResult<Option<Vec<OvenStoredProjectOutput>>> {
-    policy.reject_cargo_feature_controls("library builds")?;
-    if policy.package_features != &FeatureSelection::default() || policy.sdk_profile.is_some() {
-        return Ok(None);
-    }
-    let project_root = resolve_library_project_root(file_path)?;
-    let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
-        return Ok(None);
-    };
-    let entrypoint = validate_library_entrypoint(&manifest)?;
-    validate_completed_output_lock_policy(&project_root, &manifest, &entrypoint, policy)?;
-    let store = open_default_oven_store()?;
-    let source_authority_digest = digest_baked_project_source_authority(&project_root)?;
-    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut profile_candidates = Vec::new();
-    let mut current_receipts = Vec::new();
-    for profile in explicit_bake_profiles() {
-        let candidates = matching_baked_project_outputs_with_source_authority(
-            &store,
-            &project_root,
-            &entrypoint,
-            OvenBakeProjectTarget::Library,
-            profile,
-            &source_authority_digest,
-            Some((&target, &toolchain)),
-        )?;
-        if candidates.is_empty() {
-            if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none()
-                && has_stale_baked_project_output(
-                    &store,
-                    &project_root,
-                    &entrypoint,
-                    OvenBakeProjectTarget::Library,
-                    profile,
-                )?
-            {
-                warn_stale_sealed_project_output("library build");
-            }
-            return Ok(None);
-        };
-        if let Some(receipt) =
-            current_project_output_receipt(&project_root, OvenBakeProjectTarget::Library, &entrypoint, profile)?
-        {
-            current_receipts.push(receipt);
-        }
-        profile_candidates.push(candidates);
-    }
-    select_coherent_library_outputs(
-        profile_candidates,
-        &current_receipts,
-        baked_project_lock_dependencies_fingerprint(&project_root)?.as_deref(),
-    )
-}
-
-/// Retain one shared lock cohort across all requested library profiles, including a coherent stale fallback.
-pub fn select_coherent_library_outputs(
-    profile_candidates: Vec<Vec<OvenStoredProjectOutput>>,
-    current_receipts: &[oven_store::OvenReceipt],
-    current_fingerprint: Option<&str>,
-) -> CliResult<Option<Vec<OvenStoredProjectOutput>>> {
-    // Score semantic preferences directly: retained duplicates must never outweigh a verified local lineage.
-    let fingerprints = profile_candidates
-        .first()
-        .map(|candidates| {
-            candidates
-                .iter()
-                .map(|output| output.payload.lock_dependencies_fingerprint.clone())
-                .collect::<std::collections::BTreeSet<_>>()
-        })
-        .unwrap_or_default();
-    let selected_fingerprint = fingerprints
-        .into_iter()
-        .filter_map(|fingerprint| {
-            if !profile_candidates.iter().all(|candidates| {
-                candidates
-                    .iter()
-                    .any(|output| output.payload.lock_dependencies_fingerprint == fingerprint)
-            }) {
-                return None;
-            }
-            let lineage_matches = current_receipts
-                .iter()
-                .filter(|receipt| {
-                    profile_candidates.iter().flatten().any(|output| {
-                        output.payload.lock_dependencies_fingerprint == fingerprint
-                            && output.payload.receipt_identity == receipt.identity
-                            && output.payload.build_unit_identity == receipt.build_unit_identity
-                            && output.intent == receipt.intent
-                    })
-                })
-                .count();
-            Some((
-                (
-                    std::cmp::Reverse(lineage_matches),
-                    fingerprint.as_deref() != current_fingerprint,
-                ),
-                fingerprint,
-            ))
-        })
-        .min_by(|left, right| left.0.cmp(&right.0));
-    let Some((_, fingerprint)) = selected_fingerprint else {
-        return Err(CliError::failure(
-            "Oven has no coherent completed library output cohort across the requested profiles. Run `incan oven bake --project .` before a normal library build.",
-        ));
-    };
-    let mut outputs = Vec::new();
-    for candidates in profile_candidates {
-        let Some(output) = candidates
-            .into_iter()
-            .find(|output| output.payload.lock_dependencies_fingerprint == fingerprint)
-        else {
-            return Ok(None);
-        };
-        if completed_output_default_backend_receipt(&output).is_none() {
-            return Ok(None);
-        }
-        outputs.push(output);
-    }
-    Ok(Some(outputs))
 }
 
 /// Restore caller-visible generated sources, package handoff records, and native artifacts from a completed immutable
@@ -915,45 +668,6 @@ pub fn materialize_project_output(project_root: &Path, output: &OvenStoredProjec
     Ok(())
 }
 
-/// Publish a selected library cohort as one ordinary-error transaction, retaining a verified warm no-op.
-pub fn materialize_completed_library_outputs<T>(
-    project_root: &Path,
-    outputs: &[OvenStoredProjectOutput],
-    backend_receipt: &crate::backend::selection::BackendExecutionReceipt,
-    complete: impl FnOnce() -> CliResult<T>,
-) -> CliResult<T> {
-    let receipt_path = default_backend_receipt_path(project_root);
-    let mut expected_receipt = serde_json::to_vec_pretty(backend_receipt)
-        .map_err(|error| CliError::failure(format!("failed to encode completed library receipt: {error}")))?;
-    expected_receipt.push(b'\n');
-    let current = outputs.iter().try_fold(true, |current, output| {
-        Ok::<_, CliError>(project_output_projection_is_current(project_root, output)? && current)
-    })?;
-    if current && fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected_receipt) {
-        return complete();
-    }
-    let publication = if current {
-        library_publication::LibraryPublication::begin_receipt_update(project_root, vec![receipt_path.clone()])?
-    } else {
-        library_publication::LibraryPublication::begin(
-            project_root,
-            &project_root.join("target/lib"),
-            library_projection_publication_receipts(project_root, outputs)?,
-        )?
-        .retaining_package_cache()
-    };
-    let result = (|| {
-        if !current {
-            for output in outputs {
-                materialize_project_output(project_root, output)?;
-            }
-        }
-        write_backend_receipt(backend_receipt, &receipt_path)?;
-        complete()
-    })();
-    publication.finish(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,7 +677,7 @@ mod tests {
     use std::time::Instant;
 
     use crate::backend::selection::{BackendExecutionReceipt, BackendKind, finalize_receipt, select_backend};
-    use crate::build::backend_selection::default_backend_receipt_path;
+    use crate::backend::selection::default_backend_receipt_path;
     use crate::build::output_selection::{
         baked_project_owner_identity, make_project_output_report_portable, restore_project_output_report_paths,
         select_baked_project_output,

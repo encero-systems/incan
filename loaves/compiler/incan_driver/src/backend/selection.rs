@@ -409,3 +409,42 @@ mod tests {
         assert!(digest_output(&["a"]).starts_with("sha256:"));
     }
 }
+
+/// Project-relative location of the backend receipt an ordinary build writes beside its outputs.
+const DEFAULT_BACKEND_RECEIPT_RELATIVE_PATH: &str = ".incan/backend/receipt.json";
+
+/// Return the backend receipt location for one project.
+pub fn default_backend_receipt_path(project_root: &std::path::Path) -> std::path::PathBuf {
+    project_root.join(DEFAULT_BACKEND_RECEIPT_RELATIVE_PATH)
+}
+
+/// Publish a backend execution receipt through a same-directory staged file and atomic replacement, mirroring
+/// `oven_store::write_receipt`'s durability guarantee for its own receipt.
+pub fn write_backend_receipt(
+    receipt: &BackendExecutionReceipt,
+    path: &std::path::Path,
+) -> crate::error::CliResult<()> {
+    use crate::error::CliError;
+    let parent = path
+        .parent()
+        .ok_or_else(|| CliError::failure(format!("invalid backend-selection receipt path {}", path.display())))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| CliError::failure(format!("failed to create {}: {error}", parent.display())))?;
+    let payload = serde_json::to_vec_pretty(receipt)
+        .map_err(|error| CliError::failure(format!("failed to serialize backend-selection receipt: {error}")))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| CliError::failure(format!("invalid backend-selection receipt path {}", path.display())))?;
+    let staged_path = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
+    let result = oven_store::write_receipt_staged(&payload, &staged_path, path, parent);
+    if result.is_err() && staged_path.exists() {
+        let _ = std::fs::remove_file(&staged_path);
+    }
+    result.map_err(|error| {
+        CliError::failure(format!(
+            "failed to publish backend-selection receipt {}: {error}",
+            path.display()
+        ))
+    })
+}

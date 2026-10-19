@@ -22,10 +22,8 @@ use crate::error::{CliError, CliResult};
 use crate::project::effective_project_manifest_with_workspace;
 use crate::session::CompilationSession;
 use incan_frontend::library_manifest::visit_provider_artifact_inputs;
-use incan_provider::{FeatureSelection, ProviderPlan};
-use oven_rustc::plan::OvenDirectRustcPlanSelection;
+use incan_provider::FeatureSelection;
 
-use super::{NativeSdkCommandContext, OvenPreparedProject};
 
 /// One existing effective manifest and its workspace topology, kept alive by the serial executable owner.
 pub(super) struct RetainedProject {
@@ -80,176 +78,6 @@ struct RetainedSession {
     check_warnings: Vec<String>,
     check_report: Option<super::check::CompletedCheck>,
     lock_preparation: Option<super::lock_preparation::CompletedLockPreparation>,
-    executable: Option<RetainedExecutableDependencies>,
-    native_admission: Option<ObservedNativeAdmission>,
-    test_generation: Arc<super::test_generation::RetainedTestGeneration>,
-}
-
-/// Original native dependency owners shared by build and test within one reconciled lock/session generation.
-struct ObservedNativeAdmission {
-    context: Arc<NativeSdkCommandContext>,
-    inputs: ModelInputs,
-}
-
-/// Exact command configuration and existing typed dependency declarations, compared without another encoding.
-#[derive(PartialEq, Eq)]
-pub(super) struct ExecutableDependencyRequest {
-    pub(super) configuration: String,
-    pub(super) dependencies: [Vec<DependencySpec>; 3],
-}
-
-/// Original native admission and identity projection for one exact dependency request in the retained session.
-pub(super) struct ExecutableDependencyInputs {
-    key: ExecutableDependencyRequest,
-    provider: Arc<ProviderPlan>,
-    pub(super) context: Option<Arc<NativeSdkCommandContext>>,
-    /// Original ordinary producer requests and semantic owners survive retained plan reuse.
-    pub(super) ordinary: Option<Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
-    pub(super) ordinary_session: Option<Arc<CompilationSession>>,
-    pub(super) build_inputs: BTreeMap<String, String>,
-    observations: ModelInputs,
-    plan_observed: bool,
-}
-
-impl ExecutableDependencyInputs {
-    /// Retain canonical admission, observing its original physical inputs through the existing model observer.
-    pub(super) fn new(
-        key: ExecutableDependencyRequest,
-        provider: Arc<ProviderPlan>,
-        context: Option<Arc<NativeSdkCommandContext>>,
-        build_inputs: BTreeMap<String, String>,
-    ) -> Self {
-        let mut observations = ModelInputs::default();
-        if let Some(context) = &context {
-            context.visit_retained_inputs(&mut |path| observations.observe(path));
-        }
-        Self {
-            key,
-            provider,
-            context,
-            ordinary: None,
-            ordinary_session: None,
-            build_inputs,
-            observations,
-            plan_observed: false,
-        }
-    }
-
-    /// Match the session's exact provider projection and current native request, excluding only consumer bodies.
-    pub(super) fn matches(&self, key: &ExecutableDependencyRequest, provider: &Arc<ProviderPlan>) -> bool {
-        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::match_native_dependency_inputs", metadata_checks = self.observations.len()).entered();
-        &self.key == key
-            && Arc::ptr_eq(&self.provider, provider)
-            && self.observations.supports_retention()
-            && self.observations.current()
-            && self.ordinary.as_ref().is_none_or(|native| native.verify().is_ok())
-            && self.ordinary_session.as_ref().is_none_or(|session| {
-                session
-                    .admitted_library_dependencies()
-                    .is_some_and(|dependencies| dependencies.verify().is_ok())
-            })
-    }
-
-    /// Require observation of a replacement selection instead of treating the previous plan as still retained.
-    pub(super) fn require_plan_observation(&mut self) {
-        self.plan_observed = false;
-    }
-
-    /// Observe a newly selected plan once; a retained original plan was reconciled by `matches` for this command.
-    ///
-    /// Unsupported selection families keep canonical admission. Completion reconciles again to refuse retaining inputs
-    /// changed during compilation.
-    pub(super) fn observe_plan(&mut self, prepared: &OvenPreparedProject) -> CliResult<bool> {
-        let _trace =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::observe_executable_dependency_plan")
-                .entered();
-        if prepared.runtime_foundation.is_some() || prepared.release_generation_guard.is_some() {
-            return Ok(false);
-        }
-        if self.plan_observed {
-            return Ok(true);
-        }
-        self.observations.observe(&prepared.rustc);
-        let supported = prepared
-            .plan_selection
-            .visit_retained_inputs(&mut |path| self.observations.observe(path))
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        self.plan_observed = supported && self.observations.supports_retention() && self.observations.current();
-        Ok(self.plan_observed)
-    }
-}
-
-/// One original leased plan under the same build-unit and intent match used by canonical Store selection.
-pub(super) struct RetainedExecutableDependencies<I = ExecutableDependencyInputs, S = OvenDirectRustcPlanSelection> {
-    pub(super) inputs: I,
-    build_unit: String,
-    intent: oven_store::OvenBuildIntent,
-    pub(super) selection: S,
-}
-
-impl RetainedExecutableDependencies {
-    /// Move the original leases into the owner only after successful execution and publication.
-    pub(super) fn completed(inputs: ExecutableDependencyInputs, prepared: OvenPreparedProject) -> Option<Self> {
-        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::retain_executable_dependencies", metadata_checks = inputs.observations.len()).entered();
-        if !inputs.observations.supports_retention() || !inputs.observations.current() {
-            return None;
-        }
-        Some(Self {
-            inputs,
-            build_unit: prepared.receipt.build_unit_identity,
-            intent: prepared.receipt.intent,
-            selection: prepared.plan_selection,
-        })
-    }
-}
-
-impl<I, S> RetainedExecutableDependencies<I, S> {
-    /// Apply the existing selector's identity contract to a freshly generated source receipt.
-    pub(super) fn matches_receipt(&self, receipt: &oven_store::OvenReceipt) -> bool {
-        self.build_unit == receipt.build_unit_identity && self.intent == receipt.intent
-    }
-}
-
-impl RetainedExecutableDependencies<ModelInputs> {
-    /// Retain the canonical native selection with the ordinary owner's existing metadata observations.
-    /// The caller has already reconciled its declared native closure; unsupported plans keep canonical selection.
-    pub(super) fn admitted_native_plan(
-        receipt: &oven_store::OvenReceipt,
-        selection: OvenDirectRustcPlanSelection,
-    ) -> CliResult<Self> {
-        let mut inputs = ModelInputs::default();
-        let supported = selection
-            .visit_retained_inputs(&mut |path| inputs.observe(path))
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        if !supported {
-            inputs.disable_retention();
-        }
-        Ok(Self {
-            inputs,
-            build_unit: receipt.build_unit_identity.clone(),
-            intent: receipt.intent.clone(),
-            selection,
-        })
-    }
-
-    /// Share the original selected plan and its leases between worker requests without copying its authority.
-    pub(super) fn into_shared(self) -> RetainedExecutableDependencies<ModelInputs, Arc<OvenDirectRustcPlanSelection>> {
-        RetainedExecutableDependencies {
-            inputs: self.inputs,
-            build_unit: self.build_unit,
-            intent: self.intent,
-            selection: Arc::new(self.selection),
-        }
-    }
-}
-
-impl<S> RetainedExecutableDependencies<ModelInputs, S> {
-    /// Reconcile original plan inputs before reuse and after successful execution, preserving the same leases.
-    /// This observation is not dependency authority: the existing native producer reconciles that independently.
-    pub(super) fn native_inputs_current(&self) -> bool {
-        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::match_retained_native_plan", metadata_checks = self.inputs.len()).entered();
-        self.inputs.supports_retention() && self.inputs.current()
-    }
 }
 
 /// Retained workspace selection is scoped to the same nested-command configuration as ordinary discovery.
@@ -455,9 +283,6 @@ impl RetainedProjectInputs {
                 check_warnings,
                 check_report: None,
                 lock_preparation: None,
-                executable: None,
-                native_admission: None,
-                test_generation: Arc::default(),
             },
         );
         Ok(session)
@@ -495,96 +320,6 @@ impl RetainedProjectInputs {
     pub(super) fn discard_compilation_session(&mut self, root: &Path, purpose: SessionPurpose) {
         if let Some(project) = self.projects.get_mut(root) {
             project.sessions.remove(&purpose);
-        }
-    }
-
-    /// Borrow generated test sources only from the exact, already reconciled artifact session.
-    pub(super) fn test_generation(
-        &self,
-        root: &Path,
-        session: &Arc<CompilationSession>,
-    ) -> Option<Arc<super::test_generation::RetainedTestGeneration>> {
-        self.projects
-            .get(root)?
-            .sessions
-            .get(&SessionPurpose::Artifacts)
-            .filter(|retained| Arc::ptr_eq(&retained.session, session))
-            .map(|retained| Arc::clone(&retained.test_generation))
-    }
-
-    /// Transfer the prior plan out of the current session; failures cannot leave a partially reused plan installed.
-    pub(super) fn take_executable_dependencies(&mut self, root: &Path) -> Option<RetainedExecutableDependencies> {
-        let _trace =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::take_retained_native_dependencies")
-                .entered();
-        self.projects
-            .get_mut(root)?
-            .sessions
-            .get_mut(&SessionPurpose::Artifacts)?
-            .executable
-            .take()
-    }
-
-    /// Borrow native owners only from the exact artifact session reconciled by the current request.
-    /// Changed physical inputs discard the old admission before canonical discovery. Original leases stay alive
-    /// while consumers hold the returned context; unsupported observations never authorize a retained hit.
-    pub(super) fn native_dependency_context(
-        &mut self,
-        root: &Path,
-        session: &Arc<CompilationSession>,
-    ) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
-        if session.has_admitted_library_dependencies() {
-            return Ok(None);
-        }
-        let Some(retained) = self
-            .projects
-            .get_mut(root)
-            .and_then(|project| project.sessions.get_mut(&SessionPurpose::Artifacts))
-            .filter(|retained| Arc::ptr_eq(&retained.session, session))
-        else {
-            return NativeSdkCommandContext::discover();
-        };
-        let _trace =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::shared_native_admission").entered();
-        if let Some(admitted) = &retained.native_admission
-            && admitted.inputs.supports_retention()
-            && admitted.inputs.current()
-        {
-            tracing::trace!(target: "incan::invocation", decision = "reuse_native_admission");
-            return Ok(Some(Arc::clone(&admitted.context)));
-        }
-        retained.native_admission = None;
-        let Some(context) = NativeSdkCommandContext::discover()? else {
-            return Ok(None);
-        };
-        let mut inputs = ModelInputs::default();
-        context.visit_retained_inputs(&mut |path| inputs.observe(path));
-        context.verify()?;
-        if inputs.supports_retention() {
-            if !inputs.current() {
-                return Err(CliError::failure("native dependency inputs changed during observation"));
-            }
-            retained.native_admission = Some(ObservedNativeAdmission {
-                context: Arc::clone(&context),
-                inputs,
-            });
-        }
-        tracing::trace!(target: "incan::invocation", decision = "admit_native_dependencies");
-        Ok(Some(context))
-    }
-
-    /// Return a completed original plan to the same observed dependency generation, without a second cache.
-    pub(super) fn remember_executable_dependencies(
-        &mut self,
-        root: &Path,
-        dependencies: RetainedExecutableDependencies,
-    ) {
-        if let Some(session) = self
-            .projects
-            .get_mut(root)
-            .and_then(|record| record.sessions.get_mut(&SessionPurpose::Artifacts))
-        {
-            session.executable = Some(dependencies);
         }
     }
 
@@ -676,69 +411,12 @@ impl RetainedProjectInputs {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecutableDependencyInputs, ExecutableDependencyRequest, ModelInputs, RetainedProjectInputs};
+    use super::{ModelInputs, RetainedProjectInputs};
     use incan_frontend::library_manifest::visit_provider_artifact_inputs;
     use oven_model::lock::{CargoFeatureSelection, IncanLock};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-
-    /// A changed dependency request or provider projection cannot reuse the earlier native admission.
-    #[test]
-    fn retained_native_inputs_require_exact_request_and_provider_generation() {
-        let provider = Arc::new(incan_provider::ProviderPlan::default());
-        let request = || ExecutableDependencyRequest {
-            configuration: "request".to_string(),
-            dependencies: Default::default(),
-        };
-        let inputs = ExecutableDependencyInputs::new(request(), Arc::clone(&provider), None, Default::default());
-        assert!(inputs.matches(&request(), &provider));
-        let mut changed = request();
-        changed.configuration = "changed configuration".to_string();
-        assert!(!inputs.matches(&changed, &provider));
-        for group in 0..3 {
-            let mut changed = request();
-            changed.dependencies[group].push(oven_model::manifest::DependencySpec {
-                crate_name: "new_dependency".to_string(),
-                version: Some("1.0".to_string()),
-                features: Vec::new(),
-                default_features: true,
-                source: oven_model::manifest::DependencySource::Registry,
-                optional: false,
-                package: None,
-            });
-            assert!(!inputs.matches(&changed, &provider));
-        }
-        assert!(!inputs.matches(&request(), &Arc::new(incan_provider::ProviderPlan::default())));
-    }
-
-    /// Source bodies do not invalidate dependency admission, but replacing a declared native input does.
-    #[cfg(unix)]
-    #[test]
-    fn retained_native_inputs_observe_physical_replacement_without_source_invalidation()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let root = fs::canonicalize(directory.path())?;
-        let native = root.join("native.rlib");
-        let source = root.join("main.incn");
-        fs::write(&native, "immutable native bytes")?;
-        fs::write(&source, "old source body")?;
-        let provider = Arc::new(incan_provider::ProviderPlan::default());
-        let request = || ExecutableDependencyRequest {
-            configuration: "request".to_string(),
-            dependencies: Default::default(),
-        };
-        let mut inputs = ExecutableDependencyInputs::new(request(), Arc::clone(&provider), None, Default::default());
-        inputs.observations.observe(&native);
-        assert!(inputs.matches(&request(), &provider));
-        fs::write(&source, "new source body")?;
-        assert!(inputs.matches(&request(), &provider));
-        let replacement = root.join("replacement.rlib");
-        fs::write(&replacement, "immutable native bytes")?;
-        fs::rename(replacement, native)?;
-        assert!(!inputs.matches(&request(), &provider));
-        Ok(())
-    }
 
     /// Retained provider observations detect nested content and membership changes without watching build outputs.
     #[cfg(unix)]

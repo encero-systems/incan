@@ -148,10 +148,10 @@ pub(super) fn execute_request(
     let manifest = ProjectManifest::discover(&request.directory)
         .map_err(|error| CliError::failure(error.to_string()))?
         .ok_or_else(|| CliError::failure("No loaf.toml found (run `incan init`)"))?;
-    crate::cargo_policy::enforce_project_toolchain_constraint(&manifest)?;
+    crate::project::enforce_project_toolchain_constraint(&manifest)?;
     let root = std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
     let canonical = || {
-        crate::lock::resolution::prepare_sdk_and_publish_project_lock(
+        crate::lock::resolution::collect_and_publish_project_lock(
             &manifest,
             request.entry.as_deref(),
             &request.cargo_features,
@@ -184,10 +184,9 @@ pub(super) fn execute_request(
     } else {
         &request.features
     };
-    let _inventory = super::native_sdk::prepare_or_discover_sdk_inventory()?;
     let mut members = Vec::new();
     for manifest in &manifests {
-        crate::cargo_policy::enforce_project_toolchain_constraint(manifest)?;
+        crate::project::enforce_project_toolchain_constraint(manifest)?;
         let member_root = manifest.project_root();
         let entry = request.entry.as_deref().filter(|_| member_root == root);
         let entries = crate::lock::workspace::project_lock_entry_paths(manifest, entry);

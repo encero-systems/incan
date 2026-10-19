@@ -525,93 +525,6 @@ pub fn collect_project_lock_context(
         sdk_profile_override,
         workspace,
         command_session,
-        None,
-    )
-}
-
-/// The explicitly retained ordinary native authority a lock collector may carry.
-#[cfg(feature = "cli")]
-type OrdinaryNative = crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles;
-
-/// Without the build pipeline (the `cli` feature, #1479) no ordinary native authority exists: the uninhabited
-/// stand-in keeps one collector signature while proving its optional authority is always absent.
-#[cfg(not(feature = "cli"))]
-enum OrdinaryNative {}
-
-/// Bind the semantic SDK paths to the ordinary native authority's checked demands rather than to discovered support.
-#[cfg(feature = "cli")]
-fn ordinary_semantic_sdk_paths(
-    native: &OrdinaryNative,
-    session_manifest: &ProjectManifest,
-    project_requirement_modules: &[ParsedModule],
-    source_requirements: &incan_provider::requirements::ProjectRequirements,
-    project_requirements: &incan_provider::requirements::ProjectRequirements,
-    provider_plan: &incan_provider::ProviderPlan,
-    session: &CompilationSession,
-) -> CliResult<Vec<DependencySpec>> {
-    native.verify()?;
-    #[cfg(feature = "rust_inspect")]
-    let queries = crate::build::library_exports::collect_ordinary_library_rust_abi_query_paths(
-        project_requirement_modules,
-        &crate::build::rust_extern::collect_rust_extern_contexts(project_requirement_modules),
-        provider_plan,
-    )?
-    .into_iter()
-    .collect();
-    #[cfg(not(feature = "rust_inspect"))]
-    let queries = BTreeSet::new();
-    crate::build::library_metadata::requirements::capture_checked_native_demands(
-        session_manifest,
-        project_requirement_modules,
-        source_requirements,
-        provider_plan,
-        &queries,
-    )?
-    .require_ordinary_source_inspection_with_vocabulary(
-        session
-            .admitted_library_dependencies()
-            .map(|owners| (owners.as_ref(), provider_plan)),
-        native.prepared_vocabulary().map(std::sync::Arc::as_ref),
-    )?;
-    native.provider_semantic_dependencies(
-        provider_plan,
-        project_requirements,
-        session.admitted_library_dependencies().map(|owners| owners.as_ref()),
-    )
-}
-
-/// No ordinary native authority can exist without the build pipeline, so this is never reached.
-#[cfg(not(feature = "cli"))]
-fn ordinary_semantic_sdk_paths(
-    native: &OrdinaryNative,
-    _session_manifest: &ProjectManifest,
-    _project_requirement_modules: &[ParsedModule],
-    _source_requirements: &incan_provider::requirements::ProjectRequirements,
-    _project_requirements: &incan_provider::requirements::ProjectRequirements,
-    _provider_plan: &incan_provider::ProviderPlan,
-    _session: &CompilationSession,
-) -> CliResult<Vec<DependencySpec>> {
-    match *native {}
-}
-
-/// Collect the same whole-project inputs under an explicitly retained ordinary native authority.
-#[cfg(feature = "cli")]
-pub(crate) fn collect_ordinary_project_lock_context(
-    manifest: &ProjectManifest,
-    entry: &Path,
-    features: &FeatureSelection,
-    session: &CompilationSession,
-    native: &crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles,
-) -> CliResult<Option<ProjectLockContext>> {
-    collect_project_lock_context_impl(
-        manifest,
-        Some(entry),
-        &CargoFeatureSelection::default(),
-        features,
-        None,
-        None,
-        Some(session),
-        Some(native),
     )
 }
 
@@ -628,7 +541,6 @@ fn collect_project_lock_context_impl(
     sdk_profile_override: Option<&str>,
     workspace: Option<&WorkspaceGraph>,
     command_session: Option<&CompilationSession>,
-    ordinary_native: Option<&OrdinaryNative>,
 ) -> CliResult<Option<ProjectLockContext>> {
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_context_collection();
@@ -685,20 +597,6 @@ fn collect_project_lock_context_impl(
             manifest.project_root().display()
         )));
     }
-    // Ordinary publication replaces the recorded SDK with an original verified native request. The demand and
-    // provider checks below must succeed before any replacement lock can be published.
-    if let Some(native) = ordinary_native {
-        #[cfg(feature = "cli")]
-        native.verify()?;
-        #[cfg(not(feature = "cli"))]
-        match *native {}
-    } else {
-        require_sdk_inventory_for_lock_write(
-            session_manifest.project_root(),
-            workspace,
-            session.sdk_inventory().is_some(),
-        )?;
-    }
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_authority_snapshot_read();
     let entry_paths = project_lock_entry_paths(session_manifest, explicit_entry_file);
@@ -751,18 +649,7 @@ fn collect_project_lock_context_impl(
     let provider_plan = session
         .provider_plan_for_used_module_paths(lock_provider_used_module_paths(session, &project_requirement_modules))?;
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    let semantic_sdk_paths = match ordinary_native {
-        Some(native) => ordinary_semantic_sdk_paths(
-            native,
-            session_manifest,
-            &project_requirement_modules,
-            &source_requirements,
-            &project_requirements,
-            &provider_plan,
-            session,
-        )?,
-        None => semantic_sdk_path_dependencies(&project_requirements),
-    };
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
         session_manifest.interop_c(),
@@ -791,48 +678,6 @@ fn collect_project_lock_context_impl(
         project_requirements,
         semantic,
     }))
-}
-
-/// Refuse to replace recorded SDK lock state with a lock assembled without an SDK inventory.
-///
-/// A project with no SDK inventory, such as one built from a fresh home that compiles the standard library from
-/// source, may still write its lock. An existing SDK entry for the project or workspace member is authoritative,
-/// though: it must not disappear merely because an Oven command ran with a fresh home or without an installed
-/// inventory.
-fn require_sdk_inventory_for_lock_write(
-    project_root: &Path,
-    workspace: Option<&WorkspaceGraph>,
-    inventory_available: bool,
-) -> CliResult<()> {
-    let lock_root = workspace.map_or(project_root, WorkspaceGraph::root);
-    let existing_lock_records_sdk = existing_lock_records_member_sdk(lock_root, project_root, workspace.is_some());
-    if lock_write_without_sdk_is_allowed(inventory_available, existing_lock_records_sdk) {
-        return Ok(());
-    }
-    Err(CliError::failure(
-        "no standard-library SDK inventory is available to this Oven command, so it cannot rewrite `oven.lock` without the SDK state the existing lock records; run `incan lock`, which prepares and publishes the inventory, then rerun the command",
-    ))
-}
-
-/// Return whether one lock writer may proceed without an SDK inventory.
-fn lock_write_without_sdk_is_allowed(inventory_available: bool, existing_lock_records_sdk: bool) -> bool {
-    inventory_available || !existing_lock_records_sdk
-}
-
-/// Return whether the existing canonical lock records SDK state for this project or workspace member.
-fn existing_lock_records_member_sdk(lock_root: &Path, project_root: &Path, is_workspace: bool) -> bool {
-    let Ok(lock) = IncanLock::load(&lock_root.join(LOCK_FILENAME)) else {
-        return false;
-    };
-    if !is_workspace {
-        return lock.semantic.sdk.is_some();
-    }
-    let member_root = portable_project_path(lock_root, project_root);
-    lock.semantic
-        .workspace_members
-        .iter()
-        .find(|member| member.member_root == member_root)
-        .is_some_and(|member| member.sdk.is_some())
 }
 
 #[cfg(test)]

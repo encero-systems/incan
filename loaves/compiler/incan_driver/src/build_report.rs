@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::backend::selection::BackendExecutionReceipt;
-use crate::cargo_policy::CargoPolicy;
 use crate::error::{CliError, CliResult};
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::dependency_resolver::InlineRustImport;
@@ -131,18 +130,6 @@ pub struct BuildDependencyReport {
     pub stdlib_facets: Vec<String>,
 }
 
-/// Cargo feature and policy flags for the generated build.
-#[derive(Debug, Clone, Serialize)]
-pub struct BuildCargoReport {
-    pub offline: bool,
-    pub locked: bool,
-    pub frozen: bool,
-    pub extra_args: Vec<String>,
-    pub features: Vec<String>,
-    pub no_default_features: bool,
-    pub all_features: bool,
-}
-
 /// Rust interop use summary.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildInteropReport {
@@ -247,9 +234,6 @@ pub struct BuildReport {
     pub artifacts: Vec<BuildArtifactReport>,
     pub dependencies: BuildDependencyReport,
     pub semantic: BuildSemanticReport,
-    /// Cargo policy evidence is present only for an explicit legacy backend report.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cargo: Option<BuildCargoReport>,
     /// Oven selection evidence is present for normal executable builds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oven: Option<BuildOvenReport>,
@@ -295,7 +279,6 @@ pub struct BuildReportDraft {
     pub artifacts: Vec<BuildArtifactReport>,
     pub dependencies: BuildDependencyReport,
     pub semantic: BuildSemanticReport,
-    pub cargo: Option<BuildCargoReport>,
     pub oven: Option<BuildOvenReport>,
     pub interop: BuildInteropReport,
     pub notes: Vec<String>,
@@ -320,7 +303,6 @@ impl BuildReportDraft {
             artifacts: self.artifacts,
             dependencies: self.dependencies,
             semantic: self.semantic,
-            cargo: self.cargo,
             oven: self.oven,
             interop: self.interop,
             timings_ms,
@@ -497,24 +479,6 @@ pub fn incan_dependencies_report(dependencies: Vec<(&String, &LibraryDependencyS
         .collect::<Vec<_>>();
     report.sort_by(|left, right| left.library_name.cmp(&right.library_name));
     report
-}
-
-/// Capture Cargo policy flags and feature selections exactly as the CLI forwarded them to Cargo.
-pub fn cargo_report(
-    policy: &CargoPolicy,
-    features: Vec<String>,
-    no_default_features: bool,
-    all_features: bool,
-) -> BuildCargoReport {
-    BuildCargoReport {
-        offline: policy.offline,
-        locked: policy.locked,
-        frozen: policy.frozen,
-        extra_args: policy.extra_args.clone(),
-        features,
-        no_default_features,
-        all_features,
-    }
 }
 
 /// Summarize Rust interop surfaces referenced by source code and inferred ABI query paths.

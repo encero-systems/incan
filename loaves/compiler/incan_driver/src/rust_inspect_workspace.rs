@@ -4,7 +4,7 @@
 //! Everything here is about producing that root and the query surface it answers. Reading Rust metadata out of it
 //! is the `rust_inspect` crate's job.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 

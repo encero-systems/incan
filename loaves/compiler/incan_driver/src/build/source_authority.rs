@@ -5,20 +5,12 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::build::bake::discover_oven_executable_entrypoints;
-use crate::build::output_paths::validate_packaged_library_metadata_files;
-use crate::build::package_loafs::{
-    decode_packaged_library_loaf_manifest, read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
-};
 use crate::build::{
-    OvenBakeProjectTarget, OvenProjectPlanMode, ProjectSourceAuthorityDigester, oven_bake_project_target_identity,
+    OvenBakeProjectTarget, ProjectSourceAuthorityDigester, oven_bake_project_target_identity,
 };
 use crate::error::{CliError, CliResult};
 use crate::project::{effective_project_manifest_for_exact_root, resolve_source_root};
-use incan_frontend::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
-use incan_frontend::library_manifest_index::{
-    LibraryArtifactKind, LibraryManifestIndexEntry, load_provider_dependency_artifact,
-};
-use oven_cargo_compat::digest_local_cargo_workspace_authority;
+
 use oven_interop::{
     default_interop_execution_receipt_path, load_interop_execution_receipt, validate_interop_execution_receipt,
 };
@@ -48,50 +40,6 @@ pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
 /// it must supply that exact compiler identity without changing the configuration or validation domain.
 pub(super) fn ordinary_preparation_identity_for_compiler(compiler: String) -> CliResult<String> {
     ordinary_preparation_identity_from_values(compiler, |name| std::env::var_os(name))
-}
-
-/// Bind an ordinary library to its compiler and native producer inputs through the shared freshness store.
-/// The ordinary publisher consumes no SDK inventory, so an absent or changed inventory cannot invalidate this
-/// route. Explicit producer admissions supply their original graph coordinate rather than an ambient SDK graph;
-/// configured output reuse observes the current configured graph. Both use the same identity observer and domain.
-pub(super) fn ordinary_library_preparation_identity_digest(
-    native: Option<&super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
-) -> CliResult<String> {
-    let explicit_graph = native
-        .map(|native| {
-            let mut requests = native.metadata().observations().values();
-            let graph = requests
-                .next()
-                .ok_or_else(|| CliError::failure("ordinary preparation has no original native request"))?
-                .resolved_graph_path();
-            if requests.any(|request| request.resolved_graph_path() != graph) {
-                return Err(CliError::failure(
-                    "ordinary preparation profiles disagree on their original graph coordinate",
-                ));
-            }
-            Ok(graph)
-        })
-        .transpose()?;
-    ordinary_library_preparation_identity_from_values(current_compiler_identity_digest()?, explicit_graph, |name| {
-        std::env::var_os(name)
-    })
-}
-
-/// Apply the ordinary library domain while retaining the canonical preparation input observer.
-/// An outer `None` uses configured inputs; `Some(None)` represents an explicit direct request without a graph.
-fn ordinary_library_preparation_identity_from_values(
-    compiler: String,
-    explicit_graph: Option<Option<&Path>>,
-    value: impl Fn(&str) -> Option<std::ffi::OsString>,
-) -> CliResult<String> {
-    ordinary_preparation_identity_from_values(format!("ordinary-library:{compiler}"), |name| match name {
-        "INCAN_SDK_INVENTORY" => None,
-        "INCAN_SDK_NATIVE_COMPILER_GRAPH" => explicit_graph.map_or_else(
-            || value(name),
-            |graph| graph.map(|path| path.as_os_str().to_os_string()),
-        ),
-        _ => value(name),
-    })
 }
 
 /// Observe explicit preparation inputs through the existing freshness store without changing global configuration.
@@ -336,27 +284,6 @@ impl ProjectSourceAuthorityDigester {
         self.retained_inputs.check_report(&root, session)
     }
 
-    /// Borrow the original native plan only from a dependency session reconciled by this request.
-    pub(super) fn take_executable_dependencies(
-        &mut self,
-        root: &Path,
-    ) -> CliResult<Option<super::retained_inputs::RetainedExecutableDependencies>> {
-        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
-        Ok(self.retained_inputs.take_executable_dependencies(&root))
-    }
-
-    /// Keep a successful native plan inside the existing canonical project's dependency session.
-    pub(super) fn remember_executable_dependencies(
-        &mut self,
-        root: &Path,
-        dependencies: super::retained_inputs::RetainedExecutableDependencies,
-    ) -> CliResult<()> {
-        let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
-        self.retained_inputs
-            .remember_executable_dependencies(&root, dependencies);
-        Ok(())
-    }
-
     /// Drop every memoized project-tree digest so the next scan re-reads each project from disk.
     ///
     /// A memoized digest is only as current as the tree it was read from. Publishing the canonical lock writes one
@@ -389,51 +316,25 @@ impl ProjectSourceAuthorityDigester {
     #[cfg(not(test))]
     pub fn record_project_scan(&mut self, _canonical_root: &Path) {}
 
-    /// Bind a Loaf's declared Rust source closure, or retain conservative authority for a legacy Cargo-only package.
+    /// Bind a Rust path dependency's declared Loaf source closure.
     ///
-    /// A neighboring Cargo manifest never contributes to a Loaf. The SDK publisher owns Rust source geometry,
-    /// including compiler-embedded inputs; this boundary adds named normal path edges without resolving versions.
+    /// Every Rust path dependency is a Loaf: its `loaf.toml` owns the Rust source geometry, and this boundary adds
+    /// named normal path edges without resolving versions. A directory without one is refused.
     pub fn digest_rust_path_crate_authority(
         package_root: &Path,
         memo: &mut BTreeMap<PathBuf, String>,
     ) -> CliResult<String> {
         let declaration = package_root.join(LOAF_MANIFEST_FILENAME);
         match fs::symlink_metadata(&declaration) {
-            Ok(_) => {
-                return super::rust_source_freshness::digest_loaf(package_root, memo, |nodes| {
-                    digest_rust_loaf_node(package_root, nodes, &mut HashSet::new())
-                });
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(CliError::failure(error.to_string())),
+            Ok(_) => super::rust_source_freshness::digest_loaf(package_root, memo, |nodes| {
+                digest_rust_loaf_node(package_root, nodes, &mut HashSet::new())
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(CliError::failure(format!(
+                "Rust path dependency at {} has no loaf.toml",
+                package_root.display()
+            ))),
+            Err(error) => Err(CliError::failure(error.to_string())),
         }
-        super::rust_source_freshness::digest(package_root, memo, |rust_source_closure_digests| {
-            let source_tree = digest_cargo_path_source_tree_with_cache(package_root, rust_source_closure_digests)
-                .map_err(|error| {
-                    CliError::failure(format!(
-                        "Oven Alpha cannot digest Rust path dependency source authority at {}: {error}",
-                        package_root.display()
-                    ))
-                })?;
-            let mut records = BTreeMap::from([("package-source-tree", source_tree)]);
-            if let Some(workspace_authority) =
-                digest_local_cargo_workspace_authority(package_root).map_err(|error| {
-                    CliError::failure(format!(
-                        "Oven Alpha cannot resolve Rust path dependency workspace authority at {}: {error}",
-                        package_root.display()
-                    ))
-                })?
-            {
-                records.insert("inherited-cargo-workspace", workspace_authority);
-            }
-            let payload = serde_json::to_vec(&records).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to serialize Rust path dependency source authority at {}: {error}",
-                    package_root.display()
-                ))
-            })?;
-            Ok(digest_bytes(&payload))
-        })
     }
 
     /// Digest one reachable Incan node and its named dependency edges.
@@ -483,33 +384,10 @@ impl ProjectSourceAuthorityDigester {
             let child_digest = match fs::symlink_metadata(&child_manifest) {
                 Ok(_) => self.digest_project_node(&dependency.path, visiting)?,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    let artifact_root = dependency.path.join("target/lib");
-                    let entry = load_provider_dependency_artifact(name, &artifact_root);
-                    let artifact = match entry {
-                        LibraryManifestIndexEntry::Loaded { metadata, .. }
-                            if metadata.kind == LibraryArtifactKind::Materialized =>
-                        {
-                            metadata
-                        }
-                        LibraryManifestIndexEntry::Loaded { .. } => {
-                            return Err(CliError::failure(format!(
-                                "Oven Alpha cannot bind source-free pub::{name}: its checked package artifact is not materialized"
-                            )));
-                        }
-                        LibraryManifestIndexEntry::Failed(failure) => {
-                            return Err(CliError::failure(format!(
-                                "Oven Alpha cannot bind source-free pub::{name} at {}: {failure}",
-                                dependency.path.display()
-                            )));
-                        }
-                    };
-                    let package = read_packaged_library_loaf_manifest(&artifact)?.ok_or_else(|| {
-                        CliError::failure(format!(
-                            "Oven Alpha cannot bind source-free pub::{name} at {} without its sealed package Loaf; rebake or reinstall that provider",
-                            dependency.path.display()
-                        ))
-                    })?;
-                    package.source_authority_digest
+                    return Err(CliError::failure(format!(
+                        "Incan dependency pub::{name} at {} has no loaf.toml",
+                        dependency.path.display()
+                    )));
                 }
                 Err(error) => {
                     return Err(CliError::failure(format!(
@@ -519,7 +397,6 @@ impl ProjectSourceAuthorityDigester {
                 }
             };
             records.insert(format!("incan-dependency:{name}"), child_digest);
-            append_provider_artifact_authority(name, &dependency.path, &mut records)?;
         }
 
         let mut rust_path_dependencies =
@@ -634,106 +511,6 @@ fn digest_rust_loaf_node(
     visiting.remove(&root);
     memo.insert(root, digest.clone());
     Ok(digest)
-}
-
-/// Bind a materialized provider's execution inputs into its consumer's completed-output authority.
-///
-/// Authored source remains independently bound above. A sealed native handoff binds its checked metadata, generated
-/// source, receipts and native bytes; generated Cargo projections and store bookkeeping are outside that contract.
-/// Older handoffs without complete generated-source evidence retain conservative physical artifact authority.
-fn append_provider_artifact_authority(
-    dependency_name: &str,
-    dependency_root: &Path,
-    records: &mut BTreeMap<String, String>,
-) -> CliResult<()> {
-    let artifact_root = dependency_root.join("target/lib");
-    if !artifact_root.is_dir() {
-        return Ok(());
-    }
-    let artifact_digest = match sealed_provider_artifact_authority(dependency_name, &artifact_root)? {
-        Some(digest) => digest,
-        None => digest_provider_artifact(&artifact_root).map_err(|error| {
-            CliError::failure(format!(
-                "Oven Alpha cannot digest the packaged provider for pub::{dependency_name} at {}: {error}",
-                artifact_root.display()
-            ))
-        })?,
-    };
-    records.insert(format!("incan-provider-artifact:{dependency_name}"), artifact_digest);
-    Ok(())
-}
-
-/// Validate an existing native package seal before using it as the additional provider authority.
-///
-/// This does not resolve dependencies or authorize execution: the normal package importer still owns receipt selection
-/// and leases. The caller separately binds authored dependency sources, so this check does not recurse back into the
-/// consumer graph. Incomplete legacy evidence falls back to the physical digest; present but invalid evidence always
-/// refuses.
-fn sealed_provider_artifact_authority(dependency_name: &str, artifact_root: &Path) -> CliResult<Option<String>> {
-    if !incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path(artifact_root).is_file()
-    {
-        return Ok(None);
-    }
-    let artifact = match load_provider_dependency_artifact(dependency_name, artifact_root) {
-        LibraryManifestIndexEntry::Loaded { metadata, .. } if metadata.kind == LibraryArtifactKind::Materialized => {
-            metadata
-        }
-        LibraryManifestIndexEntry::Loaded { .. } => {
-            return Err(CliError::failure(format!(
-                "Oven Alpha cannot bind pub::{dependency_name}: its sealed provider artifact is not materialized"
-            )));
-        }
-        LibraryManifestIndexEntry::Failed(failure) => {
-            return Err(CliError::failure(format!(
-                "Oven Alpha cannot bind pub::{dependency_name} at {}: {failure}",
-                artifact_root.display()
-            )));
-        }
-    };
-    let Some((_, _, package)) = decode_packaged_library_loaf_manifest(&artifact)? else {
-        return Ok(None);
-    };
-    validate_packaged_library_metadata_files(&artifact, &package)?;
-    let generated_root =
-        digest_bytes(&fs::read(&artifact.crate_lib_path).map_err(|error| CliError::failure(error.to_string()))?);
-    let generated_tree =
-        digest_source_tree(&artifact_root.join("src")).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut complete_source_evidence = !package.profiles.is_empty();
-    for (profile, candidate) in &package.profiles {
-        if validated_packaged_library_loaf_profile(
-            &artifact,
-            &package,
-            profile,
-            &candidate.receipt.intent.target,
-            &candidate.receipt.intent.toolchain,
-        )?
-        .is_none()
-        {
-            return Err(CliError::failure(format!(
-                "Oven Alpha refuses pub::{dependency_name}: its sealed profile `{profile}` has inconsistent intent"
-            )));
-        }
-        for (key, actual) in [
-            ("generated-root", &generated_root),
-            ("generated-source-tree", &generated_tree),
-        ] {
-            match candidate.receipt.sources.supplemental_digests.get(key) {
-                Some(sealed) if sealed != actual => {
-                    return Err(CliError::failure(format!(
-                        "Oven Alpha refuses pub::{dependency_name}: `{profile}` {key} changed after its package Loaf was baked"
-                    )));
-                }
-                Some(_) => {}
-                None => complete_source_evidence = false,
-            }
-        }
-    }
-    if !complete_source_evidence {
-        return Ok(None);
-    }
-    let payload = serde_json::to_vec(&("incan-sealed-provider-authority/1", package))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok(Some(digest_bytes(&payload)))
 }
 
 /// Digest the exact build-input graph for a completed project output without observing generated or unrelated files.
@@ -1257,27 +1034,6 @@ pub fn interop_bootstrap_receipt_path(
         .to_string();
     Ok(oven_store::default_receipt_path(project_root)
         .with_file_name(format!("interop-bootstrap-{identity}-{profile}-receipt.json")))
-}
-
-/// Return the durable receipt path appropriate to one prepared Oven command mode.
-pub fn prepared_oven_receipt_path(
-    project_root: &Path,
-    mode: OvenProjectPlanMode,
-    rust_target: &str,
-    entrypoint: &Path,
-    profile: &str,
-) -> CliResult<PathBuf> {
-    if mode == OvenProjectPlanMode::InteropBootstrap {
-        interop_bootstrap_receipt_path(
-            project_root,
-            rust_target,
-            OvenBakeProjectTarget::Executable,
-            entrypoint,
-            profile,
-        )
-    } else {
-        Ok(oven_store::default_receipt_path(project_root))
-    }
 }
 
 #[cfg(test)]
