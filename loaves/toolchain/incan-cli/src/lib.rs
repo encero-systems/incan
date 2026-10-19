@@ -54,7 +54,7 @@ use commands::representation_inspect::RepresentationInspectionFormat;
 use commands::workspace::WorkspaceInspectFormat;
 use incan_driver::build_report::{BuildReportFormat, BuildReportOptions};
 use incan_driver::lock::policy::{LockPolicy, LockPolicyCliFlags};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use incan_provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
 use oven_cli::workspace_scope::{
     resolve_workspace_command_scope, resolve_workspace_library_build_scope, workspace_member_relative_path,

@@ -8,7 +8,7 @@ use incan_driver::build::executable::ExecutableBuildOwner;
 use incan_driver::project::resolve_project_root;
 use incan_format::{FormatConfig, format_parsed_source_with_config};
 use incan_frontend::diagnostics;
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

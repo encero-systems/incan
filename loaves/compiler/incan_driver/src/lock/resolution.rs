@@ -24,7 +24,7 @@ use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::requirements::{
     ProjectRequirements, merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
 };
-use incan_provider::FeatureSelection;
+use crate::features::FeatureSelection;
 use oven_model::lock::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState,
     compute_resolved_fingerprint_with_sdk_paths,

@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 
 use crate::commands;
 use crate::commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};

@@ -9,10 +9,10 @@ use std::time::Instant;
 
 use super::bake::select_default_executable_project_output;
 use super::output_materialization::{completed_executable_output_report, materialize_completed_executable_output};
-use super::retained_inputs::{ModelInputs, SessionPurpose};
+use super::retained_inputs::ModelInputs;
 use super::{BuildCommandOptions, ProjectSourceAuthorityDigester, RunProfile};
 use crate::error::{CliError, CliResult};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 
 /// Serial executable-build owner retaining typed ordinary/native inputs, with fresh source authority per request.
 #[derive(Default)]
@@ -213,72 +213,26 @@ impl ExecutableBuildOwner {
 
     /// Prepare the canonical project lock through this owner's original source and dependency sessions.
     pub fn prepare_lock(&mut self, request: &super::lock_preparation::LockPreparationRequest) -> CliResult<()> {
-        super::lock_preparation::execute_request(request, &mut self.authority)
+        super::lock_preparation::execute_request(request)
     }
 
     /// Run metadata-only checking through this serial owner using the single canonical driver pipeline.
     /// The request returns diagnostics and warning output, never a native artifact or execution permission.
     pub fn check(&mut self, request: &super::check::CheckRequest) -> CliResult<super::check::CheckOutput> {
-        super::check::execute_request(request, &mut self.authority)
+        super::check::execute_request(request)
     }
 
-    /// Borrow the canonical parser-only session for a fresh test collection request.
-    ///
-    /// The same owner, typed lock and input reconciler used by builds guard retention. Collection mode is part of
-    /// the retained identity and never admits execution artifacts. Standalone files keep canonical discovery.
-    pub fn test_collection_session(
+    /// Open the session a test request collects and executes through, sharing this owner's vocabulary runtime.
+    pub fn test_session(
         &mut self,
-        root: &Path,
         entry: &Path,
         features: &FeatureSelection,
-        sdk_profile: Option<&str>,
-    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
-        self.test_session(root, entry, features, sdk_profile, SessionPurpose::Collection)
-    }
-
-    /// Borrow canonical artifact preparation for fresh test execution, retaining no test outcomes or fixtures.
-    /// The existing project, lock and provider observations guard the same artifact-purpose session used by builds.
-    pub fn test_execution_session(
-        &mut self,
-        root: &Path,
-        entry: &Path,
-        features: &FeatureSelection,
-        sdk_profile: Option<&str>,
-    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
-        self.test_session(root, entry, features, sdk_profile, SessionPurpose::Artifacts)
-    }
-
-    /// Select the original discovery mode for one reconciled test request without a second session cache.
-    fn test_session(
-        &mut self,
-        root: &Path,
-        entry: &Path,
-        features: &FeatureSelection,
-        sdk_profile: Option<&str>,
-        purpose: SessionPurpose,
+        profile: &str,
     ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
         self.authority.begin_request();
-        if !root.join(oven_model::manifest::LOAF_MANIFEST_FILENAME).is_file() {
-            let mut session = match purpose {
-                SessionPurpose::Collection => {
-                    crate::session::CompilationSession::discover_for_collection_with_selections(
-                        entry,
-                        features,
-                        sdk_profile,
-                    )?
-                }
-                SessionPurpose::Artifacts => {
-                    crate::session::CompilationSession::discover_for_oven(entry, features, sdk_profile)?
-                }
-                SessionPurpose::CheckMetadata => {
-                    return Err(CliError::failure("metadata-only checks cannot prepare a test session"));
-                }
-            };
-            session.vocab_runtime = std::sync::Arc::clone(&self.authority.retained_inputs.vocab_runtime);
-            return Ok(std::sync::Arc::new(session));
-        }
-        self.authority
-            .compilation_session(root, entry, features, sdk_profile, purpose)
+        let mut session = crate::session::CompilationSession::discover(entry, features, profile)?;
+        session.vocab_runtime = std::sync::Arc::clone(&self.authority.retained_inputs.vocab_runtime);
+        Ok(std::sync::Arc::new(session))
     }
 
     /// Retain the existing supervised collection for an already admitted native libtest executable.

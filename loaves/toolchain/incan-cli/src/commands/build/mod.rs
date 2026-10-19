@@ -17,7 +17,7 @@ use incan_driver::build::{BuildCommandOptions, RunProfile};
 use incan_driver::build_report::BuildReportOptions;
 use incan_driver::lock::policy::LockPolicy;
 use incan_frontend::diagnostics;
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_rustc::rustc::clear_inherited_cargo_environment;
 
 /// Print human build progress to stderr when stdout is reserved for a machine-readable report.
@@ -335,7 +335,7 @@ mod tests {
     use incan_frontend::{body_ir, lexer, parser};
 
     use incan_frontend::library_manifest::LibraryManifest;
-    use incan_provider::FeatureSelection;
+    use incan_driver::features::FeatureSelection;
     use oven_model::lock::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
 
     #[cfg(feature = "rust_inspect")]

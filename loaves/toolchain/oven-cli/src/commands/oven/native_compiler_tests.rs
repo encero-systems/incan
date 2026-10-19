@@ -358,7 +358,7 @@ fn compilation_features(
     manifest: &ProjectManifest,
 ) -> Result<incan_provider::ResolvedPackageFeatures, Box<dyn std::error::Error>> {
     let selected = incan_provider::PackageFeatureGraph::from_manifest(manifest)?
-        .resolve(&incan_provider::FeatureSelection::default())?;
+        .resolve(&incan_driver::features::FeatureSelection::default())?;
     if !selected.active_optional_dependencies.is_empty()
         || !selected.dependency_features.is_empty()
         || !selected.required_sdk_components.is_empty()

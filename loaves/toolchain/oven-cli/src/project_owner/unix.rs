@@ -709,7 +709,7 @@ mod tests {
                 intent: serde_json::json!({"test_list": {
                     "languages": "Incan", "path": directory.path(), "verbose": false, "include_slow": false,
                     "filter": null, "marker_expr": null, "strict_markers": false,
-                    "test_features": [], "package_features": incan_provider::FeatureSelection::default(),
+                    "test_features": [], "package_features": incan_driver::features::FeatureSelection::default(),
                     "sdk_profile": null, "timeout": null,
                     "cargo_policy": incan_driver::cargo_policy::CargoPolicy::default(),
                 }}),
@@ -798,7 +798,7 @@ mod tests {
             generation: "current".to_string(),
             intent: serde_json::json!({"lock": {
                 "directory": ".", "entry": null,
-                "features": incan_provider::FeatureSelection::default(),
+                "features": incan_driver::features::FeatureSelection::default(),
                 "sdk_profile": null, "cargo_features": oven_model::lock::CargoFeatureSelection::default(),
             }}),
         };
@@ -818,7 +818,7 @@ mod tests {
             intent: serde_json::json!({"test_list": {
                 "languages": "Incan", "path": "tests", "verbose": false, "include_slow": false,
                 "filter": null, "marker_expr": null, "strict_markers": false,
-                "test_features": [], "package_features": incan_provider::FeatureSelection::default(),
+                "test_features": [], "package_features": incan_driver::features::FeatureSelection::default(),
                 "sdk_profile": null, "timeout": null,
                 "cargo_policy": incan_driver::cargo_policy::CargoPolicy::default(),
             }}),

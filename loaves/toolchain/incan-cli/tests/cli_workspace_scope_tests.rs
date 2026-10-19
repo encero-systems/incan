@@ -1042,7 +1042,7 @@ fn workspace_owner_retains_all_members_and_invalidates_sibling_inputs() -> Resul
     let mut request = incan_driver::build::lock_preparation::LockPreparationRequest {
         directory: root.join("a"),
         entry: None,
-        features: incan_provider::FeatureSelection::default(),
+        features: incan_driver::features::FeatureSelection::default(),
         sdk_profile: None,
         cargo_features: oven_model::lock::CargoFeatureSelection::default(),
     };

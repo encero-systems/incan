@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::native_test::{OvenNativeTestCollection, OvenNativeTestRequest, run_native_tests_exact_for_request};
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
@@ -632,7 +632,7 @@ leaf = { optional = false }
 "#,
             std::path::Path::new("/fixture/loaf.toml"),
         )?;
-        let selection = incan_provider::FeatureSelection {
+        let selection = incan_driver::features::FeatureSelection {
             requested: std::collections::BTreeSet::from(["helpers".into()]),
             ..Default::default()
         };
@@ -649,7 +649,7 @@ leaf = { optional = false }
         assert!(!effective.loaf_dependencies["leaf"][0].spec.optional);
         let (_, default_features) = super::resolve_test_manifest(&manifest, &Default::default())?;
         assert!(!default_features.active_features.contains("helpers"));
-        let unknown = incan_provider::FeatureSelection {
+        let unknown = incan_driver::features::FeatureSelection {
             requested: std::collections::BTreeSet::from(["unknown".into()]),
             ..Default::default()
         };
@@ -684,7 +684,7 @@ mixed = { loaf = "mixed", path = "mixed", optional = true, default-features = fa
         let (effective, features) = super::resolve_test_manifest(&manifest, &Default::default())?;
         let inactive = crate::commands::oven::native_compiler_tests::native_test_dependencies(&effective, &features)?;
         assert!(inactive.is_empty());
-        let selection = incan_provider::FeatureSelection {
+        let selection = incan_driver::features::FeatureSelection {
             requested: std::collections::BTreeSet::from(["helpers".into()]),
             ..Default::default()
         };
@@ -800,7 +800,7 @@ mixed = { loaf = "mixed", path = "mixed", optional = true, default-features = fa
             "[project]\nname = \"own-library\"\n[project.features]\ntest_support = []\n",
             &root.join("loaf.toml"),
         )?;
-        let selected = incan_provider::FeatureSelection {
+        let selected = incan_driver::features::FeatureSelection {
             requested: std::collections::BTreeSet::from(["test_support".into()]),
             ..Default::default()
         };

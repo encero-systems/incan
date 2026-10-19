@@ -56,7 +56,7 @@ thread_local! {
 fn prepare_test_command_session(
     representative_test: &Path,
     list_only: bool,
-    package_features: &incan_provider::FeatureSelection,
+    package_features: &incan_driver::features::FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> CliResult<Arc<CompilationSession>> {
     #[cfg(test)]
@@ -1369,7 +1369,7 @@ pub(crate) struct TestCollectionOptions {
     marker_expr: Option<String>,
     strict_markers: bool,
     test_features: Vec<String>,
-    package_features: incan_provider::FeatureSelection,
+    package_features: incan_driver::features::FeatureSelection,
     sdk_profile: Option<String>,
     timeout: Option<String>,
     lock_policy: LockPolicy,
@@ -2256,7 +2256,7 @@ mod tests {
             jobs: 1,
             isolate: false,
             test_features: Vec::new(),
-            package_features: incan_provider::FeatureSelection::default(),
+            package_features: incan_driver::features::FeatureSelection::default(),
             sdk_profile: None,
             timeout: None,
             no_capture: false,
@@ -2294,7 +2294,7 @@ mod tests {
         let representative = candidates
             .representative_path(&authority_root)
             .ok_or("test candidate inventory has no representative")?;
-        let package_features = incan_provider::FeatureSelection::default();
+        let package_features = incan_driver::features::FeatureSelection::default();
         let session = prepare_test_command_session(representative, false, &package_features, None)?;
         let test_files = discover_test_files_with_session(&candidates, &authority_root, session.as_ref());
         assert_eq!(test_files.len(), 2);

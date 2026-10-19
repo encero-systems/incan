@@ -6,14 +6,13 @@
 use std::path::PathBuf;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
 
 /// Generate or update oven.lock for a project.
 pub fn lock_project(
     entry_file: Option<&PathBuf>,
     package_features: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
 ) -> CliResult<ExitCode> {
     let start_dir = entry_file
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -25,7 +24,6 @@ pub fn lock_project(
             .transpose()
             .map_err(|error| CliError::failure(error.to_string()))?,
         features: package_features.clone(),
-        sdk_profile: sdk_profile_override.map(str::to_owned),
         cargo_features: CargoFeatureSelection::default(),
     })?;
 

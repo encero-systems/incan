@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::error::{CliError, CliResult};
 use crate::lock::workspace::{collect_project_lock_context, collect_workspace_lock_context};
-use incan_provider::FeatureSelection;
+use crate::features::FeatureSelection;
 use incan_provider::requirements::semantic_sdk_path_dependencies;
 use oven_model::lock::{
     CargoFeatureSelection, IncanLock, LockedProvider, SemanticLockState, compute_resolved_fingerprint_with_sdk_paths,

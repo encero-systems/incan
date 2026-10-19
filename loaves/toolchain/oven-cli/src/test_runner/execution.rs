@@ -15,7 +15,7 @@ use incan_driver::lock::policy::LockPolicy;
 use incan_driver::lock::resolution::validate_oven_lock_policy_with_session;
 use incan_driver::testing::infer_test_project_root_without_manifest;
 use incan_driver::testing::types::{TestInfo, TestResult};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
 
 #[derive(Debug, Clone, Default)]

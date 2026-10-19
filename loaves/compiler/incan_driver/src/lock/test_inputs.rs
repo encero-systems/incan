@@ -141,7 +141,7 @@ fn discover_project_test_files_observed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_provider::FeatureSelection;
+    use crate::features::FeatureSelection;
 
     #[test]
     fn lock_collects_test_imported_source_modules_as_normal_deps() -> Result<(), Box<dyn std::error::Error>> {

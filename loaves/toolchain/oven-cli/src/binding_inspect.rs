@@ -21,7 +21,7 @@ use incan_frontend::typechecker::{
     CBindingBuffer, CBindingDescriptor, CBindingOutcome, CBindingType, COutputMode, CResourceAccess,
     c_binding_descriptor_identity,
 };
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_interop::{
     default_interop_execution_receipt_path, load_interop_execution_receipt, validate_interop_execution_receipt,
 };

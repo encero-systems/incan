@@ -1,23 +1,21 @@
 //! Canonical metadata-only checking and stable diagnostic reports shared by command and service clients.
 //!
-//! Checking may inspect unbaked local dependencies, but cannot authorize their execution or native publication.
-//! Clients render the returned report; dependency discovery, module collection and typechecking stay in this driver.
+//! Checking reads the Loaves a program imports from their artifacts and never executes or publishes anything.
+//! Clients render the returned report; module collection and typechecking stay in this driver.
 
 use std::env;
 use std::path::{Path, PathBuf};
 
 use incan_frontend::diagnostics::{self, StableDiagnostic};
-use incan_provider::FeatureSelection;
 use serde::{Deserialize, Serialize};
 
-use super::retained_inputs::ModelInputs;
 use crate::backend::c_abi::CAbiVerificationPlan;
 use crate::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
 use crate::error::{CliError, CliResult};
+use crate::features::FeatureSelection;
 use crate::modules::collect_modules_detailed_with_session;
-use crate::session::CompilationSession;
-use crate::typecheck::typecheck_modules_with_import_graph_artifacts;
-use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::session::{CompilationSession, DEFAULT_PROFILE};
+use crate::typecheck::typecheck_modules;
 
 /// Explicit metadata-only check selection carried by the existing project-owner protocol.
 #[derive(Serialize, Deserialize)]
@@ -27,8 +25,8 @@ pub struct CheckRequest {
     pub path: PathBuf,
     /// Existing package-feature selection, independent from rendering choices.
     pub features: FeatureSelection,
-    /// Explicit provider-profile override, when the caller selected one.
-    pub sdk_profile: Option<String>,
+    /// The build profile whose Loaf artifacts the check reads; the default profile when absent.
+    pub profile: Option<String>,
     /// Declared C ABI verification target; never a native execution target.
     pub interop_target: Option<String>,
 }
@@ -47,57 +45,18 @@ pub struct CheckOutput {
     pub warnings: Vec<String>,
 }
 
-/// A completed frontend report inside the existing dependency session, guarded by its original source owners.
-/// Failed analysis and external inspection keep canonical checking until their complete inputs can be retained.
-pub(super) struct CompletedCheck {
-    entry: PathBuf,
-    interop_target: Option<String>,
-    report: DiagnosticReport,
-    warnings: Vec<String>,
-    inputs: ModelInputs,
-    source_metadata: StdlibAstCache,
-}
-
-impl CompletedCheck {
-    /// Reuse diagnostics only while source text, topology and original consulted metadata remain unchanged.
-    fn matches(&self, entry: &Path, interop_target: Option<&str>) -> bool {
-        self.entry == entry
-            && self.interop_target.as_deref() == interop_target
-            && self.inputs.supports_retention()
-            && self.inputs.current()
-            && self.source_metadata.supports_generation_reuse()
-    }
-}
-
 /// Evaluate the single canonical check operation and transport its original diagnostics without native authority.
-pub(super) fn execute_request(
-    request: &CheckRequest,
-    authority: &mut super::ProjectSourceAuthorityDigester,
-) -> CliResult<CheckOutput> {
+pub(super) fn execute_request(request: &CheckRequest) -> CliResult<CheckOutput> {
     if !request.path.is_absolute() {
         return Err(CliError::failure("owner requires an absolute check path"));
     }
     let (result, warnings) = crate::diagnostics::capture_warning_output(|| {
-        authority.begin_request();
-        check_path_report_with_session(&request.path, request.interop_target.as_deref(), |entry| {
-            let inferred = crate::project::resolve_project_root(entry);
-            let manifest = oven_model::manifest::ProjectManifest::discover(&inferred)
-                .map_err(|error| CliError::failure(error.to_string()))?;
-            if let Some(manifest) = manifest {
-                let session = authority.compilation_session(
-                    manifest.project_root(),
-                    entry,
-                    &request.features,
-                    request.sdk_profile.as_deref(),
-                    super::retained_inputs::SessionPurpose::CheckMetadata,
-                )?;
-                let report = authority.check_report(manifest.project_root(), &session);
-                Ok((session, report))
-            } else {
-                CompilationSession::discover_for_check(entry, &request.features, request.sdk_profile.as_deref())
-                    .map(|session| (std::sync::Arc::new(session), None))
-            }
-        })
+        check_path_report(
+            &request.path,
+            &request.features,
+            request.profile.as_deref().unwrap_or(DEFAULT_PROFILE),
+            request.interop_target.as_deref(),
+        )
     });
     match result {
         Ok(report) => Ok(CheckOutput {
@@ -155,42 +114,21 @@ impl DiagnosticReport {
 ///
 /// This is the single-project compiler boundary used by both `incan check` and RFC 077 workspace command fan-out. It
 /// deliberately retains stable diagnostics rather than printing them as soon as a member fails.
-pub fn check_path_report_with_selections(
+
+/// Run the canonical check pipeline for one package-feature projection, profile and optional declared C ABI target,
+/// without rendering it.
+///
+/// This is the single-project compiler boundary used by both `incan check` and RFC 077 workspace command fan-out. It
+/// retains stable diagnostics rather than printing them as soon as a member fails.
+pub fn check_path_report(
     path: &Path,
     feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-) -> CliResult<DiagnosticReport> {
-    check_path_report_with_interop_target_selection(path, feature_selection, sdk_profile_override, None)
-}
-
-/// Run one canonical package-feature, SDK-profile, and declared C ABI target projection without rendering it.
-pub fn check_path_report_with_interop_target_selection(
-    path: &Path,
-    feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
+    profile: &str,
     interop_target: Option<&str>,
-) -> CliResult<DiagnosticReport> {
-    check_path_report_with_session(path, interop_target, |entry| {
-        CompilationSession::discover_for_check(entry, feature_selection, sdk_profile_override)
-            .map(|session| (std::sync::Arc::new(session), None))
-    })
-}
-
-/// Run one check pipeline using a fresh or reconciled metadata-only session from the caller's existing owner.
-/// Source collection, provider selection and typechecking are identical for service and direct report callers.
-fn check_path_report_with_session<'a>(
-    path: &Path,
-    interop_target: Option<&str>,
-    session: impl FnOnce(
-        &Path,
-    ) -> CliResult<(
-        std::sync::Arc<CompilationSession>,
-        Option<&'a mut Option<CompletedCheck>>,
-    )>,
 ) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
     let normalized_path = normalize_input_path(path)?;
-    let (compilation_session, mut retained) = match session(&normalized_path) {
+    let session = match CompilationSession::discover(&normalized_path, feature_selection, profile) {
         Ok(session) => session,
         Err(error) => {
             let failure = CliDiagnosticFailure::single(
@@ -202,148 +140,43 @@ fn check_path_report_with_session<'a>(
             return Ok(diagnostic_report_from_failure(failure));
         }
     };
-    // ---- Completed frontend result for this reconciled dependency session ----
-    if let Some(report) = retained.as_deref().and_then(Option::as_ref)
-        && report.matches(&normalized_path, interop_target)
-    {
-        for warning in &report.warnings {
-            crate::diagnostics::emit_warning_output(warning.clone());
-        }
-        tracing::trace!(target: "incan::invocation", decision = "reuse_check_report");
-        return Ok(report.report.clone());
-    }
-    if let Some(slot) = retained.as_deref_mut() {
-        *slot = None;
-    }
-
-    // ---- Observe authored inputs before canonical collection and analysis ----
-    let manifest = compilation_session.manifest.clone();
-    let source_root = manifest
-        .as_ref()
-        .map(|manifest| crate::project::resolve_source_root(manifest.project_root(), Some(manifest)));
-    let mut inputs = ModelInputs::default();
-    if retained.is_some() {
-        inputs.observe(&normalized_path);
-        if let Some(root) = &source_root {
-            if incan_frontend::library_manifest::visit_provider_artifact_inputs(root, &mut |path| inputs.observe(path))
-                .is_err()
-            {
-                inputs.disable_retention();
-            }
-        } else {
-            inputs.disable_retention();
-        }
-    } else {
-        inputs.disable_retention();
-    }
-    let (checked, warnings) = crate::diagnostics::capture_warning_output(|| {
-        check_collected_report(
-            &normalized_path,
-            interop_target,
-            &compilation_session,
-            &mut inputs,
-            source_root.as_deref(),
-        )
-    });
-    for warning in &warnings {
-        crate::diagnostics::emit_warning_output(warning.clone());
-    }
-    let (report, metadata) = checked?;
-
-    // ---- Install only a complete result whose original inputs still match ----
-    if let Some(slot) = retained
-        && let Some(source_metadata) = metadata
-    {
-        let inputs_supported = inputs.supports_retention();
-        let inputs_current = inputs_supported && inputs.current();
-        let metadata_current = source_metadata.supports_generation_reuse();
-        tracing::trace!(target: "incan::invocation", decision = "check_report_admission", inputs_supported, inputs_current, metadata_current);
-        if !inputs_current || !metadata_current {
-            return Ok(report);
-        }
-        *slot = Some(CompletedCheck {
-            entry: normalized_path,
-            interop_target: interop_target.map(str::to_owned),
-            report: report.clone(),
-            warnings,
-            inputs,
-            source_metadata,
-        });
-    }
-    Ok(report)
-}
-
-/// Execute the single canonical collection/check pipeline, preserving metadata owners only for observable inputs.
-fn check_collected_report(
-    normalized_path: &Path,
-    interop_target: Option<&str>,
-    compilation_session: &CompilationSession,
-    inputs: &mut ModelInputs,
-    source_root: Option<&Path>,
-) -> CliResult<(DiagnosticReport, Option<StdlibAstCache>)> {
-    let manifest = compilation_session.manifest.clone();
     let c_abi_plan = interop_target
-        .map(|target| select_interop_c_abi_verification_plan(manifest.as_ref(), target))
+        .map(|target| select_interop_c_abi_verification_plan(session.manifest.as_ref(), target))
         .transpose()?;
-    let modules = match collect_modules_detailed_with_session(normalized_path.to_path_buf(), compilation_session) {
+    let modules = match collect_modules_detailed_with_session(normalized_path.clone(), &session) {
         Ok(modules) => modules,
-        Err(failure) => return Ok((diagnostic_report_from_failure(failure), None)),
+        Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
-    if modules.iter().any(|module| {
-        module.file_path != normalized_path && !source_root.is_some_and(|root| module.file_path.starts_with(root))
-    }) {
-        tracing::trace!(target: "incan::invocation", decision = "check_report_unretained", reason = "module_outside_observed_source_root");
-        inputs.disable_retention();
-    }
-    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     #[cfg(feature = "rust_inspect")]
-    let rust_inspect_manifest_dir = compilation_session.prepare_check_rust_inspection(normalized_path, &modules)?;
-
+    let rust_inspect = session.prepare_check_rust_inspection(&normalized_path, &modules)?;
     #[cfg(feature = "rust_inspect")]
-    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+    if let Some(workspace) = rust_inspect.as_ref() {
         workspace.verify_ordinary_native()?;
     }
-    let typecheck = typecheck_modules_with_import_graph_artifacts(
+    let typecheck = typecheck_modules(
         &modules,
-        manifest.as_ref(),
-        &provider_plan,
+        session.manifest.as_ref(),
+        session.loaves(),
+        session.own_standard_package(),
         c_abi_plan.as_ref(),
         #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir
-            .as_ref()
-            .map(|workspace| workspace.manifest_dir()),
+        rust_inspect.as_ref().map(|workspace| workspace.manifest_dir()),
     );
-
     #[cfg(feature = "rust_inspect")]
-    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+    if let Some(workspace) = rust_inspect.as_ref() {
         workspace.verify_ordinary_native()?;
     }
-
     match typecheck {
-        Ok(artifacts) => {
-            #[cfg(feature = "rust_inspect")]
-            if rust_inspect_manifest_dir.is_some() {
-                tracing::trace!(target: "incan::invocation", decision = "check_report_unretained", reason = "rust_inspection_workspace");
-                inputs.disable_retention();
-            }
-            if c_abi_plan.is_some() || artifacts.type_infos.iter().any(|info| !info.c_abi.bindings.is_empty()) {
-                inputs.disable_retention();
-            }
-            Ok((
-                DiagnosticReport {
-                    schema_version: CHECK_REPORT_SCHEMA_VERSION,
-                    ok: true,
-                    diagnostics: stable_diagnostics_from(&artifacts.warnings),
-                    human_message: None,
-                },
-                Some(artifacts.stdlib_cache),
-            ))
-        }
-        Err(failure) => Ok((diagnostic_report_from_failure(failure), None)),
+        Ok(checked) => Ok(DiagnosticReport {
+            schema_version: CHECK_REPORT_SCHEMA_VERSION,
+            ok: true,
+            diagnostics: stable_diagnostics_from(&checked.warnings),
+            human_message: None,
+        }),
+        Err(failure) => Ok(diagnostic_report_from_failure(failure)),
     }
 }
 
-/// Select exactly one Oven interop C ABI profile for an invocation that names `--interop-target`.
 fn select_interop_c_abi_verification_plan(
     manifest: Option<&oven_model::manifest::ProjectManifest>,
     requested_target: &str,

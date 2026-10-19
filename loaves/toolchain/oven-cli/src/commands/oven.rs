@@ -26,7 +26,7 @@ use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenOutputFormat};
 use incan_driver::interop_plan::locked_interop_plan_target;
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use oven_interop::{
     OvenInteropAdapter, OvenInteropAdapterStageRequest, OvenInteropCapabilitySelection, OvenInteropNativeBakeRequest,
     bake_interop_native_plan, default_interop_execution_receipt_path, load_interop_execution_receipt,

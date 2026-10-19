@@ -2,7 +2,7 @@
 use crate::workspace_scope::{resolve_workspace_command_scope, workspace_member_relative_path};
 use crate::{CliError, CliResult, ExitCode, test_runner};
 use incan_driver::lock::policy::{LockPolicy, LockPolicyCliFlags};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 use std::path::{Path, PathBuf};
 
 /// Apply shared test options through canonical workspace selection and the retained owner.

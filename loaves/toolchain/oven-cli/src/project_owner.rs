@@ -86,14 +86,14 @@ struct CheckIntent {
 /// Non-Unix clients use the same driver operation in process; transport failure never starts another compiler route.
 pub fn check(
     path: &Path,
-    features: &incan_provider::FeatureSelection,
-    sdk_profile: Option<&str>,
+    features: &incan_driver::features::FeatureSelection,
+    profile: Option<&str>,
     interop_target: Option<&str>,
 ) -> CliResult<incan_driver::build::check::CheckOutput> {
     let request = incan_driver::build::check::CheckRequest {
         path: std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?,
         features: features.clone(),
-        sdk_profile: sdk_profile.map(str::to_owned),
+        profile: profile.map(str::to_owned),
         interop_target: interop_target.map(str::to_owned),
     };
     #[cfg(unix)]

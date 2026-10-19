@@ -22,7 +22,7 @@ use crate::modules::{
 use crate::session::CompilationSession;
 use incan_frontend::ParsedModule;
 use incan_frontend::ast::{Declaration, ImportKind};
-use incan_provider::FeatureSelection;
+use crate::features::FeatureSelection;
 use incan_provider::dependency_resolver::{ResolvedDependencies, resolve_reachable_dependencies};
 use incan_provider::inventory::extend_requirements_with_provider_plan;
 use incan_provider::lock_semantics::semantic_lock_state;

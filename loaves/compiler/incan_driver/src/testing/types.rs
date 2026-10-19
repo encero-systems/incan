@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 
 use crate::lock::policy::LockPolicy;
 

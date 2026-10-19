@@ -28,7 +28,7 @@ use crate::error::{CliError, CliResult};
 use policy::LockPolicy;
 
 use incan_frontend::ParsedModule;
-use incan_provider::FeatureSelection;
+use crate::features::FeatureSelection;
 use incan_provider::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use incan_provider::requirements::ProjectRequirements;
 use oven_model::lock::{CargoFeatureSelection, SemanticLockState};

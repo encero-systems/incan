@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
 use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION};
-use incan_provider::FeatureSelection;
+use incan_driver::features::FeatureSelection;
 
 #[cfg(test)]
 use incan_driver::{build::check::check_path_report_with_selections, session::CompilationSession};
