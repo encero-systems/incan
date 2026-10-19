@@ -6302,8 +6302,6 @@
       
         
       
-        
-      
     
     
     
@@ -6390,34 +6388,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7801,6 +7771,8 @@
       
         
       
+        
+      
     
     
     
@@ -7943,6 +7915,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8427,8 +8427,6 @@
       
         
       
-        
-      
     
     
     
@@ -8487,34 +8485,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9035,6 +9005,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9216,7 +9190,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9721,7 +9765,7 @@
 <ul>
 <li>Defining the exact wire encoding. This RFC fixes the contract and constrains the encoding to be binary; it does not select a specific binary format.</li>
 <li>Replacing the compiled Rust library. Packages continue to ship one, and it remains what the Rust-linking route uses.</li>
-<li>Making a package's private implementation executable. Only the public surface is in scope.</li>
+<li>Making private declarations importable or callable as consumer-selected roots. Required private implementation may execute through a public entry point.</li>
 <li>Cross-version execution guarantees. A representation produced by one compiler release need not be interpretable by another; it must only say so clearly.</li>
 <li>Rust-hosted callers, which RFC 097 owns, and the interop surface a package may expose to Rust.</li>
 </ul>
@@ -9735,12 +9779,13 @@
 <p>A published representation <strong>must</strong> identify every declaration it covers by the canonical identity that declaration carries in the package's own manifest. A representation <strong>must not</strong> identify a declaration by source spelling, by module path, or by any generated Rust name.</p>
 <p>A representation <strong>must</strong> be produced by the compilation that declares the symbols it covers. A consumer <strong>must not</strong> synthesize a representation for a dependency, including when that dependency's source is available to it.</p>
 <p>A representation <strong>must</strong> carry a version distinct from the manifest's. A consumer <strong>must</strong> refuse a representation whose version it does not support, and that refusal <strong>must not</strong> invalidate the manifest or the package.</p>
-<p>A representation <strong>must</strong> be self-consistent with the manifest it accompanies: every identity it covers <strong>must</strong> appear in that manifest's public surface, and a representation <strong>must not</strong> cover a declaration the package does not export.</p>
+<p>A representation <strong>must</strong> be self-consistent with the manifest it accompanies: its public coverage index <strong>must</strong> contain exactly that manifest's public identities owned by the package. Internal implementation dependencies <strong>must</strong> be indexed separately and <strong>must not</strong> become public exports or consumer-selected resolution roots.</p>
 <p>A consumer that requires a representation and cannot obtain a usable one <strong>must</strong> refuse before producing any result or publishing an execution receipt. The refusal <strong>must</strong> name the package, the version, and the requirement that was not met. It <strong>must not</strong> silently select another route, and it <strong>must not</strong> report the condition as an unsupported language construct.</p>
 <p>A consumer <strong>must</strong> resolve an imported declaration to its representation through canonical identity alone. Where a package's declaration is a projection of another — an alias, a re-export, or a facade — the consumer <strong>must</strong> resolve to the declaration the identity names rather than to the projection's spelling.</p>
 <p>A representation <strong>must</strong> use a binary encoding. A self-describing text encoding <strong>must not</strong> be used: measured against the same content, JSON was an order of magnitude larger and several times slower to decode than a binary encoding, and a representation is read by every consumer of the package on every route that needs it.</p>
 <p>A representation <strong>must</strong> be addressable by canonical identity without decoding the whole of it. A consumer that calls three declarations of four hundred <strong>must not</strong> be required to load four hundred.</p>
-<p>A representation <strong>must not</strong> expose a package's private declarations, its compiler-session state, or its generated Rust layout. A consumer <strong>must not</strong> derive compatibility from any of those, and <strong>must</strong> derive it from the declared version and requirements alone.</p>
+<p>A representation <strong>may</strong> retain private bodies, defaults and type layouts required by covered public declarations. Such content <strong>must</strong> come from the declaring compilation's checked facts and <strong>must</strong> be reachable through the public execution closure; unrelated private declarations <strong>must not</strong> be retained. A consumer <strong>must</strong> authorize private content only through same-package requirements of selected fragments. Explicit private roots and requirements originating in another package <strong>must</strong> resolve against the public index and <strong>must</strong> be refused if absent there. Private layout fields remain private to source-level import and access checking.</p>
+<p>A representation <strong>must not</strong> carry compiler-session state or generated Rust layout. Its implementation payload is executable content and provides no confidentiality guarantee for retained private names or behavior. A consumer <strong>must not</strong> derive compatibility from private content, compiler-session state or generated Rust layout, and <strong>must</strong> derive it from the declared version and requirements alone.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <p>The representation is a third product of a library build, beside the manifest and the compiled artifact. It is keyed by canonical identity, which is already the manifest's currency, so the two are joined by the identity space rather than by file naming or ordering.</p>
 <p>Versioning is separate from the manifest deliberately. A consumer that understands a package's exports but not its representation is in a recoverable position: it can typecheck, report precisely, and continue on a route that does not need the representation. Collapsing the two versions would turn an execution-route limitation into a packaging incompatibility.</p>
@@ -9808,7 +9853,7 @@
 </ul>
 <h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
 <h3 id="phase-1-public-executable-publication">Phase 1: Public executable publication<a class="headerlink" href="#phase-1-public-executable-publication" title="Permanent link">&para;</a></h3>
-<p>Produce the representation from the compilation that finalizes the manifest. Select declarations through its canonical public graph, record explicit uncovered reasons, and retain the complete public execution closure, including defaults, deferred computations and required type context. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Exclude private declarations and compiler-session identities. A public declaration that cannot satisfy those constraints remains uncovered.</p>
+<p>Produce the representation from the compilation that finalizes the manifest. Select public roots through its canonical public graph, record explicit uncovered reasons, and retain their complete execution closure, including private helpers, defaults, recursion, deferred computations and required type layouts. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Separate required private content from finalized public coverage, omit unrelated private declarations and compiler-session identities, and keep missing or unsupported dependencies uncovered transitively. A public declaration that cannot satisfy those constraints remains uncovered.</p>
 <h3 id="phase-2-versioned-selective-consumption">Phase 2: Versioned selective consumption<a class="headerlink" href="#phase-2-versioned-selective-consumption" title="Permanent link">&para;</a></h3>
 <p>Separate the stable version prefix and coverage index from individually addressable declaration payloads. Resolve dependency aliases and facades through the selected package graph, retaining the declaring identity and version. Load only required bodies and type context, and reject malformed, incompatible or incomplete requirements before execution.</p>
 <h3 id="phase-3-execution-and-refusal-parity">Phase 3: Execution and refusal parity<a class="headerlink" href="#phase-3-execution-and-refusal-parity" title="Permanent link">&para;</a></h3>
@@ -9821,7 +9866,8 @@
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Review the RFC contract and establish an independent implementation and acceptance design.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Select published identities from the finalized manifest, including public members and canonical facade targets.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Record uncovered exports separately from empty executable bodies.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Close public requirements over defaults, deferred computations, callees and type context without publishing compiler-session state.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Retain reachable checked private implementation in a separate dependency index, preserving public imports and explicit-root refusal.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Share checked dependency relationships with RFC 106 codegraph and prove agreement for aliases, facades, members, type context and defaults without another analysis pass.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Publish semantic content from the same checked compilation as the manifest and native artifact.</li>
 </ul>

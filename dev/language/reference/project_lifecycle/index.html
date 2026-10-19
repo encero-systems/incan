@@ -6528,8 +6528,6 @@
       
         
       
-        
-      
     
     
     
@@ -6616,34 +6614,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -8027,6 +7997,8 @@
       
         
       
+        
+      
     
     
     
@@ -8169,6 +8141,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8653,8 +8653,6 @@
       
         
       
-        
-      
     
     
     
@@ -8713,34 +8711,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9261,6 +9231,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9442,7 +9416,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -10108,7 +10152,7 @@ incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </spa
 <span class="k">[rust-dependencies]</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">workspace</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[tool.incan.envs.ci]</span>
+<span class="k">[envs.ci]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;workspace:ci&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own <code>optional</code> use. Shared declarations are inactive until a member declares <code>{ workspace = true }</code>; a member-local <code>oven.lock</code> is never authoritative.</p>
@@ -10172,7 +10216,7 @@ incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class
 <td>Rust crate dependencies available only to tests</td>
 </tr>
 <tr>
-<td><code>[tool.incan.envs.&lt;name&gt;]</code></td>
+<td><code>[envs.&lt;name&gt;]</code></td>
 <td>Named lifecycle environments for <code>incan env</code></td>
 </tr>
 <tr>
@@ -10348,7 +10392,7 @@ incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </
 <span class="n">main</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span>
 <span class="n">migrate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/migrate.incn&quot;</span>
 </code></pre></div>
-<p>These are Incan entry points, not shell commands. Use <code>[tool.incan.envs.&lt;name&gt;.scripts]</code> for shell-style command argv lists.</p>
+<p>These are Incan entry points, not shell commands. Use <code>[envs.&lt;name&gt;.scripts]</code> for shell-style command argv lists.</p>
 <h2 id="source-root">Source root<a class="headerlink" href="#source-root" title="Permanent link">&para;</a></h2>
 <p>The source root controls how local imports resolve.</p>
 <p>Resolution order:</p>
@@ -10463,32 +10507,32 @@ incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"
 </tbody>
 </table>
 <p>Example configuration:</p>
-<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[envs.default]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_NO_BANNER</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[tool.incan.envs.default.scripts]</span>
+<span class="k">[envs.default.scripts]</span>
 <span class="n">run</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.unit]</span>
+<span class="k">[envs.unit]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_FANCY_ERRORS</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[tool.incan.envs.unit.scripts]</span>
+<span class="k">[envs.unit.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;tests/&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.ci]</span>
+<span class="k">[envs.ci]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;unit&quot;</span><span class="p">]</span>
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4,&lt;0.5&quot;</span>
 
-<span class="k">[tool.incan.envs.ci.scripts]</span>
+<span class="k">[envs.ci.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;tests/&quot;</span><span class="p">]</span>
 <span class="n">build</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;build&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.docs]</span>
+<span class="k">[envs.docs]</span>
 <span class="n">detached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">cwd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;workspaces/docs-site&quot;</span>
 
-<span class="k">[tool.incan.envs.docs.scripts]</span>
+<span class="k">[envs.docs.scripts]</span>
 <span class="n">build</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;python3&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;-m&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;mkdocs&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;build&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--strict&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>Example commands:</p>
@@ -10505,7 +10549,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </span>unit<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--dry-run<span class="w"> </span>--<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;greet&quot;</span>
 </code></pre></div>
 <p>Arguments after <code>--</code> are appended to the configured script argv.</p>
-<p><code>incan env show</code> with no env name prints a compact overview table, similar to Hatch. <code>incan env show default</code> works even when <code>[tool.incan.envs.default]</code> is not declared. In that case, <code>default</code> exposes the project base overlay with no extra overrides.</p>
+<p><code>incan env show</code> with no env name prints a compact overview table, similar to Hatch. <code>incan env show default</code> works even when <code>[envs.default]</code> is not declared. In that case, <code>default</code> exposes the project base overlay with no extra overrides.</p>
 <p>Typical pattern:</p>
 <ul>
 <li><code>default</code> for shared baseline commands and environment variables</li>
@@ -10525,7 +10569,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <tbody>
 <tr>
 <td><code>extends</code></td>
-<td>list of strings</td>
+<td>string or list of strings</td>
 <td>Other environments to merge before this one</td>
 </tr>
 <tr>
@@ -10558,7 +10602,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <p>An env-level <code>requires-incan</code> is combined with the project requirement and any inherited env requirements. This can make an automation env stricter than day-to-day development without weakening the project baseline. Use <code>incan env show &lt;env&gt;</code> or <code>incan env run &lt;env&gt; &lt;script&gt; --dry-run</code> to inspect the effective requirement and current compatibility before running the script.</p>
 <p>RFC 073 also reserves declarative environment matrices, but matrix expansion is not part of the <code>0.3</code> lifecycle implementation. Named envs resolve one configuration unless a later release documents matrix support.</p>
 <p>Dependency overlay tables may also be used for environment-specific dependencies:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.integration.rust-dev-dependencies]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[envs.integration.rust-dev-dependencies]</span>
 <span class="n">testcontainers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.15&quot;</span>
 </code></pre></div>
 <h2 id="environment-merge-rules">Environment merge rules<a class="headerlink" href="#environment-merge-rules" title="Permanent link">&para;</a></h2>
@@ -10592,7 +10636,8 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 </tr>
 </tbody>
 </table>
-<p><code>default</code> is always present conceptually; declaring <code>[tool.incan.envs.default]</code> customizes it rather than creating it from nothing. Duplicate environment inclusion and inheritance cycles are errors. Use <code>incan env show &lt;env&gt;</code> to debug the resolved overlay chain.</p>
+<p>The standard <code>dev</code>, <code>test</code>, <code>lint</code>, and <code>docs</code> environments always exist. Unless detached or given explicit parents, <code>test</code>, <code>lint</code>, and <code>docs</code> inherit <code>dev</code>. The ambient <code>default</code> environment remains available; <code>[envs.default]</code> customizes it. <code>extends</code> accepts one name or an ordered list. Duplicate inclusion and cycles are errors. The retired <code>[tool.incan.envs]</code> placement is rejected with a migration diagnostic. Use <code>incan env show &lt;env&gt;</code> to inspect the resolved chain.</p>
+<p>Rust roots selected by <code>oven tests</code> resolve the <code>test</code> dependency overlay through this environment model. The resulting dependencies are a command-local manifest view; they do not modify ordinary production dependencies on disk.</p>
 <p>Practical implications:</p>
 <ul>
 <li>Use <code>default</code> for shared baseline behavior such as <code>INCAN_NO_BANNER=1</code> or common <code>run</code> / <code>test</code> scripts.</li>

@@ -6308,8 +6308,6 @@
       
         
       
-        
-      
     
     
     
@@ -6396,34 +6394,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7812,6 +7782,8 @@
       
         
       
+        
+      
     
     
     
@@ -7954,6 +7926,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8586,8 +8586,6 @@
       
         
       
-        
-      
     
     
     
@@ -8646,34 +8644,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9194,6 +9164,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9375,7 +9349,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -10168,7 +10212,7 @@
 </tr>
 <tr>
 <td>Test discovery, module graph, reporting, types</td>
-<td><code>loaves/compiler/incan_driver/src/testing/{discovery,module_graph,types}.rs</code>, <code>loaves/toolchain/incan-cli/src/test_runner/reporter.rs</code></td>
+<td><code>loaves/compiler/incan_driver/src/testing/{discovery,module_graph,types}.rs</code>, <code>loaves/toolchain/oven-cli/src/test_runner/reporter.rs</code></td>
 <td>Semantic source-level test discovery and result presentation, no Oven/project state</td>
 <td>~2,740 combined</td>
 <td><code>discovery</code> 828/33, <code>module_graph</code> 127/3, <code>reporter</code> 0/0 ⚠️, <code>types</code> 0/0 ⚠️</td>
@@ -10200,13 +10244,13 @@
 </tr>
 <tr>
 <td><code>incan build</code> / <code>incan run</code> / <code>incan inspect rust</code></td>
-<td><code>loaves/toolchain/incan-cli/src/commands/build.rs</code>, <code>loaves/compiler/incan_driver/src/build/</code>, <code>loaves/oven/oven_rustc/src/plan.rs</code></td>
+<td><code>loaves/toolchain/incan-cli/src/commands/build/mod.rs</code>, <code>loaves/compiler/incan_driver/src/build/</code>, <code>loaves/oven/oven_rustc/src/plan.rs</code></td>
 <td>The original audit found plan selection mixed into the CLI. The CLI now delegates build orchestration to <code>incan_driver</code>; native plan composition and selection live in <code>oven_rustc</code>. This records the settled Rust ownership split, not completion of the separate native-Incan CLI goal.</td>
 <td>Historical: 4,599 / 82 in the original combined file</td>
 </tr>
 <tr>
 <td>Test harness build/execution</td>
-<td><code>loaves/toolchain/incan-cli/src/test_runner/execution.rs</code></td>
+<td><code>loaves/toolchain/oven-cli/src/test_runner/execution.rs</code></td>
 <td>Same shim-vs-core blur as <code>build.rs</code> — it does call into Oven's plan/store, but also independently constructs build-unit inputs rather than making one clean delegation call. <strong>Decided</strong> alongside <code>build.rs</code> in <a href="https://github.com/encero-systems/incan/issues/1094">#1094</a>; tracked for implementation by #1095.</td>
 <td>513 / 23</td>
 </tr>

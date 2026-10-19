@@ -6313,8 +6313,6 @@
       
         
       
-        
-      
     
     
     
@@ -6401,34 +6399,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7247,21 +7217,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#refusals" class="md-nav__link">
+  <a href="#resolution-refusals" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Refusals
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#execution-report" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Execution report
+        Resolution refusals
       
     </span>
   </a>
@@ -7916,6 +7875,8 @@
       
         
       
+        
+      
     
     
     
@@ -8058,6 +8019,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8542,8 +8531,6 @@
       
         
       
-        
-      
     
     
     
@@ -8602,34 +8589,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9150,6 +9109,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9331,7 +9294,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9794,21 +9827,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#refusals" class="md-nav__link">
+  <a href="#resolution-refusals" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Refusals
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#execution-report" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Execution report
+        Resolution refusals
       
     </span>
   </a>
@@ -9847,8 +9869,7 @@
 
 
 <h1 id="package-executable-representation">Package executable representation<a class="headerlink" href="#package-executable-representation" title="Permanent link">&para;</a></h1>
-<p>A built Incan library can publish checked executable content for its public declarations. The replacement backend reads that content to execute supported package calls without the producer's Incan source or native linking. The native backend continues to consume the compiled library.</p>
-<p>For command steps, see <a href="../../how-to/execute_published_package/">Execute a published package</a>.</p>
+<p>A built Incan library can publish checked executable content for its public declarations, beside its compiled library. <code>incan inspect representation</code> reports its coverage.</p>
 <h2 id="artifact-layout">Artifact layout<a class="headerlink" href="#artifact-layout" title="Permanent link">&para;</a></h2>
 <p>The <code>.incnlib</code> manifest selects one immutable binary file beside it:</p>
 <div class="language-text highlight"><pre><span></span><code>target/lib/
@@ -9870,7 +9891,7 @@
 <tr>
 <td><code>representation_version</code></td>
 <td>unsigned integer</td>
-<td>Executable encoding version, independent of the package and manifest versions. The current compiler accepts version 4.</td>
+<td>Executable encoding version, independent of the package and manifest versions. The current compiler writes and reads version 9.</td>
 </tr>
 <tr>
 <td><code>content_digest</code></td>
@@ -9881,11 +9902,12 @@
 </table>
 <p>An omitted object denotes a package with no published executable representation. The package remains valid for native linking. The reader checks the binary's leading version before decoding version-specific data, verifies package and coverage identity against the manifest, and checks the complete file against its selected digest. This content check is not a package signature.</p>
 <h2 id="coverage-and-identity">Coverage and identity<a class="headerlink" href="#coverage-and-identity" title="Permanent link">&para;</a></h2>
-<p>Coverage is declared for the manifest's public canonical identities. A callable fragment carries its required public declarations and type context. Public fields and enum variants can refer to their declaring type's context. Aliases and facades resolve to the original declaration; they do not create another executable body.</p>
+<p>Coverage is declared for the manifest's public canonical identities. A callable fragment carries its required public declarations and type context. Public fields, enum variants, and abstract trait methods can refer to their declaring type's context. Aliases and facades resolve to the original declaration; they do not create another executable body.</p>
+<p>A checked package module binding selects a namespace in the admitted dependency graph and requires no executable fragment. Calls and type references through that binding retain their own canonical executable requirements.</p>
 <p>Coverage can be partial. The published content excludes private declarations and private type layouts. A public body that needs either remains uncovered, as does a body containing an unsupported operation or an unresolved reference. An uncovered required public declaration also leaves its callers uncovered. An empty supported function is covered; it is distinct from an absent executable declaration.</p>
-<p>Published fragments currently represent supported functions and methods, plain-model layout, fieldless enums and scalar value enums. Each selected body and value shape must also satisfy the replacement backend's <a href="../../explanation/backend_selection_receipts/">execution profile</a>. Publication does not grant general support for generics, methods, aggregate shapes, interop or other operations that the execution profile refuses.</p>
-<h2 id="refusals">Refusals<a class="headerlink" href="#refusals" title="Permanent link">&para;</a></h2>
-<p>A replacement command refuses an unusable required package declaration before program output or a new successful execution receipt. The diagnostic names the package, its version and the unmet requirement. An earlier successful receipt is not evidence that the refused attempt succeeded.</p>
+<p>Published fragments represent functions and methods, checker-evaluated scalar and text constants, nongeneric erased type aliases including unions, admitted model and class layouts, concrete trait implementation records, trait identities, normal enum payload layouts, fieldless enums, and scalar value enums. A body is covered when Body IR represents all of it and its types and references satisfy the public executable closure checks. A trait default retains its abstract receiver until concrete implementation specialization. Published function bodies have no original source text; native execution uses source-less diagnostic spans for their package identities.</p>
+<h2 id="resolution-refusals">Resolution refusals<a class="headerlink" href="#resolution-refusals" title="Permanent link">&para;</a></h2>
+<p>Resolving a required public declaration from a dependency's representation refuses, naming the package, its version and the unmet requirement, when:</p>
 <table>
 <thead>
 <tr>
@@ -9896,52 +9918,23 @@
 <tbody>
 <tr>
 <td>Representation absent or selected file unavailable</td>
-<td>The required package declaration cannot be executed through this route.</td>
+<td>The required declaration has no executable content.</td>
 </tr>
 <tr>
 <td>Unsupported representation version</td>
-<td>The compiler reports the incompatible version without decoding its payload.</td>
+<td>The incompatible version is reported without decoding its payload.</td>
 </tr>
 <tr>
 <td>Digest, package identity, public coverage or selected payload inconsistent</td>
-<td>The compiler rejects the unusable artifact.</td>
+<td>The artifact is rejected as unusable.</td>
 </tr>
 <tr>
 <td>Required declaration uncovered</td>
-<td>The compiler reports the unavailable public execution requirement.</td>
-</tr>
-<tr>
-<td>Published body outside the consumer's execution profile</td>
-<td>The compiler reports the package execution requirement that it cannot satisfy.</td>
+<td>The unavailable public requirement is reported.</td>
 </tr>
 </tbody>
 </table>
-<p>The replacement command does not regenerate a dependency's representation from available source and does not fall back to native execution.</p>
-<h2 id="execution-report">Execution report<a class="headerlink" href="#execution-report" title="Permanent link">&para;</a></h2>
-<p><code>incan build --backend replacement --report json --report-output &lt;PATH&gt;</code> writes the <code>incan.replacement_execution.v1</code> report. The following nonnegative integer fields occur inside <code>replacement_execution</code>:</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>package_declarations_decoded</code></td>
-<td>Number of selected package declaration fragments decoded, including required public type context.</td>
-</tr>
-<tr>
-<td><code>package_payload_bytes_read</code></td>
-<td>Sum of encoded bytes read for those selected fragments.</td>
-</tr>
-<tr>
-<td><code>package_content_bytes_verified</code></td>
-<td>Sum of complete semantic-file bytes streamed for digest verification.</td>
-</tr>
-</tbody>
-</table>
-<p>The reader decodes selected fragments and their required public closure. Digest verification still reads complete files, so selective decoding does not imply selective total I/O. These counters do not measure elapsed time or peak memory. See the <a href="../cli_reference/#incan-build">CLI reference</a> for the remaining report fields.</p>
+<p>A dependency's representation is never regenerated from available source.</p>
 <h2 id="publication-and-reuse">Publication and reuse<a class="headerlink" href="#publication-and-reuse" title="Permanent link">&para;</a></h2>
 <p>A successful library build publishes the semantic file selected by its new manifest. Unselected files are not searched for a substitute representation. Native outputs, checked metadata and selected semantic content are retained together during ordinary materialization and reuse.</p>
 <p>A failed library rebuild restores the previous library output and its existing publication receipts. That output directory can be temporarily unavailable during a rebuild. This local workflow does not guarantee availability to concurrent readers or atomic recovery across a process crash, and it does not establish signed archive distribution.</p>

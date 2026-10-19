@@ -6313,8 +6313,6 @@
       
         
       
-        
-      
     
     
     
@@ -6401,34 +6399,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7370,6 +7340,28 @@
     <span class="md-ellipsis">
       
         incan test
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#oven-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        oven tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#oven-convert-cargo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        oven convert-cargo
       
     </span>
   </a>
@@ -8330,6 +8322,8 @@
       
         
       
+        
+      
     
     
     
@@ -8472,6 +8466,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8956,8 +8978,6 @@
       
         
       
-        
-      
     
     
     
@@ -9016,34 +9036,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9564,6 +9556,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9745,7 +9741,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -10506,6 +10572,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#oven-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        oven tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#oven-convert-cargo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        oven convert-cargo
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#incan-new" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10859,12 +10947,12 @@
 <tr>
 <td>Build report</td>
 <td><code>incan build --report json</code></td>
-<td><code>2</code>; <code>"incan.replacement_execution.v1"</code> with <code>--backend replacement</code></td>
+<td><code>2</code></td>
 </tr>
 <tr>
 <td>Backend-selection receipt</td>
 <td><code>incan inspect backend-selection --format json</code></td>
-<td><code>2</code></td>
+<td><code>3</code></td>
 </tr>
 <tr>
 <td>Generated Rust</td>
@@ -11117,19 +11205,17 @@ incan<span class="w"> </span>explain<span class="w"> </span>INCAN-T0001<span cla
 <div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] [FILE] [OUTPUT_DIR]
 </code></pre></div>
 <p>Compiles <code>FILE</code>, or the project entrypoint, to an executable and prints the generated project path and the binary path. Generated source and the binary go under <code>target/incan/</code>, or under <code>OUTPUT_DIR</code> when given.</p>
-<p>With no <code>FILE</code>, a project that declares one or more <code>[[rust.bin]]</code> entries and no <code>[project.scripts].main</code> builds the declared toolchain binaries from stored direct-<code>rustc</code> plans. This mode accepts <code>OUTPUT_DIR</code>. It refuses <code>--release</code>, backend-selection options, package-feature options, <code>--sdk-profile</code>, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. <code>INCAN_OVEN_COMPILER_SUITE_STORE</code> selects the compiler-suite store for this mode.</p>
+<p>On Unix, ordinary executable builds use a compatible background owner. Commands retain separate diagnostics and output, and a failed request does not prevent later requests. Source, manifest, lock, compiler and selected-output changes invalidate affected preparation; invalid replacements never authorize old results. Non-Unix builds execute in process. The <a href="../../explanation/projects_today/#retained-command-preparation">project owner explanation</a> describes reuse.</p>
+<p>With no <code>FILE</code>, a project that declares one or more <code>[[rust.bin]]</code> entries and no <code>[project.scripts].main</code> builds the declared toolchain binaries from stored direct-<code>rustc</code> plans. This mode accepts <code>OUTPUT_DIR</code>. It refuses <code>--release</code>, package-feature options, <code>--sdk-profile</code>, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. <code>INCAN_OVEN_COMPILER_SUITE_STORE</code> selects the compiler-suite store for this mode.</p>
 <p>Options:</p>
 <ul>
 <li><code>--lib</code>: build the library rooted at <code>src/lib.incn</code>: its checked <code>.incnlib</code> manifest, debug and release <code>rlib</code> outputs, and its <a href="../package_executable_representation/">package executable representation</a>. <code>--help</code> does not list this option.</li>
 <li><code>--release</code>: build the release profile, which is the default for <code>incan build</code>. The profile does not change language semantics; integer <code>abs</code> and <code>sum</code> stay overflow-checked in every profile.</li>
-<li><code>--backend legacy|replacement</code> (default <code>legacy</code>): select the compiler backend. <code>replacement</code> runs the entrypoint's zero-argument <code>main</code> directly, without generating Rust or an Oven plan, for a program within the replacement backend's supported profile; a program outside it is refused before it runs. The profile is described in <a href="../../explanation/backend_selection_receipts/">Backend selection &amp; execution receipts</a>.</li>
-<li><code>--backend-fallback refuse</code>: refuse an unavailable backend instead of substituting another. <code>refuse</code> is the only policy.</li>
-<li><code>--shadow</code>: record a shadow comparison against the replacement backend. For a build, the comparison is recorded as unavailable, with its reason; the comparison that does run is described in <a href="../../explanation/backend_selection_receipts/#source-observable-shadow-comparison">Source-observable shadow comparison</a>.</li>
 <li><code>--report json</code>: emit a machine-readable build report.</li>
-<li><code>--report-output &lt;PATH&gt;</code>: write the report to <code>PATH</code> instead of stdout. Required with <code>--backend replacement --report json</code>; without it that command is refused before it runs.</li>
+<li><code>--report-output &lt;PATH&gt;</code>: write the report to <code>PATH</code> instead of stdout.</li>
 <li>The <a href="#package-feature-and-sdk-profile-options">package-feature and SDK profile options</a>, the <a href="#lock-policy-options">lock policy options</a>, and <code>--workspace</code> and <code>--member &lt;NAME_OR_PATH&gt;</code> (<a href="#workspace-scope">workspace scope</a>).</li>
 </ul>
-<p>Build report, <code>legacy</code> backend:</p>
+<p>Build report:</p>
 <ul>
 <li><code>schema_version: 2</code>;</li>
 <li>source and generated paths, emitted artifacts, dependency and provider summaries;</li>
@@ -11138,23 +11224,12 @@ incan<span class="w"> </span>explain<span class="w"> </span>INCAN-T0001<span cla
 <li>a note that no Cargo consumer ran;</li>
 <li><code>backend</code>: the build's backend-selection execution receipt.</li>
 </ul>
-<p>Build report, <code>replacement</code> backend:</p>
-<ul>
-<li><code>schema_version: "incan.replacement_execution.v1"</code>;</li>
-<li><code>status</code>, <code>mode</code>, <code>entrypoint</code>, <code>backend</code>, and <code>semantic_module</code>, which names the selected module with its source and semantic-snapshot identities, as <code>backend.semantic_module</code> does;</li>
-<li><code>replacement_execution</code>: <code>result</code>, the exact checked <code>result_type</code>, the <code>stdout_bytes</code> and <code>stderr_bytes</code> byte arrays, the <code>emitted_output</code> projection, <code>output_identity</code>, the Body-IR snapshot, canonical ownership reads and runtime requirements;</li>
-<li>in <code>replacement_execution</code>, <code>package_declarations_decoded</code>, <code>package_payload_bytes_read</code> and <code>package_content_bytes_verified</code> (see <a href="../package_executable_representation/#execution-report">package execution report fields</a>);</li>
-<li>total elapsed time;</li>
-<li>no <code>generated</code>, artifact or <code>oven</code> fields.</li>
-</ul>
-<p>The replacement backend writes program output to stdout and stderr while it runs, and each print flushes. A later failure does not withdraw output already written. The report never goes to the program's stdout or stderr. The byte arrays keep each stream's bytes, which need not be UTF-8, and record no order between the two streams.</p>
-<p>A successful build also writes its backend-selection receipt to <code>.incan/backend/receipt.json</code> in the project root (see <a href="#incan-inspect-backend-selection"><code>incan inspect backend-selection</code></a>). A reused completed output keeps the receipt its bake sealed; that reuse applies only to the implicit <code>legacy</code> default, and an explicit <code>--backend</code> or <code>--shadow</code> prepares the build again.</p>
+<p>A successful build also writes its backend-selection receipt to <code>.incan/backend/receipt.json</code> in the project root (see <a href="#incan-inspect-backend-selection"><code>incan inspect backend-selection</code></a>). A reused completed output keeps the receipt its bake sealed; that reuse applies only to the implicit default backend selection.</p>
 <p><code>build</code>, <code>run</code> and <code>test</code> select a compatible standard-library Loaf from the active toolchain and, for a project outside it, the project extension its bake published to the Oven store. A missing compatible selection is refused; these commands do not prepare one. <code>incan inspect oven --receipt PATH --format json</code> reports the plan selection for the receipt's build unit and its reason.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>examples/simple/hello.incn
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--report<span class="w"> </span>json<span class="w"> </span>--report-output<span class="w"> </span>target/build-report.json
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--features<span class="w"> </span>json,http<span class="w"> </span>--sdk-profile<span class="w"> </span>minimal
 incan<span class="w"> </span>build<span class="w"> </span>--lib
-incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--backend<span class="w"> </span>replacement<span class="w"> </span>--backend-fallback<span class="w"> </span>refuse<span class="w"> </span>--report<span class="w"> </span>json<span class="w"> </span>--report-output<span class="w"> </span>report.json
 </code></pre></div>
 <h2 id="incan-cache"><code>incan cache</code><a class="headerlink" href="#incan-cache" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code>incan cache inspect [--category generated-cargo] [--format text|json]
@@ -11205,7 +11280,7 @@ incan oven compiler-libtests [--compiler-root PATH] [--rustc PATH] [--feature NA
 <tbody>
 <tr>
 <td><code>bake</code></td>
-<td>Prepares, or reuses, the project's Loafs for debug and release. <code>--project</code> defaults to <code>.</code>. <code>--target</code> selects one Rust target for every project target and both profiles, and defaults to the active compiler's host target; the selected toolchain must already support it, or the bake fails. The target is part of every receipt and reuse identity: a warm bake reuses only outputs sealed for the same target and toolchain. When the existing project or workspace-member lock state records an SDK and no SDK inventory is discoverable, the command fails before it writes <code>oven.lock</code>, leaves the lock unchanged and names <code>incan lock</code> as the inventory-preparation command. Without recorded SDK state, the lock is written without it. When sealed provider closures overlap, one compiled registry artifact is selected for each equal portable selected-unit identity, independent of staging path or provider order. Records for one package version are refused when source, feature set, target, profile, toolchain or another selected-unit fact differs; distinct package versions remain distinct units. The report gives each output's <code>target</code>, and an <code>action</code> per profile: <code>toolchain_loaf</code> when the profile uses the toolchain's standard-library Loaf directly, <code>reused</code> for an exact warm project extension, or <code>baked</code>.</td>
+<td>Prepares, or reuses, the project's Loafs for debug and release. <code>--project</code> defaults to <code>.</code>. <code>--target</code> selects one Rust target for every project target and both profiles, and defaults to the active compiler's host target; the selected toolchain must already support it, or the bake fails. The target is part of every receipt and reuse identity: a warm bake reuses only outputs sealed for the same target and toolchain. When the existing project or workspace-member lock state records an SDK, updating it requires either the current SDK inventory or checked ordinary package and native inputs. A configured ordinary bake validates those inputs before replacing legacy SDK lock state. Without either authority, the command fails before it writes <code>oven.lock</code>, leaves the lock unchanged and names <code>incan lock</code> as the SDK inventory-preparation command. Without recorded SDK state, the lock is written without it. When sealed provider closures overlap, one compiled registry artifact is selected for each equal portable selected-unit identity, independent of staging path or provider order. Records for one package version are refused when source, feature set, target, profile, toolchain or another selected-unit fact differs; distinct package versions remain distinct units. The report gives each output's <code>target</code>, and an <code>action</code> per profile: <code>toolchain_loaf</code> when the profile uses the toolchain's standard-library Loaf directly, <code>reused</code> for an exact warm project extension, or <code>baked</code>.</td>
 </tr>
 <tr>
 <td><code>import</code></td>
@@ -11241,7 +11316,7 @@ incan oven compiler-libtests [--compiler-root PATH] [--rustc PATH] [--feature NA
 </tr>
 <tr>
 <td><code>run</code></td>
-<td>Compiles one binary from a stored plan and runs it, holding the store entry's lease until the process exits, and passes it the arguments after <code>--</code>. <code>--edition</code> defaults to <code>2024</code>.</td>
+<td>Compiles or reuses one binary from a stored plan, then runs it with the arguments after <code>--</code>. On Unix, native preparation uses the same compatible owner as build and tests, retaining guarded compiler observations between requests. The invoking command retains stdin/stdout/stderr and the original Store lease until the child exits. Receipt, source, selected plan, compiler and output checks still apply to every request. Other platforms prepare in process. <code>--edition</code> defaults to <code>2024</code>.</td>
 </tr>
 <tr>
 <td><code>compiler-libtests</code></td>
@@ -11318,7 +11393,7 @@ incan oven compiler-libtests [--compiler-root PATH] [--rustc PATH] [--feature NA
 <li>Harvesting into an existing output directory is idempotent when the canonical proposal, refusals, and retained bytes agree. Existing different bytes or facts are refused.</li>
 <li>A package is omitted from proposals when any of its bindings is refused. Proposal and refusal package sets are disjoint for each profile.</li>
 <li>A proposal observation that contains native-link or generator work becomes a registry record only through the model's fail-closed conversion boundary. The admitted TOML uses <code>[[rust.facts.link]]</code> with <code>name</code>, <code>target</code>, <code>executable</code>, <code>environment</code>, <code>sources</code>, <code>objects</code>, and <code>library</code>, or <code>[[rust.facts.tool]]</code> with <code>name</code>, <code>target</code>, <code>executable</code>, <code>arguments</code>, <code>environment</code>, <code>inputs</code>, and <code>outputs</code>. Product bytes, product digests, and producer receipts are registry asset data, not fields of either fact table.</li>
-<li>A publisher bake executes the admitted <code>link</code> compiler once for each object, with the object's ordered arguments, cleared environment plus declared entries, complete source set, and read access to only the identity-verified executable-owner closure named by the executable and <code>{ owner = "..." }</code> arguments. After the exact declared object set exists, the Oven writes <code>lib&lt;library&gt;.a</code> in process using the target's Darwin, BSD, GNU, or COFF archive format and a linker symbol index. The asset contains that exact archive and <code>publisher-receipt.json</code>; the receipt binds the executable, each object's logical argv and digest, logical environment, source digests, target, toolchain, pre-product consuming-unit identity, and archive digest. No archiver executable is declared or run.</li>
+<li>A native-link asset contains <code>lib&lt;library&gt;.a</code> and <code>publisher-receipt.json</code>. The archive uses the target's Darwin, BSD, GNU, or COFF format and a linker symbol index. The receipt binds the executable, each object's logical argv and digest, logical environment, source digests, target, toolchain, pre-product consuming-unit identity, and archive digest. No archiver executable is declared or run. See <a href="../../explanation/projects_today/#publisher-preparation">Publisher preparation</a> for the execution sequence.</li>
 <li>The release publisher accepts repeatable <code>--link-owner &lt;ROOT&gt;</code> arguments. Each root is only a candidate: Oven inventories the executable and every owner-relative path named by the selected record, reproduces the record's <code>executable.owner</code> identity, and refuses a missing or ambiguous match. <code>[publisher].link-owner</code> in the user-owned Oven configuration supplies the same candidates without placing executable authority in a project manifest.</li>
 <li>A consumer accepts a native archive only from a verified publisher receipt whose identity is the selected generated-output owner. Missing products, target or toolchain disagreement, receipt or archive tampering, name collisions, and missing or extra publisher outputs refuse. Consumer commands never execute the declared native compiler.</li>
 </ul>
@@ -11363,13 +11438,42 @@ incan oven compiler-libtests [--compiler-root PATH] [--rustc PATH] [--feature NA
 <p>Each unit has exactly <code>binding</code>, <code>package</code>, <code>version</code>, <code>unit_identity</code>, <code>features</code>, <code>source_digest</code>, <code>manifest_digest</code>, <code>identity_inputs</code>, and <code>artifacts</code>; an Oven unit additionally has <code>asset_archive</code>. <code>package</code> and <code>version</code> are the registry coordinates and are retained in the attestation output. SHA-256 values are lowercase <code>sha256:</code> identities. <code>features</code> and every set-like identity-input list are sorted and duplicate-free. <code>identity_inputs</code> has exactly <code>cfg</code>, <code>out</code>, <code>native</code>, <code>tools</code>, and <code>dependencies</code>: <code>cfg</code> is a string list; <code>out</code> entries have <code>path</code> and <code>digest</code>; native and tool entries have <code>name</code> and <code>digest</code>; dependency entries have <code>name</code> and <code>unit_identity</code>. An artifact has exactly <code>role</code>, <code>path</code>, and <code>digest</code>. <code>asset_archive</code> has exactly <code>path</code> and <code>digest</code>. Artifact and archive paths are normalized relative paths and must resolve to regular files without traversing a symlink.</p>
 <p>The comparator accepts only equal recorded setup, binding sets, identity inputs, unit identities, and artifact role/path sets. It hashes regular non-symlink files without normalization and refuses declared-digest tampering. Equal unit identity with unequal Cargo and Oven bytes is a determinism conflict. A successful schema-1 output has event <code>attest</code>, status <code>attested</code>, the recorded setup, both byte digests per artifact, and, per binding, the Oven asset archive digest and unit identity required by the registry <code>attest</code> event. No output is replaced unless the complete comparison succeeds.</p>
 <h3 id="make-gate-incql"><code>make gate-incql</code><a class="headerlink" href="#make-gate-incql" title="Permanent link">&para;</a></h3>
-<p><code>make gate-incql INCQL_CHECKOUT=PATH INCAN=PATH INCQL_EQUIVALENCE_REPORT=PATH</code> builds and runs the pinned IncQL quickstart as a Cargo-free Oven consumer. <code>scripts/incql_gate_pin.json</code> fixes the accepted checkout commit and committed root <code>oven.lock</code> digest. <code>scripts/incql_gate_expectations.toml</code> declares consumer-only packages, publisher-only packages, forbidden semantic strings, and required exact package versions. The shell preserves the committed root and example locks while removing derived <code>.incan</code> and <code>target</code> outputs, stages IncQL's source-relative vocab companion path from the canonical Incan vocab crate, invokes <code>incan oven gate registry-pin</code> before and after execution, and invokes <code>incan oven gate consumer-graph --expect scripts/incql_gate_expectations.toml</code> over the root and quickstart locks; all pin, digest, typed-lock, expectation, and equivalence checks run in Rust. The gate requires a clean checkout at the pinned commit.</p>
+<div class="language-text highlight"><pre><span></span><code>make gate-incql INCQL_CHECKOUT=PATH INCAN=PATH INCQL_EQUIVALENCE_REPORT=PATH
+</code></pre></div>
+<p>Builds and runs the pinned IncQL quickstart as a Cargo-free Oven consumer.</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INCQL_CHECKOUT</code></td>
+<td>Clean checkout at the commit and committed root <code>oven.lock</code> digest fixed by <code>scripts/incql_gate_pin.json</code>.</td>
+</tr>
+<tr>
+<td><code>INCAN</code></td>
+<td>Installed release compiler executable used for the gate.</td>
+</tr>
+<tr>
+<td><code>INCQL_EQUIVALENCE_REPORT</code></td>
+<td>Successful literal Cargo/Oven attestation report from <code>make test-oven-artifact-equivalence</code>.</td>
+</tr>
+<tr>
+<td><code>scripts/incql_gate_expectations.toml</code></td>
+<td>Consumer-only packages, publisher-only packages, forbidden semantic strings and required exact package versions.</td>
+</tr>
+</tbody>
+</table>
+<p>The gate preserves committed locks and replaces derived <code>.incan</code> and <code>target</code> outputs. Pin, digest, typed-lock, expectation and equivalence mismatches fail the gate. See <a href="../../../contributing/how-to/ci_and_automation/#incql-closure-gate">Run the IncQL closure gate</a> for preparation and execution steps.</p>
 <p>The gate makes Cargo, Protocol Buffer generators, cmake, archivers, C++ compilers, and C/assembly compilation unavailable. Final C-linker invocation remains available for rustc's executable link. A Cargo-layout executable is refused. Both generated semantic locks must contain an attested registry record for every selected unit in the equivalence report except packages declared publisher-only by the expectation file. Registry coordinates and unit identities must be unique; the report must cover every consumer-only package and exact package version declared there. Success also requires the Oven executable to run and print the quickstart completion marker.</p>
 <h2 id="incan-inspect"><code>incan inspect</code><a class="headerlink" href="#incan-inspect" title="Permanent link">&para;</a></h2>
 <h3 id="incan-inspect-backend-selection"><code>incan inspect backend-selection</code><a class="headerlink" href="#incan-inspect-backend-selection" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code>incan inspect backend-selection --receipt PATH [--format text|json]
 </code></pre></div>
-<p>Verifies and prints a backend-selection execution receipt, such as the <code>.incan/backend/receipt.json</code> a successful build writes. A receipt whose recorded content identity or embedded selection identity does not match its content is refused. <code>--format text</code> (the default) prints the selected and executed backend, the selection reason, the fallback policy and outcome, the shadow-comparison state, the compiler version and both identities; <code>--format json</code> prints the receipt. See <a href="../../explanation/backend_selection_receipts/">Backend selection &amp; execution receipts</a>.</p>
+<p>Verifies and prints a backend-selection execution receipt, such as the <code>.incan/backend/receipt.json</code> a successful build writes. A receipt with another schema version, a recorded content identity or embedded selection identity that does not match its content, or a backend revision other than this compiler's is refused. <code>--format text</code> (the default) prints the selected and executed backend, the backend revision, the compiler version and both identities; <code>--format json</code> prints the receipt. See <a href="../../explanation/backend_selection_receipts/">Backend selection &amp; execution receipts</a>.</p>
 <h3 id="incan-inspect-oven"><code>incan inspect oven</code><a class="headerlink" href="#incan-inspect-oven" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code>incan inspect oven --receipt PATH [STORE OPTIONS] [--format text|json]
 </code></pre></div>
@@ -11452,7 +11556,7 @@ incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class
 <li>A declaration the publisher refused carries one reason: <code>unsupported_construct</code>, <code>private_dependency</code>, <code>unresolved_reference</code>, <code>required_declaration_unavailable</code> or <code>no_executable_declaration</code>.</li>
 <li>A member that executes through its declaring type is reported as <code>type_context</code>, with that owner.</li>
 <li>A package without a representation reports <code>none published</code>. A representation of a version this build cannot read reports that version, and its index is not read.</li>
-<li>The JSON report adds each declaration's canonical identity, a covered declaration's direct public requirements, and each public identity the manifest declares that the index does not mention.</li>
+<li>The JSON report adds each declaration's canonical identity, a covered declaration's direct canonical execution requirements, and each public identity the manifest declares that the index does not mention. Execution requirements can include private implementation identities from the same package; those identities are not public declarations and cannot be selected or imported as public roots.</li>
 <li>The command reads only the published representation: it does not compile, execute or decode declarations, or resolve dependencies.</li>
 </ul>
 <h3 id="incan-inspect-registry"><code>incan inspect registry</code><a class="headerlink" href="#incan-inspect-registry" title="Permanent link">&para;</a></h3>
@@ -11490,7 +11594,8 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 <h2 id="incan-test"><code>incan test</code><a class="headerlink" href="#incan-test" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code>incan test [OPTIONS] [PATH]
 </code></pre></div>
-<p>Collects and runs the tests under <code>PATH</code> (default <code>.</code>).</p>
+<p>Collects and runs Incan tests under <code>PATH</code> (default <code>.</code>), delegating to the same runner as <code>oven tests --incan-only</code>. Use <a href="#oven-tests"><code>oven tests</code></a> to combine Incan and Rust tests.</p>
+<p>On Unix, test commands use the same compatible owner as builds; non-Unix tests execute in process. Each request uses current test and conftest sources, runs selected tests and fixtures afresh, and never caches passing results. Stable result IDs keep their collected file identity if a test changes or removes its source file. JSON Lines output excludes human-readable progress notices, including with <code>--verbose</code>; diagnostics and uncaptured output retain their streams. Failure to write a requested report fails the command even when all tests pass. Incan <code>--list</code> performs parser-only collection; Rust <code>--list</code> prepares or reuses its harness and lists cases without executing test bodies.</p>
 <table>
 <thead>
 <tr>
@@ -11525,7 +11630,11 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 </tr>
 <tr>
 <td><code>-j &lt;N&gt;</code>, <code>--jobs &lt;N&gt;</code></td>
-<td>Run up to <code>N</code> test batches at once (default <code>1</code>); each batch runs its tests on one thread.</td>
+<td>Total test worker budget; defaults to four workers. Incan batches each use one worker. A compatible shared Rust root reserves the budget and uses up to <code>N</code> libtest threads.</td>
+</tr>
+<tr>
+<td><code>--isolate</code></td>
+<td>Execute Rust cases in separate processes. Incan fixture groups retain their existing scope.</td>
 </tr>
 <tr>
 <td><code>--feature &lt;NAME&gt;</code></td>
@@ -11584,6 +11693,118 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--frozen
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/<span class="w"> </span>--no-default-features<span class="w"> </span>--features<span class="w"> </span>json<span class="w"> </span>--sdk-profile<span class="w"> </span>minimal
 </code></pre></div>
+<h2 id="oven-tests"><code>oven tests</code><a class="headerlink" href="#oven-tests" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code>oven tests [--incan-only | --rust-only] [OPTIONS] [PATH]
+incan oven tests [--incan-only | --rust-only] [OPTIONS] [PATH]
+</code></pre></div>
+<p>Runs both Incan and Rust tests by default. The language flags are mutually exclusive; <code>incan test</code> always selects Incan only. All three spellings use the same option conversion, project owner, selection, scheduler, reporting and failure status. The <a href="#incan-test">test options</a> apply to either language, while Incan decorators and fixtures apply only to Incan sources.</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--incan-only</code></td>
+<td>Collect only Incan tests. <code>--list</code> uses parser-only preparation.</td>
+</tr>
+<tr>
+<td><code>--rust-only</code></td>
+<td>Collect only Rust tests from the selected package.</td>
+</tr>
+<tr>
+<td>Rust roots</td>
+<td>Conventional <code>src/lib.rs</code>, <code>src/main.rs</code>, declared <code>[[rust.bin]]</code> paths and direct <code>tests/*.rs</code> roots. <code>[rust].path</code> selects a different library entry, such as <code>src/mod.rs</code>; it must be a plain project-relative <code>.rs</code> path inside the Rust source directory, with no parent traversal. The exception replaces the conventional library root and also governs its native dependency snapshot. A mixed Loaf's <code>[rust.source].root</code> owns its <code>src/</code> directory. Nested modules belong to their crate root.</td>
+</tr>
+<tr>
+<td>Rust input freshness</td>
+<td>Native harness reuse checks Rustc-observed source and included-file bytes plus consumed compile-time environment. Helper-only edits outside the crate-root directory invalidate the harness; restored inputs can reuse an earlier admitted output. A fresh compilation discovers dependencies before code generation and refuses publication if consumption or observed files change during compilation. Missing or unsupported observation evidence cannot authorize reuse.</td>
+</tr>
+<tr>
+<td>Rust collection</td>
+<td>Prepare the receipt-bound native harness and query its libtest inventory. <code>--list</code> may compile a Rust harness, but runs no test bodies.</td>
+</tr>
+<tr>
+<td>Rust selection</td>
+<td>Stable IDs contain the source path and exact libtest name. <code>-k</code> selects those IDs; excluded cases never execute. <code>#[ignore]</code> cases remain skipped.</td>
+</tr>
+<tr>
+<td>Rust snapshots</td>
+<td>Insta receives <code>INSTA_WORKSPACE_ROOT</code> at test execution: an explicit value takes precedence, otherwise it defaults to the owning Loaf’s project directory. Snapshot assertions still execute normally. See <a href="../../how-to/testing/#run-rust-snapshot-tests">Rust snapshot setup</a>.</td>
+</tr>
+<tr>
+<td>Rust preparation</td>
+<td>Resolves requested package features against the authored <code>loaf.toml</code>, then applies <code>[envs.test.dependencies]</code> and uses prebuilt Loaves. Making an optional dependency mandatory for tests preserves its authored <code>dep:</code> feature edges. Mixed Loaf dependencies retain their selected features and must provide a valid Rust facet. A sibling <code>.loaf.toml</code> can supply an integration root's declaration. Roots requiring unsupported build-script facts are refused.</td>
+</tr>
+<tr>
+<td>Conditional dependencies</td>
+<td>Evaluate each authored target condition against the selected Rust toolchain's target configuration before projecting native dependencies. False alternatives are excluded; compatible active alternatives combine their feature demands. Missing target evidence, incompatible active alternatives, malformed conditions or an unavailable compiler-bound policy engine fail preparation. The existing owner reuses unchanged decisions while observing compiler and engine files; tests still execute afresh.</td>
+</tr>
+<tr>
+<td>Own library</td>
+<td>Binary and integration-test roots link the package's authored <code>src/lib.rs</code> with the selected package features. Library unit tests compile that source directly. A sibling <code>.loaf.toml</code> is a complete target declaration and must declare any library dependency it needs.</td>
+</tr>
+<tr>
+<td>Procedural macros</td>
+<td>A library declared with <code>[rust].type = "proc-macro"</code> uses the selected Rust toolchain's macro support when preparing its unit-test harness. Its integration tests remain ordinary Rust test binaries.</td>
+</tr>
+<tr>
+<td>Scheduling</td>
+<td>Compatible selected Rust cases from one root share a process, reserving the global <code>--jobs</code> budget while it runs. <code>--isolate</code>, <code>--shuffle</code>, <code>--exitfirst</code>, deadlines or serial markers retain separate Rust case processes. Resource constraints remain enforced. Compatible Incan cases retain existing fixture groups. Outcomes come from the supervised harness result channel, not nested stdout.</td>
+</tr>
+<tr>
+<td>Result</td>
+<td>A failed selected test or preparation error fails the command. Passing outcomes are never cached. JSON retains <code>incan.test.v1</code>; JUnit combines selected cases from both languages.</td>
+</tr>
+</tbody>
+</table>
+<div class="language-bash highlight"><pre><span></span><code>oven<span class="w"> </span>tests
+oven<span class="w"> </span>tests<span class="w"> </span>tests/<span class="w"> </span>--rust-only<span class="w"> </span>-k<span class="w"> </span>native_case
+oven<span class="w"> </span>tests<span class="w"> </span>--incan-only<span class="w"> </span>--list
+oven<span class="w"> </span>tests<span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>--junit<span class="w"> </span>reports/all-tests.xml
+</code></pre></div>
+<h2 id="oven-convert-cargo"><code>oven convert-cargo</code><a class="headerlink" href="#oven-convert-cargo" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code>oven convert-cargo [--workspace PATH] --project RELATIVE_PATH [--project RELATIVE_PATH ...]
+incan oven convert-cargo [--workspace PATH] --project RELATIVE_PATH [--project RELATIVE_PATH ...]
+</code></pre></div>
+<p>Adopts selected Cargo workspace libraries and their local dependency closure into <code>loaf.toml</code> without invoking Cargo. <code>--workspace</code> defaults to the current directory and must contain <code>Cargo.toml</code> and <code>Cargo.lock</code>; each required <code>--project</code> path is relative to that workspace. Upstream source and Cargo files are unchanged. Existing Loaf-specific policy is preserved while imported declarations are replaced.</p>
+<table>
+<thead>
+<tr>
+<th>Imported input</th>
+<th>Loaf contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ordinary dependencies</td>
+<td><code>[dependencies]</code>, including workspace inheritance and target predicates.</td>
+</tr>
+<tr>
+<td>Dev dependencies</td>
+<td><code>[envs.test.dependencies]</code>; they are required for tests without changing production optionality. Local dev packages are adopted too. Reimport replaces this dependency table, removing deleted imported requirements.</td>
+</tr>
+<tr>
+<td>Overlapping normal/dev dependencies</td>
+<td>The existing test environment combines feature demands. Incompatible source/version identities, overlapping target alternatives, and optional production-only features that cannot be represented faithfully are refused.</td>
+</tr>
+<tr>
+<td>Package features</td>
+<td>Preserve authored feature edges and expose implicit optional-dependency aliases as explicit Loaf features. A <code>dep:</code> reference suppresses an implicit alias, matching Cargo; explicitly declared features remain visible. Reimport replaces imported feature definitions.</td>
+</tr>
+<tr>
+<td>Build dependencies</td>
+<td>Adoption inventory only; conversion does not execute build scripts or establish build facts.</td>
+</tr>
+<tr>
+<td>Unsupported inputs</td>
+<td>Git dependencies without registered Loaf adaptation and nonconventional library roots are refused. All converted declarations are validated before publication.</td>
+</tr>
+</tbody>
+</table>
+<p>Successful conversion exits with <code>0</code>; invalid or unsupported declarations exit with <code>1</code>. Conversion does not compile, test, or prove native dependency availability. Run <a href="#oven-tests"><code>oven tests</code></a> after the selected dependency closure has been admitted.</p>
 <h2 id="incan-new"><code>incan new</code><a class="headerlink" href="#incan-new" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code>incan new [OPTIONS] [NAME]
 </code></pre></div>
@@ -11638,7 +11859,7 @@ incan<span class="w"> </span>version<span class="w"> </span>patch<span class="w"
 incan env show [OPTIONS] [ENV]
 incan env run [OPTIONS] &lt;ENV&gt; &lt;SCRIPT&gt; [-- &lt;ARGS&gt;...]
 </code></pre></div>
-<p>Works with the environments declared in <code>[tool.incan.envs]</code> of <code>loaf.toml</code>. The <code>default</code> environment always exists.</p>
+<p>Works with the environments declared in <code>[envs]</code> of <code>loaf.toml</code>. The <code>default</code> environment always exists.</p>
 <ul>
 <li><code>list</code> lists the environments. <code>show</code> prints one environment resolved, or an overview of all when <code>ENV</code> is omitted. <code>run</code> runs a script of an environment, with the arguments after <code>--</code> appended.</li>
 <li><code>--format text|json</code> (default <code>text</code>), for <code>list</code> and <code>show</code>.</li>
@@ -11660,6 +11881,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 </ul>
 <p><code>oven.lock</code> holds an embedded <code>Cargo.lock</code>, the SDK component and provider identities, the public package-feature graph with activation reasons, the private implementation-facet closure, and a fingerprint of the dependency inputs. No command reads an <code>incan.lock</code> file.</p>
 <p>In a workspace, <code>incan lock</code> resolves every member and writes one <code>oven.lock</code> at the workspace root, from any member. It creates and reads no member-local lock. Each member is locked with its declared package-feature activation: <code>--features</code>, <code>--no-default-features</code> and <code>--all-features</code> do not reach the lock, while <code>--sdk-profile</code> and the Cargo feature options apply to every member. Publication is atomic; see <a href="../../../language/reference/project_lifecycle/">Project lifecycle</a> for the locking protocol.</p>
+<p>On Unix, <code>incan lock</code> and adjacent standalone <code>oven lock</code> share a compatible project owner for the same directory and environment. An unchanged standalone or workspace request reuses successful preparation; edits to any contributing source, test source, dependency, effective feature selection, workspace membership or the published lock invalidate it. Identical regular-file lock bytes preserve their file identity. External-entrypoint and unsupported source-layout requests resolve on every invocation. Non-Unix commands run in process. See <a href="../../explanation/projects_today/#lock-preparation">Lock preparation</a> for the retention mechanism.</p>
 <p>Dependency management is covered in <a href="../../how-to/dependencies/">Managing dependencies</a>.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock<span class="w"> </span>src/main.incn
 incan<span class="w"> </span>lock<span class="w"> </span>--features<span class="w"> </span>metrics
@@ -11796,7 +12018,7 @@ incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class
 </tr>
 </tbody>
 </table>
-<p><code>target/incan/</code> holds generated source and the project's published binary. Removing it while no Incan command is running is safe.</p>
+<p><code>target/incan/</code> holds generated source and the project's published binary. See <a href="../../explanation/projects_today/#what-gets-regenerated">What gets regenerated</a> for output ownership and removal conditions.</p>
 <h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

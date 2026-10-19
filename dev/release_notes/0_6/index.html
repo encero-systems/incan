@@ -6308,8 +6308,6 @@
       
         
       
-        
-      
     
     
     
@@ -6396,34 +6394,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7807,6 +7777,8 @@
       
         
       
+        
+      
     
     
     
@@ -7949,6 +7921,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8433,8 +8433,6 @@
       
         
       
-        
-      
     
     
     
@@ -8493,34 +8491,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -8842,6 +8812,17 @@
   
     <nav class="md-nav" aria-label="Features and enhancements — in development">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dev7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dev.7
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#the-compiler-owns-source-meaning-end-to-end" class="md-nav__link">
@@ -9209,6 +9190,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9390,7 +9375,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9865,6 +9920,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#dev7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dev.7
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-compiler-owns-source-meaning-end-to-end" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10015,13 +10081,151 @@
 <p>0.5 established compiler-owned foundations, checked project boundaries, and the first Oven Alpha evidence. It still retains generated Rust in the normal backend path and leaves Cargo-shaped build behavior too close to the center of the system.</p>
 <p>0.6 is the architectural cutover. Its purpose is not to rewrite every compiler component in Incan immediately. It is to put Incan in a position where large parts of its internals can begin moving into Incan source deliberately, while Rust stays a bounded host capability rather than a second semantic authority.</p>
 <h2 id="features-and-enhancements-in-development">Features and enhancements — in development<a class="headerlink" href="#features-and-enhancements-in-development" title="Permanent link">&para;</a></h2>
-<h3 id="the-compiler-owns-source-meaning-end-to-end">The compiler owns source meaning end to end<a class="headerlink" href="#the-compiler-owns-source-meaning-end-to-end" title="Permanent link">&para;</a></h3>
-<p>The replacement backend will consume direct, compiler-owned lowering facts through Body IR. Backend selection and execution will be explicit and receipted, with no silent fallback to the legacy route. A corpus-based parity system will show which behavior is verified, which is intentionally migrated, and which is not yet acceptable.</p>
+<h3 id="dev7">dev.7<a class="headerlink" href="#dev7" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Packages</strong>: Library builds publish versioned executable content for covered public declarations. Replacement consumers execute supported calls through package aliases and facades without producer source, using the original declaring identities and selected public type context. Missing, incompatible and uncovered requirements refuse before output or a new execution receipt. Native linking remains available for packages without executable coverage. (#1339)</li>
+<li>
+<p><strong>Tooling</strong>: Explicit Oven bakes support declared Rust library callers of Incan exports, with declared editions, separate library receipts and exact completed-output reuse. (<a href="https://github.com/encero-systems/incan/issues/1486">#1486</a>)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Registry-backed Incan libraries publish and execute through original native Loaf dependency records without a generated Cargo lock, retaining exact profile selection and corruption checks. (<a href="https://github.com/encero-systems/incan/issues/2216">#2216</a>)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Workspace lock preparation retains every member in the existing owner, avoiding unchanged source collection while observing sibling tests, source changes and membership edits. (<a href="../../tooling/reference/cli_reference/#incan-lock">CLI reference</a>, #1337, #1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: <code>incan lock</code> and adjacent standalone <code>oven lock</code> share the Unix project owner; unchanged standalone lock preparation reuses its original session and publication evidence. Workspace and external-entrypoint collection retain their existing behavior. (<a href="../../tooling/reference/cli_reference/#incan-lock">CLI reference</a>, #1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Ordinary builds share the immutable executable between native and completed-output records, preserving a separate writable project output and both receipts. (<a href="https://github.com/encero-systems/incan/issues/2205">#2205</a>)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Test progress carries typed events to the CLI, keeping console banners and verbose fixture/phase notices out of JSON Lines reports while preserving diagnostics and uncaptured test output. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Test completion carries typed results to the invoking CLI for console, JSON and JUnit reporting, resolving each source-file identity once before execution instead of repeatedly during reporting. (<a href="../../tooling/reference/cli_reference/#incan-test">CLI reference</a>, #1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust <code>oven tests</code> cases from the same harness share a process by default, with one <code>--jobs</code> budget defaulting to four workers and optional <code>--isolate</code>; exact selection, fresh per-case results and Incan fixture scopes are preserved. (<a href="../../tooling/reference/cli_reference/#oven-tests">CLI reference</a>, #1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Native graph finalization uses retained Store coordinates instead of rechecking child outputs for location lookup; publication and execution keep their integrity checks. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Cold native preparation compiles independent registry and local dependencies through one executor with up to four workers, preserving exact dependency owners, deterministic inspection records and unchanged reuse. (#1337)</p>
+</li>
+<li><strong>Tooling</strong>: Oven groups Apple drive-cache flushes at Store publication boundaries while synchronizing every staged file and directory, avoiding a full device flush for each source file. (#1337)</li>
+<li>
+<p><strong>Tooling</strong>: Rust test harnesses with compatible requirements share native dependency preparation in the existing owner while retaining their own imports, receipts and output plans. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Opt-in invocation traces separate native dependency source preparation, reuse, compiler subprocesses and durable publication across build and Rust test harnesses, including publication validation, copying/linking and synchronization. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Explicit <code>oven run</code> prepares stored native plans in the existing Unix owner, reusing guarded compiler probes while preserving local program I/O and Store leases. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Native test supervisors report periodic liveness from their existing wait loop, avoiding a dedicated heartbeat thread for each case. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Unchanged native test preparation retains its parsed graph and resolution lock in the existing owner, with coordinate and file-change checks before reuse and handoff. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Local Rust test graphs preserve root test dependencies, host procedural-macro dependencies and resolved target conditions through ordinary native Loaf admission and reuse. (#1337)</p>
+</li>
+<li><strong>Tooling</strong>: Exact Rust test cases share their collected inventory and search its sorted names without copying the full harness inventory per case; Unix process-group cleanup signals the operating system directly, and invocation tracing separates selection, child setup, waiting and cleanup. (#1337)</li>
+<li>
+<p><strong>Tooling</strong>: Unchanged native test runs retain dependency-inventory validation in the existing owner while continuing to reject changed or corrupted inputs. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust libraries can declare <code>[rust].path</code> for a nonconventional entry point; Cargo adoption, native dependency snapshots and test discovery preserve it without rewriting source files. (<a href="../../tooling/reference/cli_reference/#oven-tests">CLI reference</a>, #1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Native Rust tests supply Insta’s snapshot workspace directly, avoiding Cargo metadata discovery while preserving explicit workspace configuration. (<a href="../../tooling/reference/cli_reference/#oven-tests">CLI reference</a>, #1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust <code>oven tests</code> evaluates conditional Loaf dependencies with the selected toolchain, retains unchanged decisions in the existing owner, and refuses incomplete or incompatible target evidence. (<a href="../../tooling/reference/cli_reference/#oven-tests">CLI reference</a>, #1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Cargo adoption translates implicit optional-dependency features into explicit Loaf feature declarations, including suppression by <code>dep:</code> edges and removal on reimport. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: <code>oven convert-cargo</code> adopts upstream dev dependencies into <code>[envs.test.dependencies]</code>, preserving production optionality and refusing unsupported dependency overlaps before publication. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust <code>oven tests</code> includes declared mixed Incan/Rust Loaf dependencies with their selected features and supplies compiler test children with the same checked native closure. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust <code>oven tests</code> resolves package features before test-only dependency overlays, allowing an optional dependency to become mandatory for tests without invalidating its authored feature edges. Compiler frontend, driver and CLI roots declare their test helpers directly. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Repeated <code>oven tests</code> requests retain unchanged native test inventories in the existing owner; executable or invocation changes recollect names, while tests and runtime data are evaluated afresh. (#1337)</p>
+</li>
+<li><strong>Tooling</strong>: Repeated native preparation retains the compiler sysroot in the existing compiler memo, with replacement-sensitive executable and runtime-library checks; unsupported layouts keep ordinary probing. (#1337)</li>
+<li><strong>Tooling</strong>: Native linker preparation reuses unchanged SDK stub identities through existing file observations, preserving exact receipt identities and restoring missing or corrupted staged members. (#1337)</li>
+<li><strong>Tooling</strong>: <code>incan check</code> retains successful diagnostic reports in the existing project owner while reconciling source and dependency changes; <code>incan fmt</code> shares project preparation across file batches and preserves fresh parsing and per-file diagnostics. (#1337)</li>
+<li>
+<p><strong>Tooling</strong>: Rust <code>oven tests</code> preparation shares the ordinary native Loaf plan owner, resolves <code>[envs.test.dependencies]</code>, and supplies the authored package version at compile time without leaking that value into test processes. Named environments now use <code>[envs]</code>; the retired <code>[tool.incan.envs]</code> placement reports a migration error. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: <code>oven tests --jobs N --isolate</code> schedules prepared Rust cases independently while preserving Incan harness isolation and shared serial/resource constraints (#1337).</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust test cases reuse their current executable’s collected inventory in the existing runner. Changed executables or invocation contexts trigger fresh listing; case results, deadlines and process isolation remain fresh. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Reopening unchanged dependency declarations preserves their resolved order, allowing existing native test preparation to match equivalent requests. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Unchanged Incan test harnesses retain completed analysis and code generation in the existing project session. Selected cases, source, provider identities and generated files still invalidate preparation; tests always execute freshly. Rust inspection, C header verification and ambient source metadata keep canonical preparation. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Repeated Incan and Rust test preparation reuses checked provider identities in the existing project session, preserving physical dependency validation and fresh test execution. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: <code>oven tests</code> combines Incan and Rust tests through one owner, scheduler and reporting path, with <code>--incan-only</code> and <code>--rust-only</code> selection. <code>incan test</code> delegates to the Incan-only path. (<a href="../../tooling/reference/cli_reference/#oven-tests">CLI reference</a>, #1337, #1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Repeated Unix <code>incan test --list</code> requests reuse preparation in the shared project owner while collecting current test and conftest sources. Build and collection sessions retain their distinct preparation authority when commands alternate. (#1337, #1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Unix <code>incan test</code> execution reuses canonical session preparation and shares native dependency admission with builds in the existing lock-guarded project owner, while running fresh tests and fixtures. Console output, JSON Lines records, diagnostics and parallel-worker output remain local to each requesting command. (#1337, #1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Ordinary Unix executable builds automatically share a retained build owner, reusing canonical lock, input observations, dependency admission and completed outputs across commands while checking source and output changes. The compiler development helper uses the same owner for direct native builds. (<a href="../../tooling/reference/cli_reference/#incan-build">CLI reference</a>, #1337, #1698)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: Tuple annotations and inferred tuple literals share one semantic type shape, allowing the experimental direct route to construct, return and match tuple-payload Results without incompatible carrier identities. (#1337, #1698)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: The experimental direct route wraps collection values assigned to <code>Option</code> bindings through the shared carrier conversion, preserving empty-list and dictionary assignment behavior. (#1337, #1698, #1832)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: The experimental direct driver's manifest-backed executables reuse ordinary completed-output loaves before checking or lowering. Reuse binds source, native resolution and the shared pinned platform policy; standalone sources still compile directly. Normal command backend cutover remains in development. (#1337, #1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: macOS SDK proc macros link through the pinned Rust toolchain's LLD with explicit macOS 11.0 deployment and SDK 26.5 load commands. Their unit receipts bind the linker, LLVM library, and exact system-library stub bytes; <code>INCAN_OVEN_LINK_SDK</code> selects the stub source directory, defaulting to the Command Line Tools SDK 26.5. (#1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Loaf manifests admit scoped Rust dependencies, target entry arrays, and <code>[rust]</code> unit metadata. Standard-library requirements come from the component manifests; conditional Rust projections require selected target cfg evidence. (#1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Projects using only <code>rust::std</code> bake and inspect without Cargo; unresolved declared Rust dependencies require a sealed Loaf resolution, and comment-only edits preserve baked source authority. (#1698, #2081)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: The experimental direct route consumes validated, shared Body IR in an Incan lowering Loaf. Its scalar plan retains checked integer arithmetic, signed builtin-range facts, canonical calls, formatting ownership, and unwinding cleanup; native corpus validation and cutover remain in development. (#1337)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: Oven builds the pinned native driver and its Incan-authored scalar plan with a receipt-bound, crate-scoped rustc-private grant. The conformance fixture checks native output, overflow locations and typed malformed-plan refusal; the native-route cutover remains pending. (#1337)</p>
+</li>
+</ul>
+<h3 id="the-compiler-owns-source-meaning-end-to-end">The compiler owns source meaning end to end<a class="headerlink" href="#the-compiler-owns-source-meaning-end-to-end" title="Permanent link">&para;</a></h3>
+<p>Incan has one execution route. Programs run on the legacy Rust-emission route until the direct route replaces it: the direct route will lower Body IR, the compiler-owned facts of each checked body, inside the pinned <code>rustc</code> without generating Rust, and will replace the legacy route rather than run beside it. The Body IR interpreter that an earlier dev slice ran as a second, partial backend is removed, together with its <code>--backend</code>, <code>--backend-fallback</code> and <code>--shadow</code> build flags and its shadow comparison; the programs its tests ran are behavior fixtures. The behavior fixtures show which behavior holds, and each pending fixture names what does not hold yet. Every build's backend-selection receipt (schema 3) names the backend that produced its output, its revision, and the source and output identities. (#1337)</p>
+<ul>
+<li><strong>Packages</strong>: Library builds publish versioned executable content for covered public declarations, resolvable through package aliases and facades without producer source, under the original declaring identities and with the selected public type context. Missing, incompatible and uncovered requirements refuse by package, version and requirement. Native linking remains available for packages without executable coverage. (#1339)</li>
 <li><strong>Packages</strong>: Native <code>link</code> facts execute only during publisher bakes and produce deterministic, receipted archive assets; consumers import the verified archive into their selected-unit identity and refuse rather than compiling C when the product is absent. (#1561)</li>
 <li><strong>Tooling</strong>: The pinned IncQL release gate refuses Cargo and publisher-tool execution, requires every selected registry unit to be attested with unique identity, rejects Cargo-layout fallback and the <code>protobuf-src</code>/cmake bootstrap graph, joins the 14-package IncQL addition set to literal Cargo/Oven equivalence evidence, and runs the Oven quickstart executable. (#1561)</li>
 <li><strong>Tooling</strong>: Release packaging accepts Cargo build-script invocations that use rustc's default empty artifact suffix, selects the pinned compatibility-publisher Cargo, and passes the resolved native compiler toolchain into release Loaf publication. (#2016)</li>
+<li><strong>Tooling</strong>: A Rust-only Loaf can depend on a sibling Incan Loaf with <code>{ loaf = "&lt;name&gt;", path = "..." }</code>; an explicit project bake selects checked caller exports from Rust <code>&lt;library&gt;::caller::incan::</code> paths, emits the bounded caller namespace and identity record, and builds the Rust binary against the Oven-built Incan rlib through receipted direct <code>rustc</code>. (#1337)</li>
 <li><strong>Tooling</strong>: <code>incan inspect representation</code> reports a published package's executable-representation version and the coverage it declares for each public declaration, with refusals carrying their stable reason. A package that publishes none, and a representation this build cannot interpret, are both reported rather than refused. (#1339)</li>
 <li><strong>Packages</strong>: <code>.incnlib</code> manifests carry anonymous union types in checked signatures, and declare manifest format 4. A reader without support for the new type reference refuses the manifest by format number rather than failing to parse it, so an artifact from a newer compiler names the reason it cannot be read. Comment- and order-preserving manifest editing is unaffected. (#1339, #1453)</li>
 <li><strong>Standard library</strong>: <code>std.toml</code> reads typed manifest values and declared models, reports source locations for parse and structural errors, and writes generated lock documents while retaining TOML date/time kinds. Comment- and order-preserving manifest editing remains deferred. (#1409)</li>
@@ -10055,27 +10259,15 @@
 <li><strong>Compiler</strong>: Checked SDK artifacts retain derive-provider membership, so <code>@derive(toml)</code> remains available through compiled standard-library imports and re-exports. (#1449)</li>
 <li><strong>Compiler</strong>: Imported Rust generic trait bounds accept native scalars and collections, with the actual trait obligation checked by Rust during native compilation. Same-spelled Incan traits still require explicit adoption. (#1451)</li>
 <li><strong>Tooling</strong>: Declared scripts that resolve to <code>src/lib.incn</code> fail with a located manifest diagnostic naming the script and library path, before Oven generates executable code. (#1068)</li>
-<li><strong>Tooling</strong>: Experimental replacement execution admits compiler-selected <code>str</code>, <code>int</code>, and <code>float</code> scalar conversions with receipt-bound normal output and classified parse failures. Source literals and runtime numeric strings share one language-owned underscore-separator policy. Malformed source literals produce compile-time diagnostics, while failed runtime conversions retain the original spelling in the canonical <code>ValueError</code>. #988 retains the broader numeric-operation and entrypoint profile. (#1249, #1278)</li>
-<li><strong>Tooling</strong>: Exact signed and unsigned widths, <code>f32</code>, aliases, and checked fixed-scale decimals now retain their compiler-selected carrier through literals, locals, lossless widening, source-local calls, direct entry arguments/results, Display output, receipts, the replacement JSON report's <code>result_type</code>, and bounded two-route comparison; <code>f64</code> is <code>float</code> and travels as one. Exact <code>f32</code> carriers are finite-only: native <code>f32</code> arithmetic validates each result before it can be stored, returned, compared, or printed, and runtime <code>f32</code> boundaries use the same canonical <code>ValueError</code>; <code>float</code> retains IEEE non-finite values. The replacement profile still refuses arithmetic on these exact carriers, their unary and resize operations, Debug formatting, aggregates, matching, and decimal scalar casts before effects under #988; package/import execution remains under #989. (<code>replacement-body-v0-029</code>, #1279)</li>
-<li><strong>Tooling</strong>: The experimental direct replacement profile now executes its admitted selected entry through one session-owned package-feature projection and records matching semantic-module provenance in its JSON report and backend receipt. That initial profile did not admit package/public imports; published package coverage is described above, and broader unsupported source remains outside the profile. (#1254)</li>
-<li><strong>Compiler</strong>: The experimental replacement profile executes source-local hashed set and dictionary membership with checked <code>int</code>, <code>bool</code>, <code>str</code>, or unit keys, including typed-empty constructors. A same-source comparison covers exact program output and a separate boolean result; iteration, mutation and general collection parity remain outside this profile. (#1247)</li>
-<li><strong>Tooling</strong>: The experimental direct replacement profile recognizes compiler-selected global <code>enumerate(list)</code> and <code>zip(list, list)</code> over retained structural list shapes, preserving zero-based enumeration and ordered shortest-side pairing. Receipt-backed comparisons cover the selected list cases; this does not grant general iterator support. (#1249)</li>
+<li><strong>Language</strong>: Source literals and runtime numeric strings share one language-owned underscore-separator policy. Malformed source literals produce compile-time diagnostics, while failed runtime <code>int(str)</code> and <code>float(str)</code> conversions retain the original spelling in the canonical <code>ValueError</code>. (#1249, #1278)</li>
+<li><strong>Tooling</strong>: Exact signed and unsigned widths, <code>f32</code>, aliases, and checked fixed-scale decimals now retain their compiler-selected carrier through literals, locals, lossless widening, source-local calls, entry arguments and results, Display output and receipts; <code>f64</code> is <code>float</code> and travels as one. Exact <code>f32</code> carriers are finite-only: native <code>f32</code> arithmetic validates each result before it can be stored, returned, compared, or printed, and runtime <code>f32</code> boundaries use the same canonical <code>ValueError</code>; <code>float</code> retains IEEE non-finite values. (#1279)</li>
 <li><strong>Compiler</strong>: Native compilation materializes stored <code>enumerate</code> results as checked list values and preserves later-used values when introducing aliases, including the required generic <code>Clone</code> bounds. (#1249)</li>
 <li><strong>Compiler</strong>: Generic callers now inherit implementation-only bounds from the exact checked trait implementation, including across compiled-library metadata, without imposing those bounds on every use of the owning type. The manifest retains the selected trait identity, arguments, associated types, bound origin, and implementation header; private same-program implementation details remain absent from the public artifact. (#1280)</li>
 <li><strong>Compiler</strong>: Dependency-interface predeclaration preserves concrete public result types across cyclic and transitive local imports, so chained generic method calls no longer degrade to unknown placeholder types merely because their modules depend on each other. (#1280)</li>
-<li><strong>Tooling</strong>: Experimental replacement execution delivers program output during execution and preserves accepted bytes if execution or receipt persistence later fails. JSON reports require a separate <code>--report-output</code> file. The bounded named-function shadow comparison transports typed results separately from stdout/stderr and compares each program stream exactly; unavailable comparisons and diagnostic differences remain non-green. (#1249)</li>
-<li><strong>Compiler</strong>: Provider-aware replacement preparation checks missing hosts inside deferred computations and reachable same-module callees before program output or provider invocation. Host discovery uses retained compiler identities; invocation-time authority checks and operation receipts remain unchanged. (#1249)</li>
 <li><strong>Language</strong>: Sized integers follow Rust's ordinary debug-trap/release-wrap overflow behavior and provide checked, wrapping and saturating <code>add</code>, <code>sub</code>, <code>mul</code> and <code>pow</code> helpers; lossy resize policies accept an explicit destination such as <code>value.try_resize[u8]()</code>. Compiler-selected integer <code>abs</code> and builtin <code>sum</code> continue to fail on overflow in every build profile. (#1249, #1561)</li>
-<li><strong>Compiler</strong>: The experimental replacement profile executes the selected <code>upper</code>, <code>lower</code>, <code>strip</code>, <code>replace</code>, <code>join</code>, <code>split</code>, and <code>contains</code> string helpers through checked compiler identities and the shared runtime. A dedicated same-source comparison covers those helpers; arbitrary methods and general formatting parity remain outside this claim. (#1256)</li>
-<li><strong>Compiler</strong>: String <code>len(value)</code> and <code>value.len()</code> count Unicode scalar values consistently in generated Rust and the experimental replacement profile. The replacement path keeps checked builtin/helper identity, and a dedicated same-source corpus row compares exact program streams and the returned result; other <code>Len</code> operand profiles remain bounded. (#1249)</li>
-<li><strong>Tooling</strong>: The experimental replacement profile executes compiler-selected <code>json_stringify</code> for directly represented integers, booleans, strings, and <code>None</code>, evaluating the operand once and preserving the shared runtime's exact JSON bytes. A same-spelled source declaration keeps its lexical identity; floats, collections, nominal values, and broader serialization remain explicit refusals. A dedicated same-source corpus row compares the exact returned bytes and empty program streams through independent receipts without claiming general JSON parity. (#1249)</li>
-<li><strong>Tooling</strong>: The experimental replacement profile executes compiler-selected <code>len</code> over its source-local hashed set/dict carriers, returning the distinct element/key count after duplicate collapse, including typed-empty constructors. A dedicated same-source comparison covers exact streams and the integer result; iteration, indexing, projection, mutation, equality, ordering, printing, and formatting of these containers remain outside this bounded claim. (#1249)</li>
-<li><strong>Tooling</strong>: The experimental replacement profile executes compiler-selected <code>bool</code> for its directly represented booleans, integers, strings, lists, sets, and dictionaries. Zero and empty values are false; nonzero and nonempty values are true. A same-spelled source declaration keeps its own identity, and floats, tuples, bytes, frozen collections, options/results, arbitrary objects, and custom truthiness remain outside this bounded claim. (#1249)</li>
-<li><strong>Compiler</strong>: <code>isinstance(value, Target)</code> now retains the typechecker-resolved value and target types, any proven nominal target identity, and the target's exact source span in a dedicated Body IR operation. The experimental replacement profile executes the bounded <code>int</code>, <code>bool</code>, <code>str</code>, and ordinary binary <code>float</code> target set when the checked value type is one of those scalars or a nonempty union containing only them. Ambient and explicit <code>std.builtins.isinstance(...)</code> calls consume the same compiler-owned identity, while a source declaration with that spelling remains an ordinary direct call. A same-source comparison covers true and false union-member branches, direct expression use, exact streams, and the typed boolean result. Unsupported value or target shapes refuse before effects; this does not add arbitrary runtime type values, general reflection, nominal execution, or package/import execution. Closed #1154 supplied the current direct nominal/value substrate; open #988 owns broader replacement execution, and #989 owns package/import execution. (#1281)</li>
-<li><strong>Tooling</strong>: The experimental replacement profile executes compiler-selected <code>sorted</code> for nonempty represented integer lists, returning a fresh ascending list while retaining negative values, duplicates, and the source list's original order. Empty lists and other accepted ordering domains remain explicit refusals until checked element-type/order facts reach this runtime seam. (#1249)</li>
-<li><strong>Tooling</strong>: Experimental replacement execution now runs calls that leave the entry module. A call into a sibling module executes against a graph spanning the session's reachable modules, resolving the callee by canonical identity rather than by a same-module span identity; a module-qualified call such as <code>helper.bump(41)</code> executes as a direct call to the declaration its qualifier names, and a local sharing an imported module's name keeps its ordinary meaning. Refusals report against the module whose span they carry rather than the entrypoint, so a diagnostic names the file a reader has to open. That initial module-execution change left package (<code>pub::</code>) imports outside its scope; published package execution is described above. (#1260)</li>
-<li><strong>Tooling</strong>: A facade chain executes on the experimental replacement route with its direct, aliased, and re-exported bindings proven to resolve to one declaration. An alias is admitted as a binding to a declaration rather than a declaration of its own, so refusing it would refuse a name rather than any behavior. (#1261)</li>
-<li><strong>Compiler</strong>: A Rust or Python interop boundary the replacement route cannot cross now refuses as a missing host rather than as a construct the profile has not reached, naming the crate a call would have entered. Previously <code>import rust::serde_json</code> and <code>import std.io</code> reported the same text, which sent a reader to the language when the problem was a host. An ordinary standard-library import still reports as an unreached construct and never claims a missing interop host. (#1262)</li>
+<li><strong>Compiler</strong>: String <code>len(value)</code> and <code>value.len()</code> count Unicode scalar values, through the checked builtin or helper identity. (#1249)</li>
+<li><strong>Compiler</strong>: <code>isinstance(value, Target)</code> now retains the typechecker-resolved value and target types, any proven nominal target identity, and the target's exact source span in a dedicated Body IR operation. Ambient and explicit <code>std.builtins.isinstance(...)</code> calls consume the same compiler-owned identity, while a source declaration with that spelling remains an ordinary direct call. This does not add arbitrary runtime type values or general reflection. (#1281)</li>
+<li><strong>Compiler</strong>: Body IR carries the checked facts the direct route needs instead of leaving them to be re-derived: a <code>mut</code> parameter's argument as a mutable borrow, a value-returning function's trailing expression as its return, an <code>@rust.extern</code> body's delegated Rust item in place of its placeholder, the owner type of a <code>Self</code> parameter and its fields, a static method call as a direct call, a variant of any enum with its payload, a function named as a value as a forwarding closure, the type a trait's associated function is called on (<code>T.default()</code>), a call through <code>__call__</code>, a stdlib function or constant reached through a module binding (<code>math.sqrt</code>, <code>math.PI</code>), membership in a frozen collection, and a name a tuple assignment binds beside a place. (#1337, #2022, #2023, #2025)</li>
 <li><strong>Dependencies</strong>: The locked Wasmtime and Cranelift patch releases advance to the 36.0.17/0.123.17 family, and the declared Wasmtime floor rises to 36.0.17. This clears <code>RUSTSEC-2026-0269</code>, <code>RUSTSEC-2026-0314</code>, <code>RUSTSEC-2026-0316</code>, <code>RUSTSEC-2026-0321</code>, <code>RUSTSEC-2026-0322</code> and <code>RUSTSEC-2026-0323</code> from the repository security gate without changing Incan's public language surface.</li>
 <li><strong>Tooling</strong>: Release-foundation builds compile the locked <code>xz2</code> dependency's bundled liblzma archive. Oven can therefore retain and verify the archive as build output instead of inheriting a host <code>pkg-config</code> library path. (#1561)</li>
 <li><strong>Tooling</strong>: Project-directory codegraph export includes <code>.incn</code> files outside <code>src/</code>, including project tests, while each file's own checked registry, capability, C ABI, and semantic projections take precedence over dependency-context copies. (#1561)</li>
@@ -10083,7 +10275,7 @@
 <li><strong>Tooling</strong>: A build retains its release-generation lease for the full lifetime of the selected release compiler, including a profile-mismatched or non-envelope toolchain plan. (#1561)</li>
 <li><strong>Dependencies</strong>: Equivalent Cargo version requirements select one order-independent dependency identity when project, provider, inline, and development requirements are unified. (#1561)</li>
 </ul>
-<p>Verified means verified by execution. A source profile counts as parity only when both routes actually ran over the same source and agreed on what the program did — the replacement backend executing Body IR directly, and the legacy backend building and running the program it emits through Oven, under a receipt that records which build authority produced the answer. The backend-selection receipt records that outcome explicitly as matched, diverged, or unavailable, and only a comparison that ran and agreed is green; a legacy program that merely compiled proves nothing about meaning. A comparison that could not run keeps whatever evidence the route that did run produced, so an unstaged environment stays distinguishable from a backend that cannot execute the source. Because an environment without a staged build authority is non-green everywhere, a dedicated CI job stages one and requires the comparison to run and agree, so "verified" always names evidence that was actually produced. See <a href="../../tooling/explanation/backend_selection_receipts/#source-observable-shadow-comparison">Backend selection &amp; execution receipts</a>.</p>
+<p>Verified means verified by execution. The behavior fixtures are the acceptance record: each is an Incan program whose header declares what a run must show, and it holds for whichever route runs Incan programs. The direct route reaches parity when every fixture passes on it, and only then replaces the legacy route.</p>
 <p>Source identity is part of that contract. Imports, aliases, re-exports, locals, members, and generic binders should resolve to one canonical compiler identity across diagnostics, LSP features, graph tooling, and backend facts. This removes the backend-emitted Rust name as an accidental source of semantic truth.</p>
 <h3 id="loaf-and-oven-become-the-opted-in-project-authority">Loaf and Oven become the opted-in project authority<a class="headerlink" href="#loaf-and-oven-become-the-opted-in-project-authority" title="Permanent link">&para;</a></h3>
 <p>For a project that adopts <code>loaf.toml</code>, Loaf expresses authored project intent and Oven owns resolution, targets, provider planning, cache identity, artifacts, receipts, and publication-facing build evidence. <code>oven build</code> and <code>oven bake</code> will provide the build and target-bound asset surfaces; in-Loaf <code>incan run</code> and <code>incan test</code> will use those same plans and receipts.</p>
@@ -10125,14 +10317,42 @@
 <p>The CLI, LSP, Architect, MCP tools, and Rust/Oven views will consume the same source and build facts. They should agree about a symbol's identity and range, a package or artifact's provenance, the selected target and provider, and whether information is stale. Rust-aware inspection is deliberately bounded to the workspace, package, target, artifact, and explicit interop edges that Oven needs—it is not a separate compiler.</p>
 <h2 id="what-must-be-true-before-06-ships">What must be true before 0.6 ships<a class="headerlink" href="#what-must-be-true-before-06-ships" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The replacement backend is the default only when the complete v0.6 matrix is verified or explicitly migrated.</li>
-<li>Every backend run records both the selected route and the route that actually executed; incompatible, unavailable, skipped, or failed parity comparisons are non-green.</li>
+<li>The direct route replaces the legacy route only when every behavior fixture passes on it; a fixture marked pending stays visibly red until then.</li>
+<li>Every build records the route that produced its output.</li>
 <li>Generated Rust remains inspectable, but normal compilation, package contracts, and Oven do not rely on it as a semantic handoff. Reading it now takes a decoding step: every linker-visible Incan-origin declaration is emitted under a reversible <code>incan-v1</code> identifier that encodes its canonical identity, and a private function carries no source-named alias at all.</li>
 <li>Rust-only, Incan-only, and mixed Loaves can bake without Cargo acting as the project authority; Cargo compatibility remains explicit and well-described.</li>
 <li>Canonical source identities, provenance, source ranges, and stale-state behavior agree across compiler and inspection consumers.</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Tooling</strong>: <code>oven bake</code> publishes a Rust dependency whose library declares several crate types, such as <code>crc-fast</code> with <code>lib</code>, <code>cdylib</code> and <code>staticlib</code>, matching every output Cargo reports and rebuilding the rlib that dependents link. (#2244)</li>
+<li>
+<p><strong>Compiler</strong>: Concrete <code>f32</code> display on the direct route retains a decimal point for integral values and negative zero without widening fractional digits; printing, <code>str()</code> and interpolation share the corrected runtime formatter. (#1337)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Keep <code>continue</code> match arms multiline so formatting preserves valid syntax (<a href="https://github.com/encero-systems/incan/issues/2222">#2222</a>).</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: Ordinary source libraries reuse their projected standard namespace when linking compiled dependencies, preventing duplicate namespace declarations in nested generated projects. (#1337)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: Unnamed generated inspection probes no longer hide selected Rust dependency metadata, preserving public re-export identities while still refusing ambiguous or malformed selected sources. (#1337)</p>
+</li>
+<li>
+<p><strong>Compiler</strong>: Ordinary Rust inspection follows the declared target dependency when host or transitive crates share its name, and preserves authored dependency aliases. Original source and execution authority checks remain active. (<a href="https://github.com/encero-systems/incan/issues/2215">#2215</a>)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Parallel Incan test compilation uses the existing compiler stack size, preventing worker stack overflow on nested expressions without requiring <code>RUST_MIN_STACK</code>. Worker startup failure stops new launches and waits for active work before reporting an error. (#2213)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: Rust <code>oven tests</code> invalidates native harnesses after helper-only edits through <code>#[path]</code>, <code>include_str!</code> and <code>include_bytes!</code>; unchanged and restored inputs reuse existing outputs, while compilation races refuse publication. (#1337, #1698)</p>
+</li>
+<li>
+<p><strong>Tooling</strong>: <code>incan fmt</code> preserves top-level section comments and their surrounding blank lines after functions with multi-paragraph docstrings or nested <code>match</code> statements. (#2063)</p>
+</li>
+<li><strong>Tooling</strong>: Ordinary native dependency reuse validates compiled artifacts and the retained dependency declaration without walking archived source bodies. Source inspection still verifies the complete original source inventory; changed native members, substituted declarations and unlisted native files remain errors. (#1337, #1698)</li>
+<li><strong>Compiler</strong>: Rust trait metadata searches only the queried crate and its dependencies, so unrelated loaded crates cannot change its implementation candidates. Concrete re-exports include traits declared by their exporting crate, and generic declarations retain their original bounds. Older metadata cache records are re-extracted. (#1337)</li>
+<li><strong>Tooling</strong>: A <code>[[rust.facts]]</code> record can no longer declare <code>RUSTC_BOOTSTRAP</code>, in its compile environment or in a <code>link</code> or <code>tool</code> environment. The variable makes the pinned stable rustc accept unstable features, and a fact record about one crate was the one remaining route to that permission, since Oven already clears it from the ambient environment of every direct rustc launch. (#1337)</li>
 <li><strong><code>std.async</code></strong>: <code>Sender.reserve()</code> type-checks from source and returns a value-less <code>SendError[None]</code> when the channel is closed; reservations do not recover a message value. (#1976)</li>
 <li><strong>Compiler</strong>: Model and class constructors build in <code>if</code>, <code>elif</code>, <code>while</code>, <code>match</code>, assertion, comprehension-filter, generator-filter and <code>for</code> expression positions, including through nested field, method, operator, index and cast chains. (#1561)</li>
 <li><strong>Compiler</strong>: <code>decimal128[p, s]</code> resolves as the same fixed-scale decimal type as <code>decimal[p, s]</code>, including in nested annotations. (#1561)</li>
@@ -10167,7 +10387,7 @@
 <li><strong>Inspection</strong>: Codegraph schema 8 distinguishes same-named local declarations and parameters by their checked owner and binding ordinal, preserving identities across comments, unrelated insertions, and top-level reordering. (#1629)</li>
 <li><strong>Compiler</strong>: Comments in an imported trait definition no longer change the generated <code>std.io</code> code by accidentally selecting type facts from matching offsets in the importing module. Local trait defaults retain their own checked expression types. (#1592)</li>
 <li><strong>Tooling</strong>: The helpers a vocabulary desugarer receives from providers or exports whose names differ only in non-identifier characters, such as providers <code>a-b</code> and <code>a_b</code>, stay distinct instead of shadowing each other. (#1380)</li>
-<li><strong>Compiler</strong>: Module collection keys source files by identity rather than by the path spelling they were reached through. An entry spelled through a symlink whose import cycle reaches back into it (macOS keeps its temporary directories behind one) was collected twice, and replacement execution refused the pair as a duplicate module identity. (#1557)</li>
+<li><strong>Compiler</strong>: Module collection keys source files by identity rather than by the path spelling they were reached through. An entry spelled through a symlink whose import cycle reaches back into it (macOS keeps its temporary directories behind one) was collected twice, and the module graph refused the pair as a duplicate module identity. (#1557)</li>
 <li><strong>Stdlib</strong>: Integer <code>Duration</code> constructors clamp negative inputs to zero, and <code>Duration.from_millis</code> preserves exact seconds and nanoseconds across the full nonnegative <code>int</code> range. (#1630)</li>
 <li><strong>Compiler</strong>: A generic model or class whose type parameter appears only in method signatures, such as <code>model Column[T]: sql: str</code> with <code>def __mul__(self, other: T) -&gt; Column[T]</code>, builds and runs; its <code>Debug</code> output and field reflection list only its fields, and an explicit constructor type argument such as <code>Column[str](...)</code> is kept. A newtype whose underlying type does not mention a declared parameter, or an enum none of whose variant payloads mentions one, is refused at check time at the parameter. (#1370)</li>
 <li><strong>Compiler</strong>: Four generic-bound and type-argument diagnostics no longer mislead. A <code>with</code> bound that names a type rather than a trait is reported as such instead of asking the reader to "implement <code>float</code>", and a failing explicit type argument is named as the type argument rather than "the argument type"; a call that no overload accepts lists every candidate with the reason it was rejected instead of only the first-declared one's bound; an unknown name in a callable's type position suggests declaring it as a type parameter (<code>def widen[U](...)</code>) before suggesting an import; and a short explicit type-argument list names the parameters it left unbound and shows the <code>_</code> placeholder that infers them. (#1373)</li>

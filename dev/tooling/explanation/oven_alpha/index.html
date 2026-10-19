@@ -6390,8 +6390,6 @@
       
         
       
-        
-      
     
     
     
@@ -6478,34 +6476,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7889,6 +7859,8 @@
       
         
       
+        
+      
     
     
     
@@ -8031,6 +8003,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8515,8 +8515,6 @@
       
         
       
-        
-      
     
     
     
@@ -8575,34 +8573,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9123,6 +9093,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9304,7 +9278,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9984,7 +10028,7 @@
 </div>
 <p>The compiler-suite family is two things with two identities. The suite itself — the roots, the compiler that runs them, the Loaf compatibility they select — is keyed on the compiler's own sources, so every compiler edit misses it and is prepared again. The third-party foundation the suite links, the registry and vendored closure, is keyed on its own inputs only: the private foundation manifest, its lock, the checked-in patches, target, host, profile, the rustc identity and the Cargo version. A compiler edit therefore misses the suite but keeps the foundation key, and preparation selects the existing family by that key — from the compiler-suite store, or from a mirror through the same verifying import a mirrored Loaf uses — before it would ask Cargo to compile anything. Only a changed lock, manifest, patch, target, host, profile or toolchain derives a different key. The planning-only Cargo calls that read the unit graph and metadata still run on a suite miss; what the foundation key removes is the compilation.</p>
 <p>Compiler-suite replay reports live case completions and durations on stderr, with captured failure diagnostics and a 30-second heartbeat naming outstanding work. Its JSON report keeps process success separate from complete case evidence: missing records are unknown coverage, never zero-duration successes. Phase progress continues through scratch cleanup and report publication. Every partition retains case durations, full native transcripts and an outer timing record covering archive creation and output cleanup; see the benchmark protocol below for artifact names and timing boundaries.</p>
-<p>The current Alpha handoff uses project-extension schema 9, packaged-library schema 6, completed-output schema 12, and project-inspection-authority schema 1. Completed outputs preserve source-current inspection authority for each target and profile; a changed semantic input misses instead of borrowing authority from another receipt lineage.</p>
+<p>The current Alpha handoff uses project-extension schema 9, packaged-library schema 7, completed-output schema 14, and project-inspection-authority schema 1. Explicit-bake completed outputs preserve source-current inspection authority for each target and profile. A successful ordinary default executable build also publishes its completed loaf, bound to exact compiler and preparation inputs; it does not publish whole-project inspection authority. New bakes also record a separate dependency authority: development commands can typecheck and compile edited project Incan sources using that bake’s retained inspection closure. Manifests, semantic locks, path-provider sources, vocabulary companions and non-Incan inputs remain exact; changes to those require a bake. The sealed native project output remains reusable only for its original source authority. Older outputs without dependency authority require one bake before code edits can use this development path.</p>
 <p>The developer store defaults to <code>$INCAN_HOME/oven/store/v2</code> (or <code>~/.incan/oven/store/v2</code>). Its everyday policy allows 12 GiB of aggregate physical allocation, with 12 GiB physical and 6 GiB logical per compatibility domain, enough for two large interop projects to share one home without evicting each other. The compiler-suite policy is 16 GiB aggregate physical, 6 GiB domain physical, and 4 GiB domain logical. Before an explicit bake compiles anything it reserves a 4 GiB staging floor, reclaiming least-recently-used inactive entries to reach it and saying which ones went; an active lease is never reclaimed, and an operator-supplied limit is never silently expanded.</p>
 <a href="../../contributing/how-to/oven_alpha_benchmark.md">Run the reproducible benchmark sequence →</a>
 </details>
@@ -10059,7 +10103,8 @@
 
 <h2 id="command-details">Command details<a class="headerlink" href="#command-details" title="Permanent link">&para;</a></h2>
 <p><strong>Project bake.</strong> A project extension's <code>&lt;identity&gt;.loaf/loaf.json</code> names the exact base Loaf it extends. It canonicalizes compiler-owned runtime artifacts, overlapping locked registry units and vocabulary auxiliaries against the verified release cohort, keeps only the project-owned third-party and provider fragment, and binds each direct registry alias to the exact locked package, version, registry and checksum. The final output a bake compiles stays project-owned rather than joining the shared dependency Loaf.</p>
-<p><strong>Replay.</strong> Completed-output schema 12 keeps schema 11's single inspection authority, isolates each declared executable by stable target identity and profile, keys additional entrypoints by project-relative path, and carries report schema 2 so replay needs no frontend. The report writes project paths as tagged values and machine-specific external paths as opaque slots, so replay restores caller-owned paths without treating another machine's path spelling as authority. Canonical semantic lock authority excludes only the derived dependency fingerprint, and Rust path-dependency authority includes the exact Cargo workspace package and dependency facts selected through <code>workspace = true</code>. A completed output selects its inspection authority before frontend work, so a source-current, feature-matched bake serves later application, library and test consumers without mixing authority from another receipt lineage.</p>
+<p><strong>Replay.</strong> Completed-output schema 14 admits ordinary executable publication as well as explicit-bake publication. Ordinary default executable builds retain their exact compiler, environment and selected SDK inventory/graph inputs, generated files, executable and report in the same completed-output loaf store. An unchanged later build returns before session discovery, module collection, typechecking or code generation; missing or damaged caller output is restored from verified loaf bytes. An ordinary executable loaf cannot replace an explicit bake's whole-project inspection authority. The schema preserves target identity and profile isolation, keys additional entrypoints by project-relative path, and carries report schema 2 so replay needs no frontend. The report writes project paths as tagged values and machine-specific external paths as opaque slots, so replay restores caller-owned paths without treating another machine's path spelling as authority. Canonical semantic lock authority excludes only the derived dependency fingerprint, and Rust path-dependency authority includes the exact Cargo workspace package and dependency facts selected through <code>workspace = true</code>. A completed output selects its inspection authority before frontend work, so a source-current, feature-matched bake serves later application, library and test consumers without mixing authority from another receipt lineage.</p>
+<p><strong>Freshness.</strong> Source authority retains the existing named content digests and caches directory child lists in the same local freshness store. Known files and directories are checked by identity, size, nanosecond modification/change times and permissions on Unix. Unchanged directories reuse their child lists; changed directories are enumerated and only changed candidate files are read. A metadata change alone does not force compilation when content authority is unchanged. Missing or malformed records fall back to observation. Symlinks remain refused by the project authority boundary; platforms without replacement-sensitive metadata conservatively enumerate and read. These observations accelerate reconciliation and do not become a second source of build authority.</p>
 <p><strong>Selection.</strong> Normal <code>build</code>, <code>run</code> and <code>test</code> try the toolchain's immutable full-standard-library Loaf first; a project outside that envelope selects its receipt-bound extension together with the exact base Loaf the extension records. The selection key includes the target, toolchain, profile, Incan runtime, dependency, feature and provider inputs. The receipt stays source-strict: a source change regenerates caller-owned source and receipt, while a compatible project reuses the same base and extension. A release envelope may select registry-source authority independently from its feature-unified linkable closure, so supported standard-library Rust facades can be inspected without mixing direct-<code>rustc</code> artifacts. The retired Cargo flags on normal commands (<code>--cargo-args</code>, <code>--cargo-features</code> and its companions) are rejected, because a normal command never publishes a missing closure.</p>
 <p><strong>The release publisher.</strong> The internal release publisher is the only Cargo-backed producer for supported Oven Alpha envelopes, and its Cargo run is transitional: it observes registry packages the incan.pub registry does not describe, and a bake whose registry units all have records does not run it. It creates or exactly reuses the release or compiler-suite standard-library Loaf family, and the compiler-suite path also prepares or reuses the suite store. Each <code>loaf.json</code> binds the direct-<code>rustc</code> plan, declared artifacts, compatibility, provenance, digests and byte accounting. The publisher's Cargo may differ from the consumer's <code>rustc</code>; the latter defines the Loaf's toolchain identity. Compiler-suite JSON reports distinguish the <code>complete-suite</code>, <code>selected-complete-roots</code> and <code>exact-diagnostic</code> selection modes and give separate <code>complete_root_success</code> and <code>complete_suite_success</code> verdicts. The publisher writes harvest proposals from the captures it already holds for <code>stdlib/debug</code> and <code>stdlib/release</code> through <code>incan oven legacy-cargo bake-loafs … --harvest-dir &lt;PATH&gt;</code>; <code>--loaf-registry &lt;PATH&gt;</code> and <code>--loaf-registry-commit &lt;SHA&gt;</code> select the registry checkout whose records govern adopted units and refuse a checkout whose HEAD is not the pinned commit.</p>
 <p><strong>The runtime foundation.</strong> An explicit release-envelope bake materializes the admitted runtime foundation, rebuilds its runtime dependency closure with the retained compiler, and publishes that closure in the same generation. When <code>build</code>, <code>test</code> or <code>run</code> selects a release <code>ToolchainLoaf</code>, it proves the same-generation foundation and closure, verifies their target, toolchain, profile and compiler bindings, then composes the closure into the caller-owned plan. Missing, invalid or mismatched evidence is a refusal: a normal consumer neither bakes the closure nor invokes Cargo.</p>

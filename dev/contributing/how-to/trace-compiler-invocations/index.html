@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../backend_behavior_inventory/">
+        <link rel="prev" href="../benchmarks_and_profiling/">
       
       
-        <link rel="next" href="../test_corpus_inventory/">
+        <link rel="next" href="../oven_alpha_benchmark/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Replacement compatibility inventory - Incan Documentation</title>
+        <title>Trace compiler invocations - Incan Documentation</title>
       
     
     
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#replacement-compatibility-inventory" class="md-skip">
+        <a href="#trace-compiler-invocations" class="md-skip">
           Skip to content
         </a>
       
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Replacement compatibility inventory
+              Trace compiler invocations
             
           </span>
         </div>
@@ -6308,8 +6308,6 @@
       
         
       
-        
-      
     
     
     
@@ -6396,34 +6394,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7793,8 +7763,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -7812,6 +7784,8 @@
       
         
       
+        
+      
     
     
     
@@ -7819,11 +7793,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" checked>
         
           
           <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
@@ -7844,7 +7818,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -7862,7 +7836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/extending_language/" class="md-nav__link">
+      <a href="../extending_language/" class="md-nav__link">
         
   
   
@@ -7890,7 +7864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../authoring_vocab_crates/" class="md-nav__link">
         
   
   
@@ -7918,7 +7892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/auditing_generated_rust/" class="md-nav__link">
+      <a href="../auditing_generated_rust/" class="md-nav__link">
         
   
   
@@ -7946,7 +7920,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../benchmarks_and_profiling/" class="md-nav__link">
         
   
   
@@ -7971,10 +7945,151 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#capture-an-unchanged-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capture an unchanged command
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-the-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read the records
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attribute-test-preparation-separately-from-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribute test preparation separately from execution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attribute-cold-native-test-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribute cold native test compilation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-native-sdk-traversal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check native SDK traversal
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/oven_alpha_benchmark/" class="md-nav__link">
+      <a href="../oven_alpha_benchmark/" class="md-nav__link">
         
   
   
@@ -8002,7 +8117,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../ci_and_automation/" class="md-nav__link">
         
   
   
@@ -8030,7 +8145,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../writing_rfcs/" class="md-nav__link">
         
   
   
@@ -8423,14 +8538,10 @@
                 
   
   
-    
   
   
-  
     
     
-      
-        
       
         
       
@@ -8449,11 +8560,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
         
           
           <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
@@ -8474,7 +8585,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -8492,7 +8603,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backend_behavior_inventory/" class="md-nav__link">
+      <a href="../../reference/backend_behavior_inventory/" class="md-nav__link">
         
   
   
@@ -8517,151 +8628,10 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#release-pinned-public-baseline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Release-pinned public baseline
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#collector-assembly-and-bootstrap-retirement" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Collector assembly and bootstrap retirement
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compatibility-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compatibility features
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#public-capability-crosswalk" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Public capability crosswalk
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#private-implementation-requirements" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Private implementation requirements
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#remaining-work-issue-map" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Remaining-work issue map
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../test_corpus_inventory/" class="md-nav__link">
+      <a href="../../reference/test_corpus_inventory/" class="md-nav__link">
         
   
   
@@ -8689,7 +8659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../generated_rust_stdlib_coverage/" class="md-nav__link">
+      <a href="../../reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
   
@@ -8717,7 +8687,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hees_ai_v05_dependency_inventory/" class="md-nav__link">
+      <a href="../../reference/hees_ai_v05_dependency_inventory/" class="md-nav__link">
         
   
   
@@ -8745,7 +8715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rust_source_backend_deprecation/" class="md-nav__link">
+      <a href="../../reference/rust_source_backend_deprecation/" class="md-nav__link">
         
   
   
@@ -9161,6 +9131,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9342,7 +9316,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9783,10 +9827,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#release-pinned-public-baseline" class="md-nav__link">
+  <a href="#capture-an-unchanged-command" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Release-pinned public baseline
+        Capture an unchanged command
       
     </span>
   </a>
@@ -9794,10 +9838,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#collector-assembly-and-bootstrap-retirement" class="md-nav__link">
+  <a href="#read-the-records" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Collector assembly and bootstrap retirement
+        Read the records
       
     </span>
   </a>
@@ -9805,10 +9849,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#compatibility-features" class="md-nav__link">
+  <a href="#coverage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Compatibility features
+        Coverage
       
     </span>
   </a>
@@ -9816,10 +9860,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#public-capability-crosswalk" class="md-nav__link">
+  <a href="#attribute-test-preparation-separately-from-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Public capability crosswalk
+        Attribute test preparation separately from execution
       
     </span>
   </a>
@@ -9827,10 +9871,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#private-implementation-requirements" class="md-nav__link">
+  <a href="#attribute-cold-native-test-compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Private implementation requirements
+        Attribute cold native test compilation
       
     </span>
   </a>
@@ -9838,10 +9882,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#remaining-work-issue-map" class="md-nav__link">
+  <a href="#check-native-sdk-traversal" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Remaining-work issue map
+        Check native SDK traversal
       
     </span>
   </a>
@@ -9868,1412 +9912,49 @@
   
 
 
-<h1 id="replacement-compatibility-inventory">Replacement compatibility inventory<a class="headerlink" href="#replacement-compatibility-inventory" title="Permanent link">&para;</a></h1>
-<div class="admonition warning">
-<p class="admonition-title">Generated control-plane reference</p>
-<p>Do not edit this page by hand. Regenerate it from the checked public-capability baseline and compiler-boundary registrations.</p>
-</div>
-<p>This is a validated migration control plane, not a permanent second language-feature catalog and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.</p>
-<h2 id="release-pinned-public-baseline">Release-pinned public baseline<a class="headerlink" href="#release-pinned-public-baseline" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Release: <code>v0.5.0</code> at <code>f6c17e0f8948c032f8b308236d57d9dee6ab1e9f</code></li>
-<li>Baseline role: <code>MigrationCompatibilityTarget</code></li>
-<li>Checked source blob: <code>42f718a9c35f816a68bb3ff13578eaf6725e3d0b</code></li>
-<li>Capability descriptors: <code>67</code></li>
-<li>Retirement: Retire this active baseline when the v0.5 replacement migration closes; retain the source only as an explicitly historical regression fixture if a later migration needs it.</li>
-</ul>
-<p>The <code>v0.5.0</code> source is a frozen migration baseline, not the beginning of a version archive. It is retained only under the stated retirement condition.</p>
-<h2 id="collector-assembly-and-bootstrap-retirement">Collector assembly and bootstrap retirement<a class="headerlink" href="#collector-assembly-and-bootstrap-retirement" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Contributor</th>
-<th>Lifecycle</th>
-<th>Features</th>
-<th>Private requirements</th>
-<th>Location</th>
-<th>Retirement condition</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>backend.replacement.bounded-scalar-control</code></td>
-<td>LocalImplementation</td>
-<td>4</td>
-<td>3</td>
-<td><code>loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn replacement_compatibility_direct_execution_contribution</code></td>
-<td>-</td>
-</tr>
-<tr>
-<td><code>frontend.body-ir.callable-values</code></td>
-<td>LocalImplementation</td>
-<td>2</td>
-<td>2</td>
-<td><code>loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn replacement_compatibility_body_ir_contribution</code></td>
-<td>-</td>
-</tr>
-<tr>
-<td><code>replacement-compatibility.migration-bootstrap</code></td>
-<td>MigrationBootstrap</td>
-<td>21</td>
-<td>16</td>
-<td><code>loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn migration_bootstrap_compatibility_contribution</code></td>
-<td>Retire this contributor when every remaining feature and requirement has moved to the module that implements its coherent mechanism; then retain the v0.5 source only as an explicitly historical regression fixture if a later migration needs it.</td>
-</tr>
-</tbody>
-</table>
-<h2 id="compatibility-features">Compatibility features<a class="headerlink" href="#compatibility-features" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Feature</th>
-<th>Source contract</th>
-<th>Legacy run</th>
-<th>Body IR</th>
-<th>Direct replacement</th>
-<th>#987</th>
-<th>Feature comparison</th>
-<th>Scoped case comparisons</th>
-<th>Disposition</th>
-<th>Owner</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>async.tasks</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Represented</td>
-<td>Executable</td>
-<td>registered replacement-body-v0-018, replacement-body-v0-019</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Preserved</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>call.named-and-variadic</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-call.named-and-variadic</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>call.partial-binding</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-call.partial-binding</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>call.stored-callables</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-call.stored-callables</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>decorators.dsl-surfaces</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-decorators.dsl-surfaces</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#555</td>
-</tr>
-<tr>
-<td><code>diagnostics.stable</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-diagnostics.stable</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#655</td>
-</tr>
-<tr>
-<td><code>error.result-and-try</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-error.result-and-try</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>generator.expressions</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-generator.expressions</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>generator.functions</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-generator.functions</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>interop.rust-and-c</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-interop.rust-and-c</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#989</td>
-</tr>
-<tr>
-<td><code>iteration.protocol-and-adapters</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>registered replacement-body-v0-023</td>
-<td>NonGreenShadowUnavailable</td>
-<td>replacement-body-v0-023: ComparedMatch</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>iteration.user-and-fallible</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-iteration.user-and-fallible</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>language.aggregates-and-projections</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>registered replacement-body-v0-020, replacement-body-v0-026, replacement-body-v0-028</td>
-<td>NonGreenShadowUnavailable</td>
-<td>replacement-body-v0-020: ComparedMatch, replacement-body-v0-026: ComparedMatch, replacement-body-v0-028: ComparedMatch</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>language.control-flow</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Represented</td>
-<td>Executable</td>
-<td>registered replacement-body-v0-004, replacement-body-v0-005, replacement-body-v0-006</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Preserved</td>
-<td>-</td>
-</tr>
-<tr>
-<td><code>language.control-flow-complete</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-language.control-flow-complete</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>language.match-and-patterns</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-language.match-and-patterns</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>language.numeric-and-scalar</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Represented</td>
-<td>Executable</td>
-<td>registered replacement-body-v0-001, replacement-body-v0-002, replacement-body-v0-003, replacement-body-v0-005, replacement-body-v0-022, replacement-body-v0-025, replacement-body-v0-027</td>
-<td>NonGreenShadowUnavailable</td>
-<td>replacement-body-v0-001: ComparedMatch, replacement-body-v0-022: ComparedMatch, replacement-body-v0-025: ComparedMatch, replacement-body-v0-027: ComparedMatch</td>
-<td>Preserved</td>
-<td>-</td>
-</tr>
-<tr>
-<td><code>language.numeric-complete</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>registered replacement-body-v0-029</td>
-<td>NonGreenShadowUnavailable</td>
-<td>replacement-body-v0-029: ComparedMatch</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>language.strings-and-format</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>registered replacement-body-v0-021, replacement-body-v0-024</td>
-<td>NonGreenShadowUnavailable</td>
-<td>replacement-body-v0-021: ComparedMatch, replacement-body-v0-024: ComparedMatch</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>module.identity-and-aliases</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-module.identity-and-aliases</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#1042</td>
-</tr>
-<tr>
-<td><code>nominal.models-unions-enums</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>registered replacement-body-v0-030</td>
-<td>NonGreenShadowUnavailable</td>
-<td>replacement-body-v0-030: ComparedMatch</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>package.public-boundaries</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-package.public-boundaries</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#989</td>
-</tr>
-<tr>
-<td><code>runtime.std-data-services</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-runtime.std-data-services</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>runtime.std-hosted-services</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-runtime.std-hosted-services</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>runtime.std-observability</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-runtime.std-observability</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#988</td>
-</tr>
-<tr>
-<td><code>testing-and-tooling</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-testing-and-tooling</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#1034</td>
-</tr>
-<tr>
-<td><code>types.traits-generics-reflection</code></td>
-<td>Checked</td>
-<td>Unknown</td>
-<td>Partial</td>
-<td>BlockedByRequirements</td>
-<td>planned parity-987-plan-types.traits-generics-reflection</td>
-<td>NonGreenShadowUnavailable</td>
-<td>-</td>
-<td>Planned</td>
-<td>#1033</td>
-</tr>
-</tbody>
-</table>
-<h2 id="public-capability-crosswalk">Public capability crosswalk<a class="headerlink" href="#public-capability-crosswalk" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Capability</th>
-<th style="text-align: right;">Since</th>
-<th>RFC</th>
-<th>Landing provenance</th>
-<th>Compatibility features</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>NamespacedStdlib</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 022</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>module.identity-and-aliases</code></td>
-</tr>
-<tr>
-<td><code>RustInteropBoundary</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 041</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>interop.rust-and-c</code></td>
-</tr>
-<tr>
-<td><code>CheckedCBindingFoundation</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 116</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>interop.rust-and-c</code></td>
-</tr>
-<tr>
-<td><code>OvenInteropRequirements</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 116</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>package.public-boundaries</code></td>
-</tr>
-<tr>
-<td><code>IncanLibraries</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 031</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>package.public-boundaries</code></td>
-</tr>
-<tr>
-<td><code>StaticStorage</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 052</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>FirstClassFunctions</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 035</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>call.named-and-variadic</code>, <code>call.stored-callables</code></td>
-</tr>
-<tr>
-<td><code>CallSiteGenerics</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 054</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>call.named-and-variadic</code></td>
-</tr>
-<tr>
-<td><code>AbstractTraits</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 042</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>types.traits-generics-reflection</code></td>
-</tr>
-<tr>
-<td><code>SourceDefinedDerivesTraits</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 024</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>types.traits-generics-reflection</code></td>
-</tr>
-<tr>
-<td><code>ModelFieldMetadata</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 021</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>TypeTokensReflection</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 107</td>
-<td>HistoricalDiscrepancyUnresolved; owner #1153</td>
-<td><code>types.traits-generics-reflection</code></td>
-</tr>
-<tr>
-<td><code>ValueEnums</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 032</td>
-<td>HistoricalDiscrepancyUnresolved; owner #1153</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>UnionTypes</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 029</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>ValidatedNewtypes</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 017</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>NumericTypeSystem</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 009</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>language.numeric-and-scalar</code>, <code>language.numeric-complete</code>, <code>language.strings-and-format</code></td>
-</tr>
-<tr>
-<td><code>LoopExpressions</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 016</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>language.control-flow</code>, <code>language.control-flow-complete</code></td>
-</tr>
-<tr>
-<td><code>IfWhileLet</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 049</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>language.control-flow</code>, <code>language.control-flow-complete</code></td>
-</tr>
-<tr>
-<td><code>PatternAlternation</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 071</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>language.match-and-patterns</code></td>
-</tr>
-<tr>
-<td><code>EnumMethodsTraits</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 050</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>ComputedProperties</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 046</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>nominal.models-unions-enums</code></td>
-</tr>
-<tr>
-<td><code>SymbolAliases</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 083</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>module.identity-and-aliases</code></td>
-</tr>
-<tr>
-<td><code>CallablePresets</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 084</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>call.partial-binding</code></td>
-</tr>
-<tr>
-<td><code>VariadicAndSpreadCalls</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 038</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>call.named-and-variadic</code></td>
-</tr>
-<tr>
-<td><code>UserDefinedDecorators</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 036</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>decorators.dsl-surfaces</code></td>
-</tr>
-<tr>
-<td><code>Generators</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 006</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>generator.expressions</code>, <code>generator.functions</code></td>
-</tr>
-<tr>
-<td><code>IteratorAdapters</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 088</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>iteration.protocol-and-adapters</code></td>
-</tr>
-<tr>
-<td><code>FallibleIteration</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 115</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>iteration.user-and-fallible</code></td>
-</tr>
-<tr>
-<td><code>ResultCombinators</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 070</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>error.result-and-try</code></td>
-</tr>
-<tr>
-<td><code>ProtocolHooks</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 068</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>types.traits-generics-reflection</code></td>
-</tr>
-<tr>
-<td><code>RustTraitAdoption</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 043</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>types.traits-generics-reflection</code></td>
-</tr>
-<tr>
-<td><code>RustAllow</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 057</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>interop.rust-and-c</code></td>
-</tr>
-<tr>
-<td><code>ScopedDslSurfaces</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 040</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>decorators.dsl-surfaces</code></td>
-</tr>
-<tr>
-<td><code>StdWeb</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 023</td>
-<td>HistoricalDiscrepancyUnresolved; owner #1153</td>
-<td><code>runtime.std-hosted-services</code></td>
-</tr>
-<tr>
-<td><code>StdMath</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 022</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdCollections</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 030</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>language.aggregates-and-projections</code></td>
-</tr>
-<tr>
-<td><code>StdGraph</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 047</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdFs</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 055</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-hosted-services</code></td>
-</tr>
-<tr>
-<td><code>StdIo</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 056</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-hosted-services</code></td>
-</tr>
-<tr>
-<td><code>StdRegex</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 059</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdUuid</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 060</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdCompression</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 061</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdEncoding</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 064</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdHash</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 065</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdEnviron</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 089</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-hosted-services</code></td>
-</tr>
-<tr>
-<td><code>StdJson</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 051</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdTempfile</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 010</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-hosted-services</code></td>
-</tr>
-<tr>
-<td><code>StdDatetime</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 058</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>StdTelemetryCore</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 072</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-observability</code></td>
-</tr>
-<tr>
-<td><code>StdLogging</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 072</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-observability</code></td>
-</tr>
-<tr>
-<td><code>StdChecksum</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 065</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-data-services</code></td>
-</tr>
-<tr>
-<td><code>TestingAssertions</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 018</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>TestRunner</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 019</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>AsyncAwait</code></td>
-<td style="text-align: right;">0.2</td>
-<td>RFC 023</td>
-<td>HistoricalDiscrepancyUnresolved; owner #1153</td>
-<td><code>async.tasks</code></td>
-</tr>
-<tr>
-<td><code>AsyncRace</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 039</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>async.tasks</code></td>
-</tr>
-<tr>
-<td><code>ProjectLifecycle</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 015</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>WorkspaceMultiPackageProjects</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 077</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>package.public-boundaries</code></td>
-</tr>
-<tr>
-<td><code>ToolchainInstallerManifest</code></td>
-<td style="text-align: right;">0.4</td>
-<td>RFC 015</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>ZeroCloneStarterFlow</code></td>
-<td style="text-align: right;">0.4</td>
-<td>RFC 015</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>StableDiagnostics</code></td>
-<td style="text-align: right;">0.4</td>
-<td>RFC 015</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>diagnostics.stable</code></td>
-</tr>
-<tr>
-<td><code>BuildReportsAndRustInspection</code></td>
-<td style="text-align: right;">0.4</td>
-<td>RFC 015</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>BuildTestOvenObservability</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 015</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>CodegraphInspection</code></td>
-<td style="text-align: right;">0.4</td>
-<td>RFC 106</td>
-<td>HistoricalDiscrepancyUnresolved; owner #1153</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>CheckedApiMetadata</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 048</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>package.public-boundaries</code></td>
-</tr>
-<tr>
-<td><code>CompiledProvidersSdkComponentsPackageFeatures</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 114</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>package.public-boundaries</code></td>
-</tr>
-<tr>
-<td><code>FormatterContract</code></td>
-<td style="text-align: right;">0.3</td>
-<td>RFC 053</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>testing-and-tooling</code></td>
-</tr>
-<tr>
-<td><code>StdRegistry</code></td>
-<td style="text-align: right;">0.5</td>
-<td>RFC 113</td>
-<td>ReleaseRegistryDeclared</td>
-<td><code>runtime.std-observability</code></td>
-</tr>
-</tbody>
-</table>
-<h2 id="private-implementation-requirements">Private implementation requirements<a class="headerlink" href="#private-implementation-requirements" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Requirement</th>
-<th>Owning boundary</th>
-<th>Enabled features</th>
-<th>Verification anchor</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>async.runtime</code></td>
-<td>source-local Body IR plus replacement task runtime</td>
-<td><code>async.tasks</code></td>
-<td>replacement-body-v0-018 and replacement-body-v0-019 corpus probes</td>
-</tr>
-<tr>
-<td><code>call.argument-binder</code></td>
-<td>typechecker partial projection and replacement call runtime</td>
-<td><code>call.named-and-variadic</code>, <code>call.partial-binding</code></td>
-<td>partial/default typechecker and Body-IR tests</td>
-</tr>
-<tr>
-<td><code>call.frames</code></td>
-<td>replacement runtime call dispatcher</td>
-<td><code>call.named-and-variadic</code>, <code>call.stored-callables</code>, <code>generator.functions</code>, <code>iteration.protocol-and-adapters</code></td>
-<td>stored-callable Body-IR tests and #1152 execution probes</td>
-</tr>
-<tr>
-<td><code>captures.lexical-environments</code></td>
-<td>Body IR closure lowering and replacement runtime</td>
-<td><code>call.partial-binding</code>, <code>call.stored-callables</code></td>
-<td>closure/partial capture timing regressions</td>
-</tr>
-<tr>
-<td><code>control.normalized-flow</code></td>
-<td>Body IR lowering and replacement evaluator</td>
-<td><code>language.control-flow</code>, <code>language.control-flow-complete</code></td>
-<td>replacement-body-v0 corpus</td>
-</tr>
-<tr>
-<td><code>diagnostics.source-authority</code></td>
-<td>frontend diagnostics and backend selection receipts</td>
-<td><code>diagnostics.stable</code>, <code>error.result-and-try</code></td>
-<td>diagnostic fixtures and #987 classifier</td>
-</tr>
-<tr>
-<td><code>error.result-routing</code></td>
-<td>Body IR try lowering and replacement runtime</td>
-<td><code>error.result-and-try</code>, <code>iteration.user-and-fallible</code></td>
-<td>try/result Body-IR and runtime probes</td>
-</tr>
-<tr>
-<td><code>iteration.protocol-dispatch</code></td>
-<td>typechecker protocol facts, Body IR, replacement runtime</td>
-<td><code>generator.expressions</code>, <code>iteration.protocol-and-adapters</code>, <code>iteration.user-and-fallible</code></td>
-<td>iteration protocol Body-IR snapshots</td>
-</tr>
-<tr>
-<td><code>modules.canonical-identity</code></td>
-<td>module resolver and semantic facts</td>
-<td><code>module.identity-and-aliases</code></td>
-<td>canonical identity and package-boundary tests</td>
-</tr>
-<tr>
-<td><code>nominal.value-model</code></td>
-<td>Body IR value lowering and replacement runtime</td>
-<td><code>language.match-and-patterns</code>, <code>nominal.models-unions-enums</code></td>
-<td>model/union/value-enum Body-IR probes</td>
-</tr>
-<tr>
-<td><code>packages.public-contract</code></td>
-<td>package/ABI boundary</td>
-<td><code>interop.rust-and-c</code>, <code>package.public-boundaries</code></td>
-<td>#989 boundary corpus</td>
-</tr>
-<tr>
-<td><code>patterns.dispatch</code></td>
-<td>typechecker match facts and Body IR</td>
-<td><code>language.match-and-patterns</code></td>
-<td>match diagnostics and Body-IR tests</td>
-</tr>
-<tr>
-<td><code>providers.runtime-services</code></td>
-<td>stdlib/provider plan and replacement runtime</td>
-<td><code>runtime.std-data-services</code>, <code>runtime.std-hosted-services</code>, <code>runtime.std-observability</code></td>
-<td>stdlib/provider and authority tests</td>
-</tr>
-<tr>
-<td><code>receipts.comparison</code></td>
-<td>backend selection, #1146, and #987</td>
-<td><code>async.tasks</code>, <code>diagnostics.stable</code>, <code>runtime.std-hosted-services</code>, <code>testing-and-tooling</code></td>
-<td>backend selection and parity corpus tests</td>
-</tr>
-<tr>
-<td><code>runtime.aggregate-store</code></td>
-<td>Body IR aggregates/places and replacement runtime</td>
-<td><code>language.aggregates-and-projections</code>, <code>language.control-flow-complete</code>, <code>language.numeric-complete</code>, <code>runtime.std-data-services</code></td>
-<td>aggregate and assignment Body-IR tests</td>
-</tr>
-<tr>
-<td><code>runtime.scalar-values</code></td>
-<td>Body IR operands/rvalues and replacement evaluator</td>
-<td><code>language.numeric-and-scalar</code>, <code>language.numeric-complete</code>, <code>language.strings-and-format</code></td>
-<td>replacement-body-v0 scalar corpus, including replacement-body-v0-025</td>
-</tr>
-<tr>
-<td><code>surface.decorator-dispatch</code></td>
-<td>semantic registry and surface semantics packs</td>
-<td><code>decorators.dsl-surfaces</code></td>
-<td>surface semantics and vocab tests</td>
-</tr>
-<tr>
-<td><code>suspension.continuations</code></td>
-<td>Body IR generator model and replacement runtime</td>
-<td><code>generator.expressions</code>, <code>generator.functions</code></td>
-<td>generator laziness and resume probes</td>
-</tr>
-<tr>
-<td><code>testing.tooling-control-plane</code></td>
-<td>CLI, Oven, and test-runner boundaries</td>
-<td><code>testing-and-tooling</code></td>
-<td>CLI and Oven integration tests</td>
-</tr>
-<tr>
-<td><code>types.resolved-dispatch</code></td>
-<td>typechecker facts and Body IR call model</td>
-<td><code>call.named-and-variadic</code>, <code>types.traits-generics-reflection</code></td>
-<td>typechecker resolution and type-token tests</td>
-</tr>
-<tr>
-<td><code>unsafe.interop-boundary</code></td>
-<td>interop metadata and package boundary</td>
-<td><code>interop.rust-and-c</code></td>
-<td>Rust/C interop and package consumer tests</td>
-</tr>
-</tbody>
-</table>
-<h2 id="remaining-work-issue-map">Remaining-work issue map<a class="headerlink" href="#remaining-work-issue-map" title="Permanent link">&para;</a></h2>
-<p>Every planned feature below has a currently open mechanism owner. #1146 is completed comparison infrastructure: it supplies reusable provenance, never ownership of missing comparison evidence. Scheduled evidence belongs to its feature/runtime owner; direct profiles without one carry explicit unscheduled evidence debt. Stable corpus rows <code>replacement-body-v0-001</code> and <code>replacement-body-v0-020</code> through <code>replacement-body-v0-030</code> have case-scoped paired matches, while all incomplete features and uncovered cases remain non-green.</p>
-<ul>
-<li>
-<h1 id="555-decoratorsdsl-surfaces">555: <code>decorators.dsl-surfaces</code><a class="headerlink" href="#555-decoratorsdsl-surfaces" title="Permanent link">&para;</a></h1>
-</li>
-<li>
-<h1 id="655-diagnosticsstable">655: <code>diagnostics.stable</code><a class="headerlink" href="#655-diagnosticsstable" title="Permanent link">&para;</a></h1>
-</li>
-<li>
-<h1 id="988-asynctasks-callnamed-and-variadic-callpartial-binding-callstored-callables-errorresult-and-try-generatorexpressions-generatorfunctions-iterationprotocol-and-adapters-iterationuser-and-fallible-languageaggregates-and-projections-languagecontrol-flow-complete-languagematch-and-patterns-languagenumeric-complete-languagestrings-and-format-nominalmodels-unions-enums-runtimestd-data-services-runtimestd-hosted-services-runtimestd-observability">988: <code>async.tasks</code>, <code>call.named-and-variadic</code>, <code>call.partial-binding</code>, <code>call.stored-callables</code>, <code>error.result-and-try</code>, <code>generator.expressions</code>, <code>generator.functions</code>, <code>iteration.protocol-and-adapters</code>, <code>iteration.user-and-fallible</code>, <code>language.aggregates-and-projections</code>, <code>language.control-flow-complete</code>, <code>language.match-and-patterns</code>, <code>language.numeric-complete</code>, <code>language.strings-and-format</code>, <code>nominal.models-unions-enums</code>, <code>runtime.std-data-services</code>, <code>runtime.std-hosted-services</code>, <code>runtime.std-observability</code><a class="headerlink" href="#988-asynctasks-callnamed-and-variadic-callpartial-binding-callstored-callables-errorresult-and-try-generatorexpressions-generatorfunctions-iterationprotocol-and-adapters-iterationuser-and-fallible-languageaggregates-and-projections-languagecontrol-flow-complete-languagematch-and-patterns-languagenumeric-complete-languagestrings-and-format-nominalmodels-unions-enums-runtimestd-data-services-runtimestd-hosted-services-runtimestd-observability" title="Permanent link">&para;</a></h1>
-</li>
-<li>
-<h1 id="989-interoprust-and-c-packagepublic-boundaries">989: <code>interop.rust-and-c</code>, <code>package.public-boundaries</code><a class="headerlink" href="#989-interoprust-and-c-packagepublic-boundaries" title="Permanent link">&para;</a></h1>
-</li>
-<li>
-<h1 id="1033-typestraits-generics-reflection">1033: <code>types.traits-generics-reflection</code><a class="headerlink" href="#1033-typestraits-generics-reflection" title="Permanent link">&para;</a></h1>
-</li>
-<li>
-<h1 id="1034-testing-and-tooling">1034: <code>testing-and-tooling</code><a class="headerlink" href="#1034-testing-and-tooling" title="Permanent link">&para;</a></h1>
-</li>
-<li>
-<h1 id="1042-moduleidentity-and-aliases">1042: <code>module.identity-and-aliases</code><a class="headerlink" href="#1042-moduleidentity-and-aliases" title="Permanent link">&para;</a></h1>
-</li>
-</ul>
-<h2 id="probe-and-ownership-obligations">Probe and ownership obligations<a class="headerlink" href="#probe-and-ownership-obligations" title="Permanent link">&para;</a></h2>
-<h3 id="asynctasks"><code>async.tasks</code><a class="headerlink" href="#asynctasks" title="Permanent link">&para;</a></h3>
-<p>One exact source-local <code>std.async</code> activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.</p>
-<ul>
-<li><code>probe:async.tasks:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await</code></li>
-<li>Positive contract: One exact source-local <code>std.async</code> activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.</li>
-<li>Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await</code></li>
-<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_race_for</code></li>
-<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_race</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green.</li>
-<li>Blocker/migration: Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence.</li>
-</ul>
-<h3 id="callnamed-and-variadic"><code>call.named-and-variadic</code><a class="headerlink" href="#callnamed-and-variadic" title="Permanent link">&para;</a></h3>
-<p>Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.</p>
-<ul>
-<li><code>probe:call.named-and-variadic:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Positive contract: Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1152 delivered the callable runtime substrate; open #988 owns broadening named, variadic, and spread execution with receipt-bound evidence.</li>
-</ul>
-<h3 id="callpartial-binding"><code>call.partial-binding</code><a class="headerlink" href="#callpartial-binding" title="Permanent link">&para;</a></h3>
-<p>Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.</p>
-<ul>
-<li><code>probe:call.partial-binding:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Positive contract: Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.</li>
-</ul>
-<h3 id="callstored-callables"><code>call.stored-callables</code><a class="headerlink" href="#callstored-callables" title="Permanent link">&para;</a></h3>
-<p>Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.</p>
-<ul>
-<li><code>probe:call.stored-callables:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Positive contract: Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.</li>
-</ul>
-<h3 id="decoratorsdsl-surfaces"><code>decorators.dsl-surfaces</code><a class="headerlink" href="#decoratorsdsl-surfaces" title="Permanent link">&para;</a></h3>
-<p>Decorators and scoped DSL surfaces preserve activation, dispatch, and source-owned diagnostics.</p>
-<ul>
-<li><code>probe:decorators.dsl-surfaces:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined</code></li>
-<li>Positive contract: Decorators and scoped DSL surfaces preserve activation, dispatch, and source-owned diagnostics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body</code>; owner #555</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #555</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #555: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Surface packs and decorators require a source-to-runtime dispatch boundary before direct execution can classify them.</li>
-</ul>
-<h3 id="diagnosticsstable"><code>diagnostics.stable</code><a class="headerlink" href="#diagnosticsstable" title="Permanent link">&para;</a></h3>
-<p>Source diagnostics retain intentional acceptance/refusal boundaries, spans, and machine-readable identity.</p>
-<ul>
-<li><code>probe:diagnostics.stable:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement</code></li>
-<li>Positive contract: Source diagnostics retain intentional acceptance/refusal boundaries, spans, and machine-readable identity.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body</code>; owner #655</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function</code>; owner #655</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #655: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: The compatibility report and corpus need receipt-bound diagnostic evidence; generated Rust diagnostics are not a substitute.</li>
-</ul>
-<h3 id="errorresult-and-try"><code>error.result-and-try</code><a class="headerlink" href="#errorresult-and-try" title="Permanent link">&para;</a></h3>
-<p>Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.</p>
-<ul>
-<li><code>probe:error.result-and-try:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try</code></li>
-<li>Positive contract: Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_try</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered Result/error value routing; open #988 owns broadening and comparing the remaining execution profile.</li>
-</ul>
-<h3 id="generatorexpressions"><code>generator.expressions</code><a class="headerlink" href="#generatorexpressions" title="Permanent link">&para;</a></h3>
-<p>Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.</p>
-<ul>
-<li><code>probe:generator.expressions:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Positive contract: Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1152 delivered the bounded generator-expression collect path; open #988 owns broader consumption and comparison, which remain non-green.</li>
-</ul>
-<h3 id="generatorfunctions"><code>generator.functions</code><a class="headerlink" href="#generatorfunctions" title="Permanent link">&para;</a></h3>
-<p>Generator functions suspend and resume without replaying prior effects or losing local state.</p>
-<ul>
-<li><code>probe:generator.functions:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Positive contract: Generator functions suspend and resume without replaying prior effects or losing local state.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1152 delivered the callable/lazy-generator substrate; open #988 owns the generator-function frames and resumption forms that remain explicit replacement refusals.</li>
-</ul>
-<h3 id="interoprust-and-c"><code>interop.rust-and-c</code><a class="headerlink" href="#interoprust-and-c" title="Permanent link">&para;</a></h3>
-<p>Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.</p>
-<ul>
-<li><code>probe:interop.rust-and-c:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value</code></li>
-<li>Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #989</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #989</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Public ABI and interop parity is an explicit replacement-boundary slice, not a direct scalar-executor extension.</li>
-</ul>
-<h3 id="iterationprotocol-and-adapters"><code>iteration.protocol-and-adapters</code><a class="headerlink" href="#iterationprotocol-and-adapters" title="Permanent link">&para;</a></h3>
-<p>Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.</p>
-<ul>
-<li><code>probe:iteration.protocol-and-adapters:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
-<li>Positive contract: Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-023</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Blocker/migration: Closed #1152 delivered the first callable/lazy-generator adapter profile; open #988 owns broader protocol dispatch, which remains blocked.</li>
-</ul>
-<h3 id="iterationuser-and-fallible"><code>iteration.user-and-fallible</code><a class="headerlink" href="#iterationuser-and-fallible" title="Permanent link">&para;</a></h3>
-<p>User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.</p>
-<ul>
-<li><code>probe:iteration.user-and-fallible:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
-<li>Positive contract: User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1101 delivered the Body IR protocol vocabulary; open #988 owns the runtime dispatch and error-routing profile required to admit these forms.</li>
-</ul>
-<h3 id="languageaggregates-and-projections"><code>language.aggregates-and-projections</code><a class="headerlink" href="#languageaggregates-and-projections" title="Permanent link">&para;</a></h3>
-<p>Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.</p>
-<ul>
-<li><code>probe:language.aggregates-and-projections:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list</code></li>
-<li>Positive contract: Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_aggregate</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-020</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-026</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-028</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Blocker/migration: Source-local scalar-key set/dict membership and entry count plus nonempty integer-list sorting execute directly. Standalone replacement-body-v0-020, replacement-body-v0-026 and replacement-body-v0-028 prove their exact streams and typed results across independent routes. These bounded proofs do not establish the full aggregate or ordering contract. Closed #1154 delivered the direct value-state substrate; open #988 owns broadening storage, projection, mutation, equality, and ordering execution.</li>
-</ul>
-<h3 id="languagecontrol-flow"><code>language.control-flow</code><a class="headerlink" href="#languagecontrol-flow" title="Permanent link">&para;</a></h3>
-<p>Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.</p>
-<ul>
-<li><code>probe:language.control-flow:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
-<li>Positive contract: Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.</li>
-<li>Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
-<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if</code></li>
-<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.</li>
-</ul>
-<h3 id="languagecontrol-flow-complete"><code>language.control-flow-complete</code><a class="headerlink" href="#languagecontrol-flow-complete" title="Permanent link">&para;</a></h3>
-<p>Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.</p>
-<ul>
-<li><code>probe:language.control-flow-complete:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
-<li>Positive contract: Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if_expr</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: The current direct profile covers only the bounded scalar subset. Closed #1154 delivered the value and pattern runtime substrate; open #988 owns the remaining control-flow execution and comparison profile.</li>
-</ul>
-<h3 id="languagematch-and-patterns"><code>language.match-and-patterns</code><a class="headerlink" href="#languagematch-and-patterns" title="Permanent link">&para;</a></h3>
-<p>Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.</p>
-<ul>
-<li><code>probe:language.match-and-patterns:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match</code></li>
-<li>Positive contract: Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_match</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered pattern dispatch over direct values; open #988 owns broadening and comparing the remaining match surface.</li>
-</ul>
-<h3 id="languagenumeric-and-scalar"><code>language.numeric-and-scalar</code><a class="headerlink" href="#languagenumeric-and-scalar" title="Permanent link">&para;</a></h3>
-<p>Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.</p>
-<ul>
-<li><code>probe:language.numeric-and-scalar:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
-<li>Positive contract: Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.</li>
-<li>Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
-<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary</code></li>
-<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.</li>
-<li>Case <code>replacement-body-v0-001</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::legacy_receipt_identity</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::replacement_receipt_identity</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority</code></li>
-<li>Case <code>replacement-body-v0-022</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-025</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-027</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code></li>
-</ul>
-<h3 id="languagenumeric-complete"><code>language.numeric-complete</code><a class="headerlink" href="#languagenumeric-complete" title="Permanent link">&para;</a></h3>
-<p>Exact signed and unsigned widths, finite f32, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison; f64 is float and travels as the ordinary float value. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.</p>
-<ul>
-<li><code>probe:language.numeric-complete:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment</code></li>
-<li>Positive contract: Exact signed and unsigned widths, finite f32, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison; f64 is float and travels as the ordinary float value. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment</code></li>
-<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir/primitives.rs::fn lower_checked_literal</code></li>
-<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn validate_reachable_typed_numeric_profile</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-029</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code></li>
-<li>Blocker/migration: #1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.</li>
-</ul>
-<h3 id="languagestrings-and-format"><code>language.strings-and-format</code><a class="headerlink" href="#languagestrings-and-format" title="Permanent link">&para;</a></h3>
-<p>String operators and formatting preserve interpolation order, conversions, and runtime failures.</p>
-<ul>
-<li><code>probe:language.strings-and-format:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
-<li>Positive contract: String operators and formatting preserve interpolation order, conversions, and runtime failures.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-021</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-024</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Blocker/migration: String concatenation, bounded scalar interpolation, selected canonical string helpers and Unicode-scalar string length execute directly. Closed #1101 delivered the Body IR vocabulary. The separate replacement-body-v0-021 and replacement-body-v0-024 corpus cases prove those bounded profiles, not this full formatting contract; open #988 owns broader execution and feature parity remains non-green.</li>
-</ul>
-<h3 id="moduleidentity-and-aliases"><code>module.identity-and-aliases</code><a class="headerlink" href="#moduleidentity-and-aliases" title="Permanent link">&para;</a></h3>
-<p>Modules, imports, aliases, namespaces, and reexports resolve to one source-observable identity.</p>
-<ul>
-<li><code>probe:module.identity-and-aliases:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import</code></li>
-<li>Positive contract: Modules, imports, aliases, namespaces, and reexports resolve to one source-observable identity.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #1042</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #1042</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1042: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Canonical source identity is a prerequisite for a replacement profile that crosses module boundaries.</li>
-</ul>
-<h3 id="nominalmodels-unions-enums"><code>nominal.models-unions-enums</code><a class="headerlink" href="#nominalmodels-unions-enums" title="Permanent link">&para;</a></h3>
-<p>Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.</p>
-<ul>
-<li><code>probe:nominal.models-unions-enums:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model</code></li>
-<li>Positive contract: Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_constructor</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-030</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Blocker/migration: #1281 retains and executes the bounded checked int/bool/str/float <code>isinstance</code> target profile in replacement-body-v0-030. That case does not establish general runtime type values or the wider models/unions/enums/newtypes contract. Closed #1154 delivered the current direct nominal/value substrate; open #988 owns broadening the replacement execution profile.</li>
-</ul>
-<h3 id="packagepublic-boundaries"><code>package.public-boundaries</code><a class="headerlink" href="#packagepublic-boundaries" title="Permanent link">&para;</a></h3>
-<p>Libraries, checked API metadata, providers, workspaces, and consumer imports preserve public identity and defaults.</p>
-<ul>
-<li><code>probe:package.public-boundaries:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports</code></li>
-<li>Positive contract: Libraries, checked API metadata, providers, workspaces, and consumer imports preserve public identity and defaults.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #989</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #989</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Package and ABI boundaries deliberately remain outside the direct source-only profile until #656/#989 evidence exists.</li>
-</ul>
-<h3 id="runtimestd-data-services"><code>runtime.std-data-services</code><a class="headerlink" href="#runtimestd-data-services" title="Permanent link">&para;</a></h3>
-<p>Data-oriented stdlib services preserve their documented input, output, and error contracts.</p>
-<ul>
-<li><code>probe:runtime.std-data-services:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Positive contract: Data-oriented stdlib services preserve their documented input, output, and error contracts.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1156 delivered one checked provider-service dispatch and closed #1154 delivered its value-state prerequisite; open #988 owns broadening direct data-service execution and comparison.</li>
-</ul>
-<h3 id="runtimestd-hosted-services"><code>runtime.std-hosted-services</code><a class="headerlink" href="#runtimestd-hosted-services" title="Permanent link">&para;</a></h3>
-<p>Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.</p>
-<ul>
-<li><code>probe:runtime.std-hosted-services:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Positive contract: Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1156 delivered one checked provider-service dispatch. Open #988 owns broader direct execution and comparison, with authority and receipt facts still supplied by #662.</li>
-</ul>
-<h3 id="runtimestd-observability"><code>runtime.std-observability</code><a class="headerlink" href="#runtimestd-observability" title="Permanent link">&para;</a></h3>
-<p>Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.</p>
-<ul>
-<li><code>probe:runtime.std-observability:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Positive contract: Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Closed #1156 delivered one checked provider-service dispatch; open #988 owns broader direct observability execution and comparison, while provider authority and receipts remain explicit prerequisites.</li>
-</ul>
-<h3 id="testing-and-tooling"><code>testing-and-tooling</code><a class="headerlink" href="#testing-and-tooling" title="Permanent link">&para;</a></h3>
-<p>Test discovery, assertions, formatter, build reports, inspection, lifecycle, installer, and Oven observability preserve documented contracts.</p>
-<ul>
-<li><code>probe:testing-and-tooling:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module</code></li>
-<li>Positive contract: Test discovery, assertions, formatter, build reports, inspection, lifecycle, installer, and Oven observability preserve documented contracts.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body</code>; owner #1034</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function</code>; owner #1034</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1034: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: These are control-plane contracts with source and receipt evidence, not direct Body-IR execution rows.</li>
-</ul>
-<h3 id="typestraits-generics-reflection"><code>types.traits-generics-reflection</code><a class="headerlink" href="#typestraits-generics-reflection" title="Permanent link">&para;</a></h3>
-<p>Traits, generics, type tokens, protocol hooks, derives, and resolved method signatures preserve checked dispatch decisions.</p>
-<ul>
-<li><code>probe:types.traits-generics-reflection:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound</code></li>
-<li>Positive contract: Traits, generics, type tokens, protocol hooks, derives, and resolved method signatures preserve checked dispatch decisions.</li>
-<li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits</code></li>
-<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound</code></li>
-<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #1033</li>
-<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #1033</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1033: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Blocker/migration: Type-directed runtime calls and reflection need canonical source facts and value representation beyond the current profile.</li>
-</ul>
+<h1 id="trace-compiler-invocations">Trace compiler invocations<a class="headerlink" href="#trace-compiler-invocations" title="Permanent link">&para;</a></h1>
+<p>Use invocation tracing to investigate repeated work in a compiler command. It is disabled by default. Ordinary logging still follows <code>RUST_LOG</code>; invocation diagnostics have a separate opt-in switch and do not appear in ordinary logs.</p>
+<h2 id="capture-an-unchanged-command">Capture an unchanged command<a class="headerlink" href="#capture-an-unchanged-command" title="Permanent link">&para;</a></h2>
+<p>Run the command once to establish its artifacts. Then run the same command with the same sources, compiler, dependency declarations and Store, saving diagnostics to a fresh directory:</p>
+<div class="language-sh highlight"><pre><span></span><code><span class="nv">INCAN_TRACE_DIR</span><span class="o">=</span>/tmp/incan-invocations<span class="w"> </span>incan<span class="w"> </span>run
+</code></pre></div>
+<p>Remove <code>INCAN_TRACE_DIR</code> for normal runs and performance acceptance measurements. Enabled tracing writes records synchronously and adds overhead; its elapsed times explain the observed execution rather than establish normal performance. Disabled diagnostic fields are not constructed and no diagnostic sink is opened.</p>
+<p>Each participating CLI process creates a distinct <code>PID-TIMESTAMP.jsonl</code> file without overwriting earlier captures. Retain all files from a capture together. A requested directory that cannot be opened fails before the command executes. A later write failure prints <code>invocation trace incomplete</code> once; treat that capture as incomplete.</p>
+<h2 id="read-the-records">Read the records<a class="headerlink" href="#read-the-records" title="Permanent link">&para;</a></h2>
+<p>The <code>incan.invocations/1</code> process header records the executable, process ID and clock origin. <code>begin</code> records identify an invocation, its parent, function boundary, instrumentation source location and input fields. Selected function boundaries also record their caller's source location. <code>end</code> records close the same ID. <code>event</code> records attach decisions and actual work counts to their enclosing invocation. IDs include the process ID so files can be combined.</p>
+<p>Group invocations by function, caller and input to identify repeated traversal. Equal input labels establish repeated calls; they do not by themselves establish unnecessary compilation. Compare associated reuse/preparation decisions and the command's actual-work reports before drawing that conclusion.</p>
+<p>Subtract the union of covered, nested, same-thread child intervals to calculate exclusive covered wall time. This still includes uninstrumented work and is not CPU time. Do not add inclusive intervals across nested functions: that double-counts their shared time. Missing ends, unknown parents and uninstrumented children must remain visible in any summary. Commands that terminate through <code>process::exit</code>, including some argument-only paths, may leave an open root span.</p>
+<h2 id="coverage">Coverage<a class="headerlink" href="#coverage" title="Permanent link">&para;</a></h2>
+<p>The initial lane instruments Store manifest traversal and verification, payload selection, project-output reuse, source-authority hashing, file-digest reuse, inspection-authority loading, public-provider lookup, native-loaf preparation and the bounded subprocess runner. Both compiler CLI entrypoints share the same collector.</p>
+<p>The pinned native driver also accepts <code>INCAN_TRACE_DIR</code>. Replay its existing receipt-selected <code>--source</code> command with the same explicit externs, search paths and sysroot. Its trace separates source compilation, module collection/checking, analysis, Incan lowering and native compilation. The source-compilation span follows work into the compiler-stack thread. For manifest-backed sources with outputs inside the owning project's <code>target/</code>, the driver selects completed output through the ordinary Store, source authority and metadata reconciliation before entering these stages. A reuse trace contains <code>incan_driver::reuse_native_source_output</code> and no checking, analysis, lowering or native compilation. Standalone sources and outputs outside that generated tree still compile without this project-output optimization. Keep driver compilation and test-fixture preparation outside the workload measurement.</p>
+<p>Native reuse binds the driver's bytes, project and resolution inputs, ordered externs and search paths, standard library, output projection and ordinary pinned linker closure. It uses a separate <code>native-mir</code> output intent within the existing completed-output Store; it does not select ordinary Rust-emission outputs. Native dependency search checks immediate file members without walking their archived sources. Missing unused externs and search directories participate as absent inputs, so their appearance invalidates reuse. On a cache miss, the driver applies the ordinary platform policy and launches under its explicit environment before starting embedded rustc. A conflicting ambient <code>SDKROOT</code> or deployment target does not replace that policy. This driver facility does not change normal commands' backend selection.</p>
+<p>Supported bounded subprocess launches pass <code>INCAN_TRACE_PARENT</code> so an instrumented child CLI can link its root to the launch invocation. External tools, native test executables and applications do not automatically gain internal instrumentation. Launches outside this helper, children that clear the environment, provider implementation internals, and compiler functions without explicit spans are coverage gaps. The lane is a trace of named boundaries, not an exhaustive function-call profiler. Add a span at the relevant existing boundary when a capture identifies a gap that prevents diagnosis.</p>
+<h2 id="attribute-test-preparation-separately-from-execution">Attribute test preparation separately from execution<a class="headerlink" href="#attribute-test-preparation-separately-from-execution" title="Permanent link">&para;</a></h2>
+<p>Prepare the tests once, then capture an unchanged repeat:</p>
+<div class="language-sh highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests
+<span class="nv">INCAN_TRACE_DIR</span><span class="o">=</span>/tmp/incan-test-invocations<span class="w"> </span>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests
+</code></pre></div>
+<p>The <code>incan_cli::test</code> span covers the command. Its <code>incan_cli::test_stage</code> children identify discovery, session construction, candidate selection, lock policy, collection, test selection, dependency admission, scheduling and reporting. Each scheduled <code>incan_cli::test_batch</code> has stages for reading sources, preparing modules, dependency requirements, native inputs, analysis, code generation, receipt construction, plan selection, runtime libraries, native output preparation, test execution and outcome mapping. Parallel workers retain the scheduling span as their parent.</p>
+<p>Compare <code>session</code>, <code>test_dependency_requirements</code>, <code>admit_test_native_inputs</code> and <code>test_plan_selection</code> with <code>test_execution</code>. A reused native executable does not imply that frontend or dependency preparation was skipped. <code>--list</code> ends after selection and must have no test batch, code generation or execution spans. A keyword-filtered run records the selected batch size; reconcile it with the command's actual test results. Preserve failure captures too: spans close on normal error returns.</p>
+<p>Use tracing-disabled commands for performance measurements. These stages attribute the existing test implementation; they do not enable test-result caching or change which tests execute.</p>
+<p>On Unix, <code>incan test --list</code> uses the same automatically started project owner as ordinary builds. Capture two list requests with the same tracing directory to distinguish first session construction from retained session reuse:</p>
+<div class="language-sh highlight"><pre><span></span><code><span class="nv">INCAN_TRACE_DIR</span><span class="o">=</span>/tmp/incan-test-list-invocations<span class="w"> </span>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests<span class="w"> </span>--list
+<span class="nv">INCAN_TRACE_DIR</span><span class="o">=</span>/tmp/incan-test-list-invocations<span class="w"> </span>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests<span class="w"> </span>--list
+</code></pre></div>
+<p>The owner retains the canonical parser-only session under the existing project, lock, compiler, feature/profile and provider-input checks. Test and conftest discovery, parsing and selection still run against current source on every request. The unchanged repeat should have no <code>incan_driver::discover_session</code>, provider reconstruction, Store manifest reads or native test batches. Collection sessions cannot authorize execution: artifact preparation uses a distinct retained identity. Other platforms invoke the same collection operation in process. Ordinary test execution uses that same owner with artifact-purpose preparation and the existing scheduler. Capture two execution requests with the same tracing directory to inspect retained session reuse separately from dependency admission, generated harness preparation and fresh test execution. The <code>incan_driver::shared_native_admission</code> span distinguishes original admission from reuse of the same owners by builds and tests. Changed selected native inputs force admission again. Harness input projection, plan selection, frontend and code generation still run on an unchanged execution request; session and admission retention alone do not eliminate those stages. List timings do not describe execution performance.</p>
+<h2 id="attribute-cold-native-test-compilation">Attribute cold native test compilation<a class="headerlink" href="#attribute-cold-native-test-compilation" title="Permanent link">&para;</a></h2>
+<p>Capture <code>oven tests &lt;project&gt; --rust-only --list</code> against explicitly isolated empty build outputs and Store when investigating cold preparation. Rust test collection can compile its native test harnesses before listing their cases; it does not execute those cases. Preserve the original workspace and Store rather than clearing them for this experiment.</p>
+<p>Within <code>oven_rustc::prepare_native_loafs</code>, <code>prepare_registry_sources</code> measures registry source preparation and <code>prepare_local_source</code> measures each local source snapshot. Each <code>prepare_native_unit</code> names its loaf, version, host/target domain and profile. Its <code>reuse_native_unit</code> or <code>compile_native_unit</code> decision distinguishes an already prepared dependency from required compilation. <code>compile_native_process</code> covers the actual rustc subprocess, including linking, while <code>publish_native_unit</code> covers source/output publication and the original execution lease. These spans also cover native roots reached through ordinary builds; they are disabled with the rest of invocation tracing.</p>
+<p>The <code>compile_native_dependencies</code> and <code>compile_local_dependencies</code> spans report the registry and local dependency counts and shared compiler-worker bound. Independent ready units compile concurrently, up to the smaller of four workers and the available hardware parallelism. A consumer starts only after its dependencies have completed publication; a failed or refused dependency prevents its consumers from compiling while independent branches continue. Workers retain the parent trace and original source/output leases, and final reports and inspection indices retain deterministic graph order. Registry and local graphs share the same bounded executor while retaining their existing source-selection rules; the local phase starts after registry preparation. <code>oven tests --jobs</code> controls test execution rather than this compiler-worker bound. Compare overlapping worker intervals with the parent span's elapsed duration: summing worker durations measures work, not wall time.</p>
+<p>Compare the dependency decisions for consecutive harnesses before calling their preparation redundant. An integration harness can need the project's ordinary library even when its library-test harness did not. Report subprocess, publication and validation costs separately; their nested durations must not be added twice. Measure normal build latency again with tracing disabled.</p>
+<p>Native graph finalization compares each child’s original Store coordinate without opening its output. Coordinate lookup is metadata-only; it does not establish freshness. Record publication still verifies the selected children, and later output handoffs recheck current native files. Repeated <code>verify_selected_native_loaf</code> calls should therefore correspond to consuming handoffs, not location lookup.</p>
+<p>When publication dominates, inspect <code>oven_store::publish_artifact</code> and its nested <code>validate_publication_files</code>, <code>wait_publication_lock</code>, <code>admit_publication_capacity</code>, <code>write_staged_entry</code>, <code>measure_staged_publication</code> and <code>remember_publication_observations</code> spans. Within staging, <code>copy_publication_member</code> includes source rereading and verification; <code>write_synced_file</code> includes its nested <code>sync_staged_file</code> duration. <code>sync_staged_directory</code> submits private directory entries; <code>sync_publication_directory</code> measures complete durability barriers. On Apple platforms, each private file and directory uses <code>fsync</code>, followed by a full drive-cache flush before publication and another after the entries-directory rename. Other platforms retain <code>File::sync_all</code>. Copy spans and link-decision events carry logical byte counts: linked bytes are not newly written bytes, and neither count measures physical allocation. Sum sibling intervals or subtract nested intervals before attributing time; do not add a file's synchronization time to the inclusive write duration.</p>
+<p>For multiple compatible Rust roots selected in one test command, the owner prepares their combined dependency requirements once. Each harness still selects only its own direct imports and forward dependencies from those original owners. An added integration root can therefore increase the first preparation's required units while removing a second complete preparation. Conflicting aliases, source selections or feature requirements remain independent. Changed declarations during the grouped operation refuse; unchanged repeats still reconcile the existing lock, sources, compiler and physical inputs before reusing plans. Compare both complete-preparation counts and compiled-unit counts to distinguish eliminated work from over-compilation.</p>
+<h2 id="check-native-sdk-traversal">Check native SDK traversal<a class="headerlink" href="#check-native-sdk-traversal" title="Permanent link">&para;</a></h2>
+<p>On an unchanged command, inspect file-observation paths beneath the native compiler installation. Cached native archives are selected by the pinned source and fact receipt and their stored bytes are checked under lease. Reusing them needs no installed native compiler and must not read its SDK tree. Check that native preparation and compilation counts are zero as well as checking file paths; a short elapsed time alone does not establish reuse.</p>
+<p>An actual native archive miss selects a virtual toolchain loaf. This descriptor binds the exact compiler bytes, required owner-relative locations and small installation version files. It reads directly named <code>incan-toolchain.json</code>, <code>SDKSettings.json</code>, <code>source.properties</code>, <code>package.xml</code> or <code>SDKManifest.xml</code> at the installation root or declared directories, without enumerating descendants. A directory installation with none of these files must supply a nonempty <code>incan-toolchain.json</code> containing its version/build identity. Version files are limited to 128 KiB and cannot be symlinks. Compiler and explicit regular-file arguments retain byte identities; SDK directory contents are trusted as part of the system installation. Changing a header without changing installation version evidence deliberately does not change this descriptor.</p>
+<p>The producer rechecks the descriptor at invocation and persists it in its execution receipt. The cache key retains the original pinned native fact, so updating a host SDK does not invalidate already admitted outputs produced for that fact. Selecting a different compiler/fact or source changes the requested product. Generic byte-owned publisher closures retain recursive validation, and the Rust linker still verifies its explicitly selected files; distinguish these paths from an unwanted whole-SDK walk.</p>
+<p>The descriptor logic is independent of host OS. Filename support does not prove compatibility with an installed vendor SDK. Compare equivalent traces on each host and record the actual compiler, SDK evidence and selected paths. Publisher execution also requires platform filesystem confinement; Linux and Windows currently refuse that execution boundary because their confinement implementation is unavailable.</p>
 
 
 

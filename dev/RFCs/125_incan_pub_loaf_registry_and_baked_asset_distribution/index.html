@@ -6302,8 +6302,6 @@
       
         
       
-        
-      
     
     
     
@@ -6390,34 +6388,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7801,6 +7771,8 @@
       
         
       
+        
+      
     
     
     
@@ -7943,6 +7915,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8427,8 +8427,6 @@
       
         
       
-        
-      
     
     
     
@@ -8487,34 +8485,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9035,6 +9005,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9216,7 +9190,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9895,10 +9939,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cratesio-and-other-sources" class="md-nav__link">
+  <a href="#adoption-from-cratesio" class="md-nav__link">
     <span class="md-ellipsis">
       
-        crates.io and other sources
+        Adoption from crates.io
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider surface
       
     </span>
   </a>
@@ -10147,18 +10202,19 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p><code>incan.pub</code> is the registry for Oven-built projects. Its unit of publication is the Loaf, whatever facets the Loaf carries, so an Incan library, a Rust-only crate that adopted <code>loaf.toml</code>, and a mixed project publish and resolve the same way. The registry stores two tiers of immutable, content-addressed artifacts: <strong>source Loaves</strong>, which are the authoritative publication signed by their publisher, and <strong>baked assets</strong>, which are the target-bound <code>*.loaf</code> outputs Oven already seals, each carrying its receipt and an attestation that binds it to a source digest and a toolchain. A consumer whose plan matches an available asset downloads it instead of compiling; when no asset matches, the consumer bakes from source. Discovery goes through a static sparse index of scoped names; integrity through per-artifact checksums; trust through keyless signing and trusted publishing from the first release; state changes through signed registry events. crates.io remains a consumption-only source reached through the same client, cache, and lockfile. This RFC supersedes RFC 034, which was written before Loaves existed.</p>
+<p><code>incan.pub</code> is the registry for Oven-built projects. Its unit of publication is the Loaf, whatever facets the Loaf carries, so an Incan library, a Rust-only crate that adopted <code>loaf.toml</code>, and a mixed project publish and resolve the same way. The registry stores two tiers of immutable, content-addressed artifacts: <strong>source Loaves</strong>, which are the authoritative publication signed by their publisher, and <strong>baked assets</strong>, which are the target-bound <code>*.loaf</code> outputs Oven already seals, each carrying its receipt and an attestation that binds it to a source digest and a toolchain. A consumer whose plan matches an available asset downloads it instead of compiling; when no asset matches, the consumer bakes from source. Discovery goes through a static sparse index of scoped names; integrity through per-artifact checksums; trust through keyless signing and trusted publishing from the first release; state changes through signed registry events. crates.io is a source the registry adopts from: <code>incan.pub</code> turns a crates.io package version into a Loaf once, hosts its sources, and records its build facts, so no consumer, CI run, or toolchain build ever contacts crates.io or runs Cargo. Oven reaches every registry, remote or hosted locally, through one provider surface. This RFC supersedes RFC 034, which was written before Loaves existed.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>The Loaf is the package.</strong> A published package is a project as RFC 117 defines it, identified by <code>loaf.toml</code>. The registry does not distinguish Incan-facet, Rust-facet, or mixed Loaves; RFC 119 defines what a Rust facet is, and this RFC only requires that whatever a Loaf declares is what gets published.</li>
-<li><strong>Two tiers, one identity chain.</strong> A source Loaf is the publication of record. A baked asset is derived from exactly one source Loaf under one recorded toolchain, target, profile, and feature closure, and says so in its receipt. Nothing in the registry is authoritative unless it is reachable from a signed source Loaf or, for assets derived from an external source such as crates.io, from a signed external-source record that binds the registry, package, version, and upstream checksum the asset was built from.</li>
+<li><strong>Two tiers, one identity chain.</strong> A source Loaf is the publication of record. A baked asset is derived from exactly one source Loaf under one recorded toolchain, target, profile, and feature closure, and says so in its receipt. Nothing in the registry is authoritative unless it is reachable from a signed source Loaf; for a package adopted from crates.io, that source Loaf is the registry-signed <strong>adopted Loaf</strong>, which binds the upstream registry, package, version, and checksum it was adopted from.</li>
 <li><strong>Assets are offered, never substituted.</strong> An asset is usable only when every unit it carries has exactly the RFC 124 unit identity the consumer's plan requires. Toolchain, target, profile, and features are how candidates are found; unit identity is how they are admitted. A near match is a miss, and a miss means baking from source. Two compiled instances of one crate at the same version are not interchangeable, and the registry must never make Oven believe otherwise.</li>
-<li><strong>Versions are immutable; state is events.</strong> A <code>(name, version)</code> pair is published once and never overwritten. Bound build facts, equivalence attestations, yank, unyank, ownership, advisory, and supersession are signed registry events. The index, the rendered manifest of an external-source record, and the web site are projections over the event stream and the immutable artifacts, never a database that can drift from them.</li>
+<li><strong>Versions are immutable; state is events.</strong> A <code>(name, version)</code> pair is published once and never overwritten. Adoption, bound build facts, equivalence attestations, yank, unyank, ownership, advisory, and supersession are signed registry events. The index, the rendered manifest of an adopted Loaf, and the web site are projections over the event stream and the immutable artifacts, never a database that can drift from them.</li>
 <li><strong>Names are scoped.</strong> Community packages live under an owner scope. Unscoped names are reserved for the toolchain's own Loaves.</li>
 <li><strong>Resolution executes nothing.</strong> Resolving, fetching, verifying, and staging never run package-provided code, as RFC 117 already requires. Build-time code runs only through an explicitly selected host provider under RFC 119.</li>
 <li><strong>The registry is a key, not a hostname.</strong> A registry is identified by a root public key and an id derived from it. Every registry statement, from events to index files to a periodic checkpoint, is signed by a key delegated from that root, and clients pin the id and root key through RFC 117 configuration. Hostnames are transport: any endpoint whose content verifies under the pinned root is the registry, and mirrors need no separate trust.</li>
 <li><strong>Assets are optional; the rest is not.</strong> A build must be resolvable and bakeable from the index, manifests, event log, and source publications alone. An asset that cannot be fetched, for whatever reason, is inapplicable, and inapplicable means baking from source. No asset outage is a build failure.</li>
-<li><strong>One client, several sources.</strong> <code>incan.pub</code> and crates.io are two index formats over one transport, one TLS policy, one store, and one lockfile. Registered compatible sources from RFC 117 configuration plug into the same client.</li>
+<li><strong>One provider surface, any endpoint.</strong> Oven speaks one surface to every Loaf registry: index lines, records, Loaf archives by digest, build facts by binding, and compiled units by unit identity. A remote HTTPS endpoint, a mirror, a git checkout, and Oven's local store (RFC 117) are interchangeable once their content verifies, and Oven's behavior, output, and user experience are the same against each. A miss is the provider's business: the local store may adopt or build to answer it, a remote one answers "not published".</li>
+<li><strong>Loaves, not crates.</strong> There is no crate dependency kind and no second index format. A crates.io package reaches consumers only as the Loaf the registry adopted it into; Oven never reads crates.io, a crate's <code>Cargo.toml</code>, or a <code>Cargo.lock</code>, and nothing on any path runs Cargo.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>RFC 034 described a registry for Incan libraries in the shape the project had in early 2026: a bespoke <code>.incanpkg</code> archive around a checked type manifest, a flat namespace, tokens first and signatures later, and a resolver that fed downloaded package facts into a Cargo-generated project. Every one of those assumptions has since changed. RFC 117 made <code>loaf.toml</code> the only authored manifest and <code>oven.lock</code> the resolved graph. RFC 118 gave Oven its own command surface with <code>oven publish</code>. RFC 119 gave Rust-only projects a first-class Loaf shape and made Cargo an explicit compatibility mode rather than the hidden backend. RFC 123 defined what a package publishes so that its exports are executable by any consumer. RFC 079 reframed <code>incan.pub</code> as an artifact graph. A registry RFC that still speaks of <code>.incnlib</code> files and generated <code>Cargo.toml</code> cannot be implemented against that foundation, and patching it would leave the package format, the trust model, and the resolution flow all pointing at a world that no longer exists.</p>
@@ -10172,7 +10228,8 @@
 <li>Define the static sparse index, the per-version asset manifest, and the scoped naming rules.</li>
 <li>Define integrity, signing, trusted publishing, and consumer-side verification as normative behavior from the first release.</li>
 <li>Define registry state as signed events over immutable artifacts, consistent with RFC 079.</li>
-<li>Define how the same Oven client, cache, and lockfile serve <code>incan.pub</code>, crates.io, and registered compatible sources.</li>
+<li>Define adoption: how the registry turns a crates.io package version into a hosted Loaf, without Cargo, and records its build facts per binding.</li>
+<li>Define the provider surface every Loaf registry endpoint serves, local or remote, including compiled units looked up and published by unit identity.</li>
 <li>Define what the registry web surface shows, as a projection of the same data.</li>
 <li>Define the degradation rule: an unavailable asset is a miss, never a build failure.</li>
 <li>Define the registry's own identity and signing model, so that state assertions are verifiable independently of the host serving them.</li>
@@ -10181,7 +10238,8 @@
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Publishing Loaves or <code>*.loaf</code> assets to crates.io, or presenting an Oven-native package as a crates.io package. RFC 119 already rules this out.</li>
-<li>Mirroring or proxying crates.io source archives. crates.io remains an external, consumption-only source.</li>
+<li>Proxying crates.io on demand for consumers. The registry adopts a package version once and serves the adopted Loaf; it never forwards a consumer's request to crates.io.</li>
+<li>An on-demand compiler in the public registry. A remote registry serves what was published or attested; on-demand adoption and building happen only in Oven's local store (RFC 117).</li>
 <li>The full artifact-graph vocabulary of RFC 079 beyond packages, their versions, their assets, and the events that govern them. This RFC is the package substrate that RFC 079 builds on.</li>
 <li>The <code>*.loaf</code> archive format or receipt schema. Those belong to the Oven RFCs; this RFC consumes them.</li>
 <li>Hosting vendor selection, cost figures, and deployment topology beyond the constraints stated as goals.</li>
@@ -10206,15 +10264,15 @@
 <div class="language-toml highlight"><pre><span></span><code><span class="c1"># loaf.toml</span>
 <span class="k">[dependencies]</span>
 <span class="n">widgets</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;encero/widgets&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;^0.4&quot;</span><span class="w"> </span><span class="p">}</span>
-<span class="n">serde</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">crate</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;serde&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">serde</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;crates-io/serde&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <div class="language-text highlight"><pre><span></span><code>$ oven bake
   Resolving ...
-    encero/widgets 0.4.0  (incan.pub)
-    serde 1.0.228         (crates.io)
+    encero/widgets 0.4.0       (incan.pub)
+    crates-io/serde 1.0.228    (incan.pub, adopted)
   encero/widgets 0.4.0: asset aarch64-apple-darwin/release matches plan  → downloading
     integrity sha256:9a2f… ok · attestation github:encero/widgets@refs/tags/v0.4.0 ok
-  serde 1.0.228: no asset for this closure                              → baking from source
+  crates-io/serde 1.0.228: no asset for this closure                    → baking from source
   Baked my-app (release)
 </code></pre></div>
 <p>The consumer never chose between "download" and "compile". Oven computed the plan, asked the registry which assets exist for exactly that plan, took the ones that matched, and baked the rest. The lockfile records, for every unit, where it came from, its checksum, and whether an asset or a source bake satisfied it.</p>
@@ -10231,12 +10289,14 @@
 <h3 id="package-identity">Package identity<a class="headerlink" href="#package-identity" title="Permanent link">&para;</a></h3>
 <p>A package name is either <strong>scoped</strong>, written <code>&lt;scope&gt;/&lt;name&gt;</code>, or <strong>reserved unscoped</strong>, written <code>&lt;name&gt;</code>. Scopes and names must match <code>[a-z0-9][a-z0-9-]*</code> and must be at most 64 characters each. A scope is owned by an account or an organization. All community packages must be scoped. Unscoped names are reserved for Loaves published by the toolchain itself; the registry must reject any attempt to claim an unscoped name from a non-toolchain publisher. The reserved set includes at least <code>std</code>, <code>incan</code>, and <code>oven</code>, and every standard-library component name.</p>
 <p>Versions must be SemVer. A <code>(package, version)</code> pair is published at most once and is never overwritten, replaced, or deleted. The registry must reject a publish for an existing pair.</p>
-<p>The reservation of unscoped names for the toolchain is <code>incan.pub</code> policy. A registered compatible registry sets its own naming policy, so a private registry may serve unscoped names; a client must never treat a name as the same package across two registries. Package names on <code>incan.pub</code> and crate names on crates.io are distinct namespaces. A <code>loaf.toml</code> dependency selects the registry through its dependency key (<code>loaf</code> or <code>crate</code>) as RFC 117 defines; the registry must not attempt to disambiguate bare names across sources.</p>
+<p>The reservation of unscoped names for the toolchain is <code>incan.pub</code> policy. A registered compatible registry sets its own naming policy, so a private registry may serve unscoped names; a client must never treat a name as the same package across two registries. An adopted Loaf is named under the reserved scope of the source it was adopted from: a crates.io package <code>serde</code> becomes <code>crates-io/serde</code>. The scope is registry-owned; no publisher may claim it. The Loaf's Rust crate name stays the upstream crate name (RFC 119), so the name a consumer's code uses does not change. A <code>loaf.toml</code> dependency names its package and registry explicitly as RFC 117 defines; the registry must not disambiguate bare names across registries.</p>
 <h3 id="source-loaves">Source Loaves<a class="headerlink" href="#source-loaves" title="Permanent link">&para;</a></h3>
 <p>A source Loaf is the archive <code>oven publish</code> produces from a project root. It must contain the project's <code>loaf.toml</code> and the sources the manifest's facets select. When the Loaf publishes an RFC 123 executable representation for an Incan facet, the source Loaf carries it; a Loaf may publish none, and the routes that need one refuse it as RFC 123 specifies rather than the registry rejecting the publication. It must not contain generated Rust as its compatibility contract; generated Rust may be present only as an inspection artifact with provenance, as RFC 034 already required. The source Loaf's identity is the SHA-256 digest of the archive.</p>
+<p>Every source Loaf, published or adopted, must carry a license file and a README at its root. A license file is a file at the Loaf root whose name starts with <code>license</code>, <code>licence</code>, <code>copying</code> or <code>unlicense</code>, or the exact path the manifest names as its license file; a README is a file at the Loaf root whose name starts with <code>readme</code>, or the exact path the manifest names as its readme. Name matching is case-insensitive and by prefix, and applies to root files only: a nested file such as <code>licenses/MIT</code> counts only when the manifest names it. A boolean <code>readme</code> (<code>true</code> or <code>false</code>) names no file. The registry must refuse a publication that carries neither form of either; adoption supplies what the upstream package lacks (see "Adoption from crates.io"). Neither file is read by resolution, compilation, or any unit identity.</p>
+<p>The archive is a deterministic, uncompressed POSIX tar: entries are sorted by path bytes, paths are relative to the Loaf root with <code>loaf.toml</code> at the root, and every entry is a regular file with mode <code>0644</code> or <code>0755</code>, modification time <code>0</code>, owner and group ids <code>0</code>, and empty owner and group names. The digest covers the tar bytes; compression applies only in transport, so the digest never depends on a compressor and an identical re-adoption or re-publication produces the same identity.</p>
 <p>Every source Loaf must be signed by its publisher. Signing uses keyless certificates issued against an OpenID Connect identity and recorded in a public transparency log. The registry must verify on publish that the certificate identity is authorized for the scope, that the signature covers the archive digest, and that the transparency-log inclusion is valid. The registry must reject unsigned source Loaves.</p>
 <h3 id="baked-assets">Baked assets<a class="headerlink" href="#baked-assets" title="Permanent link">&para;</a></h3>
-<p>A baked asset is a <code>*.loaf</code> produced by Oven from exactly one source publication: a signed source Loaf, or an external-source record for a crates.io crate. Its receipt must record the source digest, the toolchain identity, the target triple, the profile, the host and target domains, and for every unit it carries the RFC 124 unit identity and payload digest. An asset is one compiled unit: the exchanged object is the RFC 124 unit, and the per-version asset manifest is the only bundle. A Loaf version therefore has as many assets per target and closure as it has units (typically one library unit and a few companions such as a host proc-macro build or a metadata-only check unit), each addressed by its unit identity, and a consumer downloads exactly the units its plan misses. This is the mainstream registries' model of one object per package per variant, with the variant tag replaced by the identity Rust requires. A registry may later offer packs, several units in one archive still addressed by their unit identities, as a cold-start optimization; a pack changes no identity and no admission rule. Two digests name an asset and must not be conflated: the <strong>archive digest</strong> is the SHA-256 of the asset archive and is what the asset manifest, attestation, and transport verify; the <strong>unit identity</strong> and payload digest inside it are what admission compares against a plan.</p>
+<p>A baked asset is a <code>*.loaf</code> produced by Oven from exactly one source publication: a signed source Loaf, publisher-signed or, for an adopted package, registry-signed. Its receipt must record the source digest, the toolchain identity, the target triple, the profile, the host and target domains, and for every unit it carries the RFC 124 unit identity and payload digest. An asset is one compiled unit: the exchanged object is the RFC 124 unit, and the per-version asset manifest is the only bundle. A Loaf version therefore has as many assets per target and closure as it has units (typically one library unit and a few companions such as a host proc-macro build or a metadata-only check unit), each addressed by its unit identity, and a consumer downloads exactly the units its plan misses. This is the mainstream registries' model of one object per package per variant, with the variant tag replaced by the identity Rust requires. A registry may later offer packs, several units in one archive still addressed by their unit identities, as a cold-start optimization; a pack changes no identity and no admission rule. Two digests name an asset and must not be conflated: the <strong>archive digest</strong> is the SHA-256 of the asset archive and is what the asset manifest, attestation, and transport verify; the <strong>unit identity</strong> and payload digest inside it are what admission compares against a plan.</p>
 <p>Every asset must carry an attestation that binds the asset digest to the source Loaf digest and the toolchain identity, and names the builder. Builder kinds are:</p>
 <ul>
 <li><strong>publisher</strong>: built in the publisher's trusted CI; the attestation identity is the workflow identity.</li>
@@ -10272,8 +10332,20 @@
 <td>the facet kinds the Loaf declares, such as <code>incan</code>, <code>rust</code></td>
 </tr>
 <tr>
+<td><code>rust</code></td>
+<td>for a Loaf with a Rust facet, its <code>[rust]</code> table (<code>name</code>, <code>type</code>, <code>edition</code>, <code>build-script</code>), so the resolver can tell a host edge, and a binding that needs a fact, from index lines alone</td>
+</tr>
+<tr>
 <td><code>deps</code></td>
-<td>typed dependencies with their requirements and source kind</td>
+<td>the version's Loaf dependencies as the manifest declares them, each <code>{name, loaf, req, features, default-features, optional, target}</code>: <code>name</code> is the extern key, <code>req</code> the RFC 119 version requirement, and <code>target</code> absent when unconditional; a key declared once per target appears once per declaration</td>
+</tr>
+<tr>
+<td><code>features</code></td>
+<td>the version's feature table in the RFC 119 grammar, so the whole graph resolves from index lines before any record or archive is fetched</td>
+</tr>
+<tr>
+<td><code>adopted</code></td>
+<td>for an adopted Loaf, <code>{registry, package, version, checksum}</code> with a <code>sha256:</code> prefixed checksum of the upstream archive; absent for a published Loaf</td>
 </tr>
 <tr>
 <td><code>requires</code></td>
@@ -10306,8 +10378,8 @@
 <h3 id="encrypted-artifacts">Encrypted artifacts<a class="headerlink" href="#encrypted-artifacts" title="Permanent link">&para;</a></h3>
 <p>A registry may serve artifacts encrypted for its authorized clients, for example a private registry protecting its assets against disclosure of the storage behind it. When it does, unit identities, payload digests, receipts, and attestations remain over the plaintext, so that verification and reuse are identical to the unencrypted case, and the asset manifest must additionally carry the digest of the ciphertext as the transport digest. Clients must verify the transport digest before decryption and the payload digest after it. Key distribution is outside this RFC.</p>
 <h3 id="registry-events">Registry events<a class="headerlink" href="#registry-events" title="Permanent link">&para;</a></h3>
-<p>Every state change other than a first publish is a signed event: <code>fact</code>, <code>attest</code>, <code>asset</code>, <code>yank</code>, <code>unyank</code>, <code>ownership</code>, <code>trusted-publisher</code>, <code>advisory</code>, <code>supersede</code>, and the key-management events <code>delegate</code>, <code>rotate</code>, and <code>revoke</code>. Events must be signed by an identity authorized for the scope at the time of the event, must be append-only, and must be publicly readable. The index, the asset manifests, and the web site must be derivable from the event log plus the immutable artifacts alone. This is the package-level substrate the RFC 079 artifact graph projects from.</p>
-<p><strong>Bound build facts.</strong> An external-source record accrues its RFC 119 build facts one at a time, as a version accrues assets: a harvest observes one exact selection — toolchain, target, profile, and the complete enabled feature set — and a <code>fact</code> event declares the answers that hold under that selection alone. A binding is published once. A later <code>fact</code> for a binding already on record must repeat its declared facts exactly, and is otherwise refused, so a record is immutable per binding rather than per version; a record that must state something new states it under a new binding. The rendered <code>loaf.toml</code> a consumer reads is a projection of a record's <code>fact</code> events, exactly as the index line is a projection of the event log, and neither is authored. A consumer applies the record whose binding equals its own selection exactly, and refuses otherwise; it never interpolates between bindings and never falls back to executing what the record replaced.</p>
+<p>Every state change other than a first publish is a signed event: <code>adopt</code>, <code>fact</code>, <code>attest</code>, <code>asset</code>, <code>yank</code>, <code>unyank</code>, <code>ownership</code>, <code>trusted-publisher</code>, <code>advisory</code>, <code>supersede</code>, and the key-management events <code>delegate</code>, <code>rotate</code>, and <code>revoke</code>. Events must be signed by an identity authorized for the scope at the time of the event, must be append-only, and must be publicly readable. The index, the asset manifests, and the web site must be derivable from the event log plus the immutable artifacts alone. This is the package-level substrate the RFC 079 artifact graph projects from.</p>
+<p><strong>Bound build facts.</strong> An adopted Loaf accrues its RFC 119 build facts one at a time, as a version accrues assets: the registry records one exact selection — toolchain, target, profile, and the complete enabled feature set — and a <code>fact</code> event declares the answers that hold under that selection alone. A binding is published once. A later <code>fact</code> for a binding already on record must repeat its declared facts exactly, and is otherwise refused, so a record is immutable per binding rather than per version; a record that must state something new states it under a new binding. The rendered <code>loaf.toml</code> a consumer reads is a projection of a record's <code>fact</code> events, exactly as the index line is a projection of the event log, and neither is authored. A consumer applies the record whose binding equals its own selection exactly, and refuses otherwise; it never interpolates between bindings and never falls back to executing what the record replaced.</p>
 <p><strong>Equivalence attestations.</strong> An <code>attest</code> event names one existing binding, the archive digest and RFC 124 unit identity of an Oven-baked unit for it, and the attestation that binds them. It is a different claim from the attestation an <code>asset</code> event carries: an asset attestation binds an artifact to a source publication, while an <code>attest</code> event says that what Oven bakes from the declaration is the unit the upstream build produces. Until one exists, a binding rests on its harvest evidence alone.</p>
 <h3 id="publishing-protocol">Publishing protocol<a class="headerlink" href="#publishing-protocol" title="Permanent link">&para;</a></h3>
 <p>Publishing must be possible through two authentication paths:</p>
@@ -10320,19 +10392,65 @@
 <h3 id="fetching-and-verification">Fetching and verification<a class="headerlink" href="#fetching-and-verification" title="Permanent link">&para;</a></h3>
 <p>Oven must fetch over HTTPS with a certificate policy that behaves identically on every supported host, and should offer an explicit opt-in to the operating system's certificate store for environments that require it. Oven must verify every downloaded artifact's digest against the index or asset manifest before using it, must fail closed on mismatch, and must verify attestations according to the active trust policy. Oven must not execute any content of a downloaded artifact during resolution or fetching.</p>
 <p>The Loaf store is the only cache and the only offline source. An offline mode must satisfy resolution from the store and the lockfile alone and must fail fast on anything absent, as RFC 020 requires. Assets are addressed by the unit identity RFC 124 defines, and importing an asset must insert its units into the store through the same path a local bake uses, so a downloaded unit and a locally baked unit with equal identity are one entry. A unit RFC 124 marks machine-local must not be published as an asset.</p>
-<h3 id="cratesio-and-other-sources">crates.io and other sources<a class="headerlink" href="#cratesio-and-other-sources" title="Permanent link">&para;</a></h3>
-<p><code>crate</code> dependencies resolve against the crates.io sparse index. <code>incan.pub</code> is the leading protocol: Oven's own registry client is designed for it, and crates.io is the secondary source it also reads. Acquisition of crates.io source archives may, in the 0.6 line, use the Cargo binary the Incan toolchain already provisions as a download tool and nothing more: Cargo fetches bytes into a location Oven controls, and Oven performs verification against the sparse index checksum, storage, lock recording, and everything after. Cargo must never resolve, plan, or build on this path. A later release may fetch crates.io archives directly through the same client that serves <code>incan.pub</code>, since the sparse protocol is the simpler of the two; that change alters no contract in this RFC. Oven must parse a crate's manifest only as provider metadata under the constraints RFC 119 places on it. The registry must not mirror crates.io source. The registry may publish registry-built assets for crates.io crates at selected closures. Such an asset does not descend from a publisher-signed source Loaf and must not be presented as if it did. Instead it descends from a signed <strong>external-source record</strong> that binds the upstream registry identity, package name, version, and the crates.io checksum of the archive the bakery consumed, together with the registry's builder attestation. External-source records and their assets must be indexed separately from scoped packages at <code>external/&lt;upstream-registry-id&gt;/&lt;name&gt;</code>, keyed by upstream package name and version so that a client which has already resolved a <code>crate</code> dependency against crates.io can look up, by that identity, whether registry-built assets exist, and the consumer's selected source kind in <code>loaf.toml</code> remains authoritative: a <code>crate</code> dependency is always resolved against crates.io for its source of truth, and an <code>incan.pub</code> asset for it is only ever an admitted shortcut for units whose identities match.</p>
-<p>An external-source record's index line must additionally carry, for every binding its record declares, that binding and its status: <code>harvested</code> while the declaration rests on harvest evidence alone, <code>attested</code> once an <code>attest</code> event names it. A consumer may refuse <code>harvested</code> bindings by policy and must be able to decide that from the index line, before it fetches the record.</p>
-<p>Registered compatible sources under RFC 117 configuration must implement this index and artifact protocol for <code>kind = "loaf"</code> or the crates.io sparse protocol for <code>kind = "crate"</code>. A private registry is a registered compatible source with its own root key and id; it implements the same protocol and is not a variant of it.</p>
+<h3 id="adoption-from-cratesio">Adoption from crates.io<a class="headerlink" href="#adoption-from-cratesio" title="Permanent link">&para;</a></h3>
+<p>crates.io is a source the registry adopts from, never a source consumers read. Adoption turns one crates.io package version into a Loaf, once:</p>
+<ol>
+<li><strong>Inputs.</strong> The registry reads the package version's crates.io sparse index entry (dependencies with requirement, kind, target predicate, rename, optional, default-features and features; the feature table; the checksum) and downloads the published package archive, which it must verify against that checksum before reading it. From the archive's published manifest it reads only the edition, the library target (crate name, root, and whether it is a procedural macro), and whether the package has a build script (a declared <code>build</code> path, or a <code>build.rs</code> at the package root when none is declared), which it writes as <code>[rust] build-script</code>; a package that declares no library target uses the conventional root. Adoption runs no Cargo.</li>
+<li><strong>Translation.</strong> The registry writes the Loaf manifest in the RFC 119 Rust facet grammar under these fixed rules: development dependencies and build dependencies are dropped; a dependency on a procedural-macro package stays and is a host edge; <code>links</code> is dropped; every implicit optional-dependency feature becomes an explicit feature; a feature member that names an optional dependency's feature without <code>?</code> becomes <code>dep:&lt;name&gt;</code> plus <code>&lt;name&gt;/&lt;feature&gt;</code> (whether the feature <code>&lt;name&gt;</code> also turns on depends on the target and is the resolver's rule, RFC 119); a weak member stays <code>&lt;name&gt;?/&lt;feature&gt;</code>, and a member naming a non-optional dependency's feature is unchanged; a renamed dependency keeps its rename as its dependency key. A package version whose manifest cannot be stated in the grammar is refused with the construct named.</li>
+<li><strong>The adopted Loaf.</strong> The Loaf archive contains the generated <code>loaf.toml</code> and the package's sources unchanged; the upstream manifest and any build script travel in it as inert files nothing reads. The package's own license and README files are kept unchanged. Where the package ships no license file, adoption adds a root <code>LICENSE</code> stating the SPDX expression its published manifest declares; where it ships no README, adoption adds a root <code>README.md</code> with its published description and links to its crates.io page, repository, and documentation. These additions are the only files adoption authors besides <code>loaf.toml</code>. An added file is part of the source archive, so it determines the archive digest, and with it the identity of every unit compiled from that Loaf, exactly as the package's own files do. The registry signs it and hosts it; consumers fetch it from the registry, never from crates.io. Its identity is its archive digest, and its index line carries the <code>adopted</code> provenance.</li>
+<li><strong>The <code>adopt</code> event.</strong> Adoption is recorded as one signed <code>adopt</code> event per <code>(name, version)</code>, carrying the manifest digest and provenance, and an <code>about</code> record copied from the published manifest: <code>license</code>, <code>license-file</code>, <code>readme</code>, <code>description</code>, <code>repository</code>, <code>homepage</code>, and <code>documentation</code>, each absent when the manifest omits it. <code>about</code> itself never reaches <code>loaf.toml</code>, an index line, or any unit identity; a file adoption adds from it is part of the archive (step 3). It is immutable: an identical repetition is a no-op and a different one is refused.</li>
+<li><strong>Closure under default dependencies.</strong> An <code>adopt</code> event is refused unless every dependency active under the version's default features, on any target, is satisfied by an already adopted or published version: every non-optional declaration, target-conditional ones included, and every optional declaration the default feature set enables through <code>dep:&lt;name&gt;</code>, a non-weak <code>&lt;name&gt;/&lt;feature&gt;</code>, or a feature that does either. Every pin therefore resolves its default graph on its own. A dependency reachable only through a feature beyond the defaults may be absent from a pin; a remote provider answers it "not published" and the local store adopts it on demand (provider rule 2). Closure over every optional declaration is not required: optional dependencies of optional dependencies reach versions that cannot be adopted at all, such as a package version with no library target.</li>
+<li><strong>Build facts.</strong> For a package with a build script, the registry records build facts per binding (see "Registry events"): it compiles the script once with the pinned <code>rustc</code> against the build-dependency Loaves, executes it sandboxed under the binding's declared environment, and records its directives in the RFC 119 vocabulary. A package without a build script needs no facts. Consumers never execute anything.</li>
+</ol>
+<h3 id="provider-surface">Provider surface<a class="headerlink" href="#provider-surface" title="Permanent link">&para;</a></h3>
+<p>Every Loaf registry endpoint, remote or local, serves one surface, and Oven uses no other:</p>
+<table>
+<thead>
+<tr>
+<th>Request</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>index line by Loaf name</td>
+<td>the signed index file for that Loaf</td>
+</tr>
+<tr>
+<td>record by name and version</td>
+<td>the manifest, events, and asset manifest of that version</td>
+</tr>
+<tr>
+<td>Loaf archive by digest</td>
+<td>the archive whose digest is requested</td>
+</tr>
+<tr>
+<td>build facts by binding</td>
+<td>the facts recorded for exactly that toolchain, target, profile, and feature set, or "not recorded"</td>
+</tr>
+<tr>
+<td>compiled unit by unit identity</td>
+<td>the asset carrying a unit with exactly that RFC 124 identity, or "not published"</td>
+</tr>
+</tbody>
+</table>
+<ol>
+<li>Every answer is content-addressed or signed and is verified by Oven before use. Because of that, a remote HTTPS endpoint, a mirror, a git checkout of the registry, and Oven's local store are interchangeable providers; Oven's behavior, output, diagnostics, and lock contents must not depend on which one answered.</li>
+<li>A miss is the provider's business. A remote provider answers a missing record, binding, or unit with "not published". The local store may instead adopt the package version or record the binding then and there and answer as if it had been present. Oven's code path is the same in both cases.</li>
+<li>Before compiling a unit, Oven asks the provider for it by unit identity. A unit Oven compiles because the provider did not have it is recorded in the local store as an <code>asset</code> event with builder kind <code>local</code>, its archive stored by digest; a remote provider accepts assets only through the publishing protocol and the trust policy for their builder kind.</li>
+<li>The local store is a cache in front of the authority, never a second authority (RFC 117): it keeps what <code>incan.pub</code> served and what Oven had to adopt or bake itself, under the same unit identities, and it cannot be selected as a registry.</li>
+</ol>
+<p>Registered compatible registries under RFC 117 configuration implement this surface. A private registry is a registered compatible registry with its own root key and id; it implements the same surface and is not a variant of it.</p>
 <h3 id="asset-unavailability">Asset unavailability<a class="headerlink" href="#asset-unavailability" title="Permanent link">&para;</a></h3>
-<p>Oven must treat any failure to obtain an asset, including a registry answering that the asset is unavailable, throttled, or over quota, exactly as it treats an inapplicable asset: it bakes the affected units from source, records the fallback in the receipt as <code>baked</code> with the reason, and neither fails the build nor retries in a way that amplifies load. The registry may make asset locations available only to clients that present a plan, through short-lived signed locations or per-client credentials at the manifest, so that assets are not reachable through stable guessable URLs; clients must not assume asset paths are stable. Index files, asset manifests, the event log, external-source records, and source publications must always be served and must be sufficient on their own to resolve and bake any project.</p>
+<p>Oven must treat any failure to obtain an asset, including a registry answering that the asset is unavailable, throttled, or over quota, exactly as it treats an inapplicable asset: it bakes the affected units from source, records the fallback in the receipt as <code>baked</code> with the reason, and neither fails the build nor retries in a way that amplifies load. The registry may make asset locations available only to clients that present a plan, through short-lived signed locations or per-client credentials at the manifest, so that assets are not reachable through stable guessable URLs; clients must not assume asset paths are stable. Index files, asset manifests, the event log, and source publications, adopted Loaves included, must always be served and must be sufficient on their own to resolve and bake any project.</p>
 <h3 id="web-surface">Web surface<a class="headerlink" href="#web-surface" title="Permanent link">&para;</a></h3>
 <p>The registry must publish a web surface generated from the index, event log, and artifacts. It must show, per package: versions and yank state with reasons, facets, scope owners and trusted publishers, the asset matrix with builder kinds, the dependency graph of each version, advisories, and download counts. It should render documentation when a version ships a documentation asset. It must not depend on a live service for reads.</p>
+<p>The registry must also publish, beside each package's index file, a per-package README projection at <code>&lt;scope&gt;/&lt;name&gt;/README.md</code> (for adopted packages, <code>crates-io/&lt;name&gt;/README.md</code>). It lists the package's upstream page when adopted and every version with its adoption or publication date, license, recorded build facts, and admitted units, and is regenerated from the event log like every other projection. Package hosts that cannot show a per-package README, such as an OCI registry, link to it from the package description.</p>
 <h3 id="mirrors">Mirrors<a class="headerlink" href="#mirrors" title="Permanent link">&para;</a></h3>
 <p>Because every artifact and index file is immutable or event-derived, a mirror is a copy of the index, asset manifest, artifact, and event directories. Oven must accept a mirror as a registered compatible source and must verify against the same digests and signatures, so a mirror can never alter content.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="interaction-with-rfc-117">Interaction with RFC 117<a class="headerlink" href="#interaction-with-rfc-117" title="Permanent link">&para;</a></h3>
-<p><code>loaf.toml</code> already distinguishes <code>loaf</code> and <code>crate</code> dependency keys and lets a project name a registered source. This RFC adds no manifest syntax. The <code>requires</code> index field maps to the requirement ranges RFC 117 lets a project declare. Registry trust policy, credentials, and registered sources stay in Oven-controlled user or organization configuration, never in <code>loaf.toml</code>.</p>
+<p><code>loaf.toml</code> declares every package dependency with the <code>loaf</code> key and lets a project name a registered Loaf registry; RFC 117 retires the <code>crate</code> key. This RFC adds no manifest syntax; an adopted Loaf's manifest uses RFC 119's Rust facet grammar. The <code>requires</code> index field maps to the requirement ranges RFC 117 lets a project declare. Registry trust policy, credentials, and registered sources stay in Oven-controlled user or organization configuration, never in <code>loaf.toml</code>.</p>
 <h3 id="interaction-with-rfc-118">Interaction with RFC 118<a class="headerlink" href="#interaction-with-rfc-118" title="Permanent link">&para;</a></h3>
 <p><code>oven publish</code>, <code>oven add</code>, <code>oven yank</code>, and the <code>oven dependency</code> family are RFC 118's surfaces; this RFC defines what they exchange with the registry. Running a published tool without adding it to a project is a natural extension of the asset model and is listed as an unresolved question rather than a new command.</p>
 <h3 id="interaction-with-rfc-119">Interaction with RFC 119<a class="headerlink" href="#interaction-with-rfc-119" title="Permanent link">&para;</a></h3>
@@ -10363,7 +10481,8 @@
 <li><strong>Flat namespace.</strong> Rejected. Rust-only Loaves guarantee collisions with crate names, and flat spaces are where squatting happens in every registry that has one. Reserving unscoped names for the toolchain keeps the common standard-library spelling short.</li>
 <li><strong><code>@scope/name</code> spelling.</strong> Rejected in favor of <code>scope/name</code>. The <code>@</code> character is the conventional version separator in tool-run syntax (<code>tool@1.2</code>), and the slash form matches container and source-forge conventions.</li>
 <li><strong>Assets built only by publishers.</strong> Rejected as the sole path. Most publishers will not bake for every target; a registry bakery over signed source is what makes assets common rather than rare. Kept as one of three builder kinds with distinct trust.</li>
-<li><strong>Proxying crates.io source through <code>incan.pub</code>.</strong> Rejected. It adds a bandwidth cost the project cannot cap and a trust surface it does not need; the client can reach crates.io directly. Registry-built assets for crates are the useful subset and are permitted.</li>
+<li><strong>Consumers read crates.io directly, with <code>incan.pub</code> offering only compiled assets for crates.</strong> Rejected (an earlier revision of this RFC). It kept Cargo's model on the consumer side: a crates.io index reader and a crate-manifest reader in Oven, Cargo as a download tool, and two sources of truth for one dependency. Adopting each package version once into a hosted Loaf costs the registry storage for adopted sources, and in exchange every consumer reads one format from one surface and no build path ever contacts crates.io.</li>
+<li><strong>Translate crate metadata with Cargo at adoption.</strong> Rejected. The sparse index entry and the published package manifest already hold everything adoption needs, so a Cargo invocation would add a dependency without adding information.</li>
 <li><strong>Tokens first, signatures later.</strong> Rejected. Long-lived publish tokens are the documented origin of the largest registry compromises elsewhere; trusted publishing is cheaper to start with than to retrofit.</li>
 <li><strong>A mutable registry database as the source of truth.</strong> Rejected, consistent with RFC 079: signed events over immutable artifacts are auditable, mirrorable, and static-site friendly.</li>
 </ul>
@@ -10376,14 +10495,14 @@
 <li><strong>A registry is infrastructure.</strong> Even a mostly static one needs a publish service, an event log, and operations. RFC 034's cost and hosting constraints are carried forward for this reason.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>Non-normative. The registry client belongs in Oven's build-system ring rather than anywhere the compiler links: one HTTPS client with a pure-Rust TLS stack and an opt-in for the platform certificate store, one retry and caching layer, and two index readers (Loaf and crates.io sparse) behind one resolver interface. The Loaf store is the cache for index files, asset manifests, source Loaves, and assets alike, keyed by payload digest with a separate name-to-digest index, which is also what lets two projects share one compiled unit. The publish service is small: authentication, validation, storage, index append, and event emission; everything read-side is static files behind a CDN. The bakery is an Oven invocation over a signed source Loaf under a pinned toolchain, producing assets whose attestations name the registry. The web surface is a static-site generator over the event log.</p>
+<p>Non-normative. The registry client belongs in Oven's build-system ring rather than anywhere the compiler links: one HTTPS client with a pure-Rust TLS stack and an opt-in for the platform certificate store, one retry and caching layer, and one provider-surface client whose endpoints may be remote, mirrored, or the local store. The adoption tool belongs to the registry, not to Oven. The Loaf store is the cache for index files, asset manifests, source Loaves, and assets alike, keyed by payload digest with a separate name-to-digest index, which is also what lets two projects share one compiled unit. The publish service is small: authentication, validation, storage, index append, and event emission; everything read-side is static files behind a CDN. The bakery is an Oven invocation over a signed source Loaf under a pinned toolchain, producing assets whose attestations name the registry. The web surface is a static-site generator over the event log.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Oven resolver and lockfile</strong>: index reading for two source kinds, toolchain-requirement filtering, asset applicability, satisfaction kind and attestation facts in <code>oven.lock</code>.</li>
+<li><strong>Oven resolver and lockfile</strong>: one provider surface for every registry endpoint, compiled-unit lookup and local publication, toolchain-requirement filtering, asset applicability, satisfaction kind and attestation facts in <code>oven.lock</code>.</li>
 <li><strong>Oven store</strong>: content-addressed storage of index files, asset manifests, source Loaves, and assets; offline mode over the store alone.</li>
 <li><strong>Oven publication</strong>: <code>oven publish</code> bakes, packages, signs, attests assets, and uploads; <code>oven yank</code> emits signed events; trusted-publishing and token flows.</li>
 <li><strong>Oven configuration</strong>: registered sources, trust policy per builder kind, certificate-store opt-in.</li>
-<li><strong>Registry service</strong>: publish validation, artifact and event storage, index projection, static web surface.</li>
+<li><strong>Registry service</strong>: publish validation, adoption from crates.io (index entry, verified package archive, translation, sandboxed build-script facts per binding), artifact and event storage, index projection, the provider surface, static web surface.</li>
 <li><strong>Compiler</strong>: no parser, typechecker, or emission changes; the source Loaf carries the RFC 123 executable representation the compiler already produces.</li>
 <li><strong>Docs / Tooling</strong>: publishing, consuming, verification, and failure-mode documentation; asset matrix and provenance in the web surface.</li>
 </ul>

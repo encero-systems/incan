@@ -6315,8 +6315,6 @@
       
         
       
-        
-      
     
     
     
@@ -6403,34 +6401,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -6718,6 +6688,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#run-incan-and-rust-together" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Incan and Rust together
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#test-discovery" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6816,6 +6797,17 @@
     <span class="md-ellipsis">
       
         CLI Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-rust-snapshot-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Rust snapshot tests
       
     </span>
   </a>
@@ -8143,6 +8135,8 @@
       
         
       
+        
+      
     
     
     
@@ -8285,6 +8279,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8769,8 +8791,6 @@
       
         
       
-        
-      
     
     
     
@@ -8829,34 +8849,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9377,6 +9369,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9558,7 +9554,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -10010,6 +10076,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#run-incan-and-rust-together" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Incan and Rust together
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#test-discovery" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10108,6 +10185,17 @@
     <span class="md-ellipsis">
       
         CLI Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-rust-snapshot-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Rust snapshot tests
       
     </span>
   </a>
@@ -10301,7 +10389,7 @@
 
 
 <h1 id="testing-in-incan">Testing in Incan<a class="headerlink" href="#testing-in-incan" title="Permanent link">&para;</a></h1>
-<p>Incan provides a pytest-like test runner with <code>incan test</code>.</p>
+<p>Incan provides a pytest-like test runner with <code>incan test</code>. For a project containing both Incan and Rust, use <code>oven tests</code> to select and report both through the same runner.</p>
 <p>For the <strong>language model for writing tests</strong> (inline <code>module tests:</code>, assertions, markers, fixtures, parametrization), see: <a href="../../../language/how-to/testing_stdlib/">Language → Testing in Incan</a>.</p>
 <p>For the <strong>API reference</strong> only, see: <a href="../../../language/reference/stdlib/testing/">Standard library reference → <code>std.testing</code></a>.</p>
 <p>For a guided walkthrough, see: <a href="../../../language/tutorials/book/13_unit_tests/">The Incan Book → Unit tests</a>.</p>
@@ -10352,6 +10440,14 @@
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
 </code></pre></div>
 <p>For long suites, use <code>incan test -v</code> to see collection, per-test timing, and the Oven front-end/generation/receipt/selection/native/execution phases. Compatible source files are module-isolated but share one native libtest harness; the batch selects one prepared Oven closure, inventories native test names, and runs verified exact tests without a Cargo consumer.</p>
+<h2 id="run-incan-and-rust-together">Run Incan and Rust together<a class="headerlink" href="#run-incan-and-rust-together" title="Permanent link">&para;</a></h2>
+<p>Run <code>oven tests</code> from the package directory to combine Incan tests with the Rust facet's unit tests and direct Rust integration roots in <code>tests/</code>. Use <code>oven tests --rust-only</code> to focus on Rust, or <code>incan test</code> for Incan only. <code>incan oven tests</code> mounts the same command when using the Incan executable.</p>
+<div class="language-bash highlight"><pre><span></span><code>oven<span class="w"> </span>tests<span class="w"> </span>--list
+oven<span class="w"> </span>tests<span class="w"> </span>--jobs<span class="w"> </span><span class="m">4</span>
+oven<span class="w"> </span>tests<span class="w"> </span>--rust-only<span class="w"> </span>-k<span class="w"> </span>parse
+</code></pre></div>
+<p>Use <code>--jobs N</code> to set the total test worker budget; the default is four workers. Compatible Rust cases from one crate share a test process with up to N test threads. That root reserves the budget until it finishes. Use <code>--isolate</code> for separate Rust test processes. <code>--shuffle</code>, <code>--exitfirst</code>, time limits and serial markers retain individual Rust execution boundaries. Incan cases retain their worker-batch fixture scopes; the scheduler never combines the two languages into one harness. Serial and resource constraints still limit concurrency.</p>
+<p>Rust listing may prepare a native test harness. Ignored Rust tests stay skipped, and selected tests execute afresh on every run. See the <a href="../../reference/cli_reference/#oven-tests">command reference</a> for root selection and preparation constraints.</p>
 <h2 id="test-discovery">Test Discovery<a class="headerlink" href="#test-discovery" title="Permanent link">&para;</a></h2>
 <p>Tests are discovered automatically from two sources:</p>
 <ul>
@@ -10568,6 +10664,14 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">),</span> <span class="n">expected</span><span class="p">)</span>
 </code></pre></div>
 <p>Pass <code>--feature new_parser</code> to make <code>feature("new_parser")</code> true for collection.</p>
+<h2 id="run-rust-snapshot-tests">Run Rust snapshot tests<a class="headerlink" href="#run-rust-snapshot-tests" title="Permanent link">&para;</a></h2>
+<p>Run Rust tests through the shared runner:</p>
+<div class="language-bash highlight"><pre><span></span><code>oven<span class="w"> </span>tests<span class="w"> </span>--rust-only
+</code></pre></div>
+<p>Oven supplies Insta's <code>INSTA_WORKSPACE_ROOT</code>, defaulting to the owning Loaf's project directory. If the snapshots belong to a different workspace root, set it explicitly for the command:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nv">INSTA_WORKSPACE_ROOT</span><span class="o">=</span>/path/to/workspace<span class="w"> </span>oven<span class="w"> </span>tests<span class="w"> </span>--rust-only
+</code></pre></div>
+<p>Providing the workspace root prevents Insta's discovery from launching <code>cargo metadata</code>. It does not bypass or reuse snapshot assertions: selected tests still execute them. See the <a href="../../reference/cli_reference/#oven-tests">Rust test contract</a> for selection, preparation and reporting behavior.</p>
 <h2 id="output-format">Output Format<a class="headerlink" href="#output-format" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span class="o">===================</span><span class="w"> </span><span class="nb">test</span><span class="w"> </span>session<span class="w"> </span><span class="nv">starts</span><span class="w"> </span><span class="o">===================</span>
 collected<span class="w"> </span><span class="m">4</span><span class="w"> </span>item<span class="o">(</span>s<span class="o">)</span>

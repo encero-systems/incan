@@ -6594,8 +6594,6 @@
       
         
       
-        
-      
     
     
     
@@ -6682,34 +6680,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -8093,6 +8063,8 @@
       
         
       
+        
+      
     
     
     
@@ -8235,6 +8207,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8719,8 +8719,6 @@
       
         
       
-        
-      
     
     
     
@@ -8779,34 +8777,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9327,6 +9297,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9508,7 +9482,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -10497,6 +10541,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">f</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="o">**</span><span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">})</span>   <span class="c1"># accepted</span>
 </code></pre></div>
 <h2 id="ordinary-call-binding">Ordinary Call Binding<a class="headerlink" href="#ordinary-call-binding" title="Permanent link">&para;</a></h2>
+<p>An ordinary checked call written with a free function’s unqualified name evaluates supplied argument expressions in parameter declaration order when it uses fixed positional or named arguments, preserving the dev.6 behavior. This rule excludes spread and rest arguments, module-qualified calls, calls through local callable values, provider operations, partial preset capture and iterator method arguments; those retain their existing written-order evaluation policies. Positional argument evaluation remains left to right.</p>
 <p>Arguments bind to normal parameters in this order:</p>
 <ol>
 <li>Positional arguments bind left to right.</li>

@@ -2596,6 +2596,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#choose-a-source-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a source layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fill-in-project-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6500,8 +6511,6 @@
       
         
       
-        
-      
     
     
     
@@ -6588,34 +6597,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7999,6 +7980,8 @@
       
         
       
+        
+      
     
     
     
@@ -8141,6 +8124,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8625,8 +8636,6 @@
       
         
       
-        
-      
     
     
     
@@ -8685,34 +8694,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9233,6 +9214,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9414,7 +9399,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9866,6 +9921,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#choose-a-source-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a source layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fill-in-project-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10062,6 +10128,16 @@ incan<span class="w"> </span>init<span class="w"> </span><span class="se">\</spa
 incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
 <p><code>loaf.toml</code> marks the project root. Project-aware commands discover it by walking upward from your current directory. File and directory arguments are still shell paths, so write them relative to the directory you are running the command from.</p>
+<h2 id="choose-a-source-layout">Choose a source layout<a class="headerlink" href="#choose-a-source-layout" title="Permanent link">&para;</a></h2>
+<p>Keep the scaffold's <code>src/</code> layout unless your project needs another directory. Incan discovers <code>src/</code> automatically, so the conventional layout needs no explicit <code>source-root</code> setting.</p>
+<p>For a project that keeps Incan modules in <code>lib/</code>, add this to <code>loaf.toml</code> and keep script paths consistent with the new layout:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[build]</span>
+<span class="n">source-root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;lib&quot;</span>
+
+<span class="k">[project.scripts]</span>
+<span class="n">main</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;lib/main.incn&quot;</span>
+</code></pre></div>
+<p>A flat project with no <code>src/</code> directory and no explicit setting uses the project root. See the <a href="../../../tooling/reference/project_configuration/#source-root">source-root reference</a> for the resolution order.</p>
 <h2 id="fill-in-project-metadata">Fill in project metadata<a class="headerlink" href="#fill-in-project-metadata" title="Permanent link">&para;</a></h2>
 <p>Open <code>loaf.toml</code> and treat <code>[project]</code> as the user-facing metadata for the project:</p>
 <div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
@@ -10104,10 +10180,10 @@ incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
 <p>Project-aware execution commands enforce this before they do real work. If the active compiler is incompatible, <code>incan run</code>, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail with the active version and the requirement that rejected it. Plain single-file or inline commands outside a project do not use <code>requires-incan</code>.</p>
 <p>You can make a named env stricter for release or CI workflows:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.ci]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[envs.ci]</span>
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
 
-<span class="k">[tool.incan.envs.ci.scripts]</span>
+<span class="k">[envs.ci.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>Inspect the effective requirement before running the script:</p>
@@ -10119,38 +10195,38 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <p>The important mental model is:</p>
 <ul>
 <li><code>[project.scripts]</code> is for Incan entry points such as <code>main = "src/main.incn"</code></li>
-<li><code>[tool.incan.envs.&lt;name&gt;.scripts]</code> is for named shell-style commands such as <code>["incan", "test", "--locked"]</code></li>
+<li><code>[envs.&lt;name&gt;.scripts]</code> is for named shell-style commands such as <code>["incan", "test", "--locked"]</code></li>
 <li><code>incan env</code> does not create a virtual environment or a shell session; it resolves a named command context and runs it explicitly</li>
 </ul>
 <p>If all you want is "run the app" or "run the tests", plain <code>incan run</code> and <code>incan test</code> are still the normal commands. Reach for <code>incan env</code> when the project starts to accumulate named workflows such as local test runs, CI runs, docs builds, or release checks.</p>
 <h3 id="a-real-world-env-setup">A real-world env setup<a class="headerlink" href="#a-real-world-env-setup" title="Permanent link">&para;</a></h3>
 <p>This is a realistic small-project setup:</p>
-<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[envs.default]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_NO_BANNER</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[tool.incan.envs.default.scripts]</span>
+<span class="k">[envs.default.scripts]</span>
 <span class="n">run</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">]</span>
 <span class="n">lock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;lock&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.unit]</span>
+<span class="k">[envs.unit]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_FANCY_ERRORS</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[tool.incan.envs.unit.scripts]</span>
+<span class="k">[envs.unit.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;tests/&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.ci]</span>
+<span class="k">[envs.ci]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;unit&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.ci.scripts]</span>
+<span class="k">[envs.ci.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;tests/&quot;</span><span class="p">]</span>
 <span class="n">build</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;build&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.docs]</span>
+<span class="k">[envs.docs]</span>
 <span class="n">detached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">cwd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;workspaces/docs-site&quot;</span>
 
-<span class="k">[tool.incan.envs.docs.scripts]</span>
+<span class="k">[envs.docs.scripts]</span>
 <span class="n">build</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;python3&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;-m&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;mkdocs&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;build&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--strict&quot;</span><span class="p">]</span>
 <span class="n">serve</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;python3&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;-m&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;mkdocs&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;serve&quot;</span><span class="p">]</span>
 </code></pre></div>
@@ -10202,24 +10278,24 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <li>using envs as a replacement for <code>[project.scripts]</code></li>
 </ul>
 <h2 id="use-environment-inheritance-carefully">Use environment inheritance carefully<a class="headerlink" href="#use-environment-inheritance-carefully" title="Permanent link">&para;</a></h2>
-<p>Every project has an ambient <code>default</code> env, even if you never declare <code>[tool.incan.envs.default]</code>. Declaring it customizes that baseline rather than creating a special extra env.</p>
+<p>Every project has an ambient <code>default</code> env, even if you never declare <code>[envs.default]</code>. Declaring it customizes that baseline rather than creating a special extra env.</p>
 <p>Other envs include <code>default</code> automatically unless they set <code>detached = true</code>.</p>
 <p>Use <code>default</code> for shared baseline behavior:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[envs.default]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_NO_BANNER</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[tool.incan.envs.default.scripts]</span>
+<span class="k">[envs.default.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>Use <code>extends</code> when one env is a stricter or more specialized version of another:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.ci]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[envs.ci]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;unit&quot;</span><span class="p">]</span>
 
-<span class="k">[tool.incan.envs.ci.scripts]</span>
+<span class="k">[envs.ci.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;tests/&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>Use <code>detached = true</code> when an env should stand on its own:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.docs]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[envs.docs]</span>
 <span class="n">detached</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="n">cwd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;workspaces/docs-site&quot;</span>
 </code></pre></div>

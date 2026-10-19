@@ -14,7 +14,7 @@
         <link rel="prev" href="../0002_single_pinned_rust_version/">
       
       
-        <link rel="next" href="../../whitepapers/">
+        <link rel="next" href="../0004_native_route_through_the_pinned_rustc/">
       
       
         
@@ -6308,8 +6308,6 @@
       
         
       
-        
-      
     
     
     
@@ -6396,34 +6394,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7807,6 +7777,8 @@
       
         
       
+        
+      
     
     
     
@@ -7949,6 +7921,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8433,8 +8433,6 @@
       
         
       
-        
-      
     
     
     
@@ -8493,34 +8491,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9048,6 +9018,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9238,7 +9212,7 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
   
 
   
@@ -9263,7 +9237,7 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
   
 
   
@@ -9366,6 +9340,76 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -9898,6 +9942,7 @@
 
 
 <h1 id="dd-0003-deliver-replacement-program-output-during-execution-and-bind-it-into-the-receipt">DD-0003: Deliver replacement program output during execution and bind it into the receipt<a class="headerlink" href="#dd-0003-deliver-replacement-program-output-during-execution-and-bind-it-into-the-receipt" title="Permanent link">&para;</a></h1>
+<p><strong>Withdrawn.</strong> The direct replacement backend this record governed was removed before the record was accepted (#1337): Incan has one execution route, and a program's output is whatever that route's produced process writes. The record is kept as provenance for the design it describes.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>The experimental direct replacement backend runs a compiled program without going through Rust emission. That backend has to answer a question the emission backend answers by construction: when the program prints, what actually reaches the user's terminal, and when?</p>
 <p>An earlier reading of this boundary treated program output as evidence to be captured rather than delivered — the executor accumulated rendered lines and the CLI relayed them only after the execution receipt had been persisted. That reading has since been reversed in the implementation, and the reversal is the reason this record exists. Output is now written through caller-supplied writers as execution proceeds, which changes what a failure leaves behind and what a receipt can honestly claim.</p>

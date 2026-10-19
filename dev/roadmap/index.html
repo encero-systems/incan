@@ -6308,8 +6308,6 @@
       
         
       
-        
-      
     
     
     
@@ -6396,34 +6394,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7807,6 +7777,8 @@
       
         
       
+        
+      
     
     
     
@@ -7949,6 +7921,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8433,8 +8433,6 @@
       
         
       
-        
-      
     
     
     
@@ -8493,34 +8491,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9046,6 +9016,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9227,7 +9201,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -11002,11 +11046,12 @@
 </details>
 <h3 id="forward-roadmap">Forward roadmap<a class="headerlink" href="#forward-roadmap" title="Permanent link">&para;</a></h3>
 <h4 id="06-release-backend-cutover">0.6 Release: backend cutover<a class="headerlink" href="#06-release-backend-cutover" title="Permanent link">&para;</a></h4>
-<p>The 0.6 milestone removes the Rust-source backend from the normal compiler path. The replacement backend should preserve supported behavior, report compatibility/migration details, and retire generated Rust as the semantic handoff.</p>
+<p>The 0.6 milestone removes the Rust-source backend from the normal compiler path. The direct route, which lowers Body IR inside the pinned <code>rustc</code>, should preserve supported behavior, report compatibility and migration details, and retire generated Rust as the semantic handoff.</p>
 <p>Only runtime/DSL RFC scope that stress-tests or supports the new backend belongs here.</p>
 <p>Core tracking issues:</p>
 <ul>
-<li><a href="https://github.com/encero-systems/incan/issues/652">#652</a>: replacement backend parity cutover.</li>
+<li><a href="https://github.com/encero-systems/incan/issues/652">#652</a>: backend parity cutover.</li>
+<li><a href="https://github.com/encero-systems/incan/issues/1337">#1337</a>: the direct route through the pinned <code>rustc</code>.</li>
 <li><a href="https://github.com/encero-systems/incan/issues/653">#653</a>: Body IR v0 and backend-owned lowering.</li>
 <li><a href="https://github.com/encero-systems/incan/issues/654">#654</a>: remove Rust-source backend and generated-Rust semantic handoff.</li>
 <li><a href="https://github.com/encero-systems/incan/issues/655">#655</a>: backend compatibility report and migration notes.</li>

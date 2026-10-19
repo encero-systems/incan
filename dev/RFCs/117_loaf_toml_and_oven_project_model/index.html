@@ -6302,8 +6302,6 @@
       
         
       
-        
-      
     
     
     
@@ -6390,34 +6388,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7801,6 +7771,8 @@
       
         
       
+        
+      
     
     
     
@@ -7943,6 +7915,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8427,8 +8427,6 @@
       
         
       
-        
-      
     
     
     
@@ -8487,34 +8485,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9035,6 +9005,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9216,7 +9190,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9823,10 +9867,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cargo-compatibility-is-a-different-mode" class="md-nav__link">
+  <a href="#a-cargo-project-is-converted-never-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cargo compatibility is a different mode
+        A Cargo project is converted, never run
       
     </span>
   </a>
@@ -10033,10 +10077,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cargo-compatibility-boundary" class="md-nav__link">
+  <a href="#cargo-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cargo compatibility boundary
+        Cargo boundary
       
     </span>
   </a>
@@ -10254,10 +10298,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-5-explicit-cargo-compatibility-and-documentation" class="md-nav__link">
+  <a href="#phase-5-cargo-project-conversion-and-documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 5: Explicit Cargo compatibility and documentation
+        Phase 5: Cargo-project conversion and documentation
       
     </span>
   </a>
@@ -10334,7 +10378,7 @@
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC replaces <code>incan.toml</code> with <code>loaf.toml</code> as the sole authored manifest for an Oven-managed project. A <code>loaf.toml</code> may describe one project, a rooted workspace, or a virtual workspace. Its package, target, lock, cache, and receipt model is language-neutral. Incan and Rust are the built-in authored source facets in v0.6; checked C interop remains under <code>[interop.c]</code>; later foreign integrations require their own explicit interop RFC rather than becoming ambient source languages.</p>
-<p><code>[project]</code> remains the familiar metadata table. <code>[workspace]</code> remains the explicit repository-coordination table. Dependencies use one typed graph whose unit kind and origin are explicit when the defaults are insufficient: Incan Loaf packages default to <code>incan.pub</code>, Rust crates default to crates.io, and foreign/system requirements use Oven-managed providers. Oven resolves authored intent into <code>oven.lock</code>, then bakes the selected target into immutable, verified <code>*.loaf</code> assets and receipts. Cargo remains a deliberately explicit compatibility mode for repositories that have no <code>loaf.toml</code>; it is never inferred as part of a Loaf build.</p>
+<p><code>[project]</code> remains the familiar metadata table. <code>[workspace]</code> remains the explicit repository-coordination table. Dependencies use one typed graph whose unit kind and origin are explicit when the defaults are insufficient: every package dependency is a Loaf and defaults to <code>incan.pub</code>, including third-party Rust packages, which <code>incan.pub</code> adopts into Loaves (RFC 125), and foreign/system requirements use Oven-managed providers. Oven resolves authored intent into <code>oven.lock</code>, then bakes the selected target into immutable, verified <code>*.loaf</code> assets and receipts. Oven never runs Cargo; a repository with only <code>Cargo.toml</code> becomes a Loaf through a one-time, explicit conversion.</p>
 <p>This RFC also rehomes the authored configuration boundaries of existing environment, matrix, action, workspace, provider, and interop RFCs. It does not define the final command spelling or a general-purpose task shell.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as thirteen foundations:</p>
@@ -10343,15 +10387,15 @@
 <li><strong>A familiar project table:</strong> <code>[project]</code> owns package identity and publication metadata. The filename carries the Loaf vocabulary; the metadata table remains ordinary and legible.</li>
 <li><strong>A workspace is an optional hierarchy:</strong> <code>[workspace]</code> declares explicit members and shared policy. A root with both <code>[project]</code> and <code>[workspace]</code> is a rooted workspace; a root with only <code>[workspace]</code> is virtual. Members may form explicit structural child groups, but the root remains the sole authority for resolution, locking, registry trust, target policy, and receipts.</li>
 <li><strong>The package graph is language-neutral:</strong> every dependency is one logical requirement with a typed provider contract. The author does not choose a separate Incan-versus-Rust dependency table.</li>
-<li><strong>Origins are configurable:</strong> Loaf packages default to <code>incan.pub</code>; crates default to crates.io. A project may explicitly select registered private registries, Git, path, or other supported controlled sources.</li>
-<li><strong>Provider semantics stay visible:</strong> an <code>incan.pub</code> package contributes checked Incan semantic/provider facts, a Cargo ecosystem crate contributes Rust interop and implementation requirements, and a system/foreign provider contributes a verified target requirement. Oven must not flatten those differences or expose backend details as public Incan API.</li>
+<li><strong>Origins are configurable:</strong> Loaf packages default to <code>incan.pub</code>. There is no crate dependency kind: a third-party Rust package is consumed as the Loaf <code>incan.pub</code> adopted it into (RFC 125). A project may explicitly select registered private Loaf registries, Git, path, or other supported controlled sources.</li>
+<li><strong>Provider semantics stay visible:</strong> a Loaf contributes what its facets declare (checked Incan semantic/provider facts, Rust units and their implementation requirements, or both), and a system/foreign provider contributes a verified target requirement. Oven must not flatten those differences or expose backend details as public Incan API.</li>
 <li><strong>Core source facets are convention-first and unambiguous:</strong> a conventional single-language project uses the ordinary <code>src/</code> layout. A mixed or nonstandard project declares non-overlapping <code>[incan.source]</code> and <code>[rust.source]</code> roots; <code>.incn</code> and <code>.rs</code> files never compete within one undiscriminated source root. C source inputs, headers, shims, and artifacts remain deliberate <code>[interop.c]</code> concerns. A Loaf never implicitly consumes a neighboring <code>Cargo.toml</code>.</li>
 <li><strong>Targets have three scopes:</strong> a Loaf declares supported target/interface combinations; a workspace declares shared delivery policy; a bake invocation chooses one concrete target, carrier, profile, and feature closure that produces a target-bound <code>*.loaf</code> asset.</li>
 <li><strong>Plans precede effects:</strong> resolution, import, installation, or the presence of a file must not execute package code. Oven exposes a plan before baking and records the actual execution in a receipt.</li>
 <li><strong>Named environments and actions are explicit Loaf intent:</strong> the standard <code>dev</code>, <code>test</code>, <code>lint</code>, and <code>docs</code> environments always exist; authored environment and typed-action configuration moves out of <code>[tool.incan.*]</code> and into the Loaf model. Environments select named, reproducible command contexts; they do not silently change a production bake.</li>
 <li><strong>Derived state is separate:</strong> <code>oven.lock</code>, immutable <code>*.loaf</code> assets, the artifact store, selected host toolchains, caches, staged outputs, generated code, and receipts are not authored Loaf configuration.</li>
 <li><strong>Distribution assets are verifiable and future-reusable:</strong> a <code>*.loaf</code> asset is immutable and target-bound. It identifies the selected project/facet, target, carrier, profile, resolved graph, payload digest, and receipt; those facts reserve the compatibility boundary through which a future <code>incan.pub</code> consumer can safely reuse a pre-warmed asset rather than rebuild it. Its wire or bundle format is intentionally deferred.</li>
-<li><strong>Cargo compatibility is explicit:</strong> a directory with only <code>Cargo.toml</code> may be run by Oven in Cargo-compatibility mode. A directory containing <code>loaf.toml</code> is a Loaf project; Cargo files there are ignored with a diagnostic unless the user explicitly invokes Cargo compatibility.</li>
+<li><strong>Oven never runs Cargo:</strong> a directory with only <code>Cargo.toml</code> is not an Oven project; it becomes one through a one-time, explicit conversion that writes <code>loaf.toml</code> (RFC 119). A directory containing <code>loaf.toml</code> is a Loaf project; Cargo files there are ignored with a diagnostic.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>The current <code>incan.toml</code> correctly introduced project identity, dependency declarations, SDK selection, build configuration, workspaces, environment configuration, Rust dependency declarations, and Oven interop requirements. It now carries an assumption that no longer fits the intended architecture: that a project's identity is primarily Incan source and that Rust is a special external implementation substrate.</p>
@@ -10364,7 +10408,7 @@
 <li>Preserve <code>[project]</code> as the familiar package-metadata surface.</li>
 <li>Preserve rooted and virtual workspace forms using optional <code>[workspace]</code>.</li>
 <li>Give Incan packages, Rust crates, and foreign/system providers one dependency grammar while retaining their distinct resolver and linkage contracts.</li>
-<li>Make <code>incan.pub</code> the default origin for Loaf packages and crates.io the default origin for Rust crates, while allowing registered alternative registries and explicit sources.</li>
+<li>Make <code>incan.pub</code> the default origin for every package dependency, Rust packages included, while allowing registered alternative Loaf registries and explicit sources.</li>
 <li>Define safe discovery when <code>loaf.toml</code> and <code>Cargo.toml</code> coexist.</li>
 <li>Permit explicitly declared hierarchical sub-Loaves under one inherited root-workspace authority.</li>
 <li>Keep source-language choice out of the package identity while avoiding implicit Cargo participation.</li>
@@ -10384,7 +10428,7 @@
 <li>Preserving <code>incan.toml</code>, <code>incan.lock</code>, or <code>[tool.incan.*]</code> as legacy compatibility formats.</li>
 <li>Defining the final <code>oven</code> versus <code>incan</code> command-line binary, aliases, or command hierarchy.</li>
 <li>Reimplementing arbitrary Cargo behavior, including implicit <code>build.rs</code> execution, proc-macro execution policy, or Cargo workspace discovery, for Loaf projects.</li>
-<li>Defining crates.io's protocol, the full <code>incan.pub</code> registry protocol, registry hosting, or publishing UX.</li>
+<li>Defining the full <code>incan.pub</code> registry protocol, how <code>incan.pub</code> adopts packages from crates.io, registry hosting, or publishing UX (RFC 125).</li>
 <li>Defining C ABI safety rules, direct C++ ABI interop, JNI safety rules, Python extension safety rules, or a universal foreign-runtime type system.</li>
 <li>Defining pluggable interop registration, installation, discovery, or execution. Future binding kinds require their own RFC and implementation work.</li>
 <li>Defining remote execution, distributed builds, or a general-purpose shell/task runner.</li>
@@ -10434,7 +10478,7 @@
 
 <span class="k">[dependencies]</span>
 <span class="n">web</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;stdlib-web&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;^0.6&quot;</span><span class="w"> </span><span class="p">}</span>
-<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">crate</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;serde&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;crates-io/serde&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 
 <span class="k">[incan.source]</span>
 <span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sources/incan&quot;</span>
@@ -10442,7 +10486,7 @@
 <span class="k">[rust.source]</span>
 <span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sources/rust&quot;</span>
 </code></pre></div>
-<p><code>web</code> defaults to <code>incan.pub</code>; <code>serde</code> defaults to crates.io. Neither the project identity nor the command to bake it changes because its implementation contains Incan, Rust, or both. The public package feature graph remains an Incan/Loaf contract. A requested Cargo feature is a typed implementation request for <code>serde</code>; it does not automatically become a public feature of <code>weather_service</code>.</p>
+<p>Both dependencies resolve against <code>incan.pub</code>. <code>crates-io/serde</code> is the Loaf <code>incan.pub</code> adopted from the crates.io package <code>serde</code>; its Rust crate name stays <code>serde</code>. Neither the project identity nor the command to bake it changes because its implementation contains Incan, Rust, or both. The public package feature graph remains an Incan/Loaf contract. A requested feature of <code>crates-io/serde</code> is a request on that dependency; it does not automatically become a public feature of <code>weather_service</code>.</p>
 <p>This example is mixed, so it names separate roots. An Incan-only project conventionally uses <code>src/*.incn</code>; a Rust-only project conventionally uses <code>src/lib.rs</code> or <code>src/main.rs</code>. Neither needs a source table. A mixed project must declare separate roots rather than placing <code>main.incn</code> and <code>main.rs</code> beside one another.</p>
 <h3 id="a-workspace-of-loaves">A workspace of Loaves<a class="headerlink" href="#a-workspace-of-loaves" title="Permanent link">&para;</a></h3>
 <p>The root <code>loaf.toml</code> can be a project and a workspace:</p>
@@ -10497,10 +10541,7 @@
 </code></pre></div>
 <p><code>[interop.c]</code> also owns C headers, ABI declarations, checked shims, linker artifacts, selected toolchain/provider facts, and their receipts. <code>[interop.python]</code>, <code>[interop.jni]</code>, <code>[interop.go]</code>, and similar names are reserved for later concrete interop RFCs; v0.6 does not define their schemas, plugin installation, or arbitrary foreign-language execution.</p>
 <h3 id="registries-without-ambient-trust">Registries without ambient trust<a class="headerlink" href="#registries-without-ambient-trust" title="Permanent link">&para;</a></h3>
-<p>Oven has built-in defaults for the public ecosystems:</p>
-<div class="language-text highlight"><pre><span></span><code>Loaf package  -&gt; incan.pub
-Rust crate    -&gt; crates.io
-</code></pre></div>
+<p><code>incan.pub</code> is the authoritative and default backend for every Loaf, third-party Rust packages included (as the Loaves <code>incan.pub</code> adopted them into). Beside it, every Oven installation has its <strong>local store</strong>, which is always available. The local store keeps what came from <code>incan.pub</code>, and it is also where Oven keeps what it had to bake itself because <code>incan.pub</code> did not have it yet: a compiled unit, or a build fact for a particular target and feature selection. Oven always looks in the local store first, then asks <code>incan.pub</code>, and bakes into the local store only when neither has what it needs. The local store is a cache in front of the authority, never a second authority: it never decides which package version a dependency resolves to.</p>
 <p>Users or organizations explicitly register additional registries in Oven-controlled user or organization configuration. Registry configuration identifies the registry kind, its identity (a registry id derived from a pinned root public key, per RFC 125), one or more endpoints that serve that registry's signed content, trust policy, and a reference to credentials held outside the project. Endpoints are transport: any endpoint whose content verifies under the pinned root is the registry, so a mirror is an additional endpoint, not a separate trust decision.</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="c1"># Illustrative Oven user/organization configuration, not loaf.toml.</span>
 <span class="k">[registries.encero]</span>
@@ -10509,19 +10550,13 @@ Rust crate    -&gt; crates.io
 <span class="n">root-keys</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;ed25519:MCow…&quot;</span><span class="p">]</span><span class="w">       </span><span class="c1"># pinned; rotated only through signed events</span>
 <span class="n">endpoints</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;https://packages.encero.dev&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;https://mirror.example.org/encero&quot;</span><span class="p">]</span>
 <span class="n">trust</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;require-signature&quot;</span>
-
-<span class="k">[registries.internal-cargo]</span>
-<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;crate&quot;</span>
-<span class="n">index</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sparse+https://cargo.encero.dev/index&quot;</span>
-<span class="n">trust</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;organization&quot;</span>
 </code></pre></div>
 <p>The project can select a registered source and the workspace can allow-list source identities:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
 <span class="n">web</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;web&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">registry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;encero&quot;</span><span class="w"> </span><span class="p">}</span>
-<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">crate</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;serde&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">registry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;internal-cargo&quot;</span><span class="w"> </span><span class="p">}</span>
 
 <span class="k">[workspace.registries]</span>
-<span class="n">allow</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;encero&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;internal-cargo&quot;</span><span class="p">]</span>
+<span class="n">allow</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;encero&quot;</span><span class="p">]</span>
 </code></pre></div>
 <p>The registry alias is convenience, not the security identity. <code>oven.lock</code> records the canonical registry endpoint and protocol, exact package identity, immutable digest, and observed signature/trust result. Credentials never enter <code>loaf.toml</code> or the lock. A project cannot silently register, rebind, or trust a registry on a developer's machine.</p>
 <h3 id="declaring-c-abi-and-future-carriers">Declaring C ABI and future carriers<a class="headerlink" href="#declaring-c-abi-and-future-carriers" title="Permanent link">&para;</a></h3>
@@ -10553,11 +10588,11 @@ show/approve the plan when policy requires it
 bake
 inspect artifacts and receipt
 </code></pre></div>
-<h3 id="cargo-compatibility-is-a-different-mode">Cargo compatibility is a different mode<a class="headerlink" href="#cargo-compatibility-is-a-different-mode" title="Permanent link">&para;</a></h3>
-<p>A repository containing only <code>Cargo.toml</code> remains runnable by Oven in explicitly selected Cargo-compatibility mode. Cargo remains authoritative for that operation and its own build-script/proc-macro side effects are Cargo-mode behavior.</p>
+<h3 id="a-cargo-project-is-converted-never-run">A Cargo project is converted, never run<a class="headerlink" href="#a-cargo-project-is-converted-never-run" title="Permanent link">&para;</a></h3>
+<p>Oven never runs Cargo. A repository containing only <code>Cargo.toml</code> is not an Oven project; an Oven operation there names the one-time conversion command (RFC 119), which reads the Cargo manifest and writes a <code>loaf.toml</code> once the user accepts it.</p>
 <p>If both files are present, Oven must continue as a Loaf project and issue a warning equivalent to:</p>
 <div class="language-text highlight"><pre><span></span><code>Found loaf.toml and Cargo.toml. loaf.toml is authoritative; Cargo configuration
-was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantics.
+was ignored.
 </code></pre></div>
 <p>Oven must not parse, merge, or infer dependency, feature, source, workspace, build-script, or target policy from the adjacent Cargo manifest.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
@@ -10573,18 +10608,18 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <li>The root workspace is the sole authority for the resolved graph, <code>oven.lock</code>, registry trust, workspace delivery policy, and receipt boundary. Child workspace declarations may add local membership and narrow local requirements, but may not create a lock, rebind registries, weaken trust, broaden target policy, or establish an independent publication authority.</li>
 <li>A manifest containing neither <code>[project]</code> nor <code>[workspace]</code> is invalid.</li>
 <li><code>incan.toml</code> is not a project manifest after this RFC. A directory that contains it but no <code>loaf.toml</code> must receive a targeted diagnostic rather than legacy parsing.</li>
-<li>If a <code>loaf.toml</code> project also contains <code>Cargo.toml</code>, Oven must warn and ignore Cargo configuration. The diagnostic must name the ignored file and explain explicit Cargo-compatibility selection.</li>
+<li>If a <code>loaf.toml</code> project also contains <code>Cargo.toml</code>, Oven must warn and ignore Cargo configuration. The diagnostic must name the ignored file.</li>
 </ol>
 <h3 id="project-metadata-and-source-domains">Project metadata and source domains<a class="headerlink" href="#project-metadata-and-source-domains" title="Permanent link">&para;</a></h3>
 <p><code>[project]</code> retains the project identity and publication fields from RFC 015: name, version, description, authors, maintainers, license, license files, readme, homepage, repository, documentation, issues, keywords, classifiers, toolchain constraint, privacy, entry points, and public features.</p>
 <p><code>requires-incan</code> remains an enforceable project compatibility requirement under RFC 073. It is a language/toolchain compatibility fact, not a claim that all implementation sources must be Incan. <code>requires-oven</code> states the minimum Oven version whose plan, lock, and receipt contracts the project relies on; a Rust-only Loaf may declare it without <code>requires-incan</code>. Both are published to the registry index so a resolver can skip versions the installed toolchain cannot build (RFC 125).</p>
 <p>An Incan-only or Rust-only project uses its conventional <code>src/</code> layout without a source declaration. A project that contains both built-in source languages, uses nonstandard roots, or needs an authored C shim must declare the relevant non-overlapping root: <code>[incan.source]</code>, <code>[rust.source]</code>, or <code>[interop.c.source]</code>. A Loaf must diagnose <code>.incn</code> and <code>.rs</code> files in one undiscriminated root; it must not apply filename precedence. Generated inputs remain declared provider outputs rather than source roots.</p>
-<p>When a Loaf project contains Rust source, Oven determines its compilation/linkage path from the Loaf plan and declared crate/provider requirements. The presence of <code>Cargo.toml</code>, <code>build.rs</code>, or another Cargo convention does not grant that file execution or planning authority.</p>
+<p>When a Loaf project contains Rust source, Oven determines its compilation/linkage path from the Loaf plan and its declared Loaf and provider requirements. The presence of <code>Cargo.toml</code>, <code>build.rs</code>, or another Cargo convention does not grant that file execution or planning authority.</p>
 <h3 id="rust-source-facet">Rust source facet<a class="headerlink" href="#rust-source-facet" title="Permanent link">&para;</a></h3>
 <p>A Rust-bearing Loaf has a bounded, inspectable Rust facet. <code>[rust.source]</code> declares its root only when convention cannot. Rust-specific exceptions live beneath <code>rust.*</code>, not in a generic source table. The planner must know, either through the conventional default or an explicit declaration, every compiled crate's package name, crate root, edition, crate type, entry point where applicable, enabled feature set, and linkage/dependency requirements. A conventional <code>src/lib.rs</code> or <code>src/main.rs</code> may supply a default root only when it yields one unambiguous crate; multiple crates, nonstandard roots, nondefault crate names, nondefault editions, additional crate types, binary entry points, or feature mapping require explicit facet data.</p>
-<p>The root spelling is settled; the compact <code>rust.*</code> exception fields remain RFC 119 work. No Rust compilation plan may be inferred from Cargo metadata. <code>oven.lock</code> and the receipt must record the selected Rust facet, compiler/toolchain identity, crate dependency closure, feature choices, and all provider-produced inputs that affect the resulting <code>*.loaf</code> asset.</p>
-<p>The existence of <code>build.rs</code> must never execute it. A Loaf may support its intent only through an explicitly selected Oven provider or typed action whose inputs, outputs, capabilities, target/host role, policy decision, and receipt effects are declared and inspectable. Likewise, a procedural macro must be an explicitly resolved compiler-time provider with a recorded host identity and execution policy; an unsupported macro is a diagnostic, not a fallback to Cargo. Cargo compatibility remains the only mode in which Cargo itself is authoritative for these behaviors.</p>
-<p>RFC 119 owns the detailed native-Rust facet grammar, crate-provider graph, direct-<code>rustc</code> planner, build-time provider envelope, Rust test/IDE projections, and explicit Cargo interoperation. This RFC retains the one-manifest, one-lock, one-workspace-authority boundary those facilities must obey.</p>
+<p>The root spelling is settled; the compact <code>rust.*</code> exception fields remain RFC 119 work. No Rust compilation plan may be inferred from Cargo metadata. <code>oven.lock</code> and the receipt must record the selected Rust facet, compiler/toolchain identity, Rust-unit dependency closure, feature choices, and all provider-produced inputs that affect the resulting <code>*.loaf</code> asset.</p>
+<p>The existence of <code>build.rs</code> must never execute it. A Loaf may support its intent only through an explicitly selected Oven provider or typed action whose inputs, outputs, capabilities, target/host role, policy decision, and receipt effects are declared and inspectable. Likewise, a procedural macro must be an explicitly resolved compiler-time provider with a recorded host identity and execution policy; an unsupported macro is a diagnostic, not a fallback to Cargo.</p>
+<p>RFC 119 owns the detailed native-Rust facet grammar, the resolution of Rust-facet Loaves into compiled units, the direct-<code>rustc</code> planner, build-time provider envelope, Rust test/IDE projections, and explicit Cargo interoperation. This RFC retains the one-manifest, one-lock, one-workspace-authority boundary those facilities must obey.</p>
 <h3 id="typed-dependencies-and-features">Typed dependencies and features<a class="headerlink" href="#typed-dependencies-and-features" title="Permanent link">&para;</a></h3>
 <p>Every dependency requirement has a <strong>unit kind</strong> and an <strong>origin</strong>.</p>
 <table>
@@ -10600,14 +10635,8 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <tr>
 <td><code>loaf</code></td>
 <td><code>incan.pub</code></td>
-<td>checked Incan semantic/provider facts and public package features</td>
+<td>the Loaf's facets: checked Incan semantic/provider facts, Rust units (RFC 119), and public package features</td>
 <td>a Cargo crate or generated Rust source contract</td>
-</tr>
-<tr>
-<td><code>crate</code></td>
-<td>crates.io</td>
-<td>Rust interop metadata and backend implementation/linkage requirements</td>
-<td>a public Incan feature namespace by accident</td>
 </tr>
 <tr>
 <td><code>provider</code></td>
@@ -10617,19 +10646,20 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 </tr>
 </tbody>
 </table>
-<p>An entry may override its default origin through a registered registry, Git, path, or another supported source form. The resolved provider contract determines the legal source forms; a Loaf registry must not be accepted as a Cargo registry merely because it has a URL.</p>
-<p>Project features remain additive public Loaf features as defined by RFC 114. They may enable optional Loaf dependencies and request public features from Loaf dependencies. A project may explicitly request a provider-specific crate feature as part of a crate dependency requirement, but that request is not exposed as a public project feature unless the project explicitly maps it through its public feature definition. Cargo feature names, generated crate names, and backend module paths remain implementation details.</p>
+<p>There is no <code>crate</code> unit kind. A third-party Rust package is consumed as the Loaf a Loaf registry adopted it into (RFC 125): a Loaf with a Rust facet, its features, and its dependencies as Loaf dependencies, so its graph resolves like any other Loaf's. A manifest that names <code>crate</code> as a dependency key must be refused with a diagnostic that names the adopted Loaf form. Oven never reads a crates.io index, a crate's <code>Cargo.toml</code>, or a <code>Cargo.lock</code> to resolve or plan a Loaf.</p>
+<p>An entry may override its default origin through a registered Loaf registry, Git, path, or another supported source form. The resolved provider contract determines the legal source forms.</p>
+<p>Project features remain additive public Loaf features as defined by RFC 114. They may enable optional Loaf dependencies and request public features from Loaf dependencies, including the features of an adopted Rust package's Loaf. A requested dependency feature is not exposed as a public project feature unless the project explicitly maps it through its public feature definition. Generated crate names and backend module paths remain implementation details.</p>
 <p>Workspace inheritance remains explicit. A workspace may own a dependency identity and members may opt into it. A member may refine only the usage properties RFC 114 and the selected dependency kind allow; it may not silently replace the source, registry, package identity, or trust policy selected by the workspace.</p>
 <h3 id="registry-registration-and-trust">Registry registration and trust<a class="headerlink" href="#registry-registration-and-trust" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Oven provides the built-in origins <code>incan.pub</code> for <code>loaf</code> dependencies and crates.io for <code>crate</code> dependencies.</li>
+<li><code>incan.pub</code> is the built-in, authoritative origin for <code>loaf</code> dependencies. The local store (see "Registries without ambient trust") sits in front of every registry as a cache and on-demand bake target; it is not a registry and cannot be selected as one.</li>
 <li>Additional registries are registered through Oven-controlled user or organization configuration, never by an unreviewed dependency or an implicit network lookup.</li>
-<li>A registry registration must declare a stable identity, unit kind/protocol, endpoint/index, and trust policy. For <code>loaf</code> registries the identity is a registry id derived from a pinned root public key and the registration may list several endpoints, all equivalent once their content verifies (RFC 125); for <code>crate</code> registries the identity is the sparse index URL. Credentials are referenced from secure user/organization storage rather than copied into project files.</li>
+<li>A registry registration must declare a stable identity, unit kind/protocol, endpoint/index, and trust policy. The identity is a registry id derived from a pinned root public key, and the registration may list several endpoints, all equivalent once their content verifies (RFC 125). Credentials are referenced from secure user/organization storage rather than copied into project files.</li>
 <li>A Loaf or workspace may allow-list registered registry identities. It may select an allowed alias but may not define credentials, rebind an alias, or weaken a user/organization trust policy.</li>
-<li>The lock records canonical registry identity, protocol, exact resolved package/crate/provider identity, version, immutable digest, source reference, and signature/trust outcome. An alias alone is insufficient for reproducibility or audit.</li>
+<li>The lock records canonical registry identity, protocol, exact resolved package/provider identity, version, immutable digest, source reference, and signature/trust outcome. An alias alone is insufficient for reproducibility or audit.</li>
 <li>Resolution in locked or offline mode must not query an unrecorded registry, substitute an ambient local package, or accept a source with different trust facts.</li>
 </ol>
-<p>RFC 125 (superseding RFC 034) is the protocol and publication authority for <code>incan.pub</code>; this RFC defines how <code>incan.pub</code> participates in the generic Loaf graph. A future Cargo-registry adapter must respect Cargo registry identity and integrity semantics without making Cargo the authority for a Loaf bake.</p>
+<p>RFC 125 (superseding RFC 034) is the protocol and publication authority for <code>incan.pub</code>, including how it adopts packages from crates.io into Loaves; this RFC defines how <code>incan.pub</code> participates in the generic Loaf graph. No Cargo registry participates in it.</p>
 <h3 id="targets-carriers-profiles-and-delivery-policy">Targets, carriers, profiles, and delivery policy<a class="headerlink" href="#targets-carriers-profiles-and-delivery-policy" title="Permanent link">&para;</a></h3>
 <p>Target selection has three distinct levels:</p>
 <table>
@@ -10772,13 +10802,13 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;dev&quot;</span>
 
 <span class="k">[envs.test.dependencies]</span>
-<span class="n">assert_cmd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">crate</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;assert_cmd&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;2&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="n">assert_cmd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;crates-io/assert_cmd&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;2&quot;</span><span class="w"> </span><span class="p">}</span>
 
 <span class="k">[envs.docs]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;dev&quot;</span>
 
 <span class="k">[envs.docs.dependencies]</span>
-<span class="n">mdbook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">crate</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;mdbook&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;0.4&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="n">mdbook</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loaf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;crates-io/mdbook&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;0.4&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>An environment is a named, reproducible command context. It may select extra development tools and project features, but it must not silently alter the selected target, carrier, profile, provider closure, or release dependency closure of an ordinary bake. <code>bake</code> is therefore not a standard environment: a bake records its target, carrier, profile, and feature selection directly in the plan and receipt. Dependencies needed to compile or execute a provider belong to that provider; target-specific dependencies belong to the target. Environment inheritance must diagnose conflicting bindings in the selected closure rather than silently choose one.</p>
 <p>Project scaffolding must generate a valid, minimal <code>loaf.toml</code> and include the four standard environments as commented examples. The comments must explain that the defaults already exist and show where test, lint, and documentation dependencies belong; they must not materialize active configuration that merely duplicates the defaults.</p>
@@ -10817,10 +10847,10 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <p>The Loaf package model is language-neutral in package and build authority; it does not claim that every language is an equivalent v0.6 source facet or relax Incan's authoring policy. Incan products and dogfooding projects should remain Incan-authored and use <code>rust::</code> interop for existing Rust capabilities. New authored Rust still requires a demonstrated Incan limitation and a tracked removal path.</p>
 <p>That policy is distinct from the manifest contract. Oven must be capable of baking a Loaf whose implementation is Rust, Incan, or mixed because the build system cannot make a package's identity depend on the language mix. Project governance can constrain which sources its maintainers choose to author.</p>
 <p>The Rust facet is the language-neutral planner contract for Rust-authored or mixed Loaves. It does not license authored Rust in Incan products without the demonstrated limitation and tracked removal path required above.</p>
-<h3 id="cargo-compatibility-boundary">Cargo compatibility boundary<a class="headerlink" href="#cargo-compatibility-boundary" title="Permanent link">&para;</a></h3>
-<p>Cargo compatibility has two valid states:</p>
+<h3 id="cargo-boundary">Cargo boundary<a class="headerlink" href="#cargo-boundary" title="Permanent link">&para;</a></h3>
+<p>A directory is in one of two states:</p>
 <ol>
-<li><strong>Cargo project:</strong> a directory has <code>Cargo.toml</code> and no <code>loaf.toml</code>. An explicitly selected Oven Cargo-compatibility operation delegates to Cargo. Cargo retains authority over its manifest and side effects.</li>
+<li><strong>Cargo project:</strong> a directory has <code>Cargo.toml</code> and no <code>loaf.toml</code>. It is not an Oven project. Oven never runs Cargo on it; the one-time conversion of RFC 119 is the only Oven operation that reads its manifest.</li>
 <li><strong>Loaf project:</strong> a directory has <code>loaf.toml</code>, with or without <code>Cargo.toml</code>. Oven uses only the Loaf graph. Cargo is not an implicit source of build policy.</li>
 </ol>
 <p>There is no mixed automatic state. In particular, Oven must not merge dependency tables, inherit Cargo workspace membership, execute a discovered <code>build.rs</code>, or allow a Cargo feature to silently change a Loaf's public feature API.</p>
@@ -10836,7 +10866,7 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <li>actual baked artifacts, receipt identities, cache status, and declared-versus-observed effects.</li>
 </ul>
 <p>For each <code>*.loaf</code> asset, inspection must report the project/facet, target, carrier, profile, resolved graph identity, payload digest, signature/trust facts where applicable, and receipt identity without requiring an author to inspect a cache path or container implementation.</p>
-<p>Diagnostics must distinguish configuration errors, unsupported target/carrier combinations, unmet package requirements, unavailable registered registries, trust failures, stale or incompatible locks, missing provider/toolchain capabilities, explicit Cargo compatibility, and accidental Cargo coexistence. They must explain which declaration or policy constraint led to the outcome.</p>
+<p>Diagnostics must distinguish configuration errors, unsupported target/carrier combinations, unmet package requirements, unavailable registered registries, trust failures, stale or incompatible locks, missing provider/toolchain capabilities, a Cargo-only directory, and accidental Cargo coexistence. They must explain which declaration or policy constraint led to the outcome.</p>
 <h2 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h2>
 <p>This RFC is intentionally breaking and should land before Incan 1.0.</p>
 <ul>
@@ -10845,7 +10875,7 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <li>Existing implemented project/workspace/environment code must be updated to discover and write the new schema; it must not retain a legacy <code>incan.toml</code> parser.</li>
 <li>Existing Draft RFCs that refer to <code>[tool.incan.*]</code> must be amended before their implementation is scheduled.</li>
 <li>Existing project authors must explicitly adopt the Loaf contract; a raw rename is valid only when the resulting tables satisfy the new schema.</li>
-<li>Cargo-only repositories require no adoption to be runnable in explicit Cargo-compatibility mode.</li>
+<li>Cargo-only repositories become Loaf projects only through the explicit one-time conversion of RFC 119; Oven never runs Cargo on them.</li>
 </ul>
 <p>The tool should emit a targeted diagnostic when it finds <code>incan.toml</code> without <code>loaf.toml</code>, but it must not silently interpret the old file. This keeps the authority transition explicit and avoids supporting every interaction between old Incan configuration, Cargo configuration, and the new Oven model.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
@@ -10880,7 +10910,7 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <li><strong>Target and interop planning</strong> — must resolve host/target/carrier/profile/delivery combinations, select providers/toolchains, and reuse RFC 116's checked <code>[interop.c]</code> facts without turning C or a future foreign ecosystem into an ambient top-level source language.</li>
 <li><strong>Environment and action tooling</strong> — must rehome RFC 073 and RFC 078 configuration to Loaf/Oven while retaining matrix, scope, dry-run, policy, and receipt contracts.</li>
 <li><strong>Locking, stores, and publication</strong> — must rename the canonical lock to <code>oven.lock</code>, preserve deterministic whole-workspace resolution, reserve immutable target-bound <code>*.loaf</code> identities, and keep locks, receipts, caches, and publication artifacts distinct.</li>
-<li><strong>Cargo compatibility adapter</strong> — must run Cargo only when explicitly selected, report its mode and side-effect boundary, and never act as a fallback inside a Loaf build.</li>
+<li><strong>Cargo-project conversion</strong> — must read a Cargo manifest only when the one-time conversion is explicitly selected, never invoke Cargo, and never act as a fallback inside a Loaf build.</li>
 <li><strong>CLI and inspection</strong> — must expose manifest shape, plan, target selection, registry/trust facts, effects, <code>*.loaf</code> assets, and receipts; RFC 118 owns final binary/subcommand spelling and alias behavior.</li>
 <li><strong>Documentation, templates, LSP, and IDEs</strong> — must create, discover, edit, display, and diagnose <code>loaf.toml</code> consistently without making generated Rust or hidden backend state the public model.</li>
 </ul>
@@ -10889,7 +10919,7 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <ul>
 <li>A standalone project, rooted workspace, and virtual workspace have unambiguous <code>loaf.toml</code> examples and discovery rules.</li>
 <li>The dependency grammar distinguishes unit kind from origin and explains defaults, source overrides, features, integrity, and trust.</li>
-<li>The <code>incan.pub</code> and crates.io defaults, explicit registry registration, project allow-list, credential boundary, and lock identity are defined precisely enough to implement.</li>
+<li>The <code>incan.pub</code> default, explicit registry registration, project allow-list, credential boundary, and lock identity are defined precisely enough to implement.</li>
 <li>An Incan-only, Rust-only, and mixed Incan/Rust Loaf have defined source-root behavior: simple projects are convention-first, mixed roots use <code>[incan.source]</code> and <code>[rust.source]</code>, ambiguous co-located <code>.incn</code>/<code>.rs</code> sources diagnose, and no implicit Cargo participation occurs.</li>
 <li>A C integration has a defined <code>[interop.c]</code> envelope without promising Python, JNI, Go, Ruby, or a general plugin system in v0.6.</li>
 <li>Target, carrier, profile, workspace delivery policy, and invocation precedence have explicit validation and receipt requirements.</li>
@@ -10909,7 +10939,7 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 </ul>
 <h3 id="phase-2-typed-graph-registries-and-lock">Phase 2: Typed graph, registries, and lock<a class="headerlink" href="#phase-2-typed-graph-registries-and-lock" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Normalize Loaf, crate, and provider dependencies into one resolver-owned graph.</li>
+<li>Normalize Loaf and provider dependencies into one resolver-owned graph; refuse the retired <code>crate</code> key with the adopted-Loaf diagnostic.</li>
 <li>Implement default origins, registered registry identities, workspace allow-lists, integrity/trust facts, and the <code>oven.lock</code> format.</li>
 <li>Amend RFC 125 integration and retain RFC 114's public-feature/provider boundaries.</li>
 </ul>
@@ -10925,10 +10955,10 @@ was ignored. Use an explicit Cargo-compatibility operation to run Cargo semantic
 <li>Materialize the standard <code>dev</code>, <code>test</code>, <code>lint</code>, and <code>docs</code> environments; support explicit inheritance, environment dependency closure, conflict diagnostics, and commented scaffold defaults.</li>
 <li>Make Oven materialization, scope selection, dry-run, and policy gating consume the same project/workspace plan without allowing an environment to change an ordinary bake implicitly.</li>
 </ul>
-<h3 id="phase-5-explicit-cargo-compatibility-and-documentation">Phase 5: Explicit Cargo compatibility and documentation<a class="headerlink" href="#phase-5-explicit-cargo-compatibility-and-documentation" title="Permanent link">&para;</a></h3>
+<h3 id="phase-5-cargo-project-conversion-and-documentation">Phase 5: Cargo-project conversion and documentation<a class="headerlink" href="#phase-5-cargo-project-conversion-and-documentation" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Implement the distinct Cargo compatibility adapter and receipt/reporting boundary.</li>
-<li>Add compatibility fixtures for Cargo-only projects, convention-first Incan-only and Rust-only Loaves, explicit mixed <code>[incan.source]</code>/<code>[rust.source]</code> Loaves, nested <code>loaves/</code> workspaces, private registries, and C ABI target carriers.</li>
+<li>Implement the explicit one-time Cargo-project conversion and its diagnostics.</li>
+<li>Add compatibility fixtures for Cargo-only projects (conversion diagnostic), convention-first Incan-only and Rust-only Loaves, explicit mixed <code>[incan.source]</code>/<code>[rust.source]</code> Loaves, nested <code>loaves/</code> workspaces, private registries, and C ABI target carriers.</li>
 <li>Document the command-surface handoff to RFC 118 without defining aliases or final command spelling here.</li>
 </ul>
 <h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>

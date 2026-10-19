@@ -6308,8 +6308,6 @@
       
         
       
-        
-      
     
     
     
@@ -6396,34 +6394,6 @@
     
   
     Managing dependencies
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
   
 
     
@@ -7814,6 +7784,8 @@
       
         
       
+        
+      
     
     
     
@@ -7956,6 +7928,34 @@
     
   
     Benchmarks & profiling (repository)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
   
 
     
@@ -8603,8 +8603,6 @@
       
         
       
-        
-      
     
     
     
@@ -8663,34 +8661,6 @@
     
   
     Backend behavior inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
   
 
     
@@ -9211,6 +9181,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9392,7 +9366,77 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0004_native_route_through_the_pinned_rustc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../design_records/0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -10008,7 +10052,16 @@
 <span class="w">  </span><span class="nv">INCAN</span><span class="o">=</span>/path/to/release/incan<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="nv">INCQL_EQUIVALENCE_REPORT</span><span class="o">=</span>/path/to/incql-equivalence.json
 </code></pre></div>
-<p>The checkout must be clean and match the revision and committed root <code>oven.lock</code> digest in <code>scripts/incql_gate_pin.json</code>. The gate removes derived <code>.incan</code> and <code>target</code> outputs but preserves every committed lock. The equivalence report is the output named by <code>OVEN_EQUIV_ATTESTATION</code> when running <code>make test-oven-artifact-equivalence</code>. A passing gate requires the complete attested registry closure and runs the Oven quickstart with Cargo and publisher-only native/tool commands unavailable. See the <a href="../../../tooling/reference/cli_reference/#make-gate-incql"><code>make gate-incql</code> contract</a> for the accepted evidence and refusal conditions.</p>
+<p>Before running the gate, use a clean checkout at the revision and committed root <code>oven.lock</code> digest in <code>scripts/incql_gate_pin.json</code>. Supply the equivalence report named by <code>OVEN_EQUIV_ATTESTATION</code> when running <code>make test-oven-artifact-equivalence</code>.</p>
+<p>The gate performs these steps:</p>
+<ol>
+<li>Validate the checkout with <code>incan oven gate registry-pin</code> and stage IncQL's source-relative vocab companion path from the canonical Incan vocab crate.</li>
+<li>Remove derived <code>.incan</code> and <code>target</code> outputs while preserving committed root and example locks.</li>
+<li>Bake the IncQL library and quickstart consumer with Cargo and publisher-only native/tool commands unavailable.</li>
+<li>Validate both locks with <code>incan oven gate consumer-graph --expect scripts/incql_gate_expectations.toml</code>, passing the equivalence report. Refuse a Cargo-layout executable and require an Oven executable.</li>
+<li>Run the quickstart, check its completion marker and forbidden-command log, and run <code>registry-pin</code> again.</li>
+</ol>
+<p>The pin, digest, typed-lock, expectation and equivalence checks run in Rust. A passing gate requires the complete attested consumer registry closure and the quickstart completion marker. See the <a href="../../../tooling/reference/cli_reference/#make-gate-incql"><code>make gate-incql</code> contract</a> for accepted inputs, retained outputs and refusal conditions.</p>
 <h2 id="build-a-toolchain-release-archive">Build a toolchain release archive<a class="headerlink" href="#build-a-toolchain-release-archive" title="Permanent link">&para;</a></h2>
 <p>Use the release packager from the repository root after building the target <code>incan</code> and <code>incan-lsp</code> binaries and the host-runnable SDK provider builder:</p>
 <p>Ensure <code>jq</code> is available. Before a local package run, populate the Cargo registry cache while network access is available:</p>
@@ -10029,7 +10082,10 @@ workspaces/release/toolchain/package_archive.sh<span class="w"> </span><span cla
 <p>To run the compiler, SDK, verified documentation and generated-reference checks without the heavy Oven suite, dispatch CI against the branch you want to measure:</p>
 <div class="language-bash highlight"><pre><span></span><code>gh<span class="w"> </span>workflow<span class="w"> </span>run<span class="w"> </span>ci.yml<span class="w"> </span>--ref<span class="w"> </span>&lt;branch&gt;<span class="w"> </span>-f<span class="w"> </span><span class="nv">heavy</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>-f<span class="w"> </span><span class="nv">reference</span><span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
-<p>The Linux compiler and SDK handoff job restores the compatible SDK cache or prepares the SDK once, then publishes the selected provider artifact. Documentation and generated-reference jobs consume that artifact independently. Heavy runs also supply it to Linux C ABI, Oven preparation, shadow comparison and release checks. macOS prepares its own platform-specific SDK.</p>
+<p>The Linux compiler and SDK handoff job restores the compatible SDK cache or prepares the SDK once, then publishes the selected provider artifact. Documentation and generated-reference jobs consume that artifact independently. Heavy runs also supply it to Linux C ABI, Oven preparation and release checks. macOS prepares its own platform-specific SDK.</p>
+<p>The native graph and its lock must match the runner platform. CI selects the checked-in Darwin or Linux compiler graph before fetching its pinned index and source archives; the source cache key includes both platform locks. A missing platform graph or lock fails preparation.</p>
+<p>Linux jobs that fetch native sources, restore the SDK store or consume its handoff run on Ubuntu 24.04. The source-fetch action checks out a pinned incan.pub source revision and runs its shared native-owner preparation script in a fresh runner-temporary directory. The script reconstructs the compiler, resource tree, declared runtime files and header sysroot from digest-pinned package archives, then CI exports that private root as <code>INCAN_OVEN_LINK_OWNERS</code> before SDK preparation or validation. The source revision supplies transport code and its recipe; the selected graph and compiler's index pin remain the authority for admitted native facts.</p>
+<p>Cargo builds the initial bootstrap executable. The subsequent native bootstrap produces the compiler together with its receipt, output record and two bound helper executables. CI transfers that complete bundle and restores executable permissions before consuming the SDK handoff. After validating the SDK, each fresh consumer prepares the ordinary standard packages with the source-current compiler before running project commands. That preparation uses the existing standard-package registry and a separate producer graph; ordinary commands keep the selected broad compiler graph. SDK validation and ordinary package preparation are separate required steps, and either failure stops the job.</p>
 <p>After the run finishes, download its preparation evidence:</p>
 <div class="language-bash highlight"><pre><span></span><code>gh<span class="w"> </span>run<span class="w"> </span>download<span class="w"> </span>&lt;run-id&gt;<span class="w"> </span>-n<span class="w"> </span>test-linux-sdk-preparation-reports
 </code></pre></div>

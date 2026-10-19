@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../dependencies/">
+        <link rel="prev" href="../0003_replacement_program_output_contract/">
       
       
-        <link rel="next" href="../ci_and_automation/">
+        <link rel="next" href="../0005_cargo_free_development_contract/">
       
       
         
@@ -25,14 +25,14 @@
     
     
       
-        <title>Execute a published package - Incan Documentation</title>
+        <title>Isolate the native compiler driver in a pinned Loaf - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,11 +51,11 @@
       
     
     
-      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20261014-whats-new-1">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#execute-a-published-package-without-native-linking" class="md-skip">
+        <a href="#dd-0004-isolate-the-native-compiler-driver-in-a-pinned-loaf" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +102,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -121,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Execute a published package
+              Isolate the native compiler driver in a pinned Loaf
             
           </span>
         </div>
@@ -200,7 +200,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../.." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -221,7 +221,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../start_here/" class="md-tabs__link">
+        <a href="../../start_here/" class="md-tabs__link">
           
   
   
@@ -243,7 +243,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../language/" class="md-tabs__link">
+        <a href="../../language/" class="md-tabs__link">
           
   
   
@@ -263,7 +263,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../explanation/oven_alpha/" class="md-tabs__link">
+      <a href="../../tooling/explanation/oven_alpha/" class="md-tabs__link">
         
   
   
@@ -280,13 +280,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../tooling/" class="md-tabs__link">
           
   
   
@@ -308,7 +306,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../contributing/" class="md-tabs__link">
+        <a href="../../contributing/" class="md-tabs__link">
           
   
   
@@ -330,7 +328,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../release_notes/" class="md-tabs__link">
+        <a href="../../release_notes/" class="md-tabs__link">
           
   
   
@@ -348,11 +346,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../../project/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../project/" class="md-tabs__link">
           
   
   
@@ -394,7 +394,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -423,7 +423,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -493,7 +493,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../start_here/" class="md-nav__link ">
+            <a href="../../start_here/" class="md-nav__link ">
               
   
   
@@ -537,7 +537,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/what_incan_is_for/" class="md-nav__link">
+      <a href="../../start_here/what_incan_is_for/" class="md-nav__link">
         
   
   
@@ -565,7 +565,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/incan_or_incql/" class="md-nav__link">
+      <a href="../../start_here/incan_or_incql/" class="md-nav__link">
         
   
   
@@ -593,7 +593,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
         
   
   
@@ -621,7 +621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   
@@ -649,7 +649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
+      <a href="../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
         
   
   
@@ -677,7 +677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   
@@ -705,7 +705,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+      <a href="../../start_here/encero_stack/" class="md-nav__link">
         
   
   
@@ -733,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/domain_native_demo/" class="md-nav__link">
+      <a href="../../start_here/domain_native_demo/" class="md-nav__link">
         
   
   
@@ -761,7 +761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/public_contracts/" class="md-nav__link">
+      <a href="../../start_here/public_contracts/" class="md-nav__link">
         
   
   
@@ -789,7 +789,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../start_here/beginner/" class="md-nav__link">
+      <a href="../../start_here/beginner/" class="md-nav__link">
         
   
   
@@ -875,7 +875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../comparisons/python/" class="md-nav__link">
+      <a href="../../comparisons/python/" class="md-nav__link">
         
   
   
@@ -903,7 +903,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../comparisons/javascript_typescript/" class="md-nav__link">
+      <a href="../../comparisons/javascript_typescript/" class="md-nav__link">
         
   
   
@@ -931,7 +931,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../comparisons/rust/" class="md-nav__link">
+      <a href="../../comparisons/rust/" class="md-nav__link">
         
   
   
@@ -1003,7 +1003,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/" class="md-nav__link ">
+            <a href="../../language/" class="md-nav__link ">
               
   
   
@@ -1168,7 +1168,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
               
   
   
@@ -1212,7 +1212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   
@@ -1240,7 +1240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   
@@ -1268,7 +1268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
         
   
   
@@ -1296,7 +1296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   
@@ -1324,7 +1324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   
@@ -1352,7 +1352,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
         
   
   
@@ -1380,7 +1380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   
@@ -1408,7 +1408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   
@@ -1436,7 +1436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
         
   
   
@@ -1464,7 +1464,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   
@@ -1492,7 +1492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   
@@ -1520,7 +1520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   
@@ -1548,7 +1548,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   
@@ -1584,7 +1584,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
         
   
   
@@ -1612,7 +1612,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/typed_data_processor/" class="md-nav__link">
+      <a href="../../language/tutorials/typed_data_processor/" class="md-nav__link">
         
   
   
@@ -1640,7 +1640,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   
@@ -1668,7 +1668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/async_worker_pipeline/" class="md-nav__link">
+      <a href="../../language/tutorials/async_worker_pipeline/" class="md-nav__link">
         
   
   
@@ -1696,7 +1696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/add_a_rust_crate/" class="md-nav__link">
+      <a href="../../language/tutorials/add_a_rust_crate/" class="md-nav__link">
         
   
   
@@ -1724,7 +1724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/guided_project/" class="md-nav__link">
+      <a href="../../language/tutorials/guided_project/" class="md-nav__link">
         
   
   
@@ -1752,7 +1752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   
@@ -1780,7 +1780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/checked_c_binding/" class="md-nav__link">
+      <a href="../../language/tutorials/checked_c_binding/" class="md-nav__link">
         
   
   
@@ -1808,7 +1808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/typed_registries/" class="md-nav__link">
+      <a href="../../language/tutorials/typed_registries/" class="md-nav__link">
         
   
   
@@ -1836,7 +1836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
   
@@ -1986,7 +1986,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
         
   
   
@@ -2014,7 +2014,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   
@@ -2042,7 +2042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
         
   
   
@@ -2070,7 +2070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
         
   
   
@@ -2098,7 +2098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
         
   
   
@@ -2126,7 +2126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
         
   
   
@@ -2154,7 +2154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/binary_text_encoding/" class="md-nav__link">
+      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
         
   
   
@@ -2182,7 +2182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/compression/" class="md-nav__link">
+      <a href="../../language/how-to/compression/" class="md-nav__link">
         
   
   
@@ -2210,7 +2210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/dynamic_json/" class="md-nav__link">
+      <a href="../../language/how-to/dynamic_json/" class="md-nav__link">
         
   
   
@@ -2238,7 +2238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/toml/" class="md-nav__link">
+      <a href="../../language/how-to/toml/" class="md-nav__link">
         
   
   
@@ -2266,7 +2266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
         
   
   
@@ -2294,7 +2294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/logging/" class="md-nav__link">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
         
   
   
@@ -2322,7 +2322,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../language/how-to/generators/" class="md-nav__link">
         
   
   
@@ -2350,7 +2350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
         
   
   
@@ -2378,7 +2378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
         
   
   
@@ -2406,7 +2406,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
         
   
   
@@ -2434,7 +2434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
         
   
   
@@ -2462,7 +2462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   
@@ -2490,7 +2490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
         
   
   
@@ -2518,7 +2518,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
         
   
   
@@ -2546,7 +2546,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/workspaces/" class="md-nav__link">
+      <a href="../../language/how-to/workspaces/" class="md-nav__link">
         
   
   
@@ -2574,7 +2574,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
         
   
   
@@ -2602,7 +2602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/typed_registries/" class="md-nav__link">
+      <a href="../../language/how-to/typed_registries/" class="md-nav__link">
         
   
   
@@ -2630,7 +2630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/decorators/" class="md-nav__link">
+      <a href="../../language/how-to/decorators/" class="md-nav__link">
         
   
   
@@ -2658,7 +2658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
         
   
   
@@ -2686,7 +2686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
         
   
   
@@ -2714,7 +2714,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/working_with_uuids/" class="md-nav__link">
+      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
         
   
   
@@ -2742,7 +2742,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
         
   
   
@@ -2770,7 +2770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
         
   
   
@@ -2798,7 +2798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/checked_c_bindings/" class="md-nav__link">
+      <a href="../../language/how-to/checked_c_bindings/" class="md-nav__link">
         
   
   
@@ -2826,7 +2826,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   
@@ -2960,7 +2960,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/reference/language/" class="md-nav__link">
         
   
   
@@ -2988,7 +2988,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/feature_inventory/" class="md-nav__link">
+      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
         
   
   
@@ -3016,7 +3016,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../language/reference/code_style/" class="md-nav__link">
         
   
   
@@ -3044,7 +3044,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/assignments/" class="md-nav__link">
+      <a href="../../language/reference/assignments/" class="md-nav__link">
         
   
   
@@ -3072,7 +3072,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/functions/" class="md-nav__link">
+      <a href="../../language/reference/functions/" class="md-nav__link">
         
   
   
@@ -3100,7 +3100,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/generators/" class="md-nav__link">
+      <a href="../../language/reference/generators/" class="md-nav__link">
         
   
   
@@ -3128,7 +3128,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
         
   
   
@@ -3156,7 +3156,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../language/reference/callable_presets/" class="md-nav__link">
         
   
   
@@ -3184,7 +3184,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/conditional_compilation/" class="md-nav__link">
+      <a href="../../language/reference/conditional_compilation/" class="md-nav__link">
         
   
   
@@ -3212,7 +3212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
         
   
   
@@ -3240,7 +3240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
         
   
   
@@ -3268,7 +3268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
         
   
   
@@ -3296,7 +3296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
         
   
   
@@ -3324,7 +3324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/frozen_collections/" class="md-nav__link">
+      <a href="../../language/reference/frozen_collections/" class="md-nav__link">
         
   
   
@@ -3352,7 +3352,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
         
   
   
@@ -3380,7 +3380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/match_patterns/" class="md-nav__link">
+      <a href="../../language/reference/match_patterns/" class="md-nav__link">
         
   
   
@@ -3408,7 +3408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
         
   
   
@@ -3436,7 +3436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/strings/" class="md-nav__link">
+      <a href="../../language/reference/strings/" class="md-nav__link">
         
   
   
@@ -3464,7 +3464,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
         
   
   
@@ -3492,7 +3492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
         
   
   
@@ -3593,7 +3593,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
               
   
   
@@ -3637,7 +3637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
         
   
   
@@ -3665,7 +3665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
         
   
   
@@ -3693,7 +3693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/checksum/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/checksum/" class="md-nav__link">
         
   
   
@@ -3721,7 +3721,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/compression/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/compression/" class="md-nav__link">
         
   
   
@@ -3749,7 +3749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
         
   
   
@@ -3777,7 +3777,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
         
   
   
@@ -3805,7 +3805,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/encoding/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
         
   
   
@@ -3833,7 +3833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/environ/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/environ/" class="md-nav__link">
         
   
   
@@ -3861,7 +3861,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
         
   
   
@@ -3889,7 +3889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
         
   
   
@@ -3917,7 +3917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/hash/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
         
   
   
@@ -3945,7 +3945,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
         
   
   
@@ -3973,7 +3973,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/interop/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/interop/" class="md-nav__link">
         
   
   
@@ -4001,7 +4001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/json/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/json/" class="md-nav__link">
         
   
   
@@ -4029,7 +4029,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/toml/" class="md-nav__link">
         
   
   
@@ -4057,7 +4057,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/logging/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
         
   
   
@@ -4085,7 +4085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/telemetry/" class="md-nav__link">
         
   
   
@@ -4113,7 +4113,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/regex/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/regex/" class="md-nav__link">
         
   
   
@@ -4141,7 +4141,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/registry/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/registry/" class="md-nav__link">
         
   
   
@@ -4169,7 +4169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/uuid/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
         
   
   
@@ -4197,7 +4197,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
         
   
   
@@ -4225,7 +4225,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
         
   
   
@@ -4253,7 +4253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
         
   
   
@@ -4281,7 +4281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
         
   
   
@@ -4309,7 +4309,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
         
   
   
@@ -4337,7 +4337,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
         
   
   
@@ -4408,7 +4408,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
               
   
   
@@ -4452,7 +4452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   
@@ -4480,7 +4480,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   
@@ -4508,7 +4508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   
@@ -4536,7 +4536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
         
   
   
@@ -4564,7 +4564,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
         
   
   
@@ -4592,7 +4592,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   
@@ -4620,7 +4620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   
@@ -4720,7 +4720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
         
   
   
@@ -4748,7 +4748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
         
   
   
@@ -4776,7 +4776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
         
   
   
@@ -4804,7 +4804,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
         
   
   
@@ -4832,7 +4832,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
         
   
   
@@ -4860,7 +4860,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
         
   
   
@@ -5014,7 +5014,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
         
   
   
@@ -5042,7 +5042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
         
   
   
@@ -5070,7 +5070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
         
   
   
@@ -5098,7 +5098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   
@@ -5126,7 +5126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/checked_and_loaded_registries/" class="md-nav__link">
+      <a href="../../language/explanation/checked_and_loaded_registries/" class="md-nav__link">
         
   
   
@@ -5154,7 +5154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/checked_c_interop/" class="md-nav__link">
+      <a href="../../language/explanation/checked_c_interop/" class="md-nav__link">
         
   
   
@@ -5182,7 +5182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   
@@ -5210,7 +5210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
         
   
   
@@ -5238,7 +5238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/functions_and_calls/" class="md-nav__link">
+      <a href="../../language/explanation/functions_and_calls/" class="md-nav__link">
         
   
   
@@ -5266,7 +5266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
         
   
   
@@ -5294,7 +5294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
         
   
   
@@ -5322,7 +5322,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
         
   
   
@@ -5350,7 +5350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../language/explanation/generators/" class="md-nav__link">
         
   
   
@@ -5378,7 +5378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
         
   
   
@@ -5406,7 +5406,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
         
   
   
@@ -5434,7 +5434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
         
   
   
@@ -5462,7 +5462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/hashing_guarantees/" class="md-nav__link">
+      <a href="../../language/explanation/hashing_guarantees/" class="md-nav__link">
         
   
   
@@ -5490,7 +5490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/dsl_embeddings/" class="md-nav__link">
+      <a href="../../language/explanation/dsl_embeddings/" class="md-nav__link">
         
   
   
@@ -5518,7 +5518,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/ordinal_map/" class="md-nav__link">
+      <a href="../../language/explanation/ordinal_map/" class="md-nav__link">
         
   
   
@@ -5546,7 +5546,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
         
   
   
@@ -5574,7 +5574,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
   
@@ -5602,7 +5602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   
@@ -5630,7 +5630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
         
   
   
@@ -5658,7 +5658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
         
   
   
@@ -5686,7 +5686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
         
   
   
@@ -5714,7 +5714,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
         
   
   
@@ -5767,7 +5767,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
               
   
   
@@ -5811,7 +5811,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
         
   
   
@@ -5839,7 +5839,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   
@@ -5875,7 +5875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   
@@ -5903,7 +5903,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   
@@ -5946,7 +5946,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/oven_alpha/" class="md-nav__link">
+      <a href="../../tooling/explanation/oven_alpha/" class="md-nav__link">
         
   
   
@@ -5970,8 +5970,6 @@
       
   
   
-    
-  
   
   
     
@@ -5993,21 +5991,18 @@
     
     
       
-        
-        
-      
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../" class="md-nav__link ">
+            <a href="../../tooling/" class="md-nav__link ">
               
   
   
@@ -6025,13 +6020,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -6115,7 +6110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/getting_started/" class="md-nav__link">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   
@@ -6143,7 +6138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   
@@ -6171,7 +6166,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/build_and_consume_library/" class="md-nav__link">
+      <a href="../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
         
   
   
@@ -6199,7 +6194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   
@@ -6227,7 +6222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/project_to_ci_artifact/" class="md-nav__link">
+      <a href="../../tooling/tutorials/project_to_ci_artifact/" class="md-nav__link">
         
   
   
@@ -6255,7 +6250,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/diagnose_failed_build/" class="md-nav__link">
+      <a href="../../tooling/tutorials/diagnose_failed_build/" class="md-nav__link">
         
   
   
@@ -6288,14 +6283,10 @@
                 
   
   
-    
   
   
-  
     
     
-      
-        
       
         
       
@@ -6324,11 +6315,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
           <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
@@ -6349,7 +6340,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -6367,7 +6358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../install_and_run/" class="md-nav__link">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   
@@ -6395,7 +6386,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dependencies/" class="md-nav__link">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   
@@ -6420,118 +6411,10 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execute a published package
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#run-the-consumer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Run the consumer
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#record-an-execution-report" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Record an execution report
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#handle-an-unavailable-package-declaration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Handle an unavailable package declaration
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../ci_and_automation/" class="md-nav__link">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   
@@ -6559,7 +6442,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../troubleshooting/" class="md-nav__link">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   
@@ -6587,7 +6470,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../editor_setup/" class="md-nav__link">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   
@@ -6615,7 +6498,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../lsp/" class="md-nav__link">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   
@@ -6643,7 +6526,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../formatting/" class="md-nav__link">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   
@@ -6671,7 +6554,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sdk_components_and_package_features/" class="md-nav__link">
+      <a href="../../tooling/how-to/sdk_components_and_package_features/" class="md-nav__link">
         
   
   
@@ -6699,7 +6582,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inspect_checked_c_bindings/" class="md-nav__link">
+      <a href="../../tooling/how-to/inspect_checked_c_bindings/" class="md-nav__link">
         
   
   
@@ -6727,7 +6610,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../testing/" class="md-nav__link">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
         
   
   
@@ -6827,7 +6710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+      <a href="../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
         
   
   
@@ -6855,7 +6738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/projects_today/" class="md-nav__link">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   
@@ -6883,7 +6766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/compiled_sdk_provider_flow/" class="md-nav__link">
+      <a href="../../tooling/explanation/compiled_sdk_provider_flow/" class="md-nav__link">
         
   
   
@@ -6911,7 +6794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/generated_build_storage/" class="md-nav__link">
+      <a href="../../tooling/explanation/generated_build_storage/" class="md-nav__link">
         
   
   
@@ -6939,7 +6822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   
@@ -6967,7 +6850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../explanation/backend_selection_receipts/" class="md-nav__link">
+      <a href="../../tooling/explanation/backend_selection_receipts/" class="md-nav__link">
         
   
   
@@ -7077,7 +6960,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/cli_reference/" class="md-nav__link">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   
@@ -7105,7 +6988,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/binding_inspection_schema/" class="md-nav__link">
+      <a href="../../tooling/reference/binding_inspection_schema/" class="md-nav__link">
         
   
   
@@ -7133,7 +7016,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/codegraph_inspection/" class="md-nav__link">
+      <a href="../../tooling/reference/codegraph_inspection/" class="md-nav__link">
         
   
   
@@ -7161,7 +7044,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/agent_docs_surfaces/" class="md-nav__link">
+      <a href="../../tooling/reference/agent_docs_surfaces/" class="md-nav__link">
         
   
   
@@ -7189,7 +7072,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contract_metadata/" class="md-nav__link">
+      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   
@@ -7217,7 +7100,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   
@@ -7245,7 +7128,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+      <a href="../../tooling/reference/package_executable_representation/" class="md-nav__link">
         
   
   
@@ -7273,7 +7156,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/project_configuration/" class="md-nav__link">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   
@@ -7301,7 +7184,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/sdk_components_and_package_features/" class="md-nav__link">
+      <a href="../../tooling/reference/sdk_components_and_package_features/" class="md-nav__link">
         
   
   
@@ -7329,7 +7212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/interop_deployment_plans/" class="md-nav__link">
+      <a href="../../tooling/reference/interop_deployment_plans/" class="md-nav__link">
         
   
   
@@ -7357,7 +7240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   
@@ -7431,7 +7314,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../contributing/" class="md-nav__link ">
+            <a href="../../contributing/" class="md-nav__link ">
               
   
   
@@ -7475,7 +7358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/contributors/" class="md-nav__link">
+      <a href="../../contributing/contributors/" class="md-nav__link">
         
   
   
@@ -7594,7 +7477,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   
@@ -7638,7 +7521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   
@@ -7666,7 +7549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   
@@ -7694,7 +7577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   
@@ -7722,7 +7605,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   
@@ -7750,7 +7633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   
@@ -7778,7 +7661,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   
@@ -7806,7 +7689,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   
@@ -7834,7 +7717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   
@@ -7879,6 +7762,8 @@
   
     
     
+      
+        
       
         
       
@@ -7944,7 +7829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   
@@ -7972,7 +7857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   
@@ -8000,7 +7885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+      <a href="../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
         
   
   
@@ -8028,7 +7913,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   
@@ -8056,7 +7941,35 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/oven_alpha_benchmark/" class="md-nav__link">
+      <a href="../../contributing/how-to/trace-compiler-invocations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trace compiler invocations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/oven_alpha_benchmark/" class="md-nav__link">
         
   
   
@@ -8084,7 +7997,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   
@@ -8112,7 +8025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   
@@ -8220,7 +8133,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   
@@ -8248,7 +8161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   
@@ -8276,7 +8189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+      <a href="../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
         
   
   
@@ -8304,7 +8217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/rust_source_backend_deprecation/" class="md-nav__link">
+      <a href="../../contributing/explanation/rust_source_backend_deprecation/" class="md-nav__link">
         
   
   
@@ -8332,7 +8245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
         
   
   
@@ -8360,7 +8273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/oven_toolchain_ownership_map/" class="md-nav__link">
+      <a href="../../contributing/explanation/oven_toolchain_ownership_map/" class="md-nav__link">
         
   
   
@@ -8388,7 +8301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/postmortem_v051/" class="md-nav__link">
+      <a href="../../contributing/explanation/postmortem_v051/" class="md-nav__link">
         
   
   
@@ -8416,7 +8329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   
@@ -8444,7 +8357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   
@@ -8472,7 +8385,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   
@@ -8509,8 +8422,6 @@
   
     
     
-      
-        
       
         
       
@@ -8572,7 +8483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/reference/backend_behavior_inventory/" class="md-nav__link">
+      <a href="../../contributing/reference/backend_behavior_inventory/" class="md-nav__link">
         
   
   
@@ -8600,35 +8511,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/reference/replacement_compatibility_inventory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Replacement compatibility inventory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../contributing/reference/test_corpus_inventory/" class="md-nav__link">
+      <a href="../../contributing/reference/test_corpus_inventory/" class="md-nav__link">
         
   
   
@@ -8656,7 +8539,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+      <a href="../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
   
@@ -8684,7 +8567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/reference/hees_ai_v05_dependency_inventory/" class="md-nav__link">
+      <a href="../../contributing/reference/hees_ai_v05_dependency_inventory/" class="md-nav__link">
         
   
   
@@ -8712,7 +8595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributing/reference/rust_source_backend_deprecation/" class="md-nav__link">
+      <a href="../../contributing/reference/rust_source_backend_deprecation/" class="md-nav__link">
         
   
   
@@ -8788,7 +8671,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../release_notes/" class="md-nav__link ">
+            <a href="../../release_notes/" class="md-nav__link ">
               
   
   
@@ -8832,7 +8715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_6/" class="md-nav__link">
+      <a href="../../release_notes/0_6/" class="md-nav__link">
         
   
   
@@ -8860,7 +8743,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_5/" class="md-nav__link">
+      <a href="../../release_notes/0_5/" class="md-nav__link">
         
   
   
@@ -8888,7 +8771,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_4/" class="md-nav__link">
+      <a href="../../release_notes/0_4/" class="md-nav__link">
         
   
   
@@ -8916,7 +8799,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../release_notes/0_3/" class="md-nav__link">
         
   
   
@@ -8944,7 +8827,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
         
   
   
@@ -8972,7 +8855,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
         
   
   
@@ -9004,6 +8887,8 @@
       
   
   
+    
+  
   
   
     
@@ -9031,18 +8916,21 @@
     
     
       
+        
+        
+      
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../project/" class="md-nav__link ">
+            <a href="../../project/" class="md-nav__link ">
               
   
   
@@ -9060,13 +8948,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_8">
             <span class="md-nav__icon md-icon"></span>
             
@@ -9086,7 +8974,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../RFCs/" class="md-nav__link">
+      <a href="../../RFCs/" class="md-nav__link">
         
   
   
@@ -9111,6 +8999,8 @@
                 
   
   
+    
+  
   
   
     
@@ -9128,6 +9018,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -9135,15 +9029,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_3" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../design_records/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -9167,7 +9061,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_8_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -9187,7 +9081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../design_records/TEMPLATE/" class="md-nav__link">
+      <a href="../TEMPLATE/" class="md-nav__link">
         
   
   
@@ -9222,7 +9116,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../design_records/0001_gpu_target_capability_deferred/" class="md-nav__link">
+      <a href="../0001_gpu_target_capability_deferred/" class="md-nav__link">
         
   
   
@@ -9257,7 +9151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../design_records/0002_single_pinned_rust_version/" class="md-nav__link">
+      <a href="../0002_single_pinned_rust_version/" class="md-nav__link">
         
   
   
@@ -9292,7 +9186,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../design_records/0003_replacement_program_output_contract/" class="md-nav__link">
+      <a href="../0003_replacement_program_output_contract/" class="md-nav__link">
         
   
   
@@ -9309,7 +9203,208 @@
     
   
   
-    <span class="md-status md-status--Draft"></span>
+    <span class="md-status md-status--Withdrawn"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0004: Pinned native compiler driver
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
+  
+
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revisit-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revisit condition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0005_cargo_free_development_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DD-0005: Cargo-free development contract
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Accepted"></span>
   
 
   
@@ -9362,7 +9457,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../whitepapers/" class="md-nav__link ">
+            <a href="../../whitepapers/" class="md-nav__link ">
               
   
   
@@ -9406,7 +9501,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   
@@ -9441,7 +9536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../whitepapers/incan_oven_positioning/" class="md-nav__link">
+      <a href="../../whitepapers/incan_oven_positioning/" class="md-nav__link">
         
   
   
@@ -9476,7 +9571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+      <a href="../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
         
   
   
@@ -9575,7 +9670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../roadmap/" class="md-nav__link">
+      <a href="../../roadmap/" class="md-nav__link">
         
   
   
@@ -9603,7 +9698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../project/v0_6_delivery/" class="md-nav__link">
+      <a href="../../project/v0_6_delivery/" class="md-nav__link">
         
   
   
@@ -9639,7 +9734,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../project/learning_journey/" class="md-nav__link">
+      <a href="../../project/learning_journey/" class="md-nav__link">
         
   
   
@@ -9667,7 +9762,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../stability/" class="md-nav__link">
+      <a href="../../stability/" class="md-nav__link">
         
   
   
@@ -9695,7 +9790,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../project/incus/" class="md-nav__link">
+      <a href="../../project/incus/" class="md-nav__link">
         
   
   
@@ -9750,10 +9845,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#run-the-consumer" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Run the consumer
+        Context
       
     </span>
   </a>
@@ -9761,10 +9856,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#record-an-execution-report" class="md-nav__link">
+  <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Record an execution report
+        Decision
       
     </span>
   </a>
@@ -9772,10 +9867,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#handle-an-unavailable-package-declaration" class="md-nav__link">
+  <a href="#consequences" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Handle an unavailable package declaration
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revisit-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revisit condition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
       
     </span>
   </a>
@@ -9802,34 +9941,44 @@
   
 
 
-<h1 id="execute-a-published-package-without-native-linking">Execute a published package without native linking<a class="headerlink" href="#execute-a-published-package-without-native-linking" title="Permanent link">&para;</a></h1>
-<p>Use the replacement backend when you want to execute supported public calls from an already built library without compiling or linking the consumer's generated Rust.</p>
-<p>You need an Incan 0.6 development compiler, a consumer project with declared package dependencies, and complete built artifacts for those dependencies. The producer must publish executable coverage for the calls and types you use. For initial project setup, follow <a href="../../tutorials/build_and_consume_library/">Build and consume an Incan library</a>; its native example does not establish replacement coverage for every value shape.</p>
-<h2 id="run-the-consumer">Run the consumer<a class="headerlink" href="#run-the-consumer" title="Permanent link">&para;</a></h2>
-<p>From the consumer project directory, select the source entrypoint and backend:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--backend<span class="w"> </span>replacement
-</code></pre></div>
-<p>Despite the command name, this backend executes the program directly. Program output appears on its ordinary streams; it does not produce a native executable. The dependency's original Incan source files need not be present, provided its selected artifact and dependency closure remain available.</p>
-<p>Keep each built library artifact together when moving it. Copying only its <code>.incnlib</code> manifest loses the semantic content that this route requires. See the <a href="../../reference/package_executable_representation/#artifact-layout">artifact layout</a>.</p>
-<h2 id="record-an-execution-report">Record an execution report<a class="headerlink" href="#record-an-execution-report" title="Permanent link">&para;</a></h2>
-<p><code>--report-output</code> is required here, not merely advisable. Replacement execution keeps stdout and stderr for the program, so the report needs a path of its own; omitting it is an error rather than merged output:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--backend<span class="w"> </span>replacement<span class="w"> </span>--report<span class="w"> </span>json<span class="w"> </span>--report-output<span class="w"> </span>execution.json
-</code></pre></div>
-<p>After success, inspect <code>execution.json</code> for the result, program output and package-loading counters. The command also writes <code>.incan/backend/receipt.json</code>; inspect it with:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>backend-selection<span class="w"> </span>--receipt<span class="w"> </span>.incan/backend/receipt.json
-</code></pre></div>
-<h2 id="handle-an-unavailable-package-declaration">Handle an unavailable package declaration<a class="headerlink" href="#handle-an-unavailable-package-declaration" title="Permanent link">&para;</a></h2>
-<p>Use the diagnostic's package, version and requirement to identify the dependency that needs attention. If its executable content is absent or incompatible, rebuild that dependency with a compatible compiler and make the complete resulting artifact available to the consumer. If the declaration is uncovered, its implementation or the replacement execution profile must support the required operations before this route can use it.</p>
-<p>To execute through the native route instead, run the program without selecting the replacement profile:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>src/main.incn
-</code></pre></div>
-<p><code>incan run</code> always uses the native route; the replacement profile is reached only by asking for it with <code>incan build --backend replacement</code>. A package whose executable content is absent or uncovered still links natively, so the native route remains available whenever the representation cannot serve a requirement. The <a href="../../reference/package_executable_representation/#refusals">representation reference</a> defines the coverage and refusal conditions.</p>
+<h1 id="dd-0004-isolate-the-native-compiler-driver-in-a-pinned-loaf">DD-0004: Isolate the native compiler driver in a pinned Loaf<a class="headerlink" href="#dd-0004-isolate-the-native-compiler-driver-in-a-pinned-loaf" title="Permanent link">&para;</a></h1>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/encero-systems/incan/issues/1337">Issue #1337</a> establishes Incan's direct compilation route: Incan and Rust units share one compilation graph, with no generated Rust source or Cargo on the build path. This record chooses the driver boundary for that route.</p>
+<p>rustc's internal interface changes between releases. Incan already pins its Rust toolchain (<a href="../0002_single_pinned_rust_version/">DD-0002</a>); the remaining choice is where that interface lives and how Oven invokes it.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p><strong>The native compiler driver is a separate Loaf built against the toolchain's exact pinned rustc.</strong></p>
+<ul>
+<li>Oven invokes the driver for each Incan or Rust compilation unit. The driver's build identity enters the identity of every unit it compiles, under <a href="../../RFCs/124_oven_store_unit_identity_and_cross_plan_artifact_sharing/">RFC 124</a>.</li>
+<li>The driver runs the Incan front end in-process. Incan declarations enter rustc as items; checked Body IR supplies their MIR bodies. No Rust source is generated, and no serialized checker-to-lowering handoff is needed.</li>
+<li>New lowering and orchestration code is authored in Incan. The Rust exception is the narrow adapter that holds rustc's internal types and turns the lowering's plain-data plan into MIR. Only the driver Loaf's own units may use rustc's internal interface.</li>
+<li>Oven owns a resident driver process and reuses it across compilation requests. Analysis-only commands continue to use the front end without loading rustc.</li>
+</ul>
+<p>The lowering belongs in the compiler ring; the driver executable belongs in the toolchain ring. Oven locates it through the compiler's provider facet.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>The compiler's dependence on rustc's unstable interface is concentrated in one adapter. Each Rust upgrade requires verifying and, where necessary, updating that adapter. The front end remains usable independently for checking and editor analysis.</p>
+<p>The driver shares rustc's type and code-generation machinery with Rust units. Incan still owns semantic checking and Body IR lowering: invalid supplied MIR is a compiler defect. Construct coverage and end-to-end build performance must be proven through #1337's acceptance checks.</p>
+<p>Keeping the driver resident avoids repeated process startup and library loading. It also makes driver lifecycle and per-request isolation part of the implementation work.</p>
+<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<p>This record does not define lowering algorithms, package-publication contracts, caller APIs, the resident-process protocol, or a rustc fork. Implementation details, spike evidence, measurements, and required adjustments to existing RFCs are tracked in <a href="https://github.com/encero-systems/incan/issues/1337">#1337</a>.</p>
+<h2 id="revisit-condition">Revisit condition<a class="headerlink" href="#revisit-condition" title="Permanent link">&para;</a></h2>
+<p>Revisit the boundary if a required operation cannot be expressed through rustc's available hooks, if upgrades require spreading rustc-specific code beyond the adapter, or if the integrated route cannot meet #1337's performance requirements.</p>
+<h2 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h2>
+<p>Accepted on 2026-10-04. This record preserves the driver shape explored by #1337's spike and applies DD-0002's pinned-toolchain policy. It replaces the earlier proposal in #1337 to feed a thin driver serialized checked facts. The broader route and cutover remain owned by #1337, <a href="https://github.com/encero-systems/incan/issues/1675">#1675</a>, and <a href="https://github.com/encero-systems/incan/issues/654">#654</a>; this record does not amend an RFC or claim implementation completion. <code>review_target</code> identifies a review point.</p>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://github.com/encero-systems/incan/issues/1337">#1337: Direct-route implementation, evidence, and acceptance</a></li>
+<li><a href="../0002_single_pinned_rust_version/">DD-0002: Single pinned Rust version</a></li>
+<li><a href="../../RFCs/124_oven_store_unit_identity_and_cross_plan_artifact_sharing/">RFC 124: Oven store unit identity</a></li>
+</ul>
 
 
 
 
 
 
+
+  
+  
 
 
 
@@ -9875,28 +10024,28 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
-        <script src="../../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
       
-        <script src="../../../_snippets/javascripts/incan_home_motion.js?v=20260810-learning-refresh-1"></script>
+        <script src="../../_snippets/javascripts/incan_home_motion.js?v=20260810-learning-refresh-1"></script>
       
-        <script src="../../../shared/incapunk/incus-library/manifest.js?v=20260810-learning-refresh-1"></script>
+        <script src="../../shared/incapunk/incus-library/manifest.js?v=20260810-learning-refresh-1"></script>
       
-        <script src="../../../_snippets/javascripts/incan_docs_components.js?v=20260824-v06-roadmap-6"></script>
+        <script src="../../_snippets/javascripts/incan_docs_components.js?v=20260824-v06-roadmap-6"></script>
       
-        <script src="../../../_snippets/javascripts/incan_mermaid.js?v=20260824-v06-roadmap-9"></script>
+        <script src="../../_snippets/javascripts/incan_mermaid.js?v=20260824-v06-roadmap-9"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
       
-        <script src="../../../_snippets/javascripts/incan_whats_new.js?v=20261014-1"></script>
+        <script src="../../_snippets/javascripts/incan_whats_new.js?v=20261014-1"></script>
       
     
   </body>
