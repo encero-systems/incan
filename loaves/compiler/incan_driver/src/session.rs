@@ -237,6 +237,7 @@ impl CompilationSession {
             &self.loaves,
             self.own_standard_package,
             None,
+            &mut |_, _| {},
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
         )?

@@ -159,6 +159,7 @@ pub fn check_path_report(
         session.loaves(),
         session.own_standard_package(),
         c_abi_plan.as_ref(),
+        &mut |_, _| {},
         #[cfg(feature = "rust_inspect")]
         rust_inspect.as_ref().map(|workspace| workspace.manifest_dir()),
     );

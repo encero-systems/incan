@@ -6,86 +6,55 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use incan_lang::lang::stdlib as core_stdlib;
-
-use crate::diagnostics::render_module_warnings;
 use crate::error::{CliError, CliResult};
-use crate::modules::{
-    collect_modules, collect_modules_detailed_with_session, imported_module_deps_for_with_index, module_key_index,
-};
-use crate::project::{discover_effective_project_manifest, resolve_project_root};
-use crate::session::CompilationSession;
+use crate::features::FeatureSelection;
+use crate::modules::collect_modules_detailed_with_session;
+use crate::project::resolve_project_root;
+use crate::session::{CompilationSession, DEFAULT_PROFILE};
+use crate::typecheck::typecheck_modules;
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_alias_metadata, collect_checked_api_metadata, materialize_api_alias_projections,
     materialize_checked_api_public_namespaces, validate_checked_api_docstrings,
 };
-use incan_frontend::library_manifest_index::LibraryManifestIndex;
+use incan_frontend::diagnostics;
+use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
     CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryMetadataPackage, CheckedRegistryPackageIdentity,
     collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
-use incan_frontend::{diagnostics, typechecker};
 use oven_model::manifest::ProjectManifest;
 
 /// Type-check a metadata entry path and collect checked API metadata for all local modules.
 pub fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPackage> {
     let entry_path = resolve_metadata_entry_path(path)?;
-    let entry_path_string = entry_path.to_string_lossy();
-    let modules = collect_modules(&entry_path_string)?;
-    let project_root = resolve_project_root(&entry_path);
-    let manifest = discover_effective_project_manifest(&project_root)?;
-    let declared = manifest.as_ref().map(|manifest| manifest.declared_rust_crate_names());
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
-    let module_idx_by_key = module_key_index(&modules);
-    let mut all_errors = String::new();
+    let session = CompilationSession::discover(&entry_path, &FeatureSelection::default(), DEFAULT_PROFILE)?;
+    let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
     let mut metadata_modules = Vec::new();
-
-    for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
-        let mut checker = typechecker::TypeChecker::new();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
-        checker.set_library_manifest_index(library_manifest_index.clone());
-        crate::modules::register_module_path_segments(&mut checker, &modules);
-
-        match checker.check_with_imports(&module.ast, &deps_for_module) {
-            Ok(()) => {
-                render_module_warnings(
-                    module.file_path.to_string_lossy().as_ref(),
-                    &module.source,
-                    checker.warnings(),
-                );
-                metadata_modules.push(collect_checked_api_metadata(
-                    &module.ast,
-                    &checker,
-                    metadata_module_path(module, &entry_path),
-                ));
-            }
-            Err(errs) => {
-                for err in &errs {
-                    all_errors.push_str(&diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        err,
-                    ));
-                }
-            }
-        }
-    }
-
-    if !all_errors.is_empty() {
-        return Err(CliError::failure(all_errors.trim_end()));
-    }
+    typecheck_modules(
+        &modules,
+        session.manifest.as_ref(),
+        session.loaves(),
+        session.own_standard_package(),
+        None,
+        &mut |module, checker| {
+            metadata_modules.push(collect_checked_api_metadata(
+                &module.ast,
+                checker,
+                metadata_module_path(module, &entry_path),
+            ));
+        },
+        #[cfg(feature = "rust_inspect")]
+        None,
+    )
+    .map_err(|failure| CliError::failure(failure.render_human()))?;
 
     materialize_api_alias_projections(&mut metadata_modules);
-
+    let mut all_errors = String::new();
     for diagnostic in validate_checked_api_docstrings(&metadata_modules) {
         if let Some((module, _)) = modules
             .iter()
@@ -102,14 +71,13 @@ pub fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadata
             all_errors.push('\n');
         }
     }
-
     if !all_errors.is_empty() {
         return Err(CliError::failure(all_errors.trim_end()));
     }
 
     let mut package = CheckedApiMetadataPackage {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
-        package: manifest.as_ref().and_then(checked_api_package_identity),
+        package: session.manifest.as_ref().and_then(checked_api_package_identity),
         modules: metadata_modules,
         public_namespaces: Vec::new(),
     };
@@ -129,9 +97,9 @@ pub fn collect_registry_metadata_package(path: &Path) -> CliResult<CheckedRegist
 /// The returned index is metadata only; it does not replace execution leases or authorize native compilation.
 pub fn collect_registry_metadata_with_dependencies(
     path: &Path,
-) -> CliResult<(CheckedRegistryMetadataPackage, LibraryManifestIndex)> {
+) -> CliResult<(CheckedRegistryMetadataPackage, Arc<LoafIndex>)> {
     let entry_path = resolve_metadata_entry_path(path)?;
-    let session = CompilationSession::discover_for_collection(&entry_path)?;
+    let session = CompilationSession::discover(&entry_path, &FeatureSelection::default(), DEFAULT_PROFILE)?;
     let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     let analysis = session
@@ -165,14 +133,10 @@ pub fn collect_registry_metadata_with_dependencies(
     let mut api_metadata_modules = Vec::new();
 
     for module in &modules {
-        // `collect_modules` includes compiler-provided modules needed to type-check the entry module. They are not
-        // producer source and must never be republished as this package's registry metadata, except when the caller
-        // intentionally selected that stdlib source entry (the capability-inventory generator does exactly that).
+        // Only the project's own sources are this package's registry metadata, except an explicitly selected entry
+        // outside it (the capability-inventory generator selects a standard package's source).
         let selected_source_entry = module.file_path == entry_path;
-        if !selected_source_entry
-            && (!module.file_path.starts_with(&canonical_project_root)
-                || module.path_segments.first().map(String::as_str) == Some(core_stdlib::INCAN_STD_NAMESPACE))
-        {
+        if !selected_source_entry && !module.file_path.starts_with(&canonical_project_root) {
             continue;
         }
         let type_info = analysis
@@ -195,7 +159,7 @@ pub fn collect_registry_metadata_with_dependencies(
             package: manifest.as_ref().and_then(checked_registry_package_identity),
             modules: metadata_modules,
         },
-        session.library_manifest_index,
+        Arc::clone(session.loaves()),
     ))
 }
 

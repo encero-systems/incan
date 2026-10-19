@@ -18,7 +18,6 @@ use incan_frontend::contract_metadata::{
 use incan_frontend::feature_metadata::{PublicFeatureDescriptor, public_feature_descriptors};
 use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use incan_frontend::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
-use incan_frontend::library_manifest_index::{LibraryArtifactKind, LibraryManifestIndexEntry};
 use incan_frontend::registry_metadata::{
     CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryDefinition, CheckedRegistryEntry,
     CheckedRegistryMetadataPackage, CheckedRegistryPackageIdentity,
@@ -123,41 +122,23 @@ pub fn inspect_registry(
             .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?,
     );
     let entry_path = resolve_metadata_entry_path(&project)?;
-    let (package, library_manifest_index) = collect_registry_metadata_with_dependencies(&entry_path)?;
+    let (package, loaves) = collect_registry_metadata_with_dependencies(&entry_path)?;
 
     let mut all_candidates = registry_candidates_from_package(&package, true);
     let mut unavailable_dependencies = Vec::new();
-    for dependency_key in library_manifest_index.known_libraries() {
-        let Some(entry) = library_manifest_index.get(&dependency_key) else {
+    for entry in loaves.entries() {
+        let key = &entry.key;
+        let Some(registry) = entry.artifact.manifest.contract_metadata.registry.as_ref() else {
             continue;
         };
-        match entry {
-            LibraryManifestIndexEntry::Loaded { metadata, .. }
-                if metadata.kind == LibraryArtifactKind::StandardVocab =>
-            {
-                continue;
-            }
-            LibraryManifestIndexEntry::Loaded { manifest, .. } => {
-                let Some(registry) = manifest.contract_metadata.registry.as_ref() else {
-                    unavailable_dependencies.push(format!(
-                        "dependency `pub::{dependency_key}` does not publish checked registry metadata"
-                    ));
-                    continue;
-                };
-                if registry.schema_version != CHECKED_REGISTRY_METADATA_SCHEMA_VERSION {
-                    unavailable_dependencies.push(format!(
-                        "dependency `pub::{dependency_key}` publishes unsupported checked registry metadata schema {}",
-                        registry.schema_version
-                    ));
-                    continue;
-                }
-                all_candidates.extend(registry_candidates_from_package(registry, false));
-            }
-            LibraryManifestIndexEntry::Failed(failure) => unavailable_dependencies.push(format!(
-                "dependency `pub::{dependency_key}` registry metadata is unavailable: {}",
-                failure.message
-            )),
+        if registry.schema_version != CHECKED_REGISTRY_METADATA_SCHEMA_VERSION {
+            unavailable_dependencies.push(format!(
+                "Loaf `{key}` publishes unsupported checked registry metadata schema {}",
+                registry.schema_version
+            ));
+            continue;
         }
+        all_candidates.extend(registry_candidates_from_package(registry, false));
     }
     all_candidates.sort_by(|left, right| {
         left.registry

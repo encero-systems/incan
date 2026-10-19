@@ -11,12 +11,9 @@ use serde::Serialize;
 
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::error::{CliError, CliResult};
+use incan_frontend::loaf_index::LoafIndex;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::dependency_resolver::InlineRustImport;
-use incan_provider::{
-    BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, PackageFeaturePlan,
-    ProviderParticipation, ProviderPlan, ProviderProvenance, ResolvedSdkComponents, SdkInventory,
-};
 use oven_model::manifest::{DependencySource, DependencySpec, GitReference, LibraryDependencySpec};
 
 /// Schema version for build and generated Rust inspection reports.
@@ -138,73 +135,22 @@ pub struct BuildInteropReport {
     pub rust_abi_query_paths: Vec<String>,
 }
 
-/// Backend-neutral SDK, public feature, and provider state that shaped the build.
-#[derive(Debug, Clone, Serialize)]
+/// The Loaves that shaped the build, as its session indexed them (DD-0007).
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct BuildSemanticReport {
-    pub sdk: Option<BuildSdkReport>,
-    pub packages: Vec<BuildPackageFeaturesReport>,
-    pub feature_edges: Vec<BuildFeatureEdgeReport>,
-    pub providers: Vec<BuildProviderReport>,
+    pub loaves: Vec<BuildLoafReport>,
 }
 
-/// Active SDK identity and expanded project component selection.
+/// One Loaf a build read.
 #[derive(Debug, Clone, Serialize)]
-pub struct BuildSdkReport {
-    pub identity: String,
-    pub profile: String,
-    pub components: Vec<BuildSdkComponentReport>,
-}
-
-/// One known SDK component with availability, enablement, dependencies, and activation provenance kept distinct.
-#[derive(Debug, Clone, Serialize)]
-pub struct BuildSdkComponentReport {
-    pub id: String,
+pub struct BuildLoafReport {
+    /// The key the build indexes the Loaf by: the dependency key, or the standard package's name.
+    pub key: String,
+    pub name: String,
     pub version: String,
-    pub available: bool,
-    pub enabled: bool,
-    pub mandatory: bool,
-    pub dependencies: BTreeSet<String>,
-    pub reason: Option<ComponentSelectionReason>,
-}
-
-/// Additive public feature closure for one concrete package root.
-#[derive(Debug, Clone, Serialize)]
-pub struct BuildPackageFeaturesReport {
-    pub package: String,
-    pub project_root: String,
-    pub active_features: BTreeSet<String>,
-    pub active_optional_dependencies: BTreeSet<String>,
-    pub dependency_features: BTreeMap<String, BTreeSet<String>>,
-    pub required_sdk_components: BTreeSet<String>,
-    pub reasons: BTreeMap<String, BTreeSet<FeatureActivationReason>>,
-}
-
-/// One active package-dependency edge and its unified public feature request.
-#[derive(Debug, Clone, Serialize)]
-pub struct BuildFeatureEdgeReport {
-    pub from: String,
-    pub dependency_key: String,
-    pub to: String,
-    pub requested_features: BTreeSet<String>,
-    pub default_features: bool,
-    pub optional: bool,
-}
-
-/// Exact provider identity, participation, provenance, semantic use, and private backend closure.
-#[derive(Debug, Clone, Serialize)]
-pub struct BuildProviderReport {
-    pub identity: String,
-    pub available: bool,
-    pub enabled: bool,
-    pub used: bool,
-    pub participation: ProviderParticipation,
-    pub provenance: ProviderProvenance,
-    pub namespace_claims: BTreeSet<Vec<String>>,
-    pub used_modules: BTreeSet<Vec<String>>,
-    pub active_features: BTreeSet<String>,
-    pub implementation_facets: Vec<String>,
-    pub backend_requirements: BTreeSet<String>,
-    pub manifest_path: Option<String>,
+    /// Content digest of the Loaf's manifest.
+    pub digest: String,
+    pub artifact_dir: String,
 }
 
 /// Receipt and selected native closure recorded by an Oven Alpha normal build.
@@ -313,102 +259,19 @@ impl BuildReportDraft {
     }
 }
 
-/// Build the shared provider/component/feature projection used by executable and library reports.
-pub fn semantic_report(
-    sdk_inventory: Option<&SdkInventory>,
-    sdk_components: Option<&ResolvedSdkComponents>,
-    package_features: Option<&PackageFeaturePlan>,
-    provider_plan: &ProviderPlan,
-) -> BuildSemanticReport {
-    let sdk = sdk_inventory
-        .zip(sdk_components)
-        .map(|(inventory, components)| BuildSdkReport {
-            identity: inventory.identity(),
-            profile: components.profile.clone(),
-            components: inventory
-                .components
-                .values()
-                .map(|component| BuildSdkComponentReport {
-                    id: component.id.clone(),
-                    version: component.version.clone(),
-                    available: component.available,
-                    enabled: components.enabled.contains(&component.id),
-                    mandatory: component.mandatory,
-                    dependencies: component.dependencies.clone(),
-                    reason: components.reasons.get(&component.id).cloned(),
-                })
-                .collect(),
-        });
-    let packages = package_features
-        .iter()
-        .flat_map(|plan| plan.packages())
-        .map(|package| BuildPackageFeaturesReport {
-            package: package.package_name.clone(),
-            project_root: path_string(&package.project_root),
-            active_features: package.features.active_features.clone(),
-            active_optional_dependencies: package.features.active_optional_dependencies.clone(),
-            dependency_features: package.features.dependency_features.clone(),
-            required_sdk_components: package.features.required_sdk_components.clone(),
-            reasons: package.features.reasons.clone(),
-        })
-        .collect();
-    let feature_edges = package_features
-        .iter()
-        .flat_map(|plan| plan.edges())
-        .map(|edge| BuildFeatureEdgeReport {
-            from: path_string(&edge.from),
-            dependency_key: edge.dependency_key.clone(),
-            to: path_string(&edge.to),
-            requested_features: edge.requested_features.clone(),
-            default_features: edge.default_features,
-            optional: edge.optional,
-        })
-        .collect();
-    let providers = provider_plan
-        .records()
-        .map(|provider| BuildProviderReport {
-            identity: provider.identity.stable_key(),
-            available: provider.available,
-            enabled: provider.enabled,
-            used: provider_plan.participation(provider) == ProviderParticipation::Used,
-            participation: provider_plan.participation(provider),
-            provenance: provider.provenance.clone(),
-            namespace_claims: provider.namespace_claims.clone(),
-            used_modules: provider_plan.used_modules(provider),
-            active_features: provider.identity.feature_projection.clone(),
-            implementation_facets: provider_plan
-                .linked_implementation_facets(provider)
-                .into_iter()
-                .map(|facet| facet.id.clone())
-                .collect(),
-            backend_requirements: provider_plan
-                .linked_backend_requirements(provider)
-                .iter()
-                .map(render_backend_requirement)
-                .collect(),
-            manifest_path: provider
-                .artifact
-                .as_ref()
-                .map(|artifact| path_string(&artifact.manifest_path)),
-        })
-        .collect();
+/// Report the Loaves a build's session indexed.
+pub fn semantic_report(loaves: &LoafIndex) -> BuildSemanticReport {
     BuildSemanticReport {
-        sdk,
-        packages,
-        feature_edges,
-        providers,
-    }
-}
-
-/// Render one private provider implementation requirement in the stable build-report vocabulary.
-fn render_backend_requirement(requirement: &BackendImplementationRequirement) -> String {
-    match requirement {
-        BackendImplementationRequirement::CargoFeature { crate_name, feature } => {
-            format!("cargo-feature:{crate_name}/{feature}")
-        }
-        BackendImplementationRequirement::CargoDependency { dependency } => {
-            format!("cargo-dependency:{}", dependency.crate_name)
-        }
+        loaves: loaves
+            .entries()
+            .map(|entry| BuildLoafReport {
+                key: entry.key.clone(),
+                name: entry.artifact.identity.name.clone(),
+                version: entry.artifact.identity.version.clone(),
+                digest: entry.artifact.identity.digest.clone(),
+                artifact_dir: path_string(&entry.artifact.dir),
+            })
+            .collect(),
     }
 }
 

@@ -31,7 +31,8 @@ pub struct TypecheckedModules {
 }
 
 /// Typecheck a collected graph in dependency-safe order against the program's Loaves, retaining one result for every
-/// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent).
+/// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent). `visit` sees each
+/// module's checker after it checks cleanly, so publication reads the same pass.
 ///
 /// Ordering is intentional: session analysis also needs an identity-keyed representation for synthetic modules that
 /// share a source file path.
@@ -41,6 +42,7 @@ pub fn typecheck_modules(
     loaves: &Arc<LoafIndex>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
     c_abi_plan: Option<&CAbiVerificationPlan>,
+    visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
@@ -88,7 +90,10 @@ pub fn typecheck_modules(
         warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
 
         match check_result {
-            Ok(()) => type_infos.push(checker.type_info().clone()),
+            Ok(()) => {
+                visit(module, &checker);
+                type_infos.push(checker.type_info().clone());
+            }
             Err(errs) => {
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                     file_path: module.file_path.to_string_lossy().to_string(),
