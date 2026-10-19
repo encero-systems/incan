@@ -1,5 +1,4 @@
 # behavior: named functions pass as first-class values through arrow-typed and Callable-typed parameters, with zero, one and two arguments (RFC 035)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_function_references_codegen
 # expect-stdout:
 #   10 9
 #   7 12

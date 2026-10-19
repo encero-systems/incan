@@ -1,5 +1,4 @@
 # behavior: an open side of an or_else result or a bound Ok takes the enclosing function's Result side and prints there, and elsewhere runs when it is never read
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::open_result_sides_build_with_the_type_the_checker_gives_them_issue1561
 # expect-stdout:
 #   1
 #   2

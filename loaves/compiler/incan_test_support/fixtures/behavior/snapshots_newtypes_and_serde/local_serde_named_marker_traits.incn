@@ -1,5 +1,4 @@
 # behavior: source traits merely named Serialize and Deserialize are ordinary marker traits a newtype can adopt, unrelated to std.serde.json (#1431)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_local_serde_named_traits_codegen
 # expect-stdout:
 #   7
 

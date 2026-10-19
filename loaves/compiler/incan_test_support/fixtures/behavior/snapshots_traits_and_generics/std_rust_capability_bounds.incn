@@ -1,8 +1,4 @@
 # behavior: std.rust capability markers in with-clauses: Send, Sync and Static accept ordinary values, alone and combined, a Static-bounded identity returns its argument, and Fn, FnMut and FnOnce accept a named function taking the marker's parameter (RFC 041, #1716)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_std_rust_capability_bounds_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_capability_bounds_full_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_emit_static_bound_codegen
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::fn_family_capability_markers_lower_to_the_callable_bound_issue1716
 # expect-stdout:
 #   ran
 #   7

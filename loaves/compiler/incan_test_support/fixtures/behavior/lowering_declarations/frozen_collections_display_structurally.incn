@@ -1,5 +1,4 @@
 # behavior: frozen list, set and dict values display through the same structural forms as their mutable collection counterparts
-# retires: loaves/compiler/incan_ir/src/expr.rs::frozen_collections_use_structured_display_issue1838
 # expect-stdout:
 #   [1, 2]
 #   {3}

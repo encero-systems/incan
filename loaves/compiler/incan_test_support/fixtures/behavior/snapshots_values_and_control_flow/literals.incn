@@ -1,5 +1,4 @@
 # behavior: int, float, scientific, string, escaped, single-quoted, bool and None literals hold the values written
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_literals_codegen
 # expect-stdout:
 #   42 -10 1000000
 #   3.14 -2.5 15000000000.0

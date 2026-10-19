@@ -1,5 +1,4 @@
 # behavior: a model adopts a stdlib trait through a module binding (`json.Serialize`, and the same trait through an aliased module import), and a generic bound spelled the same way accepts both models
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::qualified_trait_impl_retains_projected_sdk_module_import
 # expect-stdout:
 #   {"value":1}
 #   [2]

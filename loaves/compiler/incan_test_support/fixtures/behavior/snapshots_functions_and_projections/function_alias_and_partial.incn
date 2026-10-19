@@ -1,7 +1,4 @@
 # behavior: a function called directly, through a same-module binding alias and through a partial with a bound keyword argument gives the target's result each time
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::ordinary_function_declaration_and_call_share_one_projection
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::same_module_function_alias_calls_the_target_projection_without_a_second_definition
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::partial_wrapper_declaration_and_call_share_one_projection
 # expect-stdout:
 #   42
 #   42

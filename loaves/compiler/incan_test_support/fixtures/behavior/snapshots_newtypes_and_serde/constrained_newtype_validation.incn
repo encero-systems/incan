@@ -1,5 +1,4 @@
 # behavior: a constrained newtype accepts values satisfying gt=0 through coercion and explicit construction and refuses a violating value at run time
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_constrained_newtype_generated_validation_codegen
 # expect-stdout:
 #   1
 #   2

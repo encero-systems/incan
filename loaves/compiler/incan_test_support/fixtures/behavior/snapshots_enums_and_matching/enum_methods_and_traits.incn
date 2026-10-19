@@ -1,5 +1,4 @@
 # behavior: an enum adopting a trait answers the trait method by matching on self and exposes an associated constructor (RFC 050)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_enum_methods_traits_codegen
 # expect-stdout:
 #   start
 #   stop

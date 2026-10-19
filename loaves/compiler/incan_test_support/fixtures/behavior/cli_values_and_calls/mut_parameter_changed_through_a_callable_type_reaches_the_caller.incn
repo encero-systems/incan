@@ -1,5 +1,4 @@
 # behavior: a mut class parameter changed by a function called through a local bound to it, a callable-typed parameter or an annotated callable local changes the caller's mut binding
-# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::marked_arguments_through_callable_types_pass_the_callers_value_issue1773
 # expect-stdout:
 #   2
 #   3

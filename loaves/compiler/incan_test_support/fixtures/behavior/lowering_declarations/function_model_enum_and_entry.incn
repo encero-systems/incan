@@ -1,8 +1,4 @@
 # behavior: main is the program's entry point; a two-parameter int function returns its sum, a two-field model is constructed and read, and a three-variant enum is matched
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_simple_function
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_model
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_main_entry
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_enum
 # expect-stdout:
 #   entered main
 #   5

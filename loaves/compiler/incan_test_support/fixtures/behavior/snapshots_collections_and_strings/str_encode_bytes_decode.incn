@@ -1,5 +1,4 @@
 # behavior: str.encode and bytes.decode round-trip UTF-8 with default, named and runtime encodings, a replace policy for invalid bytes, and an error under the strict default (#1668)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_str_encode_bytes_decode_codegen
 # expect-stdout:
 #   6
 #   héllo

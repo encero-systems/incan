@@ -1,5 +1,4 @@
 # behavior: a tuple pattern over a tuple[...]-typed value binds its names with the element types
-# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::tuple_pattern_over_a_written_tuple_annotation_binds_its_names_issue1714
 # expect-stdout:
 #   42 hello
 #   zero

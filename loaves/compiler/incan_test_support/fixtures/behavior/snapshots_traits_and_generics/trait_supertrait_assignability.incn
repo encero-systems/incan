@@ -1,5 +1,4 @@
 # behavior: a subtrait-typed value is returned where its supertrait is declared, for a plain trait and for a generic trait (RFC 042)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_supertrait_assignability_codegen
 # expect-stdout:
 #   1
 #   1

@@ -1,5 +1,4 @@
 # behavior: a method alias called on a mut parameter calls the method it names, for a model, a class alias of a mut self method, and a newtype
-# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::method_alias_on_a_mut_parameter_calls_its_target_issue1561
 # expect-stdout:
 #   1
 #   3

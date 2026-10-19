@@ -1,5 +1,4 @@
 # behavior: a generic model's field is readable through a generic function for an int and a str instantiation
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_generic_model_field_access_codegen
 # expect-stdout:
 #   41
 #   forty-one

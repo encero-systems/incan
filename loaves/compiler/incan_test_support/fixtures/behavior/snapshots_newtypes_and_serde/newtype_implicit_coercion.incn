@@ -1,5 +1,4 @@
 # behavior: int values coerce into a validated newtype at an argument, a typed local, a nested newtype local and a model field (RFC 017)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_implicit_coercion_codegen
 # expect-stdout:
 #   3
 #   4 5 6

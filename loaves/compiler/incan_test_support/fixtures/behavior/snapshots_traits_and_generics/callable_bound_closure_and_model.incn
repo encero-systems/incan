@@ -1,5 +1,4 @@
 # behavior: a Callable1-bounded generic parameter accepts a closure and a model with __call__, and each is invoked with the argument
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_source_callable_bound_preserves_nominal_trait_with_native_callable_blanket_codegen
 # expect-stdout:
 #   item:3:model:4
 

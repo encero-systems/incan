@@ -1,5 +1,4 @@
 # behavior: targeted lint suppressions on models, classes, enums, newtypes, methods and functions leave every declaration usable (RFC 057)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_allow_codegen
 # expect-stdout:
 #   1
 #   2

@@ -1,9 +1,4 @@
 # behavior: an if/elif/else chain, a range for loop, chained binary arithmetic, a list literal return and a reassigned mut binding each produce their values
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_if_statement
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_for_loop
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_binary_expressions
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_list_literal
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_inferred_reassign_mutable
 # expect-stdout:
 #   positive
 #   negative

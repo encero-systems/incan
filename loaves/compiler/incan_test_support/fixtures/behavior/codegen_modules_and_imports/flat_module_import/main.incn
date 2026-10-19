@@ -1,5 +1,4 @@
 # behavior: a flat sibling module's model is reachable through from-import at the root and in another sibling module
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_non_nested_multi_file_api_sets_internal_module_roots
 # expect-stdout:
 #   store:7
 #   8

@@ -1,5 +1,4 @@
 # behavior: a tuple assignment that writes a list element beside a name with no binding declares the name with its element, in a loop body too, as `name = value` declares it
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::tuple_assignment_declares_an_unbound_name_beside_a_place
 # expect-stdout:
 #   2
 #   3

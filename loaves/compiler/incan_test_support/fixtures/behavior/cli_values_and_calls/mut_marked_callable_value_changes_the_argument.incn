@@ -1,5 +1,4 @@
 # behavior: a function and a closure are passed as values of a function type whose parameter is marked `mut`, each call through the value receives the caller's argument, and the function's changes to it are visible to the caller
-# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::closure_checked_against_a_mut_marked_shape_takes_the_argument_mut
 # expect-stdout:
 #   3
 #   6

@@ -1,5 +1,4 @@
 # behavior: a `mut` parameter whose type is an alias of `int` or `float` is the function's own copy, so the caller's value is unchanged and the function is a value of the unmarked function type
-# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::mut_parameter_passing_follows_the_checker_marker
 # expect-stdout:
 #   2
 #   1

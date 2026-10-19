@@ -1,5 +1,4 @@
 # behavior: a std module imported from the std root, plain and under an alias, is called through its binding
-# retires: loaves/compiler/incan_emit/src/codegen.rs::std_root_module_import_uses_sdk_facade
 # expect-stdout:
 #   4
 #   3

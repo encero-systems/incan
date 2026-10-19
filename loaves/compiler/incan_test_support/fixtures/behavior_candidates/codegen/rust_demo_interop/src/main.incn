@@ -1,26 +1,4 @@
 # behavior: the Rust interop contracts the retired codegen tests described through synthetic metadata hold over a real in-fixture crate: boxed variant payloads from every argument shape, a borrowed handle, owner-specialized and named-field constructors, a tuple-struct constructor, an owned mutable parameter, projected mutable tuple leaves and their unprojected control, two projected type arguments, a projection inside a trait method, a derived Component, an f32 boundary, keyword-spelled fields, a borrowing builder and client, a nested associated call, a trait method through its import, trait-qualified receiver modes, and a capturing closure passed to a crate method
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_boxes_variant_payloads_whatever_argument_shape
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_as_fd_generic_args_from_metadata
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_materializes_owner_specialized_rust_associated_function_arguments
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_named_field_struct_literal_for_imported_rust_type_constructor
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_uses_source_field_names_for_metadata_free_rust_type_constructor
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_tuple_struct_constructor_for_imported_rust_type
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_preserves_owned_mutable_direct_rust_parameter
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_preserves_explicit_mutable_rust_generic_arguments_in_mutating_for_loop
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_does_not_project_tuple_without_inspected_composition_contract
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_fails_closed_after_solver_rejects_associated_type_candidate
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_projects_local_type_from_actual_rust_derive_output
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_projects_each_metadata_directed_mutable_rust_generic_argument
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_projects_metadata_directed_mutable_rust_generic_arguments_in_trait_method
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_leaves_unconfigured_rust_generics_literal
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_preserves_f32_arithmetic_at_rust_boundary_issue1219
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_raw_rust_field_names_for_keyword_fields_issue725
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_reqwest_json_payload_returned_from_registry_client
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_keeps_nested_rust_associated_calls_type_like_when_outer_receiver_is_unknown
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_try_generate_module_keeps_root_rust_trait_import_issue827
-# retires: loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs::trait_qualified_calls_pass_the_declared_receiver_mode
-# retires: loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs::owned_local_receivers_are_borrowed_once_by_the_recorded_mode
-# retires: loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs::a_closure_argument_to_a_metadata_free_crate_method_keeps_its_callee_identity_issue1492
 # expect-stdout:
 #   1 2 3 2
 #   7

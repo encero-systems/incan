@@ -1,5 +1,4 @@
 # behavior: std.builtins.isinstance narrows through a type alias, a shadowing user function, consts and frozen-string unions and options
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::isinstance_alias_target_uses_the_typecheckers_resolved_target_in_native_lowering
 # expect-stdout:
 #   false
 #   true false

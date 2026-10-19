@@ -1,5 +1,4 @@
 # behavior: an OrdinalMap serialized with to_bytes, whose encoder appends into a mutable byte list through a std.collections helper, deserializes with from_bytes to a map answering the same ordinals
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_call_prefers_callable_signature_over_local_registry
 # expect-stdout:
 #   true
 #   1

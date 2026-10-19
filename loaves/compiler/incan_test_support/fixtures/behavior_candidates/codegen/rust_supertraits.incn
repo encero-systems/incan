@@ -1,6 +1,4 @@
 # behavior: source traits whose supertraits are Rust traits (Display, From under an alias, DeserializeOwned) are adopted by models that satisfy the Rust parent, and the models print, convert and decode through them (#1427)
-# retires: loaves/compiler/incan_emit/src/checked_program/rust_supertrait_codegen.rs::rust_supertrait_codegen_preserves_imported_alias_and_arguments
-# retires: loaves/compiler/incan_emit/src/checked_program/rust_supertrait_codegen.rs::rust_supertrait_codegen_does_not_implement_foreign_parent
 # expect-stdout:
 #   tag:x
 #   9

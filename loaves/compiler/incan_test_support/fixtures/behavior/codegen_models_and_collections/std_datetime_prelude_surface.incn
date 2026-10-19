@@ -1,5 +1,4 @@
 # behavior: std.datetime exports its error, duration, instant, system time, delta, date, time, datetime and offset types, and a Duration built from seconds reports them
-# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_datetime_prelude_import_snapshot
 # expect-stdout:
 #   90
 

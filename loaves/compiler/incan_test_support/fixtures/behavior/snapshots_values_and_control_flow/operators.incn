@@ -1,5 +1,4 @@
 # behavior: arithmetic, comparison, logical, unary and membership operators evaluate to their values, including a call result probed with in (#1066)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_operators_codegen
 # expect-stdout:
 #   3 2 24 3.3333333333333335 1
 #   true true true true true true

@@ -1,5 +1,4 @@
 # behavior: if/elif/else, while with break and continue, for over lists and ranges with break and continue, and nested loops print in order
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_control_flow_codegen
 # expect-stdout:
 #   x is greater than 5
 #   x is not less than 5

@@ -1,5 +1,4 @@
 # behavior: a generic parameter bounded by Awaitable[T] admits a spawned task's JoinHandle and awaits it to the task's join result (#1711)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_awaitable_bound_lowers_to_runtime_trait_codegen
 # expect-stdout:
 #   9
 

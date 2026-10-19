@@ -1,5 +1,4 @@
 # behavior: an f-string interpolates a str parameter between its literal pieces
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_fstring_generation
 # expect-stdout:
 #   Hello, Ada!
 

@@ -1,5 +1,4 @@
 # behavior: iterator and generator sources built from a list still leave the list readable afterwards, whether the list is used once or again (#602)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue602_owned_iterator_source_hotpaths_codegen
 # expect-stdout:
 #   2
 #   1

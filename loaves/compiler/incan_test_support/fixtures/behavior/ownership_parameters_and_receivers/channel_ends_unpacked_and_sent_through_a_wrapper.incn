@@ -1,6 +1,4 @@
 # behavior: the two ends of a channel are unpacked into separate locals, two values sent through the sender arrive at the receiver in order, and the sender is still open afterwards
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_moves_owned_tuple_unpack_field_without_clone
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_self_field_without_target_borrows_noncopy_receiver_field
 # expect-stdout:
 #   got 1
 #   got 2

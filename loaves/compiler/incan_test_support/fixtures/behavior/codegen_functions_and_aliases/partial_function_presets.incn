@@ -1,7 +1,4 @@
 # behavior: a top-level partial presets one parameter and a local partial's preset can be overridden or left to a trailing default
-# retires: loaves/compiler/incan_emit/src/codegen.rs::partial_function_codegen_emits_wrapper_with_defaulted_preset
-# retires: loaves/compiler/incan_emit/src/codegen.rs::local_partial_codegen_captures_a_defaulted_overrideable_preset
-# retires: loaves/compiler/incan_emit/src/codegen.rs::local_partial_codegen_materializes_a_trailing_residual_default
 # expect-stdout:
 #   GET
 #   GET/health

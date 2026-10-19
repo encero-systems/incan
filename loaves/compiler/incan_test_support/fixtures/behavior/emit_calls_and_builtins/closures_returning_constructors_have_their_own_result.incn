@@ -1,5 +1,4 @@
 # behavior: a closure returning Ok(...) or Err(...) has a complete Result result, None on the side it leaves open outside a Result function and that function's side inside one, and its own type on the side it builds; calling it, passing it to a generic callee and a list comprehension of constructors run
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::closures_returning_constructors_build_with_their_own_result_issue1561
 # expect-stdout:
 #   1
 #   no

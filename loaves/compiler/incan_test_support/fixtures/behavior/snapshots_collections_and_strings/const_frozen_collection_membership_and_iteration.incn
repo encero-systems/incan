@@ -1,9 +1,4 @@
 # behavior: a const FrozenList, FrozenSet and FrozenDict answer len, contains, membership, indexing, for loops, set() and comprehensions as list, set and dict do, and their str and bytes items read as owned str and bytes
-# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::const_frozen_collection_reads_compile_issue1757
-# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_len_reads_the_int_length_issue1757
-# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_list_index_reads_the_owned_element_issue1757
-# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_membership_reads_the_collection_test_issue1757
-# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::iteration_sources_over_frozen_collections_read_owned_items_issue1757
 # expect-stdout:
 #   6
 #   true

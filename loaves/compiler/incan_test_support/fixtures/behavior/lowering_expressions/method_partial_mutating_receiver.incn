@@ -1,5 +1,4 @@
 # behavior: a method partial declared on a model forwards to a mut self method with its preset applied, so the receiver is mutated
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::synthetic_method_partial_wrapper_has_no_source_receiver_binding
 # expect-stdout:
 #   false
 #   true

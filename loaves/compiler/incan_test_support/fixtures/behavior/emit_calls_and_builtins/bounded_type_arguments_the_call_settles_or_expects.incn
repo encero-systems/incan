@@ -1,5 +1,4 @@
 # behavior: a Display-bounded type parameter an Err argument leaves open takes the enclosing function's Result side, and an explicit type argument or an annotated binding of the result fixes one no argument fixes
-# retires: loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs::bounded_type_arguments_the_call_settles_or_expects_build_issue1561
 # expect-stdout:
 #   7
 #   err 4

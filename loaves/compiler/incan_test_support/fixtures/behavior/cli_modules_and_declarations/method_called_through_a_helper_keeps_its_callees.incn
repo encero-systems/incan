@@ -1,5 +1,4 @@
 # behavior: a method called only from a helper function that main reaches after constructing its model still runs the method it calls in turn
-# retires: loaves/compiler/incan_emit/tests/method_reachability_codegen_tests.rs::method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765
 # expect-stdout:
 #   42
 

@@ -1,5 +1,4 @@
 # behavior: Serialize and Deserialize re-exported through a facade module keep the stdlib JSON protocol, with the adopter's own from_json used
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_facade_reexported_std_serde_json_traits_keep_their_protocol
 # expect-stdout:
 #   {"value":1}
 #   2

@@ -1,5 +1,4 @@
 # behavior: while loops and for loops over one-, two- and three-argument ranges and lists, with break, continue and nesting, print each iteration
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_loops_codegen
 # expect-stdout:
 #   0 1 2 3 4
 #   0 1 2 3 4

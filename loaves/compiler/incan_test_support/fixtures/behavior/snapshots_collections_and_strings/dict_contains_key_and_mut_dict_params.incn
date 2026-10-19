@@ -1,6 +1,4 @@
 # behavior: dict membership through contains_key, in and not in, and inserts through mut dict parameters, are visible to the caller (#1668)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_dict_contains_key_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_mut_dict_param_codegen
 # expect-stdout:
 #   true
 #   false

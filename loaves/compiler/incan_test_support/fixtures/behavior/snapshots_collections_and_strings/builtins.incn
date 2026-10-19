@@ -1,5 +1,4 @@
 # behavior: print, len, range, sum, min, max, abs, str, int, float, bool and sorted builtins produce their values
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_builtins_codegen
 # expect-stdout:
 #   hello
 #   world

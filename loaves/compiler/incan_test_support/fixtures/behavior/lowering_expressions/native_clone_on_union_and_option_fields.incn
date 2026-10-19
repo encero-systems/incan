@@ -1,5 +1,4 @@
 # behavior: clone on union and Option fields uses Rust Clone rather than a source-trait projection that those carriers do not implement
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::builtin_clone_identity_without_dispatch_keeps_native_method
 # expect-stdout:
 #   cloned
 

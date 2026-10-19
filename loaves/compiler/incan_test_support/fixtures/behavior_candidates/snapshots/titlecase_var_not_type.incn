@@ -1,5 +1,4 @@
 # behavior: a variable spelled in TitleCase holding an imported Rust value is a value, so a method call on it renders the value
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_titlecase_var_not_type_codegen
 # expect-stdout:
 #   36
 

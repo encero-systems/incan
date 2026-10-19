@@ -1,7 +1,4 @@
 # behavior: an imported Rust type is a type-like receiver for its associated function, also when that call is nested inside a method argument, while an imported Rust constant is a value receiver for its methods
-# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_rust_import_associated_method_keeps_type_like_receiver
-# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_nested_rust_associated_method_arg_keeps_type_like_receiver
-# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_rust_constant_method_receiver_as_value_not_type_like
 # expect-stdout:
 #   1
 #   1500

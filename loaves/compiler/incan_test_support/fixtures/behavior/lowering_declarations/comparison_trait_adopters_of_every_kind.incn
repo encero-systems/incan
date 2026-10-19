@@ -1,5 +1,4 @@
 # behavior: enum, newtype, class and generic types that adopt Eq or Ord compare and sort through their own dunders, whether the trait is imported, imported under an alias or named through its module, and a user trait that declares __eq__ calls it
-# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::comparison_adopters_of_every_kind_and_spelling_build_issue1561
 # expect-stdout:
 #   true
 #   0

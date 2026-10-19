@@ -1,7 +1,4 @@
 # behavior: a str value enum displays as its value, exposes value() and from_value(), and message() on a value enum and on a private plain enum is the variant name; an int value enum exposes value() and from_value() the same way
-# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::string_value_enum_emits_value_lookup_and_display
-# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::integer_value_enum_emits_value_lookup_and_from_str
-# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::private_enum_keeps_used_message_helper
 # expect-stdout:
 #   development
 #   production

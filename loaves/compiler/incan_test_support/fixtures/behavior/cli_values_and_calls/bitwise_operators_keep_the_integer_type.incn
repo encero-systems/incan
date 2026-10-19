@@ -1,5 +1,4 @@
 # behavior: bit arithmetic over two values of one integer type keeps that type, a shift keeps its left operand's type whatever integer type it counts with, `~` keeps its operand's type, and every compound bit assignment on a u8 binding keeps a u8
-# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::bitwise_operators_keep_the_integer_type_build
 # expect-stdout:
 #   8 14 6 245
 #   40 2 4096

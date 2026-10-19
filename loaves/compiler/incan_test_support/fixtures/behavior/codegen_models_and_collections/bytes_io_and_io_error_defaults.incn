@@ -1,7 +1,4 @@
 # behavior: BytesIO round-trips bytes through getvalue and read, an IoError carries its kind and a source of None through the Error trait's default, and a BytesIO reader streams into a sha256 digest
-# retires: loaves/compiler/incan_emit/src/codegen.rs::package_codegen_keeps_embedded_stdlib_method_identity_at_declaration_origin
-# retires: loaves/compiler/incan_emit/src/codegen.rs::imported_stdlib_trait_default_expands_in_dependency_impl
-# retires: loaves/compiler/incan_emit/src/codegen.rs::streaming_hash_helpers_import_io_error_for_reader_chunk_failures
 # expect-stdout:
 #   4
 #   true

@@ -1,5 +1,4 @@
 # behavior: std.math constants, float functions and integer gcd/lcm give their values, and NaN poisons a sum
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_math_codegen
 # expect-stdout:
 #   nan
 #   3.141592653589793 2.718281828459045 6.283185307179586

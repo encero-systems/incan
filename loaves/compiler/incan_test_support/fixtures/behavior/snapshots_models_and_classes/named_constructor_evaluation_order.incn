@@ -1,5 +1,4 @@
 # behavior: named constructor arguments are evaluated in the order written, then fill the declared fields (#1462)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1462_named_constructor_evaluation_order_codegen
 # expect-stdout:
 #   inspect intent
 #   inspect evidence

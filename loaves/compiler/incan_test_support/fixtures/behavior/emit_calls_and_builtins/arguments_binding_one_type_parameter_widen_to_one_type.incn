@@ -1,5 +1,4 @@
 # behavior: arguments that bind one type parameter to an i8 and an int, or to an f32 and a float literal, bind it to the type the other widens to, in either order, for a function, a generic method and a generic model's constructor
-# retires: loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs::arguments_binding_one_type_parameter_build_with_the_type_they_widen_to_issue1561
 # expect-stdout:
 #   5
 #   3

@@ -1,6 +1,4 @@
 # behavior: a local partial of a model, class or newtype constructor builds the value with its presets as overridable defaults, and top-level presets of a negative number, an imported const, a module-qualified const and tuple and set literals apply at each call
-# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::local_partials_of_constructors_compile
-# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::top_level_presets_of_negative_numbers_tuples_and_sets_compile
 # expect-stdout:
 #   bronze orders delta
 #   bronze orders csv

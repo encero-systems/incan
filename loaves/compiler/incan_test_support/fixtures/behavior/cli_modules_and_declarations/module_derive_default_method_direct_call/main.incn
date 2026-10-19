@@ -1,5 +1,4 @@
 # behavior: the default method a user module's derive bundle gives a model is callable directly on the model, whether the bundle is applied under its plain or its aliased import binding, or the trait is derived by its imported name
-# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::derive_bundle_trait_counts_as_adopted_for_direct_calls_issue1792
 # expect-stdout:
 #   1
 #   encoded

@@ -1,5 +1,4 @@
 # behavior: typed writes and reads on a stdlib BytesIO dispatch through the stdlib's own BinaryWrite and BinaryRead implementations for each width the static type context selects
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_dispatched_call_to_another_packages_method_is_not_projected
 # expect-stdout:
 #   5
 #   2

@@ -1,6 +1,4 @@
 # behavior: a described function registers in a static Registry, its entry carries the key and descriptor, and the function stays callable (RFC 113)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_registry_import_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_registry_type_token_codegen
 # expect-stdout:
 #   1
 #   normalize Normalize text

@@ -1,5 +1,4 @@
 # behavior: model constructors and receiver chains build and run in statement and expression conditions, match scrutinees, assertions, comprehension and generator filters, and for iterables
-# retires: loaves/compiler/incan_emit/src/tests/condition_position_struct_literals.rs::struct_literals_in_condition_positions_build_issue1561
 # expect-stdout:
 #   if
 #   elif

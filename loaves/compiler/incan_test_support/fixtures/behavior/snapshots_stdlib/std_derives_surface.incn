@@ -1,7 +1,4 @@
 # behavior: derived Eq, Ord, Hash, Clone, Copy, Default and Debug compare (==, !=, <, >, <=, >=), key, copy, default and render models
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_comparison_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_copying_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_string_compiled_codegen
 # expect-stdout:
 #   true false
 #   true true

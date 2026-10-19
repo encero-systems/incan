@@ -1,5 +1,4 @@
 # behavior: dict.get(key, default) is the value, or the default when no entry holds the key, on a module static and on a local dict
-# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::dict_get_with_default_reads_the_value
 # expect-stdout:
 #   2
 #   1

@@ -1,17 +1,4 @@
 # behavior: arguments to Rust standard-library callees take the shape their signature needs: owned bytes and a Rust Vec of bytes lend as a slice to from_utf8, an explicit as_slice() argument is kept, a bytes literal and an owned bytes local borrow as a slice, an owned Vec of bytes passes by value to String.from_utf8, and a str literal and an owned str local borrow into Path.new
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_lends_owned_incan_bytes_to_buf_as_slice
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_lends_owned_rust_vec_to_buf_as_slice
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_rust_associated_decode_lends_generic_vec_u8_to_buf_as_slice
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_keeps_explicit_slice_argument_shape
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_metadata_keeps_explicit_rust_vec_slice_argument_shape
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_fallback_still_borrows_owned_bytes_argument
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_decode_with_generic_by_value_signature_does_not_borrow_argument
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::unregistered_decode_method_with_by_value_metadata_preserves_argument_shape
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_uses_external_planning_for_rust_rooted_field_callee
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_string_coercion_materializes_owned_string_before_borrow
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_string_coercion_borrows_owned_string_without_materializing
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_bytes_slice_coercion_borrows_owned_bytes
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_borrowed_vec_bytes_coercion_materializes_owned_bytes_before_borrow
 # expect-stdout:
 #   ab
 #   cd

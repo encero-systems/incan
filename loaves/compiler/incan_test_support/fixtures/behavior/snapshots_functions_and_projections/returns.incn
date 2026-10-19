@@ -1,5 +1,4 @@
 # behavior: plain, expression, early, multiple, in-loop, explicit-void and implicit-void returns each leave the function with the expected value
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_returns_codegen
 # expect-stdout:
 #   42
 #   30

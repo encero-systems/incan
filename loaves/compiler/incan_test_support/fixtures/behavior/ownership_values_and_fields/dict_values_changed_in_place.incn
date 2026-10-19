@@ -1,6 +1,4 @@
 # behavior: a changing method, an element or field assignment, a mut self method and a loop reach a dict value in place, under a literal, a variable and an int key, through a tuple in the value, a nested dict, a list of dicts, a field of self and a mut dict parameter
-# retires: loaves/compiler/incan_emit/src/tests/dict_value_places.rs::dict_value_changes_in_place_through_a_mut_dict_issue1561
-# retires: loaves/compiler/incan_emit/src/tests/dict_value_places.rs::dict_value_of_a_model_changes_in_place_issue1561
 # expect-stdout:
 #   [11, 2, 3]
 #   [4, 5]

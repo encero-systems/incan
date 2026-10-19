@@ -1,5 +1,4 @@
 # behavior: an OrdinalMap over str keys built from keys or pairs answers require and require_many with the ordinal of each key and refuses an unknown key
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_ordinal_map_str_fast_lookup_codegen
 # expect-stdout:
 #   1
 #   0 1

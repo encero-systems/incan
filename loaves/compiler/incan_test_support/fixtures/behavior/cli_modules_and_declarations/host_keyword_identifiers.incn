@@ -1,5 +1,4 @@
 # behavior: impl, dyn, ref, move, use, where, unsafe and mod are ordinary identifiers for fields, methods, parameters, keyword arguments, enum variants and type parameters, and reflection and JSON report the fields as written
-# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::host_keyword_identifiers_are_raw_in_every_position_issue1775
 # expect-stdout:
 #   1
 #   3

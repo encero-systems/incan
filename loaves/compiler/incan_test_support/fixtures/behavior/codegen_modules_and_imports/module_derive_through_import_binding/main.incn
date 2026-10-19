@@ -1,5 +1,4 @@
 # behavior: a user module declaring a derive bundle is applied through @derive under its import binding, plain and aliased, and the bundle's default method answers on both models through a bound on the bundle's trait (#1434)
-# retires: loaves/compiler/incan_emit/src/codegen.rs::module_derive_retains_its_trait_module_import
 # expect-stdout:
 #   1
 #   encoded

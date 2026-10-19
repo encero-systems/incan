@@ -1,7 +1,4 @@
 # behavior: a model adopting std.serde.json Serialize gains to_json and keeps its ordinary methods, and a json-derived model serializes through a generic json.Serialize bound and decodes back through from_json (RFC 024)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_with_serialize_trait_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_with_serialize_keeps_ordinary_methods_inherent
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_module_derive_json_codegen
 # expect-stdout:
 #   {"value":1}
 #   hello

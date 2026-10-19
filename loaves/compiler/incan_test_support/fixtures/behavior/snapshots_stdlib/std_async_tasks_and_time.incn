@@ -1,7 +1,4 @@
 # behavior: an async main bootstraps the runtime, spawned and blocking tasks run to completion, sleep, sleep_ms and yield_now yield, timeout and timeout_ms resolve an awaited value or report expiry through the error's message, and timeout_join_ms hands back the live handle of a task that outlives its deadline
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_task_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_time_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_async_main_runtime_bootstrap_codegen
 # expect-stdout:
 #   async main running
 #   1

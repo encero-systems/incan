@@ -1,5 +1,4 @@
 # behavior: a for loop variable, or a field of one, passed to a mut parameter the callee never changes builds and is read, whether the loop iterates a mut list parameter, an immutable local list, a list of strings or a list of models
-# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::loop_variables_passed_to_an_unchanged_mut_parameter_are_copied_issue1773
 # expect-stdout:
 #   2
 #   3

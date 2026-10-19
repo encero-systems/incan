@@ -1,5 +1,4 @@
 # behavior: `and` binds tighter than `or`, so a parenthesized `or` on the right of `and` is evaluated as a group
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_binop_parenthesizes_lower_precedence_right_operand
 # expect-stdout:
 #   false
 #   true

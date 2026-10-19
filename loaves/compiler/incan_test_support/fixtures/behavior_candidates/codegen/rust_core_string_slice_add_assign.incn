@@ -1,5 +1,4 @@
 # behavior: a str returned by a Rust core helper is appended to a local with += (#896)
-# retires: loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs::rust_string_slice_import_add_assign_preserves_owned_rhs_issue896
 # expect-stdout:
 #   a
 #   ab

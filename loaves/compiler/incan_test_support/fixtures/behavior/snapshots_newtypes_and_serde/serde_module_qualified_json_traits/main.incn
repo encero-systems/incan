@@ -1,5 +1,4 @@
 # behavior: after `from std import serde`, serde.json.Serialize and serde.json.Deserialize bound functions and type a parameter and a return, and to_json, json_stringify and from_json work through each (#1887)
-# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::serde_json_spelling_through_the_serde_module_lowers_like_json_serialize_issue1887
 # expect-stdout:
 #   {"value":1}
 #   {"value":2}

@@ -1,5 +1,4 @@
 # behavior: a `Callable` value from a dependency is passed back across the `pub::` boundary into the dependency's own higher-order function and applied to every element
-# retires: loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs::generated_callable_artifact_and_consumers_share_producer_build
 # expect-stdout:
 #   2
 #   3

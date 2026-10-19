@@ -1,5 +1,4 @@
 # behavior: simple, swapped, augmented, collection-element and chained assignments leave each variable with its final value
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_assignments_codegen
 # expect-stdout:
 #   42 hello true 2 1
 #   0 6.0 hello world

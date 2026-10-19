@@ -1,5 +1,4 @@
 # behavior: a parameter typed by an imported subtrait calls a method declared by its unimported generic supertrait
-# retires: loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs::subtrait_bound_exposes_the_unimported_supertrait_method
 # expect-stdout:
 #   42
 

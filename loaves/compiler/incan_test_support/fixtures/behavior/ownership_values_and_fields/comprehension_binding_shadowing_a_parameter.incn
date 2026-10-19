@@ -1,5 +1,4 @@
 # behavior: a list comprehension whose binding is spelled like the enclosing parameter leaves the parameter's value in place for the match that follows
-# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::comprehension_shadowing_does_not_rewrite_an_unrelated_binding
 # expect-stdout:
 #   true 3
 #   false 3

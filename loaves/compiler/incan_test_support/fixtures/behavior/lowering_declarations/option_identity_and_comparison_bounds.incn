@@ -1,6 +1,4 @@
 # behavior: `Eq`- and `Ord`-bounded generic functions compare and sort the values they are given, and Option identity tests report presence without comparing payloads
-# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_option_none_identity_lowers_to_presence_methods
-# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_ord_type_parameter_bound_lowers_to_rust_ord
 # expect-stdout:
 #   true
 #   true

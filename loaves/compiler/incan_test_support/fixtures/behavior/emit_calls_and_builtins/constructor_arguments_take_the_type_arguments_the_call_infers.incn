@@ -1,5 +1,4 @@
 # behavior: an Ok or Err argument of a generic call takes the type the call's other arguments fix for its open side, in any function, and a concrete Result parameter gives that side
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::constructor_arguments_build_with_the_type_arguments_the_call_infers_issue1561
 # expect-stdout:
 #   5
 #   7

@@ -1,5 +1,4 @@
 # behavior: set() and Set() build sets from lists, sets, frozen lists, frozen sets, optional elements and nothing, without consuming a source that is read again (#951)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue951_set_constructor_codegen
 # expect-stdout:
 #   source:3
 #   generic-source:3

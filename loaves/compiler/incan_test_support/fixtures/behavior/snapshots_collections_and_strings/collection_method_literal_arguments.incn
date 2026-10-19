@@ -1,5 +1,4 @@
 # behavior: string literals passed to Deque, list, set and dict methods are stored as elements and counted (#1494)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1494_collection_method_literal_arguments_codegen
 # expect-stdout:
 #   7
 

@@ -1,6 +1,4 @@
 # behavior: dict keys() and values() feed sorted(), membership, len(), loops and comprehensions, including sorted keys and values iterated directly (#1668, #1461)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_dict_keys_outside_comprehension_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1461_sorted_dict_keys_codegen
 # expect-stdout:
 #   a,b
 #   true

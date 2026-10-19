@@ -1,5 +1,4 @@
 # behavior: len() of a list and of a model's list field compares with < in a return and in an if (#380)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue380_len_comparison_codegen
 # expect-stdout:
 #   true false
 #   0 -1 1

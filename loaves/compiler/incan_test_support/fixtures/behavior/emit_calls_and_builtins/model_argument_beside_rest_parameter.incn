@@ -1,5 +1,4 @@
 # behavior: a model passed to a parameter that sits beside a `*rest: int` parameter is read by the callee, which also counts and sums the rest items, and the same model is passed again with no rest items
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::rest_aware_call_arg_uses_argument_plan_without_double_borrow
 # expect-stdout:
 #   thing 3 6
 #   thing 1 5

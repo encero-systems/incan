@@ -1,5 +1,4 @@
 # behavior: a generic model whose method interpolates its type parameter renders an int, a str and a float payload through that method
-# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::impl_owner_generic_bounds_are_written_to_impl_header
 # expect-stdout:
 #   boxed 7
 #   boxed seven

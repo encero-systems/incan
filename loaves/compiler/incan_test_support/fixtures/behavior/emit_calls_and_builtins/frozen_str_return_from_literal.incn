@@ -1,5 +1,4 @@
 # behavior: a str literal returned where a FrozenStr is expected is the frozen value with that text and length
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::target_aware_emission_materializes_spanless_frozen_str_literals
 # expect-stdout:
 #   policy
 #   6

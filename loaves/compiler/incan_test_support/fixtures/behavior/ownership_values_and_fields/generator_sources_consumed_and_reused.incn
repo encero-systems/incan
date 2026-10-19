@@ -1,8 +1,4 @@
 # behavior: a generator expression over a list the function still reads afterwards, over a list at its last use and over a one-shot list literal each yield the filtered values, and a comprehension over a generator variable collects what it yields
-# retires: loaves/compiler/incan_emit/src/ownership.rs::owned_iterator_source_moves_last_use_list_var
-# retires: loaves/compiler/incan_emit/src/ownership.rs::owned_iterator_source_clones_reused_list_var
-# retires: loaves/compiler/incan_emit/src/ownership.rs::owned_iterator_source_moves_one_shot_list_expression
-# retires: loaves/compiler/incan_emit/src/ownership.rs::opaque_comprehension_sources_are_consumed_by_value
 # expect-stdout:
 #   [2, 3]
 #   [1, 2, 3]

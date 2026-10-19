@@ -1,5 +1,4 @@
 # behavior: an empty list passed to a generic list parameter takes the element type another argument or the explicit type argument gives its type parameter
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::empty_list_argument_is_written_with_the_instantiated_element_type_issue1862
 # expect-stdout:
 #   0
 #   5

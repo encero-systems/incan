@@ -1,6 +1,4 @@
 # behavior: a list or dict comprehension that changes its items reaches the list it reads through enumerate, zip, a dict's values(), an element, a field of an element and directly, and a comprehension or generator over a temporary changes its own copies
-# retires: loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs::comprehensions_change_their_items_in_place_issue1561
-# retires: loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs::comprehensions_change_the_items_of_a_temporary_issue1561
 # expect-stdout:
 #   [2, 4]
 #   [[1], [3]]

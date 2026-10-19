@@ -1,6 +1,4 @@
 # behavior: a generic newtype wraps any value, answers an instance method, builds through a static wrap and duplicates its payload into a tuple
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_generic_simple_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_generic_builder_methods_codegen
 # expect-stdout:
 #   Box
 #   42 42

@@ -1,5 +1,4 @@
 # behavior: descriptor-derived model consts nest an empty FrozenList const and an Option field, and compare equal to the consts they were built from (#1001)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_descriptor_const_with_empty_frozen_list_codegen_issue1001
 # expect-stdout:
 #   true
 #   0

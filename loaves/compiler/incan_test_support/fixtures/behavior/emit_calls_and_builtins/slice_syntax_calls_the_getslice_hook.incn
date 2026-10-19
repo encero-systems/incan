@@ -1,5 +1,4 @@
 # behavior: slice syntax on a type that adopts Sliceable calls its __getslice__ hook with Some of each written part and None for each omitted one, on a generic type too, and list and str slices written with :: keep their meaning
-# retires: loaves/compiler/incan_emit/src/tests/slice_hooks.rs::slice_syntax_calls_the_getslice_hook_issue1561
 # expect-stdout:
 #   [1, 2, -1]
 #   [-1, -1, -1]

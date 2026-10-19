@@ -1,5 +1,4 @@
 # behavior: parameters, locals and a function named like host-language keywords (struct, where, mod, use, move, impl, dyn, box, async) are ordinary Incan names
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::rust_ident_uses_raw_idents_for_keywords
 # expect-stdout:
 #   5
 #   9

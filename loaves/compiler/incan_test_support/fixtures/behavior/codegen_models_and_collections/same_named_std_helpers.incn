@@ -1,5 +1,4 @@
 # behavior: std.testing's timeout marker and std.async.time's timeout are distinct functions that import side by side, and the async one races a task against its limit
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_same_named_stdlib_helpers_do_not_contaminate_nested_module_signatures
 # expect-stdout:
 #   7
 #   timed out

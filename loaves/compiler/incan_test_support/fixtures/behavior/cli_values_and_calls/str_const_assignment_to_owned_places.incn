@@ -1,5 +1,4 @@
 # behavior: a str constant becomes owned when assigned to direct and nested model fields, list and dict elements, and a field augmented assignment keeps its owned result
-# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::field_assignment_targets_retain_their_checked_storage_type_issue1986
 # expect-stdout:
 #   hello
 

@@ -1,7 +1,4 @@
 # behavior: filtered list and dict comprehensions over model and int sources keep only the items passing the predicate (#364, #602)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue364_filtered_list_comp_borrow_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_filtered_dict_comp_predicate_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue602_comprehension_copy_hotpaths_codegen
 # expect-stdout:
 #   a
 #   1

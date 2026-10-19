@@ -1,15 +1,4 @@
 # behavior: copies and mutations through collection parameters, indexed elements, derived iterables, match and comprehension bindings, closures, loop bindings and generic mut parameters preserve the values visible to the program
-# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::nonempty_dict_conversion_is_a_checked_copy_of_its_source_issue1852
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::collection_copies_from_mut_parameters_are_owned_issue1852
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_method_on_list_element_borrows_the_element_issue1857
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::tuple_index_after_list_index_has_no_bad_deref_issue1861
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::derived_iterables_keep_mutable_elements_live_issue1863
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::changed_match_comprehension_and_closure_bindings_build_issue1864
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::loop_popping_each_element_builds_issue1869
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::comprehension_filter_mutation_reaches_the_source_issue1864
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::closure_module_function_reads_and_str_literal_arms_build_issue1864
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::loop_and_mut_receiver_shapes_are_rust_valid_issue1869
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_parameter_copy_in_generic_function_states_clone_issue1874
 # expect-stdout:
 #   6
 #   2

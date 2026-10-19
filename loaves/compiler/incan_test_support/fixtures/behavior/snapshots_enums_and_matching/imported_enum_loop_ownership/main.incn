@@ -1,5 +1,4 @@
 # behavior: a loop over a list of an imported enum compares each element and passes it on to a function without losing the list (#372)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue372_imported_enum_loop_ownership_codegen
 # expect-stdout:
 #   true
 #   false

@@ -1,5 +1,4 @@
 # behavior: match statements over ints and Options select by literal, binding, wildcard and guard
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_match_statements_codegen
 # expect-stdout:
 #   other
 #   42

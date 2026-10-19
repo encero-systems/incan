@@ -1,7 +1,4 @@
 # behavior: a Rust HashMap answers get with a str literal and with a str local, and a local model whose insert method has a defaulted parameter is dispatched by its own signature beside the map's two-argument insert
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::regular_method_call_policy_preserves_lookup_arg_shape
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::regular_hash_map_get_preserves_borrowed_probe_shape
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::qualified_rust_receiver_does_not_inherit_same_named_incan_method_signature
 # expect-stdout:
 #   2
 #   1

@@ -1,5 +1,4 @@
 # behavior: models define +, <, ==, indexing, index assignment, @, & and ~ through dunder methods and the operators call them
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_operators_codegen
 # expect-stdout:
 #   125
 #   true

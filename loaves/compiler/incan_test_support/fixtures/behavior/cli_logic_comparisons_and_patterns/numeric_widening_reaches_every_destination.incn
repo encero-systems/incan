@@ -1,5 +1,4 @@
 # behavior: a narrower integer or an f32 value widens into a wider binding, argument, return, yielded item, field, list slot, Option payload and union member, match arms and loop break values of two integer types widen to the wider one, a lookup probe widens to the element or key type, and two integer types compare in a type holding both
-# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::accepted_numeric_widenings_build
 # expect-stdout:
 #   -5 250 -10 1.5
 #   250 [-5, 250]

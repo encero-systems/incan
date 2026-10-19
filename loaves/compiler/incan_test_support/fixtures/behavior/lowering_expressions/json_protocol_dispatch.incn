@@ -1,7 +1,4 @@
 # behavior: to_json dispatches to the std.serde.json Serialize protocol whether the trait is adopted by its imported name or module-qualified, and from_json reads the Deserialize protocol back
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::stdlib_json_trait_owner_precedes_native_serde_mapping
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::unqualified_stdlib_json_trait_precedes_native_serde_mapping
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::stdlib_json_trait_dispatch_keeps_source_protocol_lookup
 # expect-stdout:
 #   {"value":1}
 #   {"label":"x"}

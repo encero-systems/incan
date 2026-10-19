@@ -1,5 +1,4 @@
 # behavior: a mut self method called on a loop item inside a call argument, a list, an f-string or a field of the item changes the item in the list, as the same call written as its own statement does
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_self_call_inside_a_larger_expression_iterates_in_place
 # expect-stdout:
 #   2
 #   11

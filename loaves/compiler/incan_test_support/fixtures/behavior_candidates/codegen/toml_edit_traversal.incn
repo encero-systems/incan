@@ -1,5 +1,4 @@
 # behavior: a toml_edit document is traversed by borrowed items down a key path and the leaf is read back
-# retires: loaves/compiler/incan_emit/src/codegen.rs::toml_traversal_uses_extracted_receiver_contracts
 # expect-stdout:
 #   3
 #   none

@@ -1,5 +1,4 @@
 # behavior: a value of a type parameter is passed where its bound names the expected trait, calls its bound's method, is cloned, is returned as an Option of it and is passed to a callee's own type parameter
-# retires: loaves/compiler/incan_emit/src/tests/generic_call_arguments.rs::type_parameter_values_build_where_a_bound_makes_them_the_expected_type_issue1561
 # expect-stdout:
 #   18
 #   c

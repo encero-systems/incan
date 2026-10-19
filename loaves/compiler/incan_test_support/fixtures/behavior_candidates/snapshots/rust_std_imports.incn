@@ -1,5 +1,4 @@
 # behavior: plain, aliased and nested imports of Rust standard-library items coexist in one module and the module's functions run
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_imports_codegen
 # expect-stdout:
 #   basic imports work
 #   aliased imports work

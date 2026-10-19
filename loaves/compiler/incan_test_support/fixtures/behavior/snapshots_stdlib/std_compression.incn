@@ -1,5 +1,4 @@
 # behavior: every std.compression codec round-trips bytes, decompress_auto detects the codec, streams round-trip through files, and raw snappy round-trips
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_compression_modules_compile_codegen
 # expect-stdout:
 #   gzip round trip ok
 #   zlib round trip ok

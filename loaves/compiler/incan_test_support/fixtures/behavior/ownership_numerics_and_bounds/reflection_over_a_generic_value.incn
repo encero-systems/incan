@@ -1,5 +1,4 @@
 # behavior: a generic function reads a named public field and the field items of whatever model it is given
-# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::generic_value_field_reflection_methods_infer_field_value_bound
 # expect-stdout:
 #   Some("Ann")
 #   name=Ann

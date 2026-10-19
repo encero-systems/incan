@@ -1,5 +1,4 @@
 # behavior: matching a Rust read_dir Result and each entry Result in a loop reads the directory's single file name and reports a missing directory (#492)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue492_rust_result_match_does_not_clone_scrutinee
 # expect-stdout:
 #   only.txt
 #   missing

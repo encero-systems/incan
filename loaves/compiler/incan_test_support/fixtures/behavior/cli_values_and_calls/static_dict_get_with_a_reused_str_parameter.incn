@@ -1,15 +1,4 @@
 # behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, also when the same name is the key of an index assignment or part of the receiver's path, a str literal inserted into a static dict is stored as its key, get returns the stored value on a static dict, a local bound to one, a dict parameter and a generic dict, a value read from a dict stays the same when the dict is changed while the value is still read, and type patterns match a union value returned by get
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_copies_only_a_kept_value
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_is_copied_when_the_dict_changes_while_it_is_read
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::local_dict_get_answers_with_the_stored_value
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::static_collection_arguments_stay_readable_issue1793
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_dict_changed_while_the_binding_is_read_is_copied
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_dict_get_whose_result_is_only_read_stays_in_place
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_read_only_lookup_matched_with_union_type_patterns_names_the_variants
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_kept_readable_issue1793
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_again_by_the_generated_code_are_kept_readable_issue1793
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::dict_get_answers_with_the_stored_value
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_of_a_local_collection_method_are_left_as_written_issue1793
 # expect-stdout:
 #   a=1
 #   b missing

@@ -1,6 +1,4 @@
 # behavior: `in` over a list of str accepts a call result and a literal as the probe (#1066)
-# retires: loaves/compiler/incan_emit/src/codegen.rs::string_membership_probe_borrows_non_variable_owned_string_issue1066
-# retires: loaves/compiler/incan_emit/src/codegen.rs::string_membership_probe_keeps_literal_and_borrowed_probes_well_formed_issue1066
 # expect-stdout:
 #   true
 #   false

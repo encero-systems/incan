@@ -1,5 +1,4 @@
 # behavior: a generic BinaryReader consumer loops over chunks() through map_err with ? and reports each chunk's length
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_fallible_adapter_loop_inherits_qualified_trait_dispatch_codegen
 # expect-stdout:
 #   16
 #   4

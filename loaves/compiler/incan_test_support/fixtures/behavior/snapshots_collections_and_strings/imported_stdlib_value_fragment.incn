@@ -1,5 +1,4 @@
 # behavior: a stdlib function imported by name from a nested std module returns a one-byte value
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_imported_stdlib_value_fragment_codegen
 # expect-stdout:
 #   1
 

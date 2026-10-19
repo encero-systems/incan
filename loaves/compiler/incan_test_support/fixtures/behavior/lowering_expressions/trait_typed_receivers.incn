@@ -1,6 +1,4 @@
 # behavior: a parameter typed as a trait dispatches the trait's own method, and one typed as a supertrait adopter dispatches a method of the supertrait
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_receiver_typed_as_a_supertrait_adopter_keeps_the_trait_slot_spelling
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_receiver_typed_as_the_dispatched_trait_keeps_the_trait_slot_spelling
 # expect-stdout:
 #   plan 7
 #   first 4

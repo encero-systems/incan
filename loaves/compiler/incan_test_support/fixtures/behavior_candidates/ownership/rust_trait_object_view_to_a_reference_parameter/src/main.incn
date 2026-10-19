@@ -1,5 +1,4 @@
 # behavior: a Rust trait object behind a shared pointer is viewed through as_ref and handed to a Rust function taking the trait object by reference, twice
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_as_ref_arg_does_not_double_borrow
 # expect-stdout:
 #   3
 #   3

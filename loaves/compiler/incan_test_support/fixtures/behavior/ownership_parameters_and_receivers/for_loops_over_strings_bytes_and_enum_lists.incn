@@ -1,8 +1,4 @@
 # behavior: for loops over a list of strings, a str, a bytes value and a list of enum values visit every item, and the lists are still complete after the loops
-# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_borrowable_string_list_uses_iter
-# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_string_iterates_owned_character_strings
-# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_bytes_iterates_incan_ints
-# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_user_enum_list_clones_items_when_not_mutating
 # expect-stdout:
 #   3 2
 #   ["h.", "e.", "y."]

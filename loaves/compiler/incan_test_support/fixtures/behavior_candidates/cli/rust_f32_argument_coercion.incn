@@ -1,5 +1,4 @@
 # behavior: a float literal passed to a Rust constructor that takes f32 arrives as that many seconds
-# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::test_rfc041_rust_coercion_codegen_smoke
 # expect-stdout:
 #   1500
 

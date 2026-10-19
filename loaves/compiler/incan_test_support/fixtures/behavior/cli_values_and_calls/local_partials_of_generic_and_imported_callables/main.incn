@@ -1,6 +1,4 @@
 # behavior: a local partial of a generic function or of a generic model or class constructor is instantiated by its presets or its written type arguments, and a local partial of a function imported by name or read through its module passes every argument to it
-# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::local_partials_of_generic_callables_compile
-# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::local_partials_of_another_modules_functions_pass_every_argument
 # expect-stdout:
 #   [1, 2] [1, 3] [5, 4]
 #   no.4

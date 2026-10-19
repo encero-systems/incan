@@ -1,5 +1,4 @@
 # behavior: explicit call-site type arguments on a function and on a method select the instantiation and return the passed value (RFC 054)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_explicit_call_site_generics_codegen
 # expect-stdout:
 #   3
 #   text

@@ -1,5 +1,4 @@
 # behavior: classes with public fields, methods, self-mutating methods, list-backed state and composition run and print their state, and every declared method answers and every field is read
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_classes_codegen
 # expect-stdout:
 #   Point: (10, 20)
 #   Rectangle: 5x10

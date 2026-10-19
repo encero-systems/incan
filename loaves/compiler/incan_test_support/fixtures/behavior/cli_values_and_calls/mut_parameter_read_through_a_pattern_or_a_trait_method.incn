@@ -1,5 +1,4 @@
 # behavior: a mut parameter the callee only reads, through a match binding, a plain-self trait method or a method on Self in a trait default, accepts an immutable binding and leaves it unchanged
-# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::parameter_read_through_a_pattern_or_a_trait_method_takes_a_copy_issue1561
 # expect-stdout:
 #   2
 #   6

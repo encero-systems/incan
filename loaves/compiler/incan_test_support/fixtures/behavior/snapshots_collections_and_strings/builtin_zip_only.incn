@@ -1,5 +1,4 @@
 # behavior: builtin zip pairs two lists up to the shorter one, through the bare and the std.builtins spelling (#950)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue950_builtin_zip_only_codegen
 # expect-stdout:
 #   11
 #   alpha:1

@@ -1,15 +1,4 @@
 # behavior: std.testing assert helpers compare plain values, comparison operands, strings and inline model constructors, return the unwrapped Some/Ok/Err payload, and assert_raises catches a raised ValueError from a call expression or a function reference
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_eq_uses_plain_comparison
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_eq_message_preserves_empty_message_semantics
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_eq_parenthesizes_comparison_operands
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_ne_reuses_string_binop_plan
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_model_constructor_comparison_parses
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_some_returns_unwrapped_value
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_none_accepts_bare_none_literal
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_ok_accepts_bare_ok_literal
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_err_accepts_bare_err_literal
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_raises_catches_panic_payloads
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_raises_invokes_zero_arg_function_argument
 # expect-stdout:
 #   plain and messaged assert_eq passed
 #   comparison operand passed

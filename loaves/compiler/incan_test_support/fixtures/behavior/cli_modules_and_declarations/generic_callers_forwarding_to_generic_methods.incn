@@ -1,5 +1,4 @@
 # behavior: generic functions forwarding their values to generic methods that format or compare them run for the values they are given, as does one forwarding to a generic function that formats its value
-# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::method_body_bounds_reach_a_forwarding_caller_issue1779
 # expect-stdout:
 #   sent x
 #   sent 3

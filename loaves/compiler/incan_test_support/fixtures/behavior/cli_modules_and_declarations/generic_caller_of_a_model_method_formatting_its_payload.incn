@@ -1,7 +1,4 @@
 # behavior: generic functions that call methods of generic models run for the payloads they are given: one walks a stream through a trait the stream adopts, one calls a model method whose sibling formats the payload
-# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::trait_method_bounds_reach_a_caller_through_the_receiver_issue1280
-# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::impl_header_bounds_reach_a_caller_of_a_sibling_method_issue1779
-# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::implementation_bound_matching_is_canonical_and_instantiation_exact
 # expect-stdout:
 #   walked 7
 #   walked seven

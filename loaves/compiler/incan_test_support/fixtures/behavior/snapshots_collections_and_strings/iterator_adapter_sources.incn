@@ -1,5 +1,4 @@
 # behavior: zip and take adapters serve as loop, comprehension and generator sources through both the fluent and the builtin spellings (#950, #953)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue950_953_iterator_adapter_sources_codegen
 # expect-stdout:
 #   11.0
 #   11.0

@@ -1,5 +1,4 @@
 # behavior: the std.web Json, Html and Response types import beside a json-derived model without a name clash and the program runs; the retired test was a snapshot of the imports
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_web_response_codegen
 # expect-stdout:
 #   Newtype imports successful - no E0761 module ambiguity
 #   {"id":1,"name":"Ada"}

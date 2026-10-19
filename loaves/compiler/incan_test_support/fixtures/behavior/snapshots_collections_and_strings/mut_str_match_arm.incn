@@ -1,5 +1,4 @@
 # behavior: match arms assign string literals and a bound payload to a mutable str, with nested if/else inside an arm (#1668)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_mut_str_match_arm_codegen
 # expect-stdout:
 #   admitted
 #   no manifest

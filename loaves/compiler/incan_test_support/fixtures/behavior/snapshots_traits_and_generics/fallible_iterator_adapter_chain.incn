@@ -1,5 +1,4 @@
 # behavior: a source-defined fallible stream trait with map, take, inspect, inspect_err, map_err and collect adapters runs each chain and reports the collected count or mapped error
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fallible_iterator_adapter_chain_codegen
 # expect-stdout:
 #   2
 #   1

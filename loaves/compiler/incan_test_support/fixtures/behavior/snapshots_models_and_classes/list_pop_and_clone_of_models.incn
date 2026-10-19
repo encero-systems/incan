@@ -1,6 +1,4 @@
 # behavior: a list of a Clone-only model drains through pop() and copies through clone() with the copy independent of the original
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_list_pop_clone_only_model_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_list_clone_model_codegen
 # expect-stdout:
 #   2
 #   1

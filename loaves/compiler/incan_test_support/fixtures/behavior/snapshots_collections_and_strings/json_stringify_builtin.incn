@@ -1,7 +1,4 @@
 # behavior: json_stringify evaluates its operand exactly once through both spellings, serializes None as null and keeps the full width of an int
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::builtin_json_stringify_evaluates_its_operand_once
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::builtin_json_stringify_gives_untyped_none_a_concrete_rust_type
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::builtin_json_stringify_preserves_the_incan_int_width
 # expect-stdout:
 #   evaluated
 #   "line\né"

@@ -1,8 +1,4 @@
 # behavior: models and classes imported from other modules construct by their exact module identity: a model with private defaulted fields from its public fields alone, an all-public model directly, a class with a required private field from all its fields, and the same-named class from two modules and through a two-hop facade each with its own field types
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::private_default_source_models_expose_public_field_provider_bridges_issue884
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::constructor_metadata_keeps_all_public_models_on_struct_literal_surface
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::constructor_metadata_keeps_complete_private_class_input_surface_issue886
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::ordinary_source_imports_bind_private_constructor_bridges_by_exact_module_identity_issue886
 # expect-stdout:
 #   public sealed r1
 #   open 2

@@ -1,5 +1,4 @@
 # behavior: list() builds a list from dict views, lists, sets, a mutable parameter, a dict, a str, nothing, bytes, a range, frozen lists, an iterator, a reused source and the process arguments (#1464)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1464_list_constructor_codegen
 # expect-stdout-contains:
 #   2 2 2 3 2 2 3 0 2 3 1 1 4 2
 #   1

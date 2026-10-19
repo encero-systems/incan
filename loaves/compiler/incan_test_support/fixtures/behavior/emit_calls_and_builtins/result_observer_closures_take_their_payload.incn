@@ -1,5 +1,4 @@
 # behavior: the closure passed to inspect or inspect_err takes the payload it observes, so string methods, operators, calls, f-strings and captured locals on it run
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::result_observer_closures_take_the_payload_they_observe_issue1561
 # expect-stdout:
 #   abc!
 #   ABC

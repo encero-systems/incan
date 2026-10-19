@@ -1,5 +1,4 @@
 # behavior: a change through a name a match, if let or while let pattern binds from a mut local, a field or list element of one, or the variable of a loop over one changes that local, and a pattern that only reads leaves an immutable local as it is
-# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::change_through_a_pattern_binding_of_a_mut_local_reaches_it_issue1561
 # expect-stdout:
 #   Some([1, 2, 3])
 #   Some([1, 4])

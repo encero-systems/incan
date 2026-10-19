@@ -1,5 +1,4 @@
 # behavior: a rest-parameter function sums its spread positional arguments whether called directly, through a bound callable or as a method
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_variadic_calls_codegen
 # expect-stdout:
 #   6
 #   10

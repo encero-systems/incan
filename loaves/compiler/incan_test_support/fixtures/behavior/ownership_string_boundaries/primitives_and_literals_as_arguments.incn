@@ -1,8 +1,4 @@
 # behavior: int, float and bool values pass to functions and remain usable by the caller afterwards, and a str literal is accepted directly as a method argument
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_int_no_conversion
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_float_no_conversion
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_bool_no_conversion
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_method_arg_no_conversion
 # expect-stdout:
 #   43
 #   4.5

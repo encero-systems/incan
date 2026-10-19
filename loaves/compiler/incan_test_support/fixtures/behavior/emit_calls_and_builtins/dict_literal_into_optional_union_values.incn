@@ -1,5 +1,4 @@
 # behavior: a dict literal with int, bool and None values passed to a dict[str, Option[bool | int]] parameter stores each value as the matching Option and union member
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::interop_wrapped_dict_literal_keeps_call_site_value_target
 # expect-stdout:
 #   int 1
 #   bool true

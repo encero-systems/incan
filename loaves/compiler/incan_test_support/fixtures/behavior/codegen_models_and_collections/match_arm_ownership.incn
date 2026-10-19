@@ -1,8 +1,4 @@
 # behavior: a value returned from every match arm, cloned across arms when used after the match, or returned from a guarded arm is delivered intact
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::generic_value_moves_in_every_terminal_match_arm_without_clone_bound
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::generic_value_clones_in_match_arms_when_used_after_match
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::guarded_match_arm_returns_move_once_the_guard_admits_the_arm
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::guard_expression_reads_stay_conservative_while_the_admitted_return_moves
 # expect-stdout:
 #   first
 #   second

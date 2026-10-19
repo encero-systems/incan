@@ -1,5 +1,4 @@
 # behavior: an imported trait's default method returns and constructs a model of the trait's own module, which the adopting module never imports
-# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::imported_trait_default_names_its_module_types_by_path_issue1759
 # expect-stdout:
 #   12
 

@@ -1,5 +1,4 @@
 # behavior: a program importing a nested module that declares route handlers with and without an explicit method list runs, and the handlers compute from their parameters
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_web_route_extractors_nested_module_codegen
 # expect-stdout:
 #   3
 #   4

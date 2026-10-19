@@ -1,5 +1,4 @@
 # behavior: models with Debug, Clone and json derives, Option fields, nested collections and nested models are constructible and every declared field is readable
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_models_codegen
 # expect-stdout:
 #   User: Alice, Age: 30, alice@example.com
 #   Product ID: 123, Laptop at 999.99

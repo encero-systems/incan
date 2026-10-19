@@ -1,5 +1,4 @@
 # behavior: a trait spelled Serialize from another module keeps its own to_json body, while the std.serde.json traits forward the JSON protocol whether adopted module-qualified or derived by their imported name (#1431)
-# retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::adopted_serde_derives_require_canonical_std_serde_json_owner
 # expect-stdout:
 #   vendor codec
 #   {"value":1}

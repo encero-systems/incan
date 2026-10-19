@@ -1,5 +1,4 @@
 # behavior: the Ord and Eq dunders of adopters imported from another module, under every spelling of the trait, and of an imported derived Ord compare as their operators, an adopter's own __ge__ included
-# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::comparison_dunders_of_an_adopter_from_another_module_build_issue1561
 # expect-stdout:
 #   false
 #   true

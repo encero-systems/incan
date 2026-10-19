@@ -1,5 +1,4 @@
 # behavior: list, tuple and dict literals unpack into fixed positional and keyword parameters of functions and methods
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fixed_call_unpack_codegen
 # expect-stdout:
 #   London
 #   Paris

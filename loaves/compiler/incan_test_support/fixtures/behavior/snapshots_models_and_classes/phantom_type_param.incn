@@ -1,5 +1,4 @@
 # behavior: a model type parameter used only in method signatures still types the model, its operator method and its debug rendering (#1370)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1370_phantom_type_param_codegen
 # expect-stdout:
 #   (amount * 2)
 #   (label * x)

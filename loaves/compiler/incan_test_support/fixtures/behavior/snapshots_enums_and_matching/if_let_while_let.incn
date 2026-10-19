@@ -1,5 +1,4 @@
 # behavior: if-let binds an Option payload once and while-let loops until the binding becomes None (RFC 049)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc049_if_let_while_let_codegen
 # expect-stdout:
 #   5
 #   0

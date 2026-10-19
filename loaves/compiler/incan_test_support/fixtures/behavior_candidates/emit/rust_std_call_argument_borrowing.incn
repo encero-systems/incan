@@ -1,8 +1,4 @@
 # behavior: Incan values passed to Rust standard-library functions borrow as the signature declares: two models swap through mutable borrows, a model and an int are measured by size_of_val through shared borrows, and a list is taken by mutable borrow leaving an empty list behind
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_struct_arg_for_rust_ref_param
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_mutably_for_rust_refmut_param
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_copy_arg_for_rust_ref_param
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_args_from_typed_rust_callee_without_registry
 # expect-stdout:
 #   2 1
 #   8

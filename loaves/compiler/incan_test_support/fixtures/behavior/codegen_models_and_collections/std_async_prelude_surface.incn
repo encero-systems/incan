@@ -1,5 +1,4 @@
 # behavior: std.async exports sleep, spawn, JoinHandle, Mutex and RaceArm; a spawned task joins with its value after sleeping
-# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_async_prelude_import_snapshot
 # expect-stdout:
 #   1
 

@@ -1,5 +1,4 @@
 # behavior: std.async.prelude and std.traits.prelude name the std.async and std.traits modules, so names import through them and import std.async.prelude binds prelude to std.async; a task spawned through that binding sleeps and joins with its value, and an Error adopter reports its message
-# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::namespace_prelude_module_import_binds_the_name_it_spells_issue1561
 # expect-stdout:
 #   1
 #   broken: disk

@@ -1,5 +1,4 @@
 # behavior: a class method named clone that rebuilds the instance from its str and int fields returns an independent copy (#366)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue366_clone_self_string_field_codegen
 # expect-stdout:
 #   orders
 #   orders 1

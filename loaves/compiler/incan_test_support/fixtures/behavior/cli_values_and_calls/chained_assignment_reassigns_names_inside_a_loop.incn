@@ -1,16 +1,4 @@
 # behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, None, (None), [None], [], {} and list() reach targets of different types in each one's type, 5 reaches an i8 and an int, a module static target gets the value too, a call to a user function, closure or parameter named Vec, set, list or dict is evaluated once for all targets, and targets of list[int] and list[i64], or list[float] and list[f64], share one generic value
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_gives_every_target_the_value_issue1806
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_gives_every_target_the_value_issue1806
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_types_its_value_by_the_targets_and_copies_for_a_static_issue1806
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_types_its_value_and_copies_for_a_static_issue1806
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_literal_over_disagreeing_targets_is_written_per_target_issue1806
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_literal_over_disagreeing_targets_is_written_per_target_issue1806
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_call_to_a_user_binding_named_like_a_constructor_is_evaluated_once_issue1806
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_call_to_a_user_function_named_set_is_emitted_once_issue1806
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_targets_of_equivalent_types_share_one_typed_temporary_issue1806
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_targets_of_equivalent_types_share_one_temporary_issue1806
 # expect-stdout:
 #   5
 #   10 10

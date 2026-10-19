@@ -1,5 +1,4 @@
 # behavior: a generic FallibleIterator model from a compiled package is drained by a consumer function that inherits the implementation's bound on the type parameter (#1280)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::compiled_provider_consumer_inherits_manifest_implementation_bounds_issue1280
 # expect-stdout:
 #   2
 

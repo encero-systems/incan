@@ -1,8 +1,4 @@
 # behavior: a trait method dispatches on a generic receiver, on a nominal generic receiver over a type parameter, on a concrete receiver of a derived Clone and on a concrete adopter of a source trait
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::generic_receiver_keeps_trait_abi_dispatch
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::nominal_generic_receiver_can_use_source_projection
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::rust_native_trait_keeps_abi_dispatch_for_concrete_receiver
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::concrete_source_trait_can_use_recoverable_projection
 # expect-stdout:
 #   generic: item-a
 #   nominal generic: chunk of item-b

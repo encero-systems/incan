@@ -1,5 +1,4 @@
 # behavior: reading a bounded number of bytes from a BytesIO buffer returns exactly those bytes, and the next bounded read continues from where the first stopped
-# retires: loaves/compiler/incan_emit/src/ownership.rs::plan_read_by_ref_receiver_reborrows_refmut_guard
 # expect-stdout:
 #   2 true
 #   4 true

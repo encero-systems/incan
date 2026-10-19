@@ -1,6 +1,4 @@
 # behavior: a str literal nested in a tuple, Option, alternation or if-let pattern selects the arm whose value equals it
-# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::nested_string_literal_pattern_lowers_to_a_guarded_binding_issue1707
-# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::hoisted_literal_tests_conjoin_with_the_arm_guard_issue1707
 # expect-stdout:
 #   second is answer
 #   answered

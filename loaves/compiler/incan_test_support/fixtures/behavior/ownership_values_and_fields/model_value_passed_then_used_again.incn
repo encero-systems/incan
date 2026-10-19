@@ -1,8 +1,4 @@
 # behavior: a model value passed to a function is still usable by the caller afterwards, the same value can be passed twice in one returned call, and a value passed at its last use reaches the callee intact
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_noncopy_var_last_use_moves
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_noncopy_var_non_last_use_clones
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_call_context_noncopy_var_read_clones
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_call_context_noncopy_var_move_stays_move
 # expect-stdout:
 #   user Ann
 #   Ann

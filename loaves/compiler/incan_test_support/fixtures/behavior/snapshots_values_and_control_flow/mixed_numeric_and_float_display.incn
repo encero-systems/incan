@@ -1,6 +1,4 @@
 # behavior: int and float operands mix in arithmetic, and a float renders with its decimal point in println, str() and f-strings, an f64 included since it is a float, while :? keeps the plain rendering (#1372)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_mixed_numeric_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_float_display_codegen
 # expect-stdout:
 #   18.821428571428573
 #   100.0 25.0

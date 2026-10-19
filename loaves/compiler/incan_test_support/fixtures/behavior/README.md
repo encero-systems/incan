@@ -56,7 +56,6 @@ The header is the run of `#` comment lines at the top of the program; the first 
 
 ```text
 # behavior: a public int function taking two parameters returns their sum
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_simple_function
 # expect-stdout:
 #   5
 

@@ -1,5 +1,4 @@
 # behavior: a Regex built with the constructor and the ignore_case flag matches case-insensitively, and an invalid pattern is refused with an error
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_regex_import_constructor_hook_codegen
 # expect-stdout:
 #   true false
 #   refused

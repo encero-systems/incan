@@ -1,5 +1,4 @@
 # behavior: an imported Rust associated function call inside an elif branch runs like one in the if branch
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_associated_call_in_elif_codegen
 # expect-stdout:
 #   true
 #   false

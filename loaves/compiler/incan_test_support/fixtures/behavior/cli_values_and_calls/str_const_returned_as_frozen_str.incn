@@ -1,8 +1,4 @@
 # behavior: a const declared str reaches FrozenStr destinations and a FrozenStr const reaches str destinations, returned bare, as a union member and inside Some, passed as an argument, bound to an annotated name, stored in a model field, a list and a dict, and isinstance reads each as a str
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::frozen_str_const_is_converted_at_str_destinations_issue1794
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::planner_wraps_a_static_str_at_frozen_str_destinations_issue1794
-# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::str_const_is_wrapped_at_frozen_str_destinations_issue1794
-# retires: loaves/compiler/incan_ir/src/types.rs::frozen_str_union_member_admits_a_static_str_const_issue1794
 # expect-stdout:
 #   true
 #   true

@@ -1,5 +1,4 @@
 # behavior: arithmetic between two f32 values stays f32 for every binary operator, so 0.1 + 0.2 rounds as single precision while the same f64 sum shows the double-precision residue
-# retires: loaves/compiler/incan_ir/src/lower/types.rs::exact_binary_float_arithmetic_keeps_its_native_ir_width
 # expect-stdout:
 #   f32 add 0.3
 #   f64 add 0.30000000000000004

@@ -1,6 +1,4 @@
 # behavior: consts defined by concatenating earlier str consts concatenate again at use, and bytes and FrozenBytes consts report their lengths (RFC 008)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_const_str_chain_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_const_bytes_codegen
 # expect-stdout:
 #   hello world!
 #   hello world!?

@@ -340,7 +340,6 @@ nav:
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - Reference:
-          - Test corpus inventory: contributing/reference/test_corpus_inventory.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
   - Release notes:
       - Overview: release_notes/index.md

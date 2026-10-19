@@ -1,5 +1,4 @@
 # behavior: wildcard, literal, string, bool, Option, Result, nested, tuple and guarded patterns each select the arm that prints
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_patterns_codegen
 # expect-stdout:
 #   wildcard matches anything
 #   five

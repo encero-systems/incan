@@ -1,5 +1,4 @@
 # behavior: a local that shadows a binding of a static inside a block is an ordinary value, not the static
-# retires: loaves/compiler/incan_emit/src/codegen.rs::nested_ordinary_binding_shadows_outer_static_binding_alias
 # expect-stdout:
 #   2
 #   0

@@ -1,5 +1,4 @@
 # behavior: a by-value method argument taken from another instance's private field merges two wrappers without disturbing either (#241)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue241_field_backed_method_arg_clone_codegen
 # expect-stdout:
 #   left+right
 #   left

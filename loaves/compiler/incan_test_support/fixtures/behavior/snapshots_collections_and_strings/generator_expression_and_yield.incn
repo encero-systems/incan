@@ -1,6 +1,4 @@
 # behavior: a generator expression with nested for-clauses and filters yields lazily through take and collect, and a yield-based generator function collects its items (RFC 006)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc006_generator_expression_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc006_generator_function_yield_codegen
 # expect-stdout:
 #   2 3 4
 #   1 2 3

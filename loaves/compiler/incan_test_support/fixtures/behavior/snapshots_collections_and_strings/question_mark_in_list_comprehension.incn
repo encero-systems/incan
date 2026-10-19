@@ -1,5 +1,4 @@
 # behavior: the ? operator inside a list comprehension propagates the first Err out of the enclosing function and otherwise collects every Ok value (#633)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue633_question_mark_list_comprehension_codegen_uses_loop
 # expect-stdout:
 #   1 2 3
 #   negative: -2

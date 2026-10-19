@@ -1,5 +1,4 @@
 # behavior: list(source) and a comprehension over a Generator source materialize the yielded values, beside the generator's own take, map, filter and collect (RFC 006, RFC 088, #1464)
-# retires: loaves/compiler/incan_emit/src/ownership.rs::generator_sources_are_consumed_through_the_iterator_trait
 # expect-stdout:
 #   3
 #   0 1 2

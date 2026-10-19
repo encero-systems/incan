@@ -1,5 +1,4 @@
 # behavior: newtypes without a hook wrap raw values, a newtype with from_underlying validates on construction, and a non-canonical from_str helper is an ordinary method (RFC 017)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_checked_construction_codegen
 # expect-stdout:
 #   42 0.5 5 alice@example.com
 #   ok alice@example.com

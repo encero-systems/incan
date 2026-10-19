@@ -1,5 +1,4 @@
 # behavior: a Default with-bound lets a generic function build the value through T.default(), giving a derived model its field defaults (#1374)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_default_codegen
 # expect-stdout:
 #   0
 #   empty

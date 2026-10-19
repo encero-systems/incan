@@ -1,6 +1,4 @@
 # behavior: a borrowed rust::toml Value, shared or mutable, matches its String variant twice and yields the payload text (#1448)
-# retires: loaves/compiler/incan_emit/src/checked_program/borrowed_rust_enum.rs::borrowed_rust_enum_codegen_preserves_shared_and_mutable_subjects
-# retires: loaves/compiler/incan_emit/src/checked_program/borrowed_rust_enum.rs::borrowed_rust_enum_payload_types_preserve_reference_modes
 # expect-stdout:
 #   hello
 #   true

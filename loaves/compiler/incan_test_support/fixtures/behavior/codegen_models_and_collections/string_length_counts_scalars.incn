@@ -1,6 +1,4 @@
 # behavior: len() and .len() on a str count Unicode scalars while len() on a list counts elements
-# retires: loaves/compiler/incan_emit/tests/string_len_codegen_tests.rs::string_len_spelling_emit_shared_runtime_semantics
-# retires: loaves/compiler/incan_emit/tests/string_len_codegen_tests.rs::list_len_keeps_collection_element_count_emission
 # expect-stdout:
 #   5
 #   5

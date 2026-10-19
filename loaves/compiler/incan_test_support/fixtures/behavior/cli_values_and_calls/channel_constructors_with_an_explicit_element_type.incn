@@ -1,5 +1,4 @@
 # behavior: the channel constructors take an explicit element type, and a value sent through each channel is received
-# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::explicit_channel_element_type_is_spelled_on_the_call
 # expect-stdout:
 #   got hello
 #   got 3

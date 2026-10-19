@@ -1,5 +1,4 @@
 # behavior: a decorated method, a decorated function and its adapter all accept an aliased Rust generic over `tuple[&mut int, &mut int]`
-# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi
 # expect-stdout:
 #   7
 #   decorated explicit mutable Rust generic CLI path

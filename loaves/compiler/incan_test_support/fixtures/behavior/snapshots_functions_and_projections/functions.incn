@@ -1,5 +1,4 @@
 # behavior: plain, recursive, composed, list-mutating, early-return, void and tuple-returning functions run and print their results
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_functions_codegen
 # expect-stdout:
 #   Hello, World!
 #   5 + 3 = 8

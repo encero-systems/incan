@@ -1,5 +1,4 @@
 # behavior: a Rust extension trait imported without inspected metadata and never called leaves the program buildable and its functions runnable (#1450)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_trait_import_without_metadata_unused_codegen
 # expect-stdout:
 #   kept
 

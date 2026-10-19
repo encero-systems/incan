@@ -1,6 +1,4 @@
 # behavior: a str variable handed to a Rust method generic over Into[String] is encoded twice while the caller keeps it, and once more at its last use
-# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_inferred_generic_read_string_clones
-# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_inferred_generic_moved_string_stays_direct
 # expect-stdout:
 #   hello world
 #   HELLO WORLD

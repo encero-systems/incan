@@ -1,5 +1,4 @@
 # behavior: positional, default-argument, builtin, method, chained and collection calls each produce the value the caller prints
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_function_calls_codegen
 # expect-stdout:
 #   Hello, World!
 #   8

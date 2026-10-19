@@ -1,5 +1,4 @@
 # behavior: an alternation pattern in a match arm and in an if-let binds the same name from either alternative
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_pattern_alternation_codegen
 # expect-stdout:
 #   waiting
 #   waiting

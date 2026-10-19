@@ -1,6 +1,4 @@
 # behavior: a newtype adopting two traits with a same-named method dispatches each targeted implementation through its trait bound (RFC 043)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc043_newtype_trait_targets_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::trait_targeted_method_overloads_keep_distinct_recoverable_projections
 # expect-stdout:
 #   1
 #   value

@@ -1,6 +1,4 @@
 # behavior: a dependency's enums that share variant names (a value enum beside payload enums of other arities, in both declaration orders, and enums imported from a sibling module) each publish their own variants, and a variant whose payload type is declared after its enum publishes that type; the dependency builds and the consumer constructs, matches and prints each (#1561)
-# retires: loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs::a_variant_payload_declared_after_its_enum_publishes_its_type_issue1561
-# retires: loaves/compiler/incan_emit/src/tests/dependency_enum_variants.rs::enums_sharing_a_variant_name_publish_each_enums_own_payload_issue1561
 # expect-stdout:
 #   enter intro
 #   leave

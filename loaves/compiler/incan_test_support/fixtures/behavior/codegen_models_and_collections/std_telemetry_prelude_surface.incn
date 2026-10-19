@@ -1,5 +1,4 @@
 # behavior: std.telemetry exports TelemetryValue, Attributes, Resource, InstrumentationScope and SpanContext, and a string telemetry value displays its text
-# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_telemetry_prelude_import_snapshot
 # expect-stdout:
 #   hello
 

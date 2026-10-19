@@ -1,5 +1,4 @@
 # behavior: methods on generic receivers fill their default arguments at positional and named call sites (#731)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue731_generic_method_defaults_codegen
 # expect-stdout:
 #   2
 #   2

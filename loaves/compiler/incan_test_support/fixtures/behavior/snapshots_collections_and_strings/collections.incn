@@ -1,5 +1,4 @@
 # behavior: list, dict, nested and tuple literals index, slice, concatenate and extend without consuming their sources
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_collections_codegen
 # expect-stdout:
 #   0 0 3 2
 #   1 5 1

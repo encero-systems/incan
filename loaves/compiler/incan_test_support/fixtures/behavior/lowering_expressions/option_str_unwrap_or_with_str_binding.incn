@@ -1,6 +1,4 @@
 # behavior: unwrap_or on an Option[str] takes a str binding as its fallback, in a call argument, an f-string, an assignment and a return
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::option_str_unwrap_or_passes_an_owned_fallback_issue1875
-# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::option_str_unwrap_or_takes_its_fallback_owned_issue1875
 # expect-stdout:
 #   none
 #   value: none

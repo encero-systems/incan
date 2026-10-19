@@ -1,5 +1,4 @@
 # behavior: contains_key, keys and values classify on a dict and on a mut dict parameter, encode on str and FrozenStr, and decode on a bytes literal, a bytes value and a FrozenBytes const (#1668)
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::method_kind_for_receiver_issue1668_surfaces
 # expect-stdout:
 #   true
 #   false

@@ -1,6 +1,4 @@
 # behavior: module consts of int, frozen str, frozen list, frozen dict and tuple types and a static model are readable, and public and private float consts print (RFC 008)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_consts_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_pub_const_codegen
 # expect-stdout:
 #   7
 #   hello

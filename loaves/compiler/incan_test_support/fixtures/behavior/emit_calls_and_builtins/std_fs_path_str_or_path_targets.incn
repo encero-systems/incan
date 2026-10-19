@@ -1,6 +1,4 @@
 # behavior: std.fs Path methods whose target is `Path | str` accept a str and a Path alike, each resolving the target through a helper of the same standard-library package: samefile answers for both spellings and rename moves a file to a str target and back to a Path target
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::an_sdk_provider_binds_the_native_unions_it_owns
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::canonical_self_package_call_uses_crate_path_without_losing_package_identity
 # expect-stdout:
 #   true
 #   true

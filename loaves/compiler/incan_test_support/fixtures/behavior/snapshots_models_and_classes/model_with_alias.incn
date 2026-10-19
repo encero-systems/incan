@@ -1,5 +1,4 @@
 # behavior: a model whose fields carry aliases, descriptions, defaults and non-identifier aliases is constructible through the alias names and readable through both spellings
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_with_alias_codegen
 # expect-stdout:
 #   savings retail crm
 #   0 42 active

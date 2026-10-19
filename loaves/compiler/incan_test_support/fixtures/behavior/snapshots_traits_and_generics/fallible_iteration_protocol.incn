@@ -1,6 +1,4 @@
 # behavior: a for loop over a fallible iterator yields each Ok(Some) item and propagates the first Err through ?, on a concrete and on a trait-typed receiver
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fallible_iteration_protocol_propagates_next_errors_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fallible_iteration_protocol_lowers_trait_typed_receiver_codegen
 # expect-stdout:
 #   chunk 1
 #   chunk 2

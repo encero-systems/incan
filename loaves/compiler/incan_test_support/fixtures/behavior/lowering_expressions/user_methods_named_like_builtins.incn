@@ -1,6 +1,4 @@
 # behavior: a model's own map, join, split, replace, count and index methods dispatch to the model while str join/split/replace and mut-list swap/extend reach the builtins
-# retires: loaves/compiler/incan_ir/src/expr.rs::iterator_method_kind_for_receiver_does_not_capture_iterable_or_plain_structs
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::method_kind_for_receiver
 # expect-stdout:
 #   Dataset.map(3)
 #   Dataset.join(rows)

@@ -1,8 +1,4 @@
 # behavior: a model reflects its scalar field values by name and lists every field, an optional and a list-typed field included, in declaration order; through a type parameter an optional scalar field reflects as its value or None; a generic model's unread field is fine
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_omits_dead_code_expect_for_generated_field_reflection_reads
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_emits_value_reflection_for_optional_scalar_fields
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_skips_value_reflection_for_non_scalar_fields
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_expects_unread_private_fields_when_value_reflection_is_not_emitted
 # expect-stdout:
 #   Ada
 #   str:Ada

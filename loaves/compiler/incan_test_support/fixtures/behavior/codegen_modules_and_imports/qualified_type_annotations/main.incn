@@ -1,6 +1,4 @@
 # behavior: a module-qualified type spelling names the same type as the direct import in return, field, optional field, parameter and local annotations, and its fields reflect the declaration name (#1437)
-# retires: loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs::a_module_qualified_return_annotation_emits_a_type_path_issue1437
-# retires: loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs::a_module_qualified_type_is_a_path_in_every_annotation_position_issue1437
 # expect-stdout:
 #   x
 #   ok

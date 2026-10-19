@@ -1,8 +1,4 @@
 # behavior: an associated function of a rusttype alias over a Rust String takes a str literal, a method of a Rust String held in a model field takes an owned str where the Rust signature wants a borrowed one, and the String's generic parse method works with an explicit type argument and with the type inferred from the binding
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::rusttype_surface_associated_function_uses_incan_string_conversion
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::qualified_rusttype_receiver_method_uses_rust_signature_borrowing
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_rust_method_explicit_generic_string_arg_keeps_turbofish
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_rust_method_generic_string_arg_keeps_inferable_shape
 # expect-stdout:
 #   5
 #   8

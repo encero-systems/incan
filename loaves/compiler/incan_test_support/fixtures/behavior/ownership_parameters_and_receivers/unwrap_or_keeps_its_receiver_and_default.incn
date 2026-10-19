@@ -1,5 +1,4 @@
 # behavior: an Option local, field, generic value, mut parameter and static read again after unwrap or unwrap_or stays usable, in a loop too, and an unwrap_or default is a value of the payload type: a str literal default of a Result[str, str] runs, and a default local read again stays usable
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::option_and_result_unwrap_or_keep_their_values_issue1561
 # expect-stdout:
 #   a
 #   a

@@ -1,6 +1,4 @@
 # behavior: modules named `async`, a soft keyword in Incan and a hard keyword in the host language, import and run at the top level and nested under a package directory
-# retires: loaves/compiler/incan_driver/src/backend/project/generator.rs::test_generate_multi_escapes_keyword_module_names
-# retires: loaves/compiler/incan_driver/src/backend/project/generator.rs::test_generate_nested_escapes_keyword_submodule_names
 # expect-stdout:
 #   launched
 #   nested launched

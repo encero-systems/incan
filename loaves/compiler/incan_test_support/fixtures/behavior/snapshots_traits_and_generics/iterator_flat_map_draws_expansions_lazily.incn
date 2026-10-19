@@ -1,5 +1,4 @@
 # behavior: flat_map draws each expansion one item at a time: taking the first item runs only the first step of the first expansion, and taking past an expansion's end opens the next source item's expansion no further than the items taken
-# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::flat_map_callbacks_hand_the_adapter_a_nested_iterator
 # expect-stdout:
 #   10
 #   1

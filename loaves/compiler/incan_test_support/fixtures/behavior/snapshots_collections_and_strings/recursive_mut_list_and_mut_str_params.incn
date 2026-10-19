@@ -1,6 +1,4 @@
 # behavior: a recursive function threads mut list parameters through a loop and marks every node once, and a mut str parameter accepts a literal (#244)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue244_recursive_mut_list_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue244_mut_str_param_codegen
 # expect-stdout:
 #   true true true
 #   0

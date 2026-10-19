@@ -1,5 +1,4 @@
 # behavior: a consumer's model that adopts a dependency's trait under one spelling meets a bound that names the trait under another: the trait, an import alias, the dependency's alias and a module-bound spelling are one trait
-# retires: loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs::consumer_adopter_meets_a_bound_on_another_spelling_of_the_dependency_trait_issue1561
 # expect-stdout:
 #   mine
 #   YOURS

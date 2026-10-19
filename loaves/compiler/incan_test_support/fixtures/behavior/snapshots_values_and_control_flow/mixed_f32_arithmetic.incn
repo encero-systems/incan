@@ -1,5 +1,4 @@
 # behavior: f32 operands widen when combined with f64, float and int in +, /, //, % and ** and the results are float
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::mixed_f32_arithmetic_widens_operands_for_f64_codegen
 # expect-stdout:
 #   4.5 1.25 1.0 0.5 6.25
 #   3.5

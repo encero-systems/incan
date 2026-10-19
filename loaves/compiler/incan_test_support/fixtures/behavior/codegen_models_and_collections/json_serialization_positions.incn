@@ -1,12 +1,4 @@
 # behavior: a json-derived model and a Serialize-derived model serialize, and json_stringify works as a statement, in an if condition, an elif body, a while condition and a for iterator
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_single_derive
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_no_serde_when_not_used
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_builtin
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_if_condition
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_elif_body
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_while_condition
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_for_iterator
 # expect-stdout:
 #   {"name":"cfg"}
 #   {"id":7}

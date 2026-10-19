@@ -1,5 +1,4 @@
 # behavior: a module function named len shadows the builtin while std.builtins.len still reaches the builtin (#1116)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1116_builtin_len_shadowing_codegen
 # expect-stdout:
 #   5
 #   3

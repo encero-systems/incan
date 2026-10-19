@@ -1,5 +1,4 @@
 # behavior: not and unary minus over an operator expression apply to the whole expression rather than to its first operand
-# retires: loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs::prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763
 # expect-stdout:
 #   true
 #   true

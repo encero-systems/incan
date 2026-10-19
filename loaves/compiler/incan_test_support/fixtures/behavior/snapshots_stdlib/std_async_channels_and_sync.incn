@@ -1,6 +1,4 @@
 # behavior: a bounded channel carries values sent through the sender and a clone to the receiver, drains its buffer after close, and a Mutex guards a counter incremented by two tasks
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_channel_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_sync_compiled_codegen
 # expect-stdout:
 #   sent
 #   received 1

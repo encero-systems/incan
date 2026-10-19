@@ -1,7 +1,4 @@
 # behavior: a route handler and ordinary functions may declare the std.web Html response as their return type, through a direct import, an item alias or a module binding
-# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::std_web_html_return_type_lowers_with_its_text_body_issue1768
-# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::aliased_std_web_html_lowers_with_its_text_body_issue1768
-# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::qualified_std_web_html_lowers_as_text_response_issue1824
 # expect-stdout:
 #   rendered
 

@@ -1,10 +1,4 @@
 # behavior: models adopting the std.traits operator, Error, Index, Callable and conversion traits behave through the operators and calls they enable
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_ops_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_error_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_indexing_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_callable_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_prelude_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_convert_compiled_codegen
 # expect-stdout:
 #   30 -5 18
 #   Validation failed for 'age': cannot be negative

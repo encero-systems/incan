@@ -1,5 +1,4 @@
 # behavior: reassigning an inferred mutable variable in straight-line code, in loop branches and in an if block updates the same variable
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_inferred_reassign_codegen
 # expect-stdout:
 #   2
 #   1

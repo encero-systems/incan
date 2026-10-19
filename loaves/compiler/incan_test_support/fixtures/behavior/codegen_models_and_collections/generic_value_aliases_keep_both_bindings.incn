@@ -1,10 +1,4 @@
 # behavior: a generic value, a list element, a callable, a str and a list of callables stay usable through the original binding after being bound to an alias
-# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::generic_alias_assignment_infers_clone_bound_for_later_source_use
-# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::generic_list_index_assignment_infers_clone_bound_for_later_source_use
-# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::generic_alias_assignment_does_not_bind_an_unrelated_type_parameter
-# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::callable_alias_clone_does_not_bind_callable_type_parameters
-# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::concrete_string_alias_clone_does_not_bind_enclosing_generic_parameter
-# retires: loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs::callable_list_alias_clone_does_not_bind_callable_type_parameters
 # expect-stdout:
 #   ab:ab
 #   z:z:z

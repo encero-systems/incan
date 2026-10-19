@@ -1,5 +1,4 @@
 # behavior: every lazy adapter and terminal of the RFC 088 iterator surface classifies against an Iterator[int] receiver, and a list's .iter() starts one
-# retires: loaves/compiler/incan_ir/src/expr.rs::iterator_method_kind_for_receiver_classifies_rfc088_surface
 # expect-stdout:
 #   map 2,4,6,8
 #   filter 2,4

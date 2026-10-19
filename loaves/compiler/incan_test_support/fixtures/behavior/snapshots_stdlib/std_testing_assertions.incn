@@ -1,7 +1,4 @@
 # behavior: std.testing assertion helpers accept comparison operands, plain and Option and Result payloads, and the assert statement carries a message
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_testing_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_assert_surface_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::model_constructor_comparison_assertion_forms_codegen
 # expect-stdout:
 #   basics ok
 #   forms ok

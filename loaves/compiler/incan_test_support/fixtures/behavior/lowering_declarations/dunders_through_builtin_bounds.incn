@@ -1,5 +1,4 @@
 # behavior: through a type parameter's Eq, Ord or Display bound, calling __eq__, __ne__, an ordering dunder or __str__ does what the operator or the display does, reaching an Ord adopter's own __lt__
-# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::dunders_through_builtin_bounds_are_their_operations_issue1561
 # expect-stdout:
 #   true
 #   true

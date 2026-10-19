@@ -1,5 +1,4 @@
 # behavior: model fields with defaults are omitted from the constructor and keep their defaults unless overridden
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_constructor_field_defaults_codegen
 # expect-stdout:
 #   dark 16
 #   14 true

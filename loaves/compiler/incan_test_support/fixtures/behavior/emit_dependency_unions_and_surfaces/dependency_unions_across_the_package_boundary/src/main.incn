@@ -1,15 +1,4 @@
 # behavior: unions published by dependencies work at every consumer call: every member of a four-model union dispatches to its own arm in the provider and in a consumer match whose arm derives a mutable local from the bound payload, a renamed model constructor still fits its union, a union-returning call and a str pass to an Option[union] parameter and a model to an Option[model | str] one, both defaulting to None, unions nested in a tuple and beside a consumer-local union each keep their provider, function aliases and overload aliases keep their union results, and two providers' same-shaped unions stay apart
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_union_payload_canonicalizes_external_union_variant_index_issue1198
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::contextual_union_payload_uses_checked_nominal_identity
-# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_public_union_call_result_as_option_payload_issue745
-# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::an_optional_union_parameter_keeps_its_option_wrapper_issue745
-# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::local_callable_alias_retains_native_union_after_manifest_application
-# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::function_alias_overloads_keep_exact_native_union_projection
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::external_union_coverage_requires_all_compound_slots_to_match
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::external_union_coverage_localizes_only_the_target_provider_issue892
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::targeted_union_collection_keeps_uncovered_local_compound_slots
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::generated_union_qualifies_public_provider_payloads_issue1203
-# retires: loaves/compiler/incan_emit/src/emit/types.rs::absolute_enum_pattern_paths_remain_absolute
 # expect-stdout:
 #   bool column active
 #   number column amount

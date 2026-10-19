@@ -1,9 +1,4 @@
 # behavior: nested Option arguments and None payloads keep every layer, a str field assignment stores owned text, an Option list element can call unwrap_or, and an Error adopter displays its message through a generic Display bound
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::nested_option_call_argument_is_wrapped_in_each_layer_followups_a
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::some_none_at_nested_option_destination_has_the_inner_type_followups_a
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::string_literal_assigned_to_str_field_is_owned_followups_a
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::indexed_option_method_call_groups_the_lookup_followups_a
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::error_message_display_implements_rust_display_followups_a
 # expect-stdout:
 #   5
 #   0

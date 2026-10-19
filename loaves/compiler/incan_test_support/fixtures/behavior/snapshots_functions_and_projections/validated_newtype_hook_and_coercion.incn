@@ -1,6 +1,4 @@
 # behavior: a validated newtype's from_underlying hook accepts a positive value and refuses a non-positive one, and an int argument coerces through the same hook
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::newtype_associated_declaration_and_call_share_one_projection
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::validated_newtype_implicit_coercion_calls_the_hook_projection
 # expect-stdout:
 #   ok 1
 #   err value must be positive

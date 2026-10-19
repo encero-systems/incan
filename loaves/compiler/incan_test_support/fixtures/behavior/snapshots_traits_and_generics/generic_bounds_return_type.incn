@@ -1,5 +1,4 @@
 # behavior: a generic function returning a trait whose parameter carries a Clone bound accepts a subtrait-typed model (#196)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_generic_bounds_return_type_codegen
 # expect-stdout:
 #   5
 #   5

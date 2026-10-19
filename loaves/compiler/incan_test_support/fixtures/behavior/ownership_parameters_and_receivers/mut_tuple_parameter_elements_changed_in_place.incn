@@ -1,6 +1,4 @@
 # behavior: a mut tuple parameter reads and changes its elements by constant index, counted from either end, and the change reaches the caller's field
-# retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::mut_tuple_parameter_elements_are_places_issue1561
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_element_places.rs::tuple_index_through_a_mut_parameter_is_an_element_place_issue1561
 # expect-stdout:
 #   12
 #   1

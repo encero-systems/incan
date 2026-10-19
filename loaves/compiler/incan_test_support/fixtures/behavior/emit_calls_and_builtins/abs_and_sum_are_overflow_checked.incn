@@ -1,5 +1,4 @@
 # behavior: abs and sum over int compute their values and raise ValueError instead of wrapping when the result overflows
-# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::canonical_and_legacy_abs_sum_emit_one_checked_contract
 # expect-stdout:
 #   5
 #   7

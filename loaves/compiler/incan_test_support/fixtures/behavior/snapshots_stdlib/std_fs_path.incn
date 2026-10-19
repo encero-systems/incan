@@ -1,5 +1,4 @@
 # behavior: std.fs Path is the filesystem path type: lexical joins, name, suffix and stem work, and a File handle type is importable beside it
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_fs_import_codegen
 # expect-stdout:
 #   std.fs import codegen
 #   config/app.toml

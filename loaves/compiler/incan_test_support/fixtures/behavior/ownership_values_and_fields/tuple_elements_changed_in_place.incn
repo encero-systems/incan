@@ -1,7 +1,4 @@
 # behavior: a method call or an assignment through a constant tuple index changes that element of the tuple in place, through a mut local tuple, a nested tuple, a list of tuples, a loop variable, an index counted from the end, a field of self and a field of a mut binding
-# retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::tuple_element_method_changes_the_tuple_in_place_issue1561
-# retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::tuple_element_of_a_field_changes_in_place_issue1561
-# retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::writes_through_a_tuple_element_change_the_tuple_issue1561
 # expect-stdout:
 #   2 3 4 5 6
 #   2 8

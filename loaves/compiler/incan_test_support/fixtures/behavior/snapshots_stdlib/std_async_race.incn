@@ -1,6 +1,4 @@
 # behavior: race returns the first arm to finish through its callback, and the race-for expression yields the first arm's value
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_race_compiled_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_race_for_expression_codegen
 # expect-stdout:
 #   answered by cache
 #   1

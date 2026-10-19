@@ -1,5 +1,4 @@
 # behavior: models adopting From and TryFrom convert through their classmethod hooks, the fallible one refusing a non-positive value
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_convert_usage_codegen
 # expect-stdout:
 #   42
 #   3

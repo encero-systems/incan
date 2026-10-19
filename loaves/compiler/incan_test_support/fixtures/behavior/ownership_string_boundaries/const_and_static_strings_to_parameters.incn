@@ -1,8 +1,4 @@
 # behavior: module consts and statics of str and int type, and a local bound to a str static, are passed to a str parameter and to a generic parameter, and each call sees the declared value
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_static_str_var_to_string
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_static_read_to_string
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_static_str_var_to_generic
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_static_read_int_to_generic_stays_as_is
 # expect-stdout:
 #   [pre]
 #   [stat]

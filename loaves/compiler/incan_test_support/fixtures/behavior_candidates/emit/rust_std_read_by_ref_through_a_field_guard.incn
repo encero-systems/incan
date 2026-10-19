@@ -1,5 +1,4 @@
 # behavior: Read.by_ref over the RefCell guard of a Cursor held in a field yields a reader that take bounds and that an adapter reads through, so reads return at most the bytes asked for and then what remains
-# retires: loaves/compiler/incan_emit/src/tests/rust_trait_unknown_receivers.rs::bounded_reads_through_an_untyped_guard_build_with_read_inspected_issue1561
 # expect-stdout:
 #   4
 #   2

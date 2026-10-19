@@ -1,5 +1,4 @@
 # behavior: a public class keeps a private backing field readable through its own method beside a public field readable directly
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue246_class_field_visibility_codegen
 # expect-stdout:
 #   3
 #   id:int

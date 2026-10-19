@@ -1,5 +1,4 @@
 # behavior: the methods std.io and std.fs implement are reached from a program and from a module it imports: BytesIO byte writes and typed writes on a local, a parameter, a field, a list element and a module-qualified construction, typed reads, the same calls through a type parameter's bound, the chunks reader on a BytesIO and on a File, and a File's and a Path's text and byte reads and writes
-# retires: loaves/compiler/incan_driver/src/session.rs::a_consumer_without_an_sdk_inventory_builds_std_io_and_std_fs_trait_calls_from_source_issue1561
 # expect-stdout:
 #   7 2 9 258 2
 #   2 4 513 6

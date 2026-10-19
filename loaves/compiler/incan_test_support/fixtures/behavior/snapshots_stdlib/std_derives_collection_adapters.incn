@@ -1,5 +1,4 @@
 # behavior: a model adopting the stdlib collection Iterator drives a for loop, and a model adopting the stdlib FallibleIterator drives the map, filter and collect adapters with callable models as the mapping function and the predicate
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_collection_compiled_codegen
 # expect-stdout:
 #   3
 #   2 4 6

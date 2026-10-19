@@ -1,6 +1,4 @@
 # behavior: alias names work in a constructor, in field access, in self access and mixed with canonical names (RFC 021)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_alias_expressions_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_alias_self_access_codegen
 # expect-stdout:
 #   premium
 #   gold

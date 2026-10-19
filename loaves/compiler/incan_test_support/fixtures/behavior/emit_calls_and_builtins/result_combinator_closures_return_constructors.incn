@@ -1,5 +1,4 @@
 # behavior: a Result combinator's closure that returns Ok(...) or Err(...) without spelling the other side runs: or_else keeps the receiver's success type, and_then its error type, the other side comes from the call's expected type or is None
-# retires: loaves/compiler/incan_emit/src/tests/closure_parameter_inference.rs::result_combinator_closures_return_constructors_typed_by_the_call_issue1561
 # expect-stdout:
 #   1
 #   3

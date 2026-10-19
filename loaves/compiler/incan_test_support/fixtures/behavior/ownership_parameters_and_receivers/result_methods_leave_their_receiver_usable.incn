@@ -1,5 +1,4 @@
 # behavior: a Result local, parameter, field and generic value read again after map, and_then, inspect or unwrap_or stays usable, in a loop and in both branches of an if
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::result_receivers_stay_usable_after_a_method_call_issue1561
 # expect-stdout:
 #   2
 #   3

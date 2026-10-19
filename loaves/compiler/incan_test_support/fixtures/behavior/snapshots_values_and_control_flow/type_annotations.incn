@@ -1,5 +1,4 @@
 # behavior: scalar, collection, Option and nested-collection annotations type their initializers, and annotated parameters print their values
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_type_annotations_codegen
 # expect-stdout:
 #   42 3.14 hello true
 #   3 c 2

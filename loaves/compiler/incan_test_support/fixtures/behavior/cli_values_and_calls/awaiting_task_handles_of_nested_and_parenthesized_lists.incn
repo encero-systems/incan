@@ -1,5 +1,4 @@
 # behavior: a list of lists of task handles is awaited group by group, and a parenthesized list of handles is awaited like the bare name
-# retires: loaves/compiler/incan_ir/src/lower/tests/for_item_taking.rs::nested_loop_over_an_owned_loop_binding_iterates_it_by_value_issue1844
 # expect-stdout:
 #   1
 #   2

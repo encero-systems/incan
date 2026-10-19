@@ -1,6 +1,4 @@
 # behavior: a tuple assignment writes fields and list elements from the values read before the first write, so swapping two fields or two list elements exchanges them, and a field and a name can be assigned together
-# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::tuple_assignment_to_fields_and_list_elements_writes_each_place_issue1798
-# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::tuple_assignment_writes_each_field_and_element_issue1798
 # expect-stdout:
 #   2 1
 #   8 7

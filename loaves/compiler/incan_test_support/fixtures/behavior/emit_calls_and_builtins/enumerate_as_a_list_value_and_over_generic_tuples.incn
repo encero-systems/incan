@@ -1,6 +1,4 @@
 # behavior: enumerate used as a value is an indexable list of (index, item) pairs, and enumerate over lists of generic tuples and of Option items yields each element once with its index
-# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::canonical_and_legacy_enumerate_values_materialize_checked_lists
-# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::enumerate_copy_policy_keeps_generic_tuple_items_owned
 # expect-stdout:
 #   3
 #   1=b

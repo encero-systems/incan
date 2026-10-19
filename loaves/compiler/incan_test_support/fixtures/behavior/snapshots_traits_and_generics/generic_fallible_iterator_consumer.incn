@@ -1,5 +1,4 @@
 # behavior: a generic model adopting FallibleIterator is drained by generic functions that inherit the implementation's bound on the type parameter (#1280)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::generic_fallible_iterator_consumer_inherits_implementation_bounds_issue1280
 # expect-stdout:
 #   2
 #   2

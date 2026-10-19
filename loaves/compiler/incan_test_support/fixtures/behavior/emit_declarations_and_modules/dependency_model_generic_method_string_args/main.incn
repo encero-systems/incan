@@ -1,5 +1,4 @@
 # behavior: a generic method with an explicit type argument on a model from another module takes a str literal and a str local as ordinary owned arguments and the local stays usable afterwards
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::internal_dependency_nominal_method_call_does_not_borrow_string_arguments
 # expect-stdout:
 #   main:order_lines@s3://bucket/orders.csv
 #   s3://bucket/orders.csv

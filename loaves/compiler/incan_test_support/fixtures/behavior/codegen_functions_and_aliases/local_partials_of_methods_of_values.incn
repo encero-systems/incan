@@ -1,5 +1,4 @@
 # behavior: a local partial of a method of a value holds the receiver it was built with and calls the method with its presets, through a method alias, on a generic type and on self
-# retires: loaves/compiler/incan_emit/src/tests/capturing_closures.rs::local_partials_of_methods_of_values_build_issue1561
 # expect-stdout:
 #   xann!
 #   yann?

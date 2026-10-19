@@ -1,6 +1,4 @@
 # behavior: a map_err closure returning a string literal, an f-string or a captured generic value yields that value as the owned error (#880)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue880_map_err_string_literal_closure_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue880_map_err_string_literal_closure_emits_owned_error
 # expect-stdout:
 #   malformed_json
 #   malformed_json

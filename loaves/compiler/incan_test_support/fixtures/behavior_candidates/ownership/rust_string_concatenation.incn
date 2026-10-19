@@ -1,6 +1,4 @@
 # behavior: an Incan str extended in place with a String returned by a Rust function, and two such results joined, produce the concatenated text
-# retires: loaves/compiler/incan_emit/src/conversions.rs::string_addition_recognizes_canonical_rust_string_metadata_issue896
-# retires: loaves/compiler/incan_emit/src/ownership.rs::rust_string_buffer_detection_is_owned_string_only
 # expect-stdout:
 #   el
 #   hello

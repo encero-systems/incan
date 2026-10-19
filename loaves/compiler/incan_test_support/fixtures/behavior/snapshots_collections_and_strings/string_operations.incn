@@ -1,5 +1,4 @@
 # behavior: str methods for case, contains, split, replace, slicing, prefix and suffix tests, join and += concatenation give their results
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_string_operations_codegen
 # expect-stdout:
 #   HELLO WORLD hello world Hello World
 #   true false

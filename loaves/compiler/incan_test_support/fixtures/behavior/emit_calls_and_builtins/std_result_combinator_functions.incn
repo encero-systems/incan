@@ -1,5 +1,4 @@
 # behavior: the std.result functions map, map_err and and_then apply their callback to the matching side of a Result and leave the other side untouched
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::compiled_sdk_manifest_seeds_exact_stdlib_function_identity
 # expect-stdout:
 #   14
 #   bad x!

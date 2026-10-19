@@ -1,6 +1,4 @@
 # behavior: a generic function and a trait method with no bound on their type parameter return an element of their list by index and a slice of it, for int and str elements
-# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::index_read_of_a_type_parameter_element_states_clone_issue1756
-# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_method_and_slice_element_copies_state_clone_on_every_signature_issue1756
 # expect-stdout:
 #   4
 #   x

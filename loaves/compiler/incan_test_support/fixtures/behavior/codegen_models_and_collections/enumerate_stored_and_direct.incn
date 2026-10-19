@@ -1,5 +1,4 @@
 # behavior: a stored enumerate result is a list value traversable through an alias, and a direct enumerate loop yields the same index-value pairs
-# retires: loaves/compiler/incan_emit/tests/enumerate_value_codegen_tests.rs::stored_enumerate_materializes_the_checked_list_without_changing_direct_for_laziness
 # expect-stdout:
 #   20
 #   2

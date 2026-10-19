@@ -1,6 +1,4 @@
 # behavior: a `*` or `**` spread copies a list or dict that a binding, a field or a `mut` parameter still holds, and `sorted` or a spread copies a list of a generic function's type parameter, so each source keeps its items
-# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::spread_literals_copy_a_collection_read_again_issue1852
-# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::copying_a_list_of_the_type_parameter_bounds_it_by_clone_issue1852
 # expect-stdout:
 #   12
 #   6

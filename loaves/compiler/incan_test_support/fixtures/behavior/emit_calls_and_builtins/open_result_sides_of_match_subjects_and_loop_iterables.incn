@@ -1,5 +1,4 @@
 # behavior: Ok and Err used as a match subject or in a loop's iterable leave their open side None outside a Result function, where an arm ignoring it runs, and take the function's Result side inside one
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::open_result_sides_of_match_subjects_and_loop_iterables_build_issue1561
 # expect-stdout:
 #   1
 #   2

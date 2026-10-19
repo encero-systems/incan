@@ -1,5 +1,4 @@
 # behavior: the arms of a match and the break values of a loop share one Option or Result type whichever arm fixes the payload or side the others leave open, also inside lists and tuples and with guards, and a side none of them fixes settles to None, or to the function's Result side, where an arm ignoring it runs
-# retires: loaves/compiler/incan_emit/src/tests/result_method_receivers.rs::match_arms_and_loop_values_share_one_type_before_a_side_settles_issue1561
 # expect-stdout:
 #   A
 #   none

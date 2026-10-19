@@ -1,6 +1,4 @@
 # behavior: an empty or None-only list literal assigned to an existing Option or union binding becomes that binding's list value
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::list_literal_assigned_to_option_or_union_binding_is_wrapped_issue1832
-# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::list_literal_keeps_its_option_binding_type_issue1832
 # expect-stdout:
 #   1
 #   some 0

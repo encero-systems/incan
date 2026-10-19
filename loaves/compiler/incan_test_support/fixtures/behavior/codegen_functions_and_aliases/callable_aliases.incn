@@ -1,7 +1,4 @@
 # behavior: a plain binding and a public alias of a function both call the target, an alias spelled like a Rust keyword is callable, and a function spelled like a Rust keyword is callable directly and through an alias
-# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_callable_alias_lowers_calls_to_target_and_public_reexport
-# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_keyword_named_callable_alias_uses_raw_identifier_reexport
-# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_alias_to_keyword_named_callable_uses_raw_identifier_target_path
 # expect-stdout:
 #   10
 #   5

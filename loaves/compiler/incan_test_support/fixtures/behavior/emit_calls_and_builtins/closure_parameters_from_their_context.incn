@@ -1,5 +1,4 @@
 # behavior: closures written without parameter annotations take their parameter types from their context, an iterator adapter's or terminal's element, a fold's accumulator and a generic function's parameter once the other arguments fix it, and a generator's own map and filter call them in place
-# retires: loaves/compiler/incan_emit/src/tests/closure_parameter_inference.rs::closures_typed_by_their_context_build_and_run_issue1561
 # expect-stdout:
 #   [2, 4, 6]
 #   ["ADA", "LIN"]

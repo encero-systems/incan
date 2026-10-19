@@ -1,5 +1,4 @@
 # behavior: a generic model whose type parameter no field mentions is constructed with an explicit type argument, its operator method returns the same generic model, and its Debug rendering shows only the fields (#1370)
-# retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::phantom_type_params_are_the_parameters_no_field_mentions
 # expect-stdout:
 #   (amount * 2)
 #   (label * x)

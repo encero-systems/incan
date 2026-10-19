@@ -1,5 +1,4 @@
 # behavior: a decorated generic function in a nested module reflects its type argument's class name and field count through a helper imported from another nested module
-# retires: loaves/compiler/incan_emit/src/codegen.rs::nested_decorated_generic_original_inherits_imported_reflection_bounds
 # expect-stdout:
 #   Row:2:clone
 #   Point:3:clone

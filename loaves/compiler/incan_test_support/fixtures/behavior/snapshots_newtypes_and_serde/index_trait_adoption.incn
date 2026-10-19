@@ -1,6 +1,4 @@
 # behavior: explicit Index adoption on a generic class and a Self-returning Index adoption on a plain class make [] call __getitem__ (#815)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue815_generic_index_adoption_emits_trait_impl
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue815_self_returning_index_adoption_uses_owner_type
 # expect-stdout:
 #   amount
 #   plain

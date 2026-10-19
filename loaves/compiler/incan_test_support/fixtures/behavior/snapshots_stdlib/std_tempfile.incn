@@ -1,5 +1,4 @@
 # behavior: std.tempfile temporary files, directories and spooled files are created, report their state and use std.fs Path
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_tempfile_import_codegen
 # expect-stdout:
 #   std.tempfile import codegen
 #   false

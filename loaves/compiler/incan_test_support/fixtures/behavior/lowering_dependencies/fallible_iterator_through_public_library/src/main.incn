@@ -1,5 +1,4 @@
 # behavior: a consumer that imports FallibleIterator chains map and collect on a stream returned by a dependency's function, collecting the mapped items or the source error
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::imported_method_chain_dispatches_trait_through_public_library
 # expect-stdout:
 #   2,4,6
 #   error boom

@@ -1,7 +1,4 @@
 # behavior: a dict[str, int] answers get with a str parameter, a loop binding and a str literal, and indexing with a str literal reads the stored value
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::dict_get_with_borrowed_key_does_not_double_borrow
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::known_dict_get_with_string_literal_uses_str_lookup_shape
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::dict_index_with_string_literal_uses_str_lookup_shape
 # expect-stdout:
 #   the=2
 #   cat=1

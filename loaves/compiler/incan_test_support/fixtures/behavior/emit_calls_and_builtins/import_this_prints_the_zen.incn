@@ -1,5 +1,4 @@
 # behavior: `import this` prints the Zen of Incan, naming the one obvious way once, before main runs
-# retires: loaves/compiler/incan_emit/src/emit/decls/mod.rs::zen_text_contains_one_obvious_way_once
 # expect-stdout-contains:
 #   done
 #     › One obvious way             ─  conventions beat novelty,

@@ -1,6 +1,4 @@
 # behavior: a model adopting the stdlib FallibleIterator yields its items in a for loop with ? and through collect() on a temporary receiver
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_fallible_loop_preserves_qualified_trait_dispatch_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_projected_fallible_terminal_uses_mutable_receiver
 # expect-stdout:
 #   1
 #   2

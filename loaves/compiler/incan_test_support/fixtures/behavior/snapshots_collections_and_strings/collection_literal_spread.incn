@@ -1,5 +1,4 @@
 # behavior: list literals spread nested lists and tuples in place, and dict literals spread a dict with later keys overriding
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_collection_literal_spread_codegen
 # expect-stdout:
 #   15
 #   enabled

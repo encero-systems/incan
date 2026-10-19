@@ -1,6 +1,4 @@
 # behavior: a user module declaring __derives__ supplies traits to @derive beside the stdlib json derive, for a serde-backed and a pure Incan trait (RFC 024)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_user_module_serde_format_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_user_module_pure_incan_derivable_codegen
 # expect-stdout:
 #   yaml
 #   {"value":1}

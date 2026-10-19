@@ -1,5 +1,4 @@
 # behavior: JSON deserialization of a validated newtype runs its from_underlying hook, accepting a short id and refusing a long one, for a plain and a generic newtype
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_validated_newtype_json_deserialization_uses_canonical_hook
 # expect-stdout:
 #   valid
 #   refused

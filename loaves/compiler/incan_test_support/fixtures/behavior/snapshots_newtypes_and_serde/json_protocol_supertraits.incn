@@ -1,6 +1,4 @@
 # behavior: a trait whose supertrait is std.serde.json Serialize serves to_json and json_stringify for a model that also derives Serialize and for a class that adopts it alone, and a model adopting two traits that share a supertrait, or a trait whose builtin supertrait it derives, builds (#1845)
-# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_supertraits_carry_the_trait_and_its_serde_capability_issue1845
-# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::a_trait_reached_twice_is_implemented_once_issue1845
 # expect-stdout:
 #   {"value":1}
 #   {"value":2}

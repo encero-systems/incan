@@ -1,5 +1,4 @@
 # behavior: map, map_err, and_then, or_else, inspect, inspect_err, unwrap and unwrap_or classify against a Result[int, str] receiver and each transforms or reads the value it names
-# retires: loaves/compiler/incan_ir/src/expr.rs::result_method_kind_for_receiver_classifies_result_surface
 # expect-stdout:
 #   map Ok(4)
 #   map_err Err(bad!)

@@ -1,6 +1,4 @@
 # behavior: a Rust Duration held in a model field is added to another model's field through saturating_add, which takes its argument by value, and the sum reads back in seconds as an int, as an exact f32 that passes the finite-value check and as an ordinary float
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_method_call_uses_by_value_signature_for_field_argument
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::exact_float_rust_call_results_are_guarded_without_changing_ordinary_float
 # expect-stdout:
 #   5
 #   7

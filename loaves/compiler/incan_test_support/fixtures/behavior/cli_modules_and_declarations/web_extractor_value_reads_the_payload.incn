@@ -1,5 +1,4 @@
 # behavior: .value on a Query[T] parameter is the wrapped payload, in a route handler and in an ordinary function
-# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::web_extractor_value_reads_the_payload_field_issue1768
 # expect-stdout:
 #   incan
 

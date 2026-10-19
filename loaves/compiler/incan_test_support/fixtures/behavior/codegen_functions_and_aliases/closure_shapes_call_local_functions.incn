@@ -1,5 +1,4 @@
 # behavior: a closure bound to a local and a closure passed to a user-defined method both call a local function (#1492)
-# retires: loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs::closure_shapes_that_already_resolved_are_unchanged_issue1492
 # expect-stdout:
 #   code 3
 #   code 5

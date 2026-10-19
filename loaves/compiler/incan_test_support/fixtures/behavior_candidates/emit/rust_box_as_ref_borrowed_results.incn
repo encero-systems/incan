@@ -1,11 +1,4 @@
 # behavior: a Rust Box's as_ref() result is materialized as an owned model exactly once wherever an owned value is needed: a let binding, a reassignment, a dict-index assignment, a return value, a struct field, a collection element; a match over the borrowed result binds without copying
-# retires: loaves/compiler/incan_emit/src/emit/statements.rs::let_binding_from_method_call_result_clones_borrowed_value_exactly_once
-# retires: loaves/compiler/incan_emit/src/emit/statements.rs::local_reassignment_materializes_borrowed_method_result_exactly_once
-# retires: loaves/compiler/incan_emit/src/emit/statements.rs::dict_index_assignment_from_method_call_result_clones_borrowed_value_exactly_once
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_return_value_materializes_borrowed_as_ref_result
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_struct_field_materializes_borrowed_as_ref_result
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_collection_element_materializes_borrowed_as_ref_result
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_match_scrutinee_reaches_the_ownership_plan_without_over_cloning
 # expect-stdout:
 #   1
 #   2

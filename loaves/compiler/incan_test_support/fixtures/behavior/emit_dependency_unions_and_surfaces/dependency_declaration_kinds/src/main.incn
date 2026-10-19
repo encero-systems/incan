@@ -1,5 +1,4 @@
 # behavior: every declaration kind a dependency publishes is usable from a consumer: a model, a class with a method, an enum, a newtype, a trait adopted by a model, a union alias, a const, a static read through a function, a partial, an alias, a decorated function, a decorated generic function and an overloaded function
-# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::source_publication_anchors_survive_every_direct_lowering_path
 # expect-stdout:
 #   3
 #   8

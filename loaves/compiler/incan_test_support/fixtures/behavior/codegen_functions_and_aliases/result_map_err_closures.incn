@@ -1,6 +1,4 @@
 # behavior: map_err closures over a Result see the concrete error's methods and may return a str literal as the new error
-# retires: loaves/compiler/incan_emit/src/codegen.rs::result_map_err_closure_keeps_concrete_member_identity
-# retires: loaves/compiler/incan_emit/src/codegen.rs::result_map_err_string_literal_closure_owns_its_checked_return
 # expect-stdout:
 #   ok:7
 #   err:disk full

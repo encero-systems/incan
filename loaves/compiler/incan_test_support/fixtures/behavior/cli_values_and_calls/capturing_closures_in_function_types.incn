@@ -1,5 +1,4 @@
 # behavior: a closure that captures local values runs as an annotated local called and passed twice, as an argument for a function and a method that only call their parameter, and as the closure a function and a method return; a named function, a closure that captures nothing and a returned closure that captures nothing still run from a list and a field
-# retires: loaves/compiler/incan_emit/src/tests/capturing_closures.rs::capturing_closures_build_where_their_own_type_is_kept_issue1561
 # expect-stdout:
 #   6
 #   6

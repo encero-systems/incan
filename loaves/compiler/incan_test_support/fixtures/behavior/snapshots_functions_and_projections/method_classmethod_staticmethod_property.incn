@@ -1,7 +1,4 @@
 # behavior: an instance method, a classmethod, a staticmethod and a computed property each return their declared value when called through the matching receiver
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::ordinary_method_declaration_and_call_share_one_projection
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::classmethod_and_staticmethod_declarations_and_calls_share_their_projections
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::computed_property_getter_and_access_share_one_projection
 # expect-stdout:
 #   42
 #   42

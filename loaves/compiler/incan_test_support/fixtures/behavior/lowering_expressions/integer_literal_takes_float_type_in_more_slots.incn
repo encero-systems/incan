@@ -1,5 +1,4 @@
 # behavior: an integer literal is the float of the same value at an Option or union destination, an Option parameter, an Ok payload, a list append, a dict insert, an unwrap_or fallback, a powf exponent and a generic call argument
-# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::integer_literal_in_more_float_slots_is_a_float_literal_issue1859
 # expect-stdout:
 #   2.25
 #   3.0

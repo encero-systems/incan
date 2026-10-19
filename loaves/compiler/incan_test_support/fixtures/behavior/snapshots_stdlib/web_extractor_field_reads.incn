@@ -1,5 +1,4 @@
 # behavior: three route handlers that read a str field through a Query extractor wrapper directly, through a local and through a list each return a Json reply when called (#1489)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1489_web_extractor_field_read_clones_codegen
 # expect-stdout:
 #   search replied
 #   assign replied

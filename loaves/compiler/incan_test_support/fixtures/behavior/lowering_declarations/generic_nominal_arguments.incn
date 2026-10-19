@@ -1,6 +1,4 @@
 # behavior: a generic model keeps a nominal type argument, and inside a generic callable a name that is a type parameter stays generic while another name stays the nominal type it spells
-# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_type_preserves_named_generic_args_for_nominal_types
-# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_named_type_param_preserves_active_generic_identity
 # expect-stdout:
 #   boxed leaf
 #   first 4

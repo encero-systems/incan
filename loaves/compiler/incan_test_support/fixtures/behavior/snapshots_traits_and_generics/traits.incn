@@ -1,5 +1,4 @@
 # behavior: classes adopting one or several traits answer trait methods directly and through trait-typed parameters, including a self-mutating trait method
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_traits_codegen
 # expect-stdout:
 #   Dog name: Buddy
 #   Rectangle area: 15.0, perimeter: 16.0

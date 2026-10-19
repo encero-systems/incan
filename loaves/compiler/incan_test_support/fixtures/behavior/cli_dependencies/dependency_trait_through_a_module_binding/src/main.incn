@@ -1,5 +1,4 @@
 # behavior: a dependency's trait named through a module binding, as the trait or as the dependency's alias of it, is the dependency's own trait, so the dependency's model reached through the binding meets a bound on either spelling and a consumer's model adopts it with its own methods
-# retires: loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs::dependency_trait_through_a_module_binding_bounds_and_adopts_issue1561
 # expect-stdout:
 #   dep!
 #   dep

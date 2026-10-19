@@ -1,6 +1,4 @@
 # behavior: gen, a reserved word of the generated Rust, is an ordinary identifier for a module, a function, a parameter, a keyword argument and a field, and a module named gen is reached from another module as written
-# retires: loaves/compiler/incan_emit/src/tests/rust_2024_keyword_identifiers.rs::gen_named_function_parameter_and_field_build_issue1561
-# retires: loaves/compiler/incan_emit/src/tests/rust_2024_keyword_identifiers.rs::gen_named_module_builds_issue1561
 # expect-stdout:
 #   7
 #   1

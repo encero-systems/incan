@@ -1,5 +1,4 @@
 # behavior: a generator takes the iterator adapters and terminal consumers, is accepted where an Iterator[int] parameter is declared, and keeps its own map, filter, take and collect
-# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::generator_adapters_and_consumers_compile
 # expect-stdout:
 #   4
 #   6

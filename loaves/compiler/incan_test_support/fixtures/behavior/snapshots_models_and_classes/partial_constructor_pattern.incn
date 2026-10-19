@@ -1,5 +1,4 @@
 # behavior: a constructor pattern naming a subset of a model's fields, by canonical name or alias, selects the arm whose values match
-# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::partial_constructor_pattern_records_its_rest_fields_as_wildcards_issue1708
 # expect-stdout:
 #   Premium
 #   Other

@@ -1,5 +1,4 @@
 # behavior: indexing a JsonValue by key and by position returns the nested value or None
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_json_value_indexing_emits_checked_helpers
 # expect-stdout:
 #   found
 #   missing

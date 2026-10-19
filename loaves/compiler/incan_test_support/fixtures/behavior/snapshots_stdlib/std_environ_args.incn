@@ -1,5 +1,4 @@
 # behavior: std.environ args() returns the program's arguments with the program itself first, so a run without arguments selects the help subcommand (#1668)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_std_environ_args_codegen
 # expect-stdout:
 #   help
 

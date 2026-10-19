@@ -1,6 +1,4 @@
 # behavior: static builder methods on a str newtype construct values, and a user-provided __into_response__ is an ordinary method
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_builder_methods_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_with_override_codegen
 # expect-stdout:
 #   200 OK
 #   201 Created

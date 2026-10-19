@@ -1,23 +1,4 @@
 # behavior: a pattern alternation with str literals below its top, or a str literal beside a wildcard, selects its arm when an alternative matches; under a guard the first matching alternative decides and the guard runs once
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::or_pattern_with_nested_str_literals_lowers_one_arm_per_alternative_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_nameless_alternation_becomes_one_membership_test_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_nameless_alternations_never_multiply_the_arm_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::alternations_that_need_no_guard_of_their_own_stay_one_arm_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::if_let_or_pattern_with_nested_str_literals_lowers_one_arm_per_alternative_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::guard_shared_by_split_arms_never_consumes_what_it_reads_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::alternatives_binding_a_name_at_different_positions_each_bind_it_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::overlapping_alternatives_under_a_guard_take_the_first_match_only_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::top_level_alternation_of_a_str_literal_and_a_wildcard_splits_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::guard_after_a_whole_alternation_never_consumes_what_it_reads_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::while_let_plans_its_pattern_like_a_match_arm_issue1739
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::or_pattern_with_nested_str_literals_prints_one_guarded_arm_per_alternative_issue1739
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::guarded_alternations_print_first_match_and_membership_tests_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_nameless_alternation_over_a_temporary_binds_its_position_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::overlapping_alternatives_over_a_temporary_test_bound_positions_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::first_match_reads_through_a_whole_binding_alternation_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::guarded_alternation_leaves_a_result_scrutinee_whole_issue1739
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::first_match_tests_read_places_and_split_over_temporaries_issue1739
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_str_literal_over_a_place_leaves_the_place_whole_issue1739
 # expect-stdout:
 #   known
 #   known

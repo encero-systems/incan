@@ -1,5 +1,4 @@
 # behavior: a closure that captures local values runs as the callback of each Result combinator, which calls it before it returns
-# retires: loaves/compiler/incan_emit/src/tests/capturing_closures.rs::capturing_closures_build_as_result_combinator_callbacks_issue1561
 # expect-stdout:
 #   7
 #   10

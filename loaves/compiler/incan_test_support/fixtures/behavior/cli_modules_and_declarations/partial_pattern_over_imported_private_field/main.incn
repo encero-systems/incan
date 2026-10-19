@@ -1,6 +1,4 @@
 # behavior: a constructor pattern naming only public fields of a model imported from another module selects its arm while the model keeps its other field private
-# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::partial_pattern_leaving_a_private_field_unnamed_ends_in_a_rest_marker_issue1740
-# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::partial_pattern_leaving_a_private_field_unnamed_prints_a_rest_marker_issue1740
 # expect-stdout:
 #   premium account
 #   basic account

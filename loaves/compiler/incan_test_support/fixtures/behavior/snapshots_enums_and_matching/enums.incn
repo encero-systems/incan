@@ -1,5 +1,4 @@
 # behavior: unit, tuple-payload and collection-payload enum variants are constructed and told apart by match arms that bind their payloads
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_enums_codegen
 # expect-stdout:
 #   Color: red
 #   Some: 84, None: -1

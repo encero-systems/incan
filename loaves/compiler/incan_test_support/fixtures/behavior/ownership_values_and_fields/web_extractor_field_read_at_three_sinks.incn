@@ -1,5 +1,4 @@
 # behavior: a str field read through a Query or Json extractor wrapper is stored into a model field, collected into a list and assigned to a local, each carrying the text, while a plain generic holder hands its field over at its last use
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_field_read_through_a_transparent_wrapper_always_clones
 # expect-stdout:
 #   orders
 #   ["orders"]

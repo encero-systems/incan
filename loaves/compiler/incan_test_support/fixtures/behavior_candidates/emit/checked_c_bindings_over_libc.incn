@@ -1,8 +1,4 @@
 # behavior: checked C bindings over the host libc call a scalar function with an exact c.i32 carrier, receive a scalar through a c.Out slot, pass bounded NUL-terminated text through c.cstr and copy a returned C string view as UTF-8
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_function_emits_exact_ffi_signature_and_private_wrapper
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_output_slots_preserve_every_exact_scalar_carrier
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_string_input_emits_private_cstring_and_const_character_pointer_bridge
-# retires: loaves/compiler/incan_emit/src/emit/program.rs::checked_c_string_view_emits_bounded_utf8_copy_helper
 # expect-stdout:
 #   5
 #   7

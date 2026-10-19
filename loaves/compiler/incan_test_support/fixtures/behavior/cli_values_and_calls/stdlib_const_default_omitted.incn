@@ -1,5 +1,4 @@
 # behavior: a stdlib call that omits a parameter whose default is a stdlib const runs with that const, and matches the same call with the argument passed
-# retires: loaves/compiler/incan_ir/src/lower/tests/stdlib_const_defaults.rs::omitted_stdlib_default_names_the_const_through_its_declaring_module_issue1771
 # expect-stdout:
 #   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 #   true

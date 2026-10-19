@@ -1,6 +1,4 @@
 # behavior: a call to an overloaded stdlib function reaches the overload the checker selected by arity, and a call to a non-overloaded one reaches its only declaration
-# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::canonical_path_names_the_overload_a_call_selected
-# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::canonical_path_keeps_its_spelling_when_no_overload_was_selected
 # expect-stdout:
 #   absent
 #   7

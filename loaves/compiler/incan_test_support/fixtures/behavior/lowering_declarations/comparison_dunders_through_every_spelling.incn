@@ -1,6 +1,4 @@
 # behavior: an Eq or Ord adopter named through an import alias or its module, an enum, a newtype and a class among them, calls the dunders the trait supplies, and in a program module a type parameter bounded by an unimported Display, Eq or Ord calls __str__, __ne__ and __lt__ as the display and the operators
-# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::comparison_dunders_through_every_spelling_build_in_a_project_module_issue1561
-# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_local_adopters_ord_default_keeps_its_projection_under_an_sdk_identity_issue1561
 # expect-stdout:
 #   true
 #   false

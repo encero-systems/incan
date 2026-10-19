@@ -1,5 +1,4 @@
 # behavior: a generic function or method that keeps its type parameter's values in a dict or set, through an annotation, an index write, `add` or `insert`, runs for any hashable type argument, and so does a generic caller forwarding its own type parameter
-# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::dict_and_set_types_bound_their_hashed_type_parameter_issue1758
 # expect-stdout:
 #   2 1
 #   2 2

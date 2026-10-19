@@ -1,5 +1,4 @@
 # behavior: on a list, count() counts the items, for any element type, count(value) counts the items equal to the value, and index(value) finds its first position
-# retires: loaves/compiler/incan_ir/src/lower/tests/list_count_forms.rs::list_count_forms_lower_by_argument_count_issue1776
 # expect-stdout:
 #   4
 #   2

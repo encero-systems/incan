@@ -1,8 +1,4 @@
 # behavior: an empty list payload of a generic enum variant takes the enum's supplied type argument from its destination, whether the names differ, match, the payload is concrete, or a local's annotation differs from the enclosing return (#1516)
-# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_uses_the_enum_type_argument_not_the_declared_name_issue1516
-# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_still_emits_a_matching_type_parameter_name_issue1516
-# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_keeps_a_concrete_declared_payload_type_issue1516
-# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_follows_the_destination_not_the_enclosing_return_issue1516
 # expect-stdout:
 #   0
 #   0

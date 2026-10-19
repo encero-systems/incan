@@ -1,6 +1,4 @@
 # behavior: a json-derived model serializes its str, int and bool fields as a JSON object through std.serde.json (RFC 024)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_json_import_codegen
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_json_compiled_codegen
 # expect-stdout:
 #   {"host":"localhost","port":8080,"debug":true}
 #   localhost 8080 true

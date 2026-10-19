@@ -1,8 +1,4 @@
 # behavior: a subtrait default satisfies its supertrait slot through direct and supertrait-bounded calls, and a method a class inherits dispatches its self-calls to the override nearest the subclass, at any depth, while the declaring class keeps its own
-# retires: loaves/compiler/incan_emit/src/codegen.rs::subtrait_default_satisfies_supertrait_slot_issue1825
-# retires: loaves/compiler/incan_emit/src/codegen.rs::class_override_replaces_inherited_dispatch_issue1841
-# retires: loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs::inherited_method_self_call_reaches_the_kept_override_issue1841
-# retires: loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs::subtrait_default_fills_the_supertrait_slot_issue1825
 # expect-stdout:
 #   child
 #   child

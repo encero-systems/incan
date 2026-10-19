@@ -1,5 +1,4 @@
 # behavior: a list field read out of a local keeps the local intact when the local is used again, a field read from self leaves self intact across two calls, and a field read at the local's last use reaches its new home
-# retires: loaves/compiler/incan_emit/src/conversions.rs::test_owned_storage_field_read_moves_only_out_of_a_last_use_local
 # expect-stdout:
 #   2
 #   1

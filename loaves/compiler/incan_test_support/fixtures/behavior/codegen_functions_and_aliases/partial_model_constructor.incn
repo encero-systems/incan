@@ -1,5 +1,4 @@
 # behavior: a partial over a model constructor presets fields, and a call of the partial builds the model with them
-# retires: loaves/compiler/incan_emit/src/codegen.rs::partial_model_constructor_codegen_emits_wrapper_with_defaulted_preset
 # expect-stdout:
 #   bronze
 #   delta

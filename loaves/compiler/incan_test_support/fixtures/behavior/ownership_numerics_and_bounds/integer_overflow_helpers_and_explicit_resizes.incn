@@ -1,5 +1,4 @@
 # behavior: every checked, wrapping, and saturating integer helper follows its overflow policy and explicit resize targets select their destination
-# retires: loaves/compiler/incan_emit/tests/numeric_helper_codegen_tests.rs::rfc009_integer_helpers_and_explicit_resizes_compile_and_run
 # expect-stdout:
 #   none
 #   none

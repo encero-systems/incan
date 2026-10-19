@@ -1,6 +1,4 @@
 # behavior: a model, class, enum, newtype and generic model that derive Display print their {value:?} structure through println, str, an f-string and a Display bound, and a generic model displays inside a generic function over its type argument
-# retires: loaves/compiler/incan_emit/src/tests/derived_display_emission.rs::derived_display_prints_the_value_structure
-# retires: loaves/compiler/incan_emit/src/tests/derived_display_emission.rs::derived_display_of_a_generic_type_displays_inside_a_generic_function
 # expect-stdout:
 #   Point { x: 1, y: 2 }
 #   Point { x: 1, y: 2 }

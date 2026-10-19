@@ -1,5 +1,4 @@
 # behavior: an imported function named sum shadows the builtin and is called as the module's function (#377)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue377_imported_sum_shadows_builtin_codegen
 # expect-stdout:
 #   amount
 

@@ -1,5 +1,4 @@
 # behavior: a row found while looping over a list of rows is returned inside Ok while the caller keeps the whole list, and a local returned inside Ok at its last use carries its value
-# retires: loaves/compiler/incan_emit/src/ownership.rs::result_payload_read_of_a_loop_binding_materializes_the_owned_value
 # expect-stdout:
 #   ["b", "2"]
 #   2

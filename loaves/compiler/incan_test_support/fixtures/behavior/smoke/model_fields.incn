@@ -1,6 +1,4 @@
 # behavior: a model built with named arguments carries each str and int field's value
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_model_generation
-# retires: loaves/compiler/incan_emit/src/codegen.rs::test_struct_instantiation
 # expect-stdout:
 #   10
 #   20

@@ -1,5 +1,4 @@
 # behavior: a described method registers in a static Registry under its owner-qualified name and stays callable (RFC 113)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_registry_methods_codegen
 # expect-stdout:
 #   1
 #   main.Normalizer.normalize

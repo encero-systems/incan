@@ -1,5 +1,4 @@
 # behavior: value enums backed by str and int expose their wire value and parse back from it, refusing unknown values (RFC 032)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_value_enums_codegen
 # expect-stdout:
 #   development
 #   production

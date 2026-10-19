@@ -1,5 +1,4 @@
 # behavior: a record pattern over a generic model or class matches the instantiated fields, literal and binding sub-patterns selecting the arm and unnamed fields matching any value, and a generic enum's payload literal matches the instantiated payload
-# retires: loaves/compiler/incan_emit/src/tests/record_pattern_emission.rs::record_patterns_over_a_generic_model_and_class_compile
 # expect-stdout:
 #   -1
 #   5

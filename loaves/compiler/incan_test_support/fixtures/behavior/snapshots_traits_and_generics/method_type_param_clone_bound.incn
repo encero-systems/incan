@@ -1,5 +1,4 @@
 # behavior: generic methods and functions returning the first element of a list or a decoded payload work for a trait-bounded and an unbounded type parameter (#1489)
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1489_method_type_param_clone_bound_codegen
 # expect-stdout:
 #   7
 #   empty

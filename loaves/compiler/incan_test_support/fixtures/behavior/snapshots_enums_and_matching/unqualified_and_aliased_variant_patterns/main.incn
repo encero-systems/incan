@@ -1,6 +1,4 @@
 # behavior: a variant pattern written without its enum or through a variant alias matches the subject enum's own variant, over a plain and a generic enum, nested in another pattern, in if let, and over an enum another module declares whether or not the matching module imports it
-# retires: loaves/compiler/incan_emit/src/tests/variant_pattern_emission.rs::unqualified_and_aliased_variant_patterns_compile
-# retires: loaves/compiler/incan_emit/src/tests/variant_pattern_emission.rs::variant_patterns_over_another_modules_enum_name_a_path_the_module_can_reach
 # expect-stdout:
 #   1.5
 #   0.0

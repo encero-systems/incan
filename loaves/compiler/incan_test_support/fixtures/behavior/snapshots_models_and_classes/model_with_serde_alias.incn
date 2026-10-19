@@ -1,5 +1,4 @@
 # behavior: a json-derived model serializes its aliased fields under their alias keys and reads them back
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_with_serde_alias_codegen
 # expect-stdout:
 #   {"type":"premium","class":"gold","name":"Ada"}
 #   premium gold Ada

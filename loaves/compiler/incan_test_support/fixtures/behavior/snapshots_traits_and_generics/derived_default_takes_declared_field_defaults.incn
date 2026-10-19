@@ -1,5 +1,4 @@
 # behavior: Type.default() from @derive(Default) gives each field its declared default and its type's default only to a field that declares none, for a model, a class and a generic model, and T.default() under a Default bound builds the same value
-# retires: loaves/compiler/incan_ir/src/lower/tests/derive_contract_lowering.rs::default_derive_over_field_defaults_lowers_to_a_constructing_impl_issue1879
 # expect-stdout:
 #   dark
 #   14

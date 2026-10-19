@@ -1,5 +1,4 @@
 # behavior: deriving Serialize on a model propagates the derive to the enum inside its set field and to its newtype field, so the whole payload serializes
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_serde_propagation_respects_derives_and_containers
 # expect-stdout:
 #   {"tags":["A"],"id":7}
 

@@ -1,5 +1,4 @@
 # behavior: a std.serde.json trait re-exported by a user facade module still gives an adopting model its to_json (#1431)
-# retires: loaves/compiler/incan_emit/src/codegen.rs::sdk_facade_reexported_serde_json_trait_keeps_its_protocol
 # expect-stdout:
 #   {"value":1}
 

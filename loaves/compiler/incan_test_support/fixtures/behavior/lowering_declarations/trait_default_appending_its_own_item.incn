@@ -1,5 +1,4 @@
 # behavior: a trait default whose item type parameter is bounded by Clone appends each item its own method returns, and an adopter drains its items into a list
-# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_default_appending_its_own_item_copies_it_issue1561
 # expect-stdout:
 #   3
 #   20

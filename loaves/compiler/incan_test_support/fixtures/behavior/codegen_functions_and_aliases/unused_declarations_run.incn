@@ -1,9 +1,4 @@
 # behavior: an unused private helper, an unused parameter and an unused local do not stop a program from running, and a shadowing local reads the inner value
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_keeps_used_private_helpers_without_dead_code_allows
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_prunes_unused_private_helpers
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_uses_underscore_for_unused_parameters
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_uses_underscore_for_unused_locals
-# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_unused_local_scan_respects_shadowing
 # expect-stdout:
 #   1
 #   3

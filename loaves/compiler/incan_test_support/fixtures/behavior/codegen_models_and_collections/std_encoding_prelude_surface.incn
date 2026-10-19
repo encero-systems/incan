@@ -1,5 +1,4 @@
 # behavior: std.encoding exports hex, base32 and base64 encoders and its error type, and the three encoders encode the same bytes
-# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_encoding_prelude_import_snapshot
 # expect-stdout:
 #   6869
 #   NBUQ====

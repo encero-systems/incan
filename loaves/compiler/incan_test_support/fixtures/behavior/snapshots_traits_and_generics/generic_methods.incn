@@ -1,5 +1,4 @@
 # behavior: generic instance methods on a class, a generic model, a trait default, a two-parameter method and a newtype each return the argument they were given
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_generic_methods_codegen
 # expect-stdout:
 #   1 shelf b true 1.5
 

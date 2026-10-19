@@ -1,5 +1,4 @@
 # behavior: generic functions that call a callable parameter twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method, and return a field or a loop item inside Ok all run with concrete int and str arguments
-# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::result_payload_bounds_follow_the_struct_field_plan
 # expect-stdout:
 #   2 3
 #   ab-ab 5

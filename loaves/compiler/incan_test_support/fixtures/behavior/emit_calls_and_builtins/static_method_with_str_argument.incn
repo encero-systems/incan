@@ -1,5 +1,4 @@
 # behavior: a model's static method called through the type name takes a str local and a str literal as owned arguments and builds the model from them
-# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::type_name_associated_call_does_not_borrow_string_arguments
 # expect-stdout:
 #   <p>hello</p> 12
 #   <p>literal</p> 14

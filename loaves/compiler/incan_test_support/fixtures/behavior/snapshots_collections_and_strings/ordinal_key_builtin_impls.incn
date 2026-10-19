@@ -1,5 +1,4 @@
 # behavior: str, i32, bool, decimal and value-enum keys expose ordinal bytes and encodings through a generic OrdinalKey bound
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_ordinal_key_builtin_impls_codegen
 # expect-stdout:
 #   str:4
 #   i32:4

@@ -1,5 +1,4 @@
 # behavior: a Rust std module imported from the rust::std root is called through its binding
-# retires: loaves/compiler/incan_emit/src/codegen.rs::rust_std_root_module_import_keeps_rust_namespace
 # expect-stdout:
 #   3
 

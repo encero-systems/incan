@@ -1,5 +1,4 @@
 # behavior: a mut Generator parameter that the callee iterates, directly or through a function it passes the generator to, advances the caller's generator, so each call sees the next item
-# retires: loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs::generator_parameter_advanced_by_the_callee_reaches_the_caller_issue1561
 # expect-stdout:
 #   0
 #   1

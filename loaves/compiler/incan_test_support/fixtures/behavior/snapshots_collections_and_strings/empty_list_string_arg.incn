@@ -1,5 +1,4 @@
 # behavior: an empty list literal passed to a list[str] parameter has length zero
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_empty_list_string_arg_codegen
 # expect-stdout:
 #   0
 
