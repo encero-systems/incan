@@ -296,9 +296,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Read the selected helper's inert source default; deferred statements and non-string results grant no message.
     fn testing_raises_default_message(&self, identity: &CanonicalSymbolId) -> Option<String> {
         let published = super::library_nominals::sdk_identity(identity)?;
+        // A source-checked standard library records the call under its `std.*` module identity, a compiled one under
+        // its package identity; compare both in the published form. The projection reads the owning manifest, so
+        // only same-named records are projected.
         let default = super::library_calls::collect(self.type_info)
             .into_iter()
-            .find(|call| call.canonical == published)
+            .find(|call| {
+                call.canonical.declaration_name == published.declaration_name
+                    && super::library_nominals::sdk_identity(&call.canonical).as_ref() == Some(&published)
+            })
             .and_then(|call| call.parameter_defaults.get(1).cloned())?;
         let bir::CallableParamDefault::Source(default) = default else {
             return None;
