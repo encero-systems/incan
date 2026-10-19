@@ -1,0 +1,30 @@
+name: Prepare publisher confinement
+description: Install and verify Linux publisher namespaces without weakening the product launcher.
+runs:
+  using: composite
+  steps:
+    - name: Install Linux publisher confinement
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y bubblewrap apparmor
+        # Grant namespace creation only to the confinement primitive; retain Ubuntu's global restriction.
+        # This profile lives on the disposable runner and does not alter the installed product's host policy.
+        if test -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns && \
+           test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1; then
+          profile="$RUNNER_TEMP/incan-publisher-bwrap.apparmor"
+          cat > "$profile" <<'PROFILE'
+        abi <abi/4.0>,
+        include <tunables/global>
+        profile incan-publisher-bwrap /usr/bin/bwrap flags=(unconfined) {
+          userns,
+        }
+        PROFILE
+          sudo apparmor_parser -r "$profile"
+        fi
+        /usr/bin/bwrap --unshare-user --unshare-pid --unshare-net --unshare-ipc --unshare-uts \
+          --disable-userns --cap-drop ALL --new-session --die-with-parent \
+          --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+          -- /usr/bin/true

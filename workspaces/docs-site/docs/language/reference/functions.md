@@ -201,6 +201,8 @@ f("event", 0, *[1, 2], **{"kind": "demo"})   # accepted
 
 ## Ordinary Call Binding
 
+An ordinary checked call written with a free function’s unqualified name evaluates supplied argument expressions in parameter declaration order when it uses fixed positional or named arguments, preserving the dev.6 behavior. This rule excludes spread and rest arguments, module-qualified calls, calls through local callable values, provider operations, partial preset capture and iterator method arguments; those retain their existing written-order evaluation policies. Positional argument evaluation remains left to right.
+
 Arguments bind to normal parameters in this order:
 
 1. Positional arguments bind left to right.

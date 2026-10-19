@@ -19,8 +19,8 @@ use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
 use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::{
-    MemberBindingSurface, ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind,
-    numeric_type_id_for_compat,
+    BodyIrIterationHooksInfo, BodyIrProtocolCallInfo, MemberBindingSurface, ProtocolIterationInfo,
+    ResolvedMethodDispatch, ResolvedOperatorKind, numeric_type_id_for_compat,
 };
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
@@ -118,6 +118,7 @@ struct ResolvedIterationHooks {
     next_type: ResolvedType,
     iter_dispatch: Option<ResolvedMethodDispatch>,
     next_dispatch: Option<ResolvedMethodDispatch>,
+    body_ir: BodyIrIterationHooksInfo,
 }
 
 /// Preserve a trait's defining module when synthetic protocol-hook resolution follows a source trait call.
@@ -550,8 +551,12 @@ impl TypeChecker {
                         }
                         return left_ty.clone();
                     }
-                    (Some(_), None) if matches!(right_ty, ResolvedType::Unknown) => return left_ty.clone(),
-                    (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown) => return right_ty.clone(),
+                    (Some(_), None) if matches!(right_ty, ResolvedType::Unknown) => {
+                        return left_ty.clone();
+                    }
+                    (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown) => {
+                        return right_ty.clone();
+                    }
                     _ => {}
                 }
 
@@ -967,8 +972,11 @@ impl TypeChecker {
         Some(ret)
     }
 
-    /// Validate a boolean control-flow condition using RFC 068 structural `__bool__` when needed.
+    /// Validate a boolean control-flow condition using RFC 068 structural `__bool__` when needed. Preserve its
+    /// receiver's original value identity separately for Body IR; legacy keeps the synthetic method's reference.
     pub(in crate::typechecker) fn validate_truthiness_condition(&mut self, cond_ty: &ResolvedType, span: Span) {
+        let key = (span.start, span.end);
+        self.type_info.protocols.body_ir_truthiness_receivers.remove(&key);
         if self.types_compatible(cond_ty, &ResolvedType::Bool) || matches!(cond_ty, ResolvedType::Unknown) {
             return;
         }
@@ -979,6 +987,7 @@ impl TypeChecker {
         }
 
         if self.is_user_operator_receiver(cond_ty) {
+            let receiver_identity = self.type_info.resolved_identity(span).cloned();
             let method = "__bool__";
             let args: Vec<CallArg> = Vec::new();
             let arg_types: Vec<ResolvedType> = Vec::new();
@@ -990,6 +999,12 @@ impl TypeChecker {
                     }
                     self.type_info
                         .record_resolved_operator_call(span, method, ResolvedOperatorKind::Truthiness);
+                    if let Some(identity) = receiver_identity {
+                        self.type_info
+                            .protocols
+                            .body_ir_truthiness_receivers
+                            .insert(key, identity);
+                    }
                 }
                 None => self
                     .errors
@@ -1205,6 +1220,57 @@ impl TypeChecker {
         result
     }
 
+    /// Retain checked `Iterator.iter` and `Iterator.__next__` calls only for Body IR's opaque iterator route.
+    ///
+    /// Legacy already recognizes the canonical Iterator item and deliberately keeps its builtin iteration view.
+    /// Probe the existing member resolver in isolation, preserving all diagnostics, call-site and consumption facts;
+    /// only a complete, type-compatible pair of canonical hooks crosses into the private Body-IR table.
+    pub(in crate::typechecker) fn retain_body_ir_iterator_hooks(&mut self, receiver: &ResolvedType, span: Span) {
+        let Some(item) = receiver.iterator_item_type().cloned() else {
+            return;
+        };
+        let key = (span.start, span.end);
+        self.type_info.protocols.body_ir_iterations.remove(&key);
+        let errors = self.errors.clone();
+        let warnings = self.warnings.clone();
+        let info = self.type_info.clone();
+        let consumed = self.consumed_iterator_bindings.clone();
+        let source_dispatch = self
+            .type_info
+            .resolved_method_call(span)
+            .map(|call| call.dispatch.clone());
+        let hooks = (|| {
+            let returned =
+                self.resolve_protocol_operator_dunder(receiver, "iter", &[], &[], span, source_dispatch.as_ref())?;
+            if returned.iterator_item_type() != Some(&item) {
+                return None;
+            }
+            let iter = self.body_ir_protocol_call(receiver, "iter", &returned, span);
+            let dispatch = iter.dispatch.clone();
+            self.type_info.clear_body_ir_call_site_facts(span);
+            let next_type =
+                self.resolve_protocol_operator_dunder(&returned, "__next__", &[], &[], span, dispatch.as_ref())?;
+            if next_type.option_inner_type() != Some(&item) {
+                return None;
+            }
+            let next = self.body_ir_protocol_call(&returned, "__next__", &next_type, span);
+            if [&iter, &next]
+                .iter()
+                .any(|hook| hook.canonical.is_none() || hook.params.is_none() || hook.receiver_is_mutable.is_none())
+            {
+                return None;
+            }
+            Some(BodyIrIterationHooksInfo { iter, next })
+        })();
+        self.errors = errors;
+        self.warnings = warnings;
+        self.type_info = info;
+        self.consumed_iterator_bindings = consumed;
+        if let Some(hooks) = hooks {
+            self.type_info.protocols.body_ir_iterations.insert(key, hooks);
+        }
+    }
+
     /// Resolve the shared `__iter__` and `__next__` hook pair for one custom iteration route.
     ///
     /// The hooks are resolved as calls at `protocol_span`, and their dispatches reach lowering through the protocol's
@@ -1225,7 +1291,79 @@ impl TypeChecker {
         let written_call = self.type_info.take_call_site_facts(protocol_span);
         let hooks = self.resolve_iteration_protocol_hook_calls(receiver_ty, receiver_dispatch, protocol_span);
         self.type_info.restore_call_site_facts(protocol_span, written_call);
+        if let Some(hooks) = &hooks {
+            self.type_info
+                .protocols
+                .body_ir_iterations
+                .insert((protocol_span.start, protocol_span.end), hooks.body_ir.clone());
+        }
         hooks
+    }
+
+    /// Capture the selected hook before the next probe replaces its span facts; no legacy artifact is changed here.
+    fn body_ir_protocol_call(
+        &self,
+        receiver: &ResolvedType,
+        method: &str,
+        returned: &ResolvedType,
+        span: Span,
+    ) -> BodyIrProtocolCallInfo {
+        // ---- Selected declaration ----
+        let key = (span.start, span.end);
+        let canonical = self
+            .type_info
+            .traits
+            .provider_slot_identities
+            .get(&key)
+            .or_else(|| self.type_info.resolved_identity(span))
+            .or_else(|| self.type_info.traits.self_method_identities.get(&key))
+            .cloned();
+        // ---- Ordinary and method-scoped argument frames ----
+        let params = self
+            .type_info
+            .call_site_callable_params(span)
+            .or_else(|| self.type_info.traits.self_method_params.get(&key).map(Vec::as_slice))
+            .map(<[_]>::to_vec);
+        let type_args = self
+            .type_info
+            .calls
+            .body_ir_call_type_arguments
+            .get(&key)
+            .or_else(|| self.type_info.calls.call_site_monomorph_type_args.get(&key))
+            .cloned()
+            .unwrap_or_default();
+        // ---- Exact declared receiver mode ----
+        let receiver_is_mutable = match self.type_info.resolved_method_call(span).map(|call| &call.dispatch) {
+            Some(ResolvedMethodDispatch::Trait {
+                receiver_is_mutable, ..
+            }) => Some(*receiver_is_mutable),
+            None => self.body_ir_protocol_receiver(receiver, method),
+        };
+        BodyIrProtocolCallInfo {
+            canonical,
+            dispatch: self
+                .type_info
+                .resolved_method_call(span)
+                .map(|call| call.dispatch.clone()),
+            params,
+            type_args,
+            return_type: returned.clone(),
+            receiver_is_mutable,
+        }
+    }
+
+    /// Retain a local hook's mode from the same declared-method metadata, including aliases and overloads.
+    fn body_ir_protocol_receiver(&self, receiver: &ResolvedType, method: &str) -> Option<bool> {
+        let name = match receiver {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return None,
+        };
+        let (receivers, _) = self.declared_method_receivers_and_adoptions(name, method)?;
+        let first = receivers.first().copied().flatten()?;
+        receivers
+            .iter()
+            .all(|receiver| *receiver == Some(first))
+            .then_some(first == Receiver::Mutable)
     }
 
     /// Resolve the `__iter__` and `__next__` hooks of [`Self::resolve_iteration_protocol_hooks`] at `protocol_span`,
@@ -1264,6 +1402,8 @@ impl TypeChecker {
             .filter(|call| call.method == iter_method)
             .map(|call| call.dispatch.clone());
         inherit_same_trait_dispatch_module(receiver_dispatch.as_ref(), &mut iter_dispatch);
+        let iter = self.body_ir_protocol_call(receiver_ty, iter_method, &iterator_ty, protocol_span);
+        self.type_info.clear_body_ir_call_site_facts(protocol_span);
         let next_ret = match self.resolve_protocol_operator_dunder(
             &iterator_ty,
             next_method,
@@ -1288,11 +1428,13 @@ impl TypeChecker {
             .filter(|call| call.method == next_method)
             .map(|call| call.dispatch.clone());
         inherit_same_trait_dispatch_module(iter_dispatch.as_ref(), &mut next_dispatch);
+        let next = self.body_ir_protocol_call(&iterator_ty, next_method, &next_ret, protocol_span);
         Some(ResolvedIterationHooks {
             iterator_type: iterator_ty,
             next_type: next_ret,
             iter_dispatch,
             next_dispatch,
+            body_ir: BodyIrIterationHooksInfo { iter, next },
         })
     }
 

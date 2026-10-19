@@ -6,7 +6,10 @@ use std::fs;
 use std::path::Path;
 
 use crate::backend::ProjectGenerator;
-use crate::build::package_loafs::{read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile};
+use crate::build::package_loafs::{
+    read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
+    validated_packaged_library_output_path,
+};
 use crate::build::source_authority::project_bake_receipt_path;
 use crate::build::{CheckedPackagedProviderProfile, OvenBakeProjectTarget, OvenProjectBakeAuthorityContext};
 use crate::error::{CliError, CliResult};
@@ -25,7 +28,7 @@ use oven_interop::{
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use oven_model::oven_interop::locked_oven_interop_targets;
 use oven_rustc::rustc::{OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan};
-use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
+use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project, write_receipt};
 
 /// Add the exact selected interop execution receipt when this normal command targets a declared interop profile.
 ///
@@ -98,6 +101,10 @@ pub fn has_caller_owned_project_libraries(provider_plan: &ProviderPlan) -> bool 
 /// the legacy caller-source rematerializer.
 /// When checked profiles are supplied, public dependencies also use their original sealed output path and digest;
 /// the consumer must not substitute a convenience rlib or rebuild that dependency into another native cohort.
+/// Consumer aliases select provider records; attachment authority is the original producer name, artifact root and
+/// requested profile. Multiple aliases may repeat the same sealed profile, but conflicting profiles still refuse.
+/// Every retained transitive profile also contributes its verified output as a search-only library. It grants no
+/// consumer alias, and its original path and digest remain checked through the final Rustc handoff.
 pub fn oven_caller_owned_libraries(
     provider_plan: &ProviderPlan,
     profile: &str,
@@ -148,7 +155,7 @@ pub fn oven_caller_owned_libraries(
             )
         } else if let Some(profiles) = checked_profiles {
             let mut matching = profiles.iter().filter(|checked| {
-                checked.dependency_key == artifact.dependency_key
+                checked.package.receipt.project.name == artifact.manifest_name
                     && checked.artifact_root == artifact.crate_root
                     && checked.profile == profile
             });
@@ -158,7 +165,7 @@ pub fn oven_caller_owned_libraries(
                     artifact.dependency_key
                 ))
             })?;
-            if matching.next().is_some() {
+            if matching.any(|other| other.package != checked.package) {
                 return Err(CliError::failure(
                     "ordinary package has ambiguous checked output authority",
                 ));
@@ -188,12 +195,12 @@ pub fn oven_caller_owned_libraries(
             // output into a Cargo fallback or a false prerequisite for a source that is already materialized.
             continue;
         }
-        let digest = digest_bytes(&fs::read(&output).map_err(|source| {
+        let (_, digest) = oven_store::store::digest_regular_file(&output).map_err(|source| {
             CliError::failure(format!(
                 "Oven Alpha cannot read caller-owned Rust library {}: {source}",
                 output.display()
             ))
-        })?);
+        })?;
         if expected_digest.as_ref().is_some_and(|expected| expected != &digest) {
             return Err(CliError::failure(format!(
                 "ordinary package pub::{} output differs from its admitted `{profile}` digest",
@@ -207,16 +214,69 @@ pub fn oven_caller_owned_libraries(
             expose_extern: true,
         });
     }
+    // ---- Transitive outputs have link authority without a consumer import alias ----
+    if let Some(profiles) = checked_profiles {
+        for checked in profiles.iter().filter(|checked| checked.profile == profile) {
+            let intent = &checked.package.receipt.intent;
+            if intent.target != target || intent.toolchain != toolchain || intent.profile != profile {
+                return Err(CliError::failure(
+                    "ordinary transitive output has incompatible build intent",
+                ));
+            }
+            let candidate_output = checked.artifact_root.join(&checked.package.library_relative_path);
+            if libraries
+                .iter()
+                .any(|library| library.output == candidate_output && library.digest == checked.package.library_digest)
+            {
+                continue;
+            }
+            let artifact = LibraryArtifactMetadata::from_crate_root(
+                checked.dependency_key.clone(),
+                checked.package.receipt.project.name.clone(),
+                &checked.artifact_root,
+            );
+            let output =
+                validated_packaged_library_output_path(&artifact, &checked.package.library_relative_path, profile)?;
+            let (_, digest) = oven_store::store::digest_regular_file(&output).map_err(|error| {
+                CliError::failure(format!(
+                    "cannot read admitted transitive library {}: {error}",
+                    output.display()
+                ))
+            })?;
+            if digest != checked.package.library_digest {
+                return Err(CliError::failure(
+                    "ordinary transitive output differs from its admitted digest",
+                ));
+            }
+            libraries.push(OvenCallerOwnedRustcLibrary {
+                crate_name: ProjectGenerator::rust_target_name(&checked.package.receipt.project.name),
+                output,
+                digest,
+                expose_extern: false,
+            });
+        }
+    }
     libraries.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    validate_caller_owned_library_aliases(&libraries)?;
+    Ok(libraries)
+}
+
+/// Require unique direct import aliases while preserving private transitive Rust crate names.
+///
+/// A bridge imported under its child's canonical name still needs that child's different artifact on its search path.
+/// Library and executable preparation share this check; private search-only artifacts do not declare import aliases.
+pub(super) fn validate_caller_owned_library_aliases(libraries: &[OvenCallerOwnedRustcLibrary]) -> CliResult<()> {
+    let mut extern_names = BTreeSet::new();
     if libraries
-        .windows(2)
-        .any(|pair| pair[0].crate_name == pair[1].crate_name)
+        .iter()
+        .filter(|library| library.expose_extern)
+        .any(|library| !extern_names.insert(&library.crate_name))
     {
         return Err(CliError::failure(
             "Oven Alpha resolved duplicate caller-owned Rust library crate names",
         ));
     }
-    Ok(libraries)
+    Ok(())
 }
 
 /// Rebuild eligible caller-owned package libraries under a consumer's selected direct-Rustc cohort.

@@ -16,8 +16,9 @@
 #![deny(clippy::expect_used)]
 pub mod backend;
 // The build pipeline still rides the `cli` feature the root crate gave it: it links the generator's managed-cache
-// lease, which is gated the same way, and it reads Rust metadata on every route. Cutting it loose from `cli` is the
-// remaining #1479 work; until then a `--no-default-features` driver has no build pipeline.
+// lease, which is gated the same way, and it reads Rust metadata on every route. The `cli` feature therefore enables
+// `rust_inspect`; disabling defaults alone still leaves this module absent. Separating this lifecycle from argument
+// derives remains #1479 work.
 #[cfg(feature = "cli")]
 pub mod build;
 pub mod build_report;

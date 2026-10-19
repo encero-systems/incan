@@ -342,10 +342,62 @@ pub fn compose_direct_packaged_provider_plan(
     selected: Vec<(String, OvenPackagedLibraryLoafEntry, OvenStoredDirectRustcExecutionPlan)>,
     expected_intent: &oven_store::OvenBuildIntent,
 ) -> OvenPlanResult<OvenPackagedProviderExecutionPlan> {
+    compose_direct_execution_plans(
+        selected
+            .into_iter()
+            .map(|(name, entry, plan)| (name, entry.receipt, plan))
+            .collect(),
+        expected_intent,
+    )
+}
+
+/// Compose an ordinary consumer's native roots with the original sealed dependency closures of its packages.
+/// The same compositor verifies ABI overlap and preserves every Store lease. Compiler-base extensions cannot
+/// enter an ordinary native consumer; they require their distinct installed compiler-base authority.
+pub fn compose_ordinary_consumer_plan(
+    consumer: OvenStoredDirectRustcExecutionPlan,
+    receipt: &OvenReceipt,
+    packages: SelectedPackagedProviderPlans,
+) -> OvenPlanResult<OvenDirectRustcPlanSelection> {
+    if !packages.extensions.is_empty() {
+        return Err(OvenPlanError::selection(
+            "ordinary consumer cannot compose compiler-base package extensions",
+        ));
+    }
+    if packages.direct.is_empty() {
+        return Ok(OvenDirectRustcPlanSelection::Stored(Box::new(consumer)));
+    }
+    let mut selected = vec![("<ordinary-consumer>".to_string(), receipt.clone(), consumer)];
+    selected.extend(
+        packages
+            .direct
+            .into_iter()
+            .map(|(name, entry, plan)| (name, entry.receipt, plan)),
+    );
+    let composed = compose_direct_execution_plans(selected, &receipt.intent)?;
+    Ok(OvenDirectRustcPlanSelection::PackagedProvider(Box::new(composed)))
+}
+
+/// Merge exact receipt-selected direct plans through the existing physical overlap checks and leased fragments.
+/// Packages and consumer roots differ only in their source receipts; neither may substitute unowned search paths.
+fn compose_direct_execution_plans(
+    selected: Vec<(String, OvenReceipt, OvenStoredDirectRustcExecutionPlan)>,
+    expected_intent: &oven_store::OvenBuildIntent,
+) -> OvenPlanResult<OvenPackagedProviderExecutionPlan> {
     if selected.is_empty() {
         return Err(OvenPlanError::selection(
             "self-contained package Loaf composition requires at least one selected provider",
         ));
+    }
+    for (_, receipt, _) in &selected {
+        receipt
+            .verify_identity()
+            .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+        if receipt.intent != *expected_intent {
+            return Err(OvenPlanError::selection(
+                "direct composition receipt differs from consumer intent",
+            ));
+        }
     }
     let manifest_inputs = selected
         .iter()
@@ -359,7 +411,7 @@ pub fn compose_direct_packaged_provider_plan(
         .collect::<BTreeSet<_>>();
     let mut owned_paths = BTreeSet::new();
     let mut fragments = Vec::new();
-    for (dependency_key, entry, plan) in selected {
+    for (dependency_key, receipt, plan) in selected {
         if plan.artifacts.intent != *expected_intent {
             return Err(OvenPlanError::selection(format!(
                 "Oven Alpha cannot compose pub::{dependency_key}: its sealed direct-plan intent differs from this consumer; rebake it for the selected target, toolchain, profile, and feature set"
@@ -401,7 +453,7 @@ pub fn compose_direct_packaged_provider_plan(
         fragments.push(OvenPackagedDirectProviderFragment {
             root_inventory,
             dependency_key,
-            receipt: entry.receipt,
+            receipt,
             identity: plan.identity.clone(),
             plan,
             dependency_search_paths,
@@ -864,7 +916,7 @@ pub fn merge_packaged_provider_artifact_manifests(
                     .get(&artifact.crate_name)
                     .ok_or_else(|| OvenPlanError::selection("composed extern lost its contributor"))?;
                 let artifact_is_host_loaded = direct_extern_is_host_loaded(manifest, artifact);
-                if !*existing_is_host_loaded && !artifact_is_host_loaded {
+                if !*existing_is_host_loaded && !artifact_is_host_loaded && existing.digest != artifact.digest {
                     return Err(OvenPlanError::selection(format!(
                         "Oven Alpha cannot compose pub::{name} with pub::{existing_input}: direct target Rust crate `{}` has incompatible sealed artifacts (`{existing_input}` carries `{}` with digest `{}` and `{name}` carries `{}` with digest `{}`)",
                         artifact.crate_name,
@@ -1844,6 +1896,51 @@ mod tests {
         assert!(!direct_rustc_source_extern_names(&composed, "generated-root")?.contains("incan_vocab"));
         assert!(!direct_rustc_source_extern_names(&composed, "generated-root")?.contains("windows_sys"));
         assert!(!direct_rustc_source_extern_names(&composed, "generated-root")?.contains("incan_partner"));
+        Ok(())
+    }
+
+    /// Identical target bytes may occupy different publisher-relative coordinates without creating another ABI.
+    #[test]
+    fn package_loaf_composition_preserves_identical_target_bytes_at_distinct_coordinates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let intent = oven_store::OvenBuildIntent {
+            target: "aarch64-apple-darwin".to_string(),
+            toolchain: "rustc fixture".to_string(),
+            profile: "debug".to_string(),
+            features: Vec::new(),
+        };
+        let first = package_loaf_manifest(intent.clone(), "shared_provider", "sha256:same");
+        let mut second = first.clone();
+        let original = second
+            .externs
+            .iter_mut()
+            .find(|artifact| artifact.crate_name == "shared_provider")
+            .ok_or("fixture provider missing")?;
+        let first_path = original.relative_path.clone();
+        original.relative_path = "artifacts/deps/libshared_provider-relocated.rlib".to_string();
+        let second_path = original.relative_path.clone();
+        recapture_package_loaf_closure(&mut second);
+        for inputs in [
+            [("first", &first), ("second", &second)],
+            [("second", &second), ("first", &first)],
+        ] {
+            let composed = merge_packaged_provider_artifact_manifests(&inputs, &intent)?;
+            assert_eq!(
+                composed
+                    .externs
+                    .iter()
+                    .filter(|artifact| artifact.crate_name == "shared_provider")
+                    .count(),
+                1
+            );
+            let paths = composed
+                .composition_artifacts()?
+                .into_iter()
+                .map(|artifact| artifact.relative_path)
+                .collect::<BTreeSet<_>>();
+            assert!(paths.contains(&first_path));
+            assert!(paths.contains(&second_path));
+        }
         Ok(())
     }
 

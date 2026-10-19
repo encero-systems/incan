@@ -369,7 +369,9 @@ impl SdkNativeInputs {
 ///
 /// Successful independent units remain receipt-bound and reusable when native compilation fails. The checked
 /// publisher admits only components whose own facets and dependency providers are available; named failures remain
-/// in the closure report and cannot authorize missing outputs.
+/// in the closure report and cannot authorize missing outputs. Facets selected by an explicit compiler graph are
+/// required: their failures are recorded before publication is refused, while unrelated optional components remain
+/// eligible to be reported as unavailable.
 pub fn prepare_sdk_native_closure(
     stdlib: &Path,
     catalog: &SdkSourceCatalog,
@@ -436,10 +438,14 @@ pub fn prepare_sdk_native_closure(
             local_failures.push(format!("SDK companion {relative}: {error}"));
         }
     }
-    if let Some((owner, graph)) = &graph {
+    let required_compiler_failures = if let Some((owner, graph)) = &graph {
+        let prior_failures = closure.report().failed.len();
         compile_local_sdk_facets(&mut closure, &graph.facets, owner, &inputs.output, &inputs.rustc)
             .map_err(|error| ProviderError::failure(error.to_string()))?;
-    }
+        closure.report().failed[prior_failures..].to_vec()
+    } else {
+        Vec::new()
+    };
     if let Err(error) = attach_vocabulary_desugarer_closure(&mut closure, stdlib, source_root, inputs) {
         local_failures.push(format!("SDK vocabulary desugarer closure: {error}"));
     }
@@ -475,6 +481,12 @@ pub fn prepare_sdk_native_closure(
         serde_json::to_vec_pretty(&report).map_err(|error| ProviderError::failure(error.to_string()))?,
     )
     .map_err(|error| ProviderError::failure(error.to_string()))?;
+    if !required_compiler_failures.is_empty() {
+        return Err(ProviderError::failure(format!(
+            "required compiler native facets failed; successful native outputs remain reusable:\n{}",
+            required_compiler_failures.join("\n")
+        )));
+    }
     Ok(closure)
 }
 
@@ -525,7 +537,7 @@ pub(crate) fn compiler_native_graph_digest(path: &Path) -> ProviderResult<String
 pub const VOCABULARY_DESUGARER_TARGET: &str = "wasm32-wasip1";
 
 /// The desugarer closure's committed resolution, relative to the standard-library root.
-const VOCABULARY_DESUGARER_LOCK: &str = "vocab-wasm-lock.json";
+pub const VOCABULARY_DESUGARER_LOCK: &str = "vocab-wasm-lock.json";
 
 /// Index commit whose build facts the desugarer closure compiles under; it records the wasm32-wasip1 facts.
 const VOCABULARY_DESUGARER_INDEX_COMMIT: &str = "d6e8b1e0ce9a47bd1f9da967c270636dc8cab956";
@@ -552,6 +564,12 @@ fn attach_vocabulary_desugarer_closure(
         target: VOCABULARY_DESUGARER_TARGET,
         profile: "debug",
     })?;
+    // Preserve original missing-fact and compilation diagnostics before selecting local facet dependencies.
+    std::fs::write(
+        output.join("closure-report.json"),
+        serde_json::to_vec_pretty(vocabulary.report())?,
+    )?;
+    vocabulary.require_complete()?;
     compile_local_sdk_facet_for_target(
         &mut vocabulary,
         &source_root.join("loaves/kernel/incan_vocab"),
@@ -718,9 +736,11 @@ pub fn sdk_native_dependency_is_covered(
                     .is_none_or(|digest| unit.binding.archive_digest == *digest)
                 && accepts_version(&unit.binding.version)
                 && (unit.binding.domain == "target"
-                    || Path::new(&unit.relative_path)
-                        .extension()
-                        .is_some_and(|extension| extension == "dylib"))
+                    || oven_rustc::rustc::OvenRustcRegistryLeafKind::ProcMacro.admits_artifact_extension(
+                        Path::new(&unit.relative_path)
+                            .extension()
+                            .and_then(|extension| extension.to_str()),
+                    ))
                 && dependency
                     .features
                     .iter()
@@ -770,6 +790,14 @@ mod tests {
     /// Publish opaque test artifacts through the real store to exercise catalog admission without native compilation.
     fn dev7_native_admission_fixture()
     -> Result<(tempfile::TempDir, super::SdkNativeSelection), Box<dyn std::error::Error>> {
+        native_admission_fixture_with_output("target", "libfixture.rlib")
+    }
+
+    /// Publish exact opaque artifact coordinates for platform-independent admission predicate controls.
+    fn native_admission_fixture_with_output(
+        domain: &str,
+        output_name: &str,
+    ) -> Result<(tempfile::TempDir, super::SdkNativeSelection), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let source = root.path().join("main.rs");
         std::fs::write(&source, "fn main() {}\n")?;
@@ -789,12 +817,12 @@ mod tests {
             loaf: "crates-io/fixture".to_string(),
             version: "1.0.0".to_string(),
             archive_digest: oven_store::digest_bytes(b"source fixture"),
-            domain: "target".to_string(),
+            domain: domain.to_string(),
             features: Vec::new(),
             target_predicates: Vec::new(),
             edges: None,
         };
-        let output = root.path().join("libfixture.rlib");
+        let output = root.path().join(output_name);
         std::fs::write(&output, b"opaque native control bytes")?;
         let store = oven_store::store::OvenStore::new(
             root.path().join("store"),
@@ -802,12 +830,12 @@ mod tests {
         );
         let published = store.publish(&oven_store::store::OvenArtifactPublishRequest {
             receipt: receipt.clone(),
-            domain: "sdk-source-unit-target".to_string(),
+            domain: format!("sdk-source-unit-{domain}"),
             kind: oven_store::store::OvenArtifactKind::Engine,
             payload: serde_json::to_vec(&binding.identity_binding())?,
             materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
                 source_path: output,
-                relative_path: "libfixture.rlib".to_string(),
+                relative_path: output_name.to_string(),
             }],
             materialized_directories: Vec::new(),
         })?;
@@ -815,7 +843,7 @@ mod tests {
             binding: binding.clone(),
             store_identity: published.identity,
             receipt_identity: receipt.identity.clone(),
-            relative_path: "libfixture.rlib".to_string(),
+            relative_path: output_name.to_string(),
             digest: oven_store::digest_bytes(b"opaque native control bytes"),
         };
         let catalog = super::SdkNativeArtifactCatalog {
@@ -836,6 +864,60 @@ mod tests {
         )?;
         let selection = super::select_sdk_native_artifacts(root.path())?;
         Ok((root, selection))
+    }
+
+    /// Canonical SDK coverage accepts recognized host macro extensions without admitting host libraries or mismatched
+    /// requests.
+    #[test]
+    fn native_sdk_host_macro_coverage_is_platform_independent() -> Result<(), Box<dyn std::error::Error>> {
+        for (domain, output, covered) in [
+            ("host", "libfixture.so", true),
+            ("host", "libfixture.dylib", true),
+            ("host", "fixture.dll", true),
+            ("host", "libfixture.rlib", false),
+            ("target", "libfixture.rlib", true),
+        ] {
+            let (root, selection) = native_admission_fixture_with_output(domain, output)?;
+            selection.verify()?;
+            let inventory = crate::SdkInventory {
+                root: root.path().to_path_buf(),
+                sdk_id: "fixture".into(),
+                sdk_version: "1.0.0".into(),
+                compiler_requirement: "*".into(),
+                provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+                components: std::collections::BTreeMap::new(),
+                profiles: std::collections::BTreeMap::new(),
+            };
+            let mut dependency = oven_model::manifest::DependencySpec {
+                crate_name: "renamed".into(),
+                package: Some("fixture".into()),
+                version: Some("1".into()),
+                features: Vec::new(),
+                default_features: false,
+                optional: false,
+                source: oven_model::manifest::DependencySource::Registry,
+            };
+            assert_eq!(
+                super::sdk_native_dependency_is_covered(&inventory, &selection, &dependency)?,
+                covered,
+                "{domain}/{output}"
+            );
+            dependency.version = Some("2".into());
+            assert!(!super::sdk_native_dependency_is_covered(
+                &inventory,
+                &selection,
+                &dependency
+            )?);
+            dependency.version = Some("1".into());
+            dependency.features.push("absent".into());
+            assert!(!super::sdk_native_dependency_is_covered(
+                &inventory,
+                &selection,
+                &dependency
+            )?);
+            selection.verify()?;
+        }
+        Ok(())
     }
 
     /// A changed receipt or output catalog cannot replace metadata captured with the retained command owners.

@@ -45,6 +45,32 @@ impl ExportedPackageLoafs {
     }
 }
 
+/// Collapse repeated dependency edges only when their complete immutable-entry descriptors agree.
+///
+/// Package closures can reach one owner through multiple dependencies. Preserve first-occurrence order and every
+/// receipt, kind and base-owner contract; conflicting descriptions of one identity refuse before Store selection.
+/// The Store continues to require unique execution identities and retains responsibility for validating owner bytes.
+fn canonical_package_entries(
+    entries: &[OvenPackagedLibraryLoafEntry],
+) -> CliResult<Vec<&OvenPackagedLibraryLoafEntry>> {
+    let mut by_identity: BTreeMap<&str, &OvenPackagedLibraryLoafEntry> = BTreeMap::new();
+    let mut canonical = Vec::new();
+    for entry in entries {
+        if let Some(previous) = by_identity.get(entry.identity.as_str()) {
+            if *previous != entry {
+                return Err(CliError::failure(format!(
+                    "package Loaf has conflicting descriptors for immutable entry `{}`",
+                    entry.identity
+                )));
+            }
+        } else {
+            by_identity.insert(&entry.identity, entry);
+            canonical.push(entry);
+        }
+    }
+    Ok(canonical)
+}
+
 /// Copy one already selected project Loaf into the public provider artifact through normal immutable-store admission.
 ///
 /// Each destination entry is selected immediately after publication, before exporting another member. The caller
@@ -58,7 +84,8 @@ pub fn export_selected_package_loaf(
     let package_store = OvenStore::new(package_store_root, *source_store.limits());
     let mut entries = Vec::new();
     let mut owners = Vec::new();
-    for entry in selection.package_entries(receipt) {
+    let source_entries = selection.package_entries(receipt);
+    for entry in canonical_package_entries(&source_entries)? {
         let exported = copy_receipted_oven_store_entry(
             source_store,
             &package_store,
@@ -93,13 +120,14 @@ pub fn export_selected_package_loaf(
         // A shared direct plan may have originated under another compatible receipt. The destination publication
         // above binds this output's exact receipt; transport its actual identity while keeping that owner leased.
         entries.push(OvenPackagedLibraryLoafEntry {
-            receipt: entry.receipt,
+            receipt: entry.receipt.clone(),
             identity: exported.identity,
             kind: entry.kind,
-            base_loaf_identity: entry.base_loaf_identity,
+            base_loaf_identity: entry.base_loaf_identity.clone(),
         });
         owners.push(owner);
     }
+    let entries = canonical_package_entries(&entries)?.into_iter().cloned().collect();
     Ok(ExportedPackageLoafs {
         entries,
         _owners: owners,
@@ -448,7 +476,7 @@ pub fn read_packaged_library_loaf_manifest(
 }
 
 /// Resolve one package-owned native output without permitting a symlink escape from its artifact root.
-fn validated_packaged_library_output_path(
+pub(super) fn validated_packaged_library_output_path(
     artifact: &LibraryArtifactMetadata,
     relative_path: &str,
     profile: &str,
@@ -505,7 +533,8 @@ fn packaged_library_loaf_profile(
     validated_packaged_library_loaf_profile(artifact, &manifest, profile, target, toolchain)
 }
 
-/// Validate one profile against an already admitted provider manifest.
+/// Validate one profile against an already admitted provider manifest and return unique execution descriptors.
+/// Equal repeated edges remain valid serialized input; only the command-local checked profile is normalized.
 pub fn validated_packaged_library_loaf_profile(
     artifact: &LibraryArtifactMetadata,
     manifest: &OvenPackagedLibraryLoafManifest,
@@ -528,7 +557,8 @@ pub fn validated_packaged_library_loaf_profile(
     {
         return Ok(None);
     }
-    for entry in &candidate.entries {
+    let entries = canonical_package_entries(&candidate.entries)?;
+    for entry in &entries {
         entry.receipt.verify_identity().map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha refuses package Loaf for pub::{} because entry `{}` has an invalid receipt: {error}",
@@ -562,7 +592,12 @@ pub fn validated_packaged_library_loaf_profile(
             artifact.dependency_key, candidate.library_digest
         )));
     }
-    Ok(Some(candidate.clone()))
+    Ok(Some(OvenPackagedLibraryLoafProfile {
+        receipt: candidate.receipt.clone(),
+        entries: entries.into_iter().cloned().collect(),
+        library_relative_path: candidate.library_relative_path.clone(),
+        library_digest: candidate.library_digest.clone(),
+    }))
 }
 
 /// Return whether a store already contains every exact immutable entry required by one package profile.
@@ -576,6 +611,7 @@ pub(super) fn has_complete_packaged_library_loaf(
     if entries.is_empty() {
         return Ok(true);
     }
+    let entries = canonical_package_entries(entries)?;
     let identities = entries.iter().map(|entry| entry.identity.clone()).collect::<Vec<_>>();
     let Some(selected) = store.try_select_payloads_for_execution(&identities).map_err(|error| {
         CliError::failure(format!(
@@ -593,6 +629,56 @@ pub(super) fn has_complete_packaged_library_loaf(
     }))
 }
 
+/// Select ordinary dependency closures directly from their published package Stores, preserving original leases.
+/// Exact package coordinates and receipts remain authoritative. Locally restored outputs without an exported Store
+/// use the same exact selection from the primary Store; neither path imports or copies dependency payloads (#2216).
+pub fn select_ordinary_packaged_provider_plans(
+    primary_store: &OvenStore,
+    checked_profiles: &[CheckedPackagedProviderProfile],
+    profile: &str,
+) -> CliResult<oven_rustc::plan::selection::SelectedPackagedProviderPlans> {
+    let mut plans = oven_rustc::plan::selection::SelectedPackagedProviderPlans::default();
+    for checked in checked_profiles.iter().filter(|checked| checked.profile == profile) {
+        let root = packaged_library_loaf_store_root(&checked.artifact_root);
+        let published = root
+            .try_exists()
+            .map_err(|error| CliError::failure(format!("cannot inspect package Store: {error}")))?;
+        for entry in canonical_package_entries(&checked.package.entries)? {
+            if entry.kind != OvenArtifactKind::DirectRustcPlan || entry.base_loaf_identity.is_some() {
+                return Err(CliError::failure(
+                    "ordinary package requires a self-contained direct closure",
+                ));
+            }
+            let plan = if published {
+                let mut owners = PublishedOvenStore::new(&root)
+                    .select_payloads_for_execution(std::slice::from_ref(&entry.identity))
+                    .map_err(|error| CliError::failure(format!("cannot select published package closure: {error}")))?;
+                if owners.len() != 1 {
+                    return Err(CliError::failure(
+                        "published package closure has no unique original owner",
+                    ));
+                }
+                oven_rustc::plan::selection::packaged_direct_rustc_plan_from_selected(
+                    owners.remove(0),
+                    &entry.receipt,
+                    &entry.identity,
+                )
+                .map_err(crate::error::oven_plan_error)?
+            } else {
+                oven_rustc::plan::selection::select_packaged_direct_rustc_execution_plan(
+                    primary_store,
+                    &entry.receipt,
+                    &entry.identity,
+                )
+                .map_err(crate::error::oven_plan_error)?
+                .ok_or_else(|| CliError::failure("ordinary package closure is missing from its primary Store"))?
+            };
+            plans.direct.push((checked.dependency_key.clone(), entry.clone(), plan));
+        }
+    }
+    Ok(plans)
+}
+
 /// Import a compatible public provider closure into the consumer's bounded Oven store without running Cargo.
 ///
 /// This is the explicit consumer bake boundary. A provider artifact normally carries its own portable package-store
@@ -604,6 +690,7 @@ pub fn import_checked_packaged_library_loaf(
     checked: &CheckedPackagedProviderProfile,
 ) -> CliResult<()> {
     let package_profile = &checked.package;
+    let entries = canonical_package_entries(&package_profile.entries)?;
     let package_store_root = packaged_library_loaf_store_root(&checked.artifact_root);
     let package_store_exists = package_store_root.try_exists().map_err(|error| {
         CliError::failure(format!(
@@ -615,7 +702,7 @@ pub fn import_checked_packaged_library_loaf(
         let selected = PublishedOvenStore::new(&package_store_root)
             .select_payloads_matching_for_execution(
                 |stored| {
-                    package_profile.entries.iter().any(|entry| {
+                    entries.iter().any(|entry| {
                         stored.identity == entry.identity
                             && stored.kind == entry.kind
                             && stored.receipt_identity == entry.receipt.identity
@@ -631,12 +718,11 @@ pub fn import_checked_packaged_library_loaf(
                     checked.dependency_key
                 ))
             })?;
-        if selected.len() == package_profile.entries.len() {
+        if selected.len() == entries.len() {
             for payload in selected {
                 let identity = payload.manifest().identity.clone();
                 let kind = payload.manifest().kind;
-                let entry = package_profile
-                    .entries
+                let entry = entries
                     .iter()
                     .find(|entry| entry.identity == identity)
                     .ok_or_else(|| CliError::failure("selected package Loaf is absent from its checked profile"))?;
@@ -664,7 +750,7 @@ pub fn import_checked_packaged_library_loaf(
             checked.artifact_root.display()
         )));
     }
-    for entry in &package_profile.entries {
+    for entry in entries {
         let imported = copy_receipted_oven_store_entry(
             consumer_store,
             consumer_store,
@@ -832,6 +918,13 @@ mod tests {
         let (receipt, plan) = exportable_profile_fixture(&projects.path().join("debug"), "debug", &store)?;
         let entries = plan.package_entries(&receipt);
         assert!(has_complete_packaged_library_loaf(&store, &entries)?);
+        let repeated = [entries.clone(), entries.clone()].concat();
+        assert!(has_complete_packaged_library_loaf(&store, &repeated)?);
+        let repeated_ids = repeated.iter().map(|entry| entry.identity.clone()).collect::<Vec<_>>();
+        assert!(
+            store.try_select_payloads_for_execution(&repeated_ids).is_err(),
+            "package reference normalization must not weaken the Store's unique batch contract"
+        );
 
         let mut missing = entries.clone();
         missing[0].identity = digest_bytes(b"absent pinned provider");
@@ -840,6 +933,22 @@ mod tests {
         let mut mismatched = entries.clone();
         mismatched[0].receipt = release;
         assert!(!has_complete_packaged_library_loaf(&store, &mismatched)?);
+        let mut wrong_kind = entries[0].clone();
+        wrong_kind.kind = OvenArtifactKind::Engine;
+        let mut wrong_base = entries[0].clone();
+        wrong_base.base_loaf_identity = Some(digest_bytes(b"different sealed base"));
+        for conflicting in [mismatched[0].clone(), wrong_kind, wrong_base] {
+            for pair in [
+                [entries[0].clone(), conflicting.clone()],
+                [conflicting.clone(), entries[0].clone()],
+            ] {
+                assert!(
+                    has_complete_packaged_library_loaf(&store, &pair)
+                        .is_err_and(|error| error.message.contains("conflicting")),
+                    "same identity with incompatible descriptors must refuse in either order"
+                );
+            }
+        }
 
         let owners = store.select_payloads_for_execution(std::slice::from_ref(&entries[0].identity))?;
         let root = owners[0]
@@ -850,6 +959,7 @@ mod tests {
         fs::remove_file(&manifest_path)?;
         fs::write(&manifest_path, b"damaged selected manifest")?;
         assert!(has_complete_packaged_library_loaf(&store, &entries).is_err());
+        assert!(has_complete_packaged_library_loaf(&store, &repeated).is_err());
         Ok(())
     }
 
@@ -1039,7 +1149,10 @@ mod tests {
             materialized_files,
             materialized_directories: Vec::new(),
         })?;
-        let checked = CheckedPackagedProviderProfile {
+        let output = artifact_root.join("oven/debug/libprovider.rlib");
+        fs::create_dir_all(output.parent().ok_or("provider library has no parent")?)?;
+        fs::write(&output, b"sealed provider library")?;
+        let mut checked = CheckedPackagedProviderProfile {
             dependency_key: "provider".to_string(),
             artifact_root,
             source_available: false,
@@ -1053,9 +1166,11 @@ mod tests {
                     base_loaf_identity: None,
                 }],
                 library_relative_path: "oven/debug/libprovider.rlib".to_string(),
-                library_digest: "sha256:provider-library".to_string(),
+                library_digest: digest_bytes(&fs::read(&output)?),
             },
         };
+        // A diamond dependency exports the same exact core descriptor through both parent fragments.
+        checked.package.entries.push(checked.package.entries[0].clone());
         let consumer_store_root = tempfile::tempdir()?;
         let consumer_store = OvenStore::new(consumer_store_root.path(), limits);
         let (entry, lease) = package_store.select(&stored.identity)?;
@@ -1103,7 +1218,30 @@ mod tests {
         import_checked_packaged_library_loaf(&consumer_store, &checked)?;
         assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
         assert_eq!(fs::read(entry_root.join("last-used"))?, b"1\n");
-        let checked = [checked];
+        let artifact = LibraryArtifactMetadata::from_crate_root("provider", "provider", &checked.artifact_root);
+        let manifest = OvenPackagedLibraryLoafManifest {
+            schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+            source_authority_digest: String::new(),
+            compiler_version: INCAN_VERSION.to_string(),
+            metadata_files: Vec::new(),
+            checked_metadata: None,
+            checked_generation: None,
+            profiles: BTreeMap::from([("debug".to_string(), checked.package.clone())]),
+        };
+        checked.package = validated_packaged_library_loaf_profile(
+            &artifact,
+            &manifest,
+            "debug",
+            "aarch64-apple-darwin",
+            "rustc fixture",
+        )?
+        .ok_or("the repeated package profile should be admitted")?;
+        assert_eq!(checked.package.entries.len(), 1);
+        assert_eq!(manifest.profiles["debug"].entries.len(), 2);
+        // Two admitted dependency paths may still share this owner; export must transport it only once.
+        let mut other_dependency = checked.clone();
+        other_dependency.dependency_key = "other_provider".to_string();
+        let checked = [checked, other_dependency];
         let candidates = packaged_provider_candidates(&checked, "debug");
         let inputs = select_packaged_provider_plans(&consumer_store, &candidates)?;
         let selected = compose_selected_packaged_provider_plan(inputs, &candidates, &consumer_receipt)?
@@ -1122,6 +1260,22 @@ mod tests {
             BTreeSet::from(["incan_std_core", "provider"])
         );
         assert!(packages.report_identity().contains(&stored.identity));
+        let destination = tempfile::tempdir()?;
+        let exported = export_selected_package_loaf(
+            &consumer_store,
+            destination.path(),
+            &consumer_receipt,
+            &OvenDirectRustcPlanSelection::PackagedProvider(packages),
+        )?;
+        assert_eq!(
+            exported.entries().len(),
+            1,
+            "one immutable owner travels once in the exported closure"
+        );
+        assert!(has_complete_packaged_library_loaf(
+            &OvenStore::new(destination.path(), limits),
+            exported.entries(),
+        )?);
         Ok(())
     }
 

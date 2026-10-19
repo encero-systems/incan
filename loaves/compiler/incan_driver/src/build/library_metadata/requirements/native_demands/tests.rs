@@ -75,6 +75,7 @@ fn checked_source(
         requirements: &requirements,
         imports: &[],
         exports: &exports,
+        publication: None,
         version: "1.0.0",
         used_module_paths: BTreeSet::new(),
         source_modules: sources,
@@ -101,6 +102,13 @@ fn ordinary_native_checked_generic_and_model_source_roundtrip() -> TestResult {
     for (field, value) in [
         ("native_imports", serde_json::json!(["unbound::item"])),
         ("native_crates", serde_json::json!(["unbound"])),
+        ("rust_extern_paths", serde_json::json!(["unbound::item"])),
+        ("checked_abi_queries", serde_json::json!(["unbound::item"])),
+        (
+            "rust_extern_abi_paths",
+            serde_json::json!({"unbound::item": "unbound::item"}),
+        ),
+        ("rust_derive_paths", serde_json::json!(["unbound::Macro"])),
         ("schema_version", serde_json::json!(999)),
     ] {
         let mut changed = payload.clone();
@@ -130,6 +138,7 @@ fn ordinary_native_loaded_source_refuses_unbound_native_and_provider_demands() -
         "from rust::foreign import item\npub def answer() -> int:\n    return 42\n",
         "import std.prelude\npub def answer() -> int:\n    return 42\n",
         "import pub::other\npub def answer() -> int:\n    return 42\n",
+        "rust.module(\"incan_std_testing\")\n@rust.extern\npub def answer() -> int:\n    ...\n",
     ] {
         let parsed = module(root.path(), source)?;
         let demands = capture_checked_native_demands(
@@ -628,5 +637,83 @@ fn ordinary_native_sysroot_demands_refuse_uncovered_calls_and_imports() -> TestR
         )?;
         assert!(demands.require_source_inspection().is_err(), "{source}");
     }
+    Ok(())
+}
+
+/// Ordinary quoted derives have declaration-backed source coverage, without certifying native macro execution.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn ordinary_loaded_source_covers_only_declared_quoted_derives() -> TestResult {
+    // ---- Original manifest and actual derive-only source, without namespace or import authority ----
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("derive-probe/src"))?;
+    fs::write(
+        root.path().join("derive-probe/src/lib.rs"),
+        "extern crate proc_macro;\n",
+    )?;
+    fs::write(
+        root.path().join("derive-probe/loaf.toml"),
+        "[project]\nname='derive-probe'\nversion='1.0.0'\n[rust]\nname='derive_probe'\ntype='proc-macro'\nedition='2024'\n",
+    )?;
+    let declaration = "[dependencies]\nderive-probe={loaf='derive-probe',path='derive-probe',version='1.0.0'}\n";
+    let (declared, providers) = project(root.path(), declaration)?;
+    let parsed = module(
+        root.path(),
+        "@rust.derive(\"derive_probe::Generated\")\nmodel Item:\n    value: int\n",
+    )?;
+    let modules = std::slice::from_ref(&parsed);
+    assert!(crate::modules::collect_rust_dependency_uses(&parsed, false).is_empty());
+    let demands =
+        capture_checked_native_demands(&declared, modules, &Default::default(), &providers, &BTreeSet::new())?;
+    demands.require_ordinary_source_inspection(None)?;
+    assert!(demands.require_support_only().is_err());
+    assert!(demands.require_source_inspection().is_err());
+
+    // ---- Serialized coverage stays exact and old facts cannot invent a declaration ----
+    let payload = serde_json::to_value(&demands)?;
+    assert_eq!(
+        payload["observed"]["ordinary_source"]["declared_rust_derive_paths"],
+        serde_json::json!(["derive_probe::Generated"])
+    );
+    let decoded: CheckedNativeDemands = serde_json::from_value(payload.clone())?;
+    decoded.require_ordinary_source_inspection(None)?;
+    for field in ["declared_rust_derive_paths", "rust_derive_paths"] {
+        let mut changed = payload.clone();
+        changed["observed"]["ordinary_source"][field] = serde_json::json!(["foreign::Generated"]);
+        let decoded: CheckedNativeDemands = serde_json::from_value(changed)?;
+        let error = decoded
+            .require_ordinary_source_inspection(None)
+            .err()
+            .ok_or("changed derive facts accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("ordinary loaded source lacks complete native import or own-namespace coverage")
+        );
+    }
+    let mut old = payload;
+    old["observed"]["ordinary_source"]
+        .as_object_mut()
+        .ok_or("source facts missing")?
+        .remove("declared_rust_derive_paths");
+    let decoded: CheckedNativeDemands = serde_json::from_value(old)?;
+    assert!(decoded.require_ordinary_source_inspection(None).is_err());
+
+    // ---- Removing the original declaration keeps the same quoted demand unowned ----
+    let (undeclared, providers) = project(root.path(), "")?;
+    let missing =
+        capture_checked_native_demands(&undeclared, modules, &Default::default(), &providers, &BTreeSet::new())?;
+    let error = missing
+        .require_ordinary_source_inspection(None)
+        .err()
+        .ok_or("undeclared derive admitted")?;
+    assert!(
+        error
+            .to_string()
+            .contains("ordinary loaded source lacks complete native import or own-namespace coverage")
+    );
+    let (restored, providers) = project(root.path(), declaration)?;
+    capture_checked_native_demands(&restored, modules, &Default::default(), &providers, &BTreeSet::new())?
+        .require_ordinary_source_inspection(None)?;
     Ok(())
 }

@@ -1,0 +1,10 @@
+"""Checked JSON hook-result mapping preserving the selected error's actual Display form."""
+
+from std.derives.string import Display
+
+
+pub def checked_json_result[T, E with Display](result: Result[T, E]) -> Result[T, str]:
+    """Preserve the selected hook's success owner or displayed error for serde's ordinary custom-error adapter."""
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return Err(str(error))

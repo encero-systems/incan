@@ -351,6 +351,8 @@ fn select_native_loaf_plan_for_receipt(
 
 /// Append one original ordinary closure to an existing physical manifest without copying its native members.
 /// The enclosing receipt must bind these roots; aliases cannot replace another authority's direct externs.
+/// Admitted record identities keep coordinates stable across consumer subsets; graph positions cannot identify
+/// independent sealed owners. Original owner receipts, members and leases remain verified by `plan_members`.
 pub(crate) fn append_native_loaf_closure(
     closure: &NativeLoafClosure,
     receipt: &OvenReceipt,
@@ -358,8 +360,8 @@ pub(crate) fn append_native_loaf_closure(
     shared_roots: &mut Vec<oven_rustc::plan::shared::OvenSharedNativeRoot>,
     prefix: &str,
 ) -> CliResult<()> {
-    for (index, (identity, unit)) in closure.graph().units().iter().enumerate() {
-        let prefix = format!("{prefix}/{index}");
+    for (identity, unit) in closure.graph().units() {
+        let prefix = format!("{prefix}/{}", identity.replace(':', "-"));
         let (shared_root, members) = unit.plan_members(&prefix).map_err(failure)?;
         let record = unit.record();
         if record.recipe.intent.toolchain != receipt.intent.toolchain

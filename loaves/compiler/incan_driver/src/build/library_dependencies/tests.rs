@@ -86,6 +86,7 @@ fn checked_package_with_requirements(
         requirements: &ProjectRequirements::default(),
         imports: &[],
         exports: &exports,
+        publication: None,
         version: "0.1.0",
         used_module_paths: BTreeSet::new(),
         source_modules: BTreeMap::from([("src/lib.incn".into(), vec!["lib".into()])]),
@@ -179,6 +180,7 @@ fn ordinary_admission_source_free_repeat_and_profiles() -> Result<(), Box<dyn st
 /// Current source dependency resolution selects exact checked owners and retains them across later mutations.
 #[test]
 fn resolved_source_dependencies_bind_checked_publication_and_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    // ---- Original checked publication selected under two aliases ----
     let (provider, _artifact, _input) = checked_package()?;
     let consumer = tempfile::tempdir()?;
     fs::write(
@@ -200,12 +202,91 @@ fn resolved_source_dependencies_bind_checked_publication_and_aliases() -> Result
             .validate_module_usage(&BTreeSet::from([vec!["std".into(), "unselected".into()]]))
             .is_err()
     );
+
+    // ---- A selected dependency's canonical lock remains part of its full source recipe ----
+    let lock = crate::build::source_authority::canonical_baked_project_lock_path(provider.path())?;
+    let original_lock = match fs::read(&lock) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let mut changed_lock = original_lock.as_deref().unwrap_or_default().to_vec();
+    changed_lock.extend_from_slice(b"\n# changed selected dependency lock\n");
+    fs::write(&lock, changed_lock)?;
+    assert!(admitted.verify().is_err());
+    assert!(PreparedLibraryDependencies::from_source_feature_plan(&features, TARGET, TOOLCHAIN, limits()).is_err());
+    match original_lock {
+        Some(bytes) => fs::write(lock, bytes)?,
+        None => fs::remove_file(lock)?,
+    }
+    admitted.verify()?;
+
+    // ---- Authored source mutation remains independently rejected ----
     fs::write(
         provider.path().join("src/lib.incn"),
         "def changed() -> int:\n    return 2\n",
     )?;
     assert!(admitted.verify().is_err());
     assert!(PreparedLibraryDependencies::from_source_feature_plan(&features, TARGET, TOOLCHAIN, limits()).is_err());
+    Ok(())
+}
+
+/// Consumer aliases retain the original producer output; mismatched owners and conflicting sealed profiles refuse.
+#[test]
+fn ordinary_alias_attachments_use_original_package_profile() -> Result<(), Box<dyn std::error::Error>> {
+    let (_root, artifact, input) = checked_package()?;
+    // One canonical provider record can serve several aliases. Check each consumer spelling independently;
+    // the separate shared-owner test covers namespace-route coalescing without requiring duplicate externs.
+    for import_alias in ["geometry", "other_alias"] {
+        let mut selected = input.clone();
+        selected.import_alias = Some(import_alias.into());
+        let owners = PreparedLibraryDependencies::admit(&[selected], TARGET, TOOLCHAIN, limits())?;
+        let plan = owners
+            .provider_plan()
+            .project_module_usage(BTreeSet::from([vec!["pub".into(), import_alias.into()]]));
+        let checked = owners
+            .execution_profiles(&["debug"])?
+            .into_values()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(checked.len(), 1);
+        assert_eq!(checked[0].dependency_key, "provider");
+        let attach = |profiles: &[crate::build::CheckedPackagedProviderProfile]| {
+            crate::build::caller_owned::oven_caller_owned_libraries(&plan, "debug", TARGET, TOOLCHAIN, Some(profiles))
+        };
+        let libraries = attach(&checked)?;
+        assert_eq!(
+            libraries
+                .iter()
+                .map(|library| library.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            [import_alias]
+        );
+        assert!(
+            libraries
+                .iter()
+                .all(|library| library.output == artifact.crate_root.join(&checked[0].package.library_relative_path))
+        );
+
+        // Repeated copies of the same checked owner do not introduce another output authority.
+        let mut repeated = vec![checked[0].clone(), checked[0].clone()];
+        repeated[0].dependency_key = "geometry".into();
+        repeated[1].dependency_key = "other_alias".into();
+        assert_eq!(attach(&repeated)?.len(), 1);
+        repeated[1].package.library_digest = digest_bytes(b"different sealed output");
+        assert!(attach(&repeated).is_err_and(|error| error.message.contains("ambiguous checked output authority")));
+
+        let mut wrong_owner = checked.clone();
+        wrong_owner[0].package.receipt.project.name = "another_producer".into();
+        wrong_owner[0].dependency_key = import_alias.into();
+        assert!(attach(&wrong_owner).is_err_and(|error| error.message.contains("no admitted")));
+        let mut wrong_root = checked.clone();
+        wrong_root[0].artifact_root = artifact.crate_root.join("different-owner");
+        assert!(attach(&wrong_root).is_err_and(|error| error.message.contains("no admitted")));
+        let mut wrong_profile = checked.clone();
+        wrong_profile[0].profile = "release".into();
+        assert!(attach(&wrong_profile).is_err_and(|error| error.message.contains("no admitted")));
+    }
     Ok(())
 }
 
@@ -981,5 +1062,52 @@ fn ordinary_generation_checks_correct_raw_source_domain_and_restoration() -> Res
     fs::File::options().write(true).open(&source)?.set_modified(modified)?;
     admitted.verify()?;
     PreparedLibraryDependencies::admit(&[input], TARGET, TOOLCHAIN, limits())?;
+    Ok(())
+}
+
+/// A retained package without a direct import remains linkable, but never becomes a consumer extern.
+#[test]
+fn ordinary_transitive_outputs_retain_checked_search_only_libraries() -> Result<(), Box<dyn std::error::Error>> {
+    let (_root, artifact, mut input) = checked_package()?;
+    input.import_alias = None;
+    let owners = PreparedLibraryDependencies::admit(&[input], TARGET, TOOLCHAIN, limits())?;
+    let profiles = owners.execution_profiles(&["debug", "release"])?;
+    let checked = profiles.into_values().flatten().collect::<Vec<_>>();
+    let attach = |selected: &[crate::build::CheckedPackagedProviderProfile]| {
+        crate::build::caller_owned::oven_caller_owned_libraries(
+            owners.provider_plan(),
+            "debug",
+            TARGET,
+            TOOLCHAIN,
+            Some(selected),
+        )
+    };
+    let libraries = attach(&checked)?;
+    assert_eq!(libraries.len(), 1);
+    assert!(!libraries[0].expose_extern);
+    assert_eq!(libraries[0].crate_name, "provider");
+    assert!(libraries[0].output.starts_with(&artifact.crate_root));
+    assert_eq!(
+        libraries[0]
+            .output
+            .parent()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str()),
+        Some("debug")
+    );
+    let mut duplicate = checked.clone();
+    duplicate.extend(checked.iter().cloned());
+    assert_eq!(attach(&duplicate)?.len(), 1);
+    let output = &libraries[0].output;
+    let original = fs::read(output)?;
+    fs::write(output, b"changed transitive output")?;
+    assert!(attach(&checked).is_err());
+    fs::write(output, original)?;
+    assert_eq!(attach(&checked)?.len(), 1);
+    let moved = output.with_extension("preserved");
+    fs::rename(output, &moved)?;
+    assert!(attach(&checked).is_err());
+    fs::rename(moved, output)?;
+    assert_eq!(attach(&checked)?.len(), 1);
     Ok(())
 }

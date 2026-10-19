@@ -1,0 +1,27 @@
+"""Reachability of a lowered loop's exit block, read from the native edges its body produced."""
+
+from pub::incan_mir_plan import BasicBlock, TerminatorKind
+
+
+pub def exits_to(blocks: list[BasicBlock], start: int, target: int) -> bool:
+    """
+    Report whether any block from `start` onward has an edge to `target`.
+
+    A loop's exit block is allocated before its body and only the body's own blocks can leave the loop, so a loop whose
+    blocks never reach the exit never falls through: the exit stays unreachable, as Rust's `loop` without `break` is.
+    """
+    for index in range(start, len(blocks)):
+        if edges_to(blocks[index].terminator.kind, target):
+            return true
+    return false
+
+
+def edges_to(kind: TerminatorKind, target: int) -> bool:
+    """Whether one terminator names `target` as a normal successor; cleanup edges never leave a loop normally."""
+    match kind:
+        TerminatorKind.Goto(next) => return next == target
+        TerminatorKind.SwitchBool(_condition, otherwise, then) => return otherwise == target or then == target
+        TerminatorKind.Call(_callee, _arguments, _destination, next, _unwind) => return next == target
+        TerminatorKind.Drop(_place, next, _unwind) => return next == target
+        TerminatorKind.AssertOverflow(_flag, _operator, _left, _right, next, _unwind) => return next == target
+        _ => return false

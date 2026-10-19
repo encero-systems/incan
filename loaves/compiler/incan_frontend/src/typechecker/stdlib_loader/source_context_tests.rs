@@ -17,6 +17,8 @@ use super::StdlibAstCache;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+const OWN_MATH: &str = "from rust::std::f64::consts import PI as FIRST, E as OTHER\npub const VALUE: float = FIRST\n";
+
 const OWN_IO: &str = "pub const LIMIT: int = 7\npub def owned(value: int = LIMIT) -> int:\n    return value\n";
 
 /// Spell exact canonical module segments for cache queries.
@@ -39,6 +41,14 @@ fn child(mode: &str) -> TestResult {
     let policy = standard_package_namespace_policy("incan_stdlib_system").ok_or("missing policy")?;
     write(&package.join("loaf.toml"), policy.declaration)?;
     write(&package.join("src/io.incn"), OWN_IO)?;
+    let data_policy = standard_package_namespace_policy("incan_stdlib_data").ok_or("missing data policy")?;
+    write(&root.path().join("stdlib/data/loaf.toml"), data_policy.declaration)?;
+    write(&root.path().join("stdlib/data/src/math.incn"), OWN_MATH)?;
+    let core_policy = standard_package_namespace_policy("incan_stdlib_core").ok_or("missing core policy")?;
+    write(&root.path().join("stdlib/core/loaf.toml"), core_policy.declaration)?;
+    for module in ["features", "prelude", "this"] {
+        write(&root.path().join(format!("stdlib/core/src/{module}.incn")), OWN_IO)?;
+    }
     write(&package.join("src/fs/prelude.incn"), "pub from std.io import owned\n")?;
     let executable = root.path().join("bin/incan");
     fs::create_dir_all(executable.parent().ok_or("missing executable parent")?)?;
@@ -52,17 +62,25 @@ id = "incan"
 version = "0.6.0-dev.6"
 compiler-requirement = ">=0.6.0-dev.6,<0.7.0"
 [profiles]
-minimal = ["stdlib-system", "stdlib-core"]
-default = ["stdlib-system", "stdlib-core"]
+minimal = ["stdlib-system", "stdlib-core", "stdlib-data"]
+default = ["stdlib-system", "stdlib-core", "stdlib-data"]
 [components.stdlib-system]
 project = "system"
 namespace-roots = ["io", "fs", "environ", "tempfile"]
 [components.stdlib-core]
 project = "core"
 namespace-roots = ["result"]
+[components.stdlib-data]
+project = "data"
+namespace-roots = ["math"]
 "#,
     )?;
     write(&decoy.path().join("system/loaf.toml"), policy.declaration)?;
+    write(&decoy.path().join("data/loaf.toml"), data_policy.declaration)?;
+    write(
+        &decoy.path().join("data/src/math.incn"),
+        &OWN_MATH.replace("= FIRST", "= OTHER"),
+    )?;
     write(
         &decoy.path().join("system/src/io.incn"),
         "pub def owned() -> str:\n    return \"ambient\"\n",
@@ -140,6 +158,141 @@ fn dev7_standard_source_cache_clone_new_member_is_retained_by_parent() -> TestRe
     child("clone-new-member")
 }
 
+/// Body IR consumes the same selected bytes as checking despite a same-identity ambient declaration with a different
+/// value, and rejects changes to those original bytes at the lowering boundary.
+#[cfg(unix)]
+#[test]
+fn dev7_body_ir_uses_checked_sources_and_refuses_changed_members() -> TestResult {
+    child("body-ir")
+}
+
+/// Pinned publisher-private modules retain their exact source without becoming public stdlib namespaces.
+#[cfg(unix)]
+#[test]
+fn dev7_standard_source_cache_retains_publisher_private_roots() -> TestResult {
+    child("core-private")
+}
+
+/// A missing pinned private source root is a broken publisher input, not an optional metadata lookup.
+#[cfg(unix)]
+#[test]
+fn dev7_standard_source_cache_refuses_missing_publisher_private_root() -> TestResult {
+    child("core-private-missing")
+}
+
+/// Read pinned private roots through the original owner, preserving ordinary denial and path confinement.
+#[cfg(unix)]
+fn checked_private_core_sources(ordinary: &Arc<ProviderPlan>, missing: bool) -> TestResult {
+    let source = Arc::new(
+        TrustedStandardSourcePublication::discover("incan_stdlib_core")?.ok_or("missing genuine core source")?,
+    );
+    let package = source.verified_package_root()?.to_path_buf();
+    let policy = standard_package_namespace_policy("incan_stdlib_core").ok_or("missing core policy")?;
+    let plan = Arc::new(ordinary.as_ref().clone().with_standard_source_publication(
+        Arc::clone(&source),
+        &package,
+        policy.package_name,
+        policy.version,
+    )?);
+    let mut cache = StdlibAstCache::new();
+    cache.bind_provider_plan(&plan);
+    let features = path("std.features");
+    if missing {
+        fs::remove_file(package.join("src/features.incn"))?;
+        assert!(cache.lookup_function_meta(&features, "owned").is_none());
+        assert!(cache.verify_retained_sources().is_err());
+        return Ok(());
+    }
+    for module in ["std.features", "std.prelude", "std.this"] {
+        let module = path(module);
+        assert!(!incan_lang::lang::stdlib::is_known_stdlib_module(&module));
+        assert!(cache.lookup_function_meta(&module, "owned").is_some());
+        cache.verify_retained_sources()?;
+    }
+    assert!(
+        cache
+            .lookup_function_meta(&path("std.features.NotAModule"), "owned")
+            .is_none()
+    );
+    cache.verify_retained_sources()?;
+    assert!(source.open_source_module(&path("std.io")).is_err());
+    assert!(
+        source
+            .open_source_module(&["std".into(), "features".into(), "..".into(), "this".into(),])
+            .is_err()
+    );
+    fs::create_dir(package.join("src/features"))?;
+    std::os::unix::fs::symlink(package.join("src/this.incn"), package.join("src/features/escape.incn"))?;
+    assert!(source.open_source_module(&path("std.features.escape")).is_err());
+    let mut checked_only = cache.clone();
+    checked_only.bind_provider_plan(ordinary);
+    assert!(checked_only.lookup_function_meta(&features, "owned").is_none());
+    checked_only.verify_retained_sources()?;
+    let file = package.join("src/features.incn");
+    let modified = fs::metadata(&file)?.modified()?;
+    fs::write(&file, OWN_IO.replace("7", "9"))?;
+    fs::File::open(&file)?.set_modified(modified)?;
+    assert!(cache.verify_retained_sources().is_err());
+    Ok(())
+}
+
+/// Query one real checked const import, proving typed lowering sees the retained producer rather than an ambient twin.
+#[cfg(unix)]
+fn checked_body_ir(ordinary: &Arc<ProviderPlan>) -> TestResult {
+    use incan_semantics_core::body_ir::{Constant, Operand, StatementKind};
+    let source = Arc::new(
+        TrustedStandardSourcePublication::discover("incan_stdlib_data")?.ok_or("missing genuine data source")?,
+    );
+    let package = source.verified_package_root()?.to_path_buf();
+    let plan = Arc::new(ordinary.as_ref().clone().with_standard_source_publication(
+        source,
+        &package,
+        "incan_stdlib_data",
+        "0.5.0",
+    )?);
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path("consumer")));
+    checker.set_provider_plan(plan);
+    let tokens = crate::lexer::lex("from std.math import VALUE\ndef consume() -> float:\n    return VALUE\n")
+        .map_err(|error| format!("lex: {error:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|error| format!("parse: {error:?}"))?;
+    checker
+        .check_program(&program)
+        .map_err(|error| format!("check: {error:?}"))?;
+    let facts = checker.type_info();
+    let module_path = path("consumer");
+    let lower = |cache: &StdlibAstCache| {
+        crate::body_ir::build_body_ir_module_v0_with_checked_sources(&program, &module_path, facts, &[], cache)
+    };
+    let returned_float = |module: &incan_semantics_core::body_ir::BodyIrModule| {
+        module
+            .bodies
+            .iter()
+            .flat_map(|body| &body.block.stmts)
+            .find_map(|statement| match &statement.kind {
+                StatementKind::Return {
+                    value: Some(Operand::Constant(Constant::Float(value))),
+                } => Some(value.clone()),
+                _ => None,
+            })
+    };
+    let selected = lower(&checker.stdlib_cache)?;
+    assert_eq!(returned_float(&selected), Some(std::f64::consts::PI.to_string()));
+    // The decoy has identical names, types and declaration spans, but a different initializer. The old compatibility
+    // path deliberately demonstrates that the hostile source is productive, rather than relying on absent files.
+    let legacy = crate::body_ir::build_body_ir_module_v0(&program, &module_path, facts);
+    assert_eq!(returned_float(&legacy), Some(std::f64::consts::E.to_string()));
+    let mut checked_only = checker.stdlib_cache.clone();
+    checked_only.bind_provider_plan(ordinary);
+    assert_eq!(returned_float(&lower(&checked_only)?), None);
+    let file = package.join("src/math.incn");
+    let modified = fs::metadata(&file)?.modified()?;
+    fs::write(&file, OWN_MATH.replace("= FIRST", "= OTHER"))?;
+    fs::File::open(&file)?.set_modified(modified)?;
+    assert!(lower(&checker.stdlib_cache).is_err());
+    Ok(())
+}
+
 /// The real copied executable enters the public factory, then binds that exact Arc through the real checker adapter.
 #[cfg(unix)]
 #[test]
@@ -159,6 +312,12 @@ fn dev7_standard_source_cache_actual_executable_child() -> TestResult {
         &[],
         std::iter::empty(),
     )?);
+    if mode == "body-ir" {
+        return checked_body_ir(&ordinary);
+    }
+    if mode == "core-private" || mode == "core-private-missing" {
+        return checked_private_core_sources(&ordinary, mode == "core-private-missing");
+    }
     let mut checked_only = TypeChecker::new();
     checked_only.stdlib_cache = legacy.clone();
     checked_only.set_provider_plan(Arc::clone(&ordinary));

@@ -342,6 +342,22 @@ def test_new_parser_case() -> None:
 
 Pass `--feature new_parser` to make `feature("new_parser")` true for collection.
 
+## Run Rust snapshot tests
+
+Run Rust tests through the shared runner:
+
+```bash
+oven tests --rust-only
+```
+
+Oven supplies Insta's `INSTA_WORKSPACE_ROOT`, defaulting to the owning Loaf's project directory. If the snapshots belong to a different workspace root, set it explicitly for the command:
+
+```bash
+INSTA_WORKSPACE_ROOT=/path/to/workspace oven tests --rust-only
+```
+
+Providing the workspace root prevents Insta's discovery from launching `cargo metadata`. It does not bypass or reuse snapshot assertions: selected tests still execute them. See the [Rust test contract](../reference/cli_reference.md#oven-tests) for selection, preparation and reporting behavior.
+
 ## Output Format
 
 ```bash

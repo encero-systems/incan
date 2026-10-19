@@ -264,8 +264,45 @@ fn captured_provider_contracts(selected: &ProviderPlan) -> CliResult<BTreeMap<St
 }
 
 impl CheckedNativeDemands {
+    /// Retain actual successful checker queries only after their complete durable ABI has been validated.
+    ///
+    /// Inferred return types can name crates below an authored dependency. They are not new source imports or
+    /// macro roots, and cannot authorize inspection by themselves. Original native requests and checked metadata
+    /// owners remain independently required at preparation and replay handoffs.
+    pub(crate) fn with_checked_rust_abi_queries(
+        mut self,
+        manifest: &incan_frontend::library_manifest::LibraryManifest,
+        queries: &BTreeSet<String>,
+    ) -> CliResult<Self> {
+        crate::build::library_metadata::validate_required_rust_abi(manifest, queries)?;
+        let facts = self
+            .observed
+            .as_mut()
+            .ok_or_else(|| invalid("native demand coverage is unknown"))?;
+        let source = facts
+            .ordinary_source
+            .as_mut()
+            .ok_or_else(|| invalid("ordinary source demand coverage is unknown"))?;
+        source.bind_checked_abi_queries(queries, &facts.rust_abi_queries)?;
+        Ok(self)
+    }
+
+    /// Bind reported extern labels to exact original own-facet declarations and their inspected ABI queries.
+    pub(crate) fn require_ordinary_extern_paths(&self, paths: &[String]) -> CliResult<()> {
+        let facts = self
+            .observed
+            .as_ref()
+            .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        match &facts.ordinary_source {
+            Some(source) => source.require_extern_paths(paths, facts),
+            None if paths.is_empty() => Ok(()),
+            None => Err(invalid("ordinary Rust extern coverage is unknown")),
+        }
+    }
+
     /// Admit loaded ordinary source for checking while keeping every native, provider and macro demand explicit.
     /// Old scalar metadata retains its narrower coverage; no source fact alone certifies a checked publication.
+    #[cfg(test)]
     pub(crate) fn require_ordinary_source_inspection(
         &self,
         admitted: Option<(
@@ -273,10 +310,33 @@ impl CheckedNativeDemands {
             &ProviderPlan,
         )>,
     ) -> CliResult<()> {
+        self.require_ordinary_source_inspection_with_vocabulary(admitted, None)
+    }
+
+    /// Admit only a genuinely prepared vocabulary for the exact retained own-source publisher; no declaration grants
+    /// execution.
+    pub(crate) fn require_ordinary_source_inspection_with_vocabulary(
+        &self,
+        admitted: Option<(
+            &crate::build::library_dependencies::PreparedLibraryDependencies,
+            &ProviderPlan,
+        )>,
+        vocabulary: Option<&crate::build::library_project::standard_vocabulary::PreparedStandardVocabulary>,
+    ) -> CliResult<()> {
         let facts = self
             .observed
             .as_ref()
             .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        let vocabulary_declaration = match vocabulary {
+            Some(vocabulary) => Some(
+                vocabulary.verified_declaration_for_plan(
+                    admitted
+                        .map(|(_, plan)| plan)
+                        .ok_or_else(|| invalid("prepared vocabulary requires its own source plan"))?,
+                )?,
+            ),
+            None => None,
+        };
         let mut dependencies = BTreeSet::new();
         let mut modules = BTreeSet::new();
         if let Some((owners, plan)) = admitted {
@@ -294,6 +354,26 @@ impl CheckedNativeDemands {
                     .iter()
                     .map(|dependency| dependency.crate_name.clone()),
             );
+            if let Some(source) = selected.standard_source_publication() {
+                let root = source
+                    .verified_package_root()
+                    .map_err(|error| invalid(error.to_string()))?;
+                let declaration = std::str::from_utf8(
+                    source
+                        .verified_declaration_bytes()
+                        .map_err(|error| invalid(error.to_string()))?,
+                )
+                .map_err(|error| invalid(error.to_string()))?;
+                let manifest = ProjectManifest::from_str(declaration, &root.join("loaf.toml"))
+                    .map_err(|error| invalid(error.to_string()))?;
+                dependencies.extend(
+                    facts
+                        .dependency_aliases
+                        .iter()
+                        .filter(|alias| manifest.rust_dependencies().contains_key(*alias))
+                        .cloned(),
+                );
+            }
             if captured_provider_contracts(&selected)? != facts.provider_contracts {
                 return Err(invalid(
                     "ordinary native demands differ from their admitted provider contracts",
@@ -344,7 +424,7 @@ impl CheckedNativeDemands {
             ));
         }
         match &facts.ordinary_source {
-            Some(source) => source.require_inspection(facts, &modules, &dependencies),
+            Some(source) => source.require_inspection(facts, &modules, &dependencies, vocabulary_declaration),
             None => self.require_source_inspection(),
         }
     }

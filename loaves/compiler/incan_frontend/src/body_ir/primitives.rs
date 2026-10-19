@@ -18,6 +18,23 @@ pub(super) fn result_type_parts(ty: &IncanType) -> Option<(&IncanType, &IncanTyp
         _ => None,
     }
 }
+/// Return the member types of `ty` when it is the builtin collection `kind` (a list's or set's element type, a dict's
+/// key and value types).
+pub(super) fn collection_member_types(ty: &IncanType, kind: CollectionTypeId) -> Option<&[IncanType]> {
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    (collections::from_str(base) == Some(kind)).then_some(args.as_slice())
+}
+/// Report whether a checked type is an optional union (`int | str | None`): an intrinsic `Option` whose payload is a
+/// union, so a member pattern over it selects `Some` and then the member of that payload.
+pub(super) fn is_optional_union(ty: &IncanType) -> bool {
+    let IncanType::Generic { base, args } = ty else {
+        return false;
+    };
+    collections::from_str(base) == Some(CollectionTypeId::Option)
+        && matches!(args.as_slice(), [IncanType::Generic { base, .. }] if base == "Union")
+}
 /// Return just the checked error channel for an intrinsic `Result` carrier.
 pub(super) fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
     result_type_parts(ty).map(|(_, error_type)| error_type)
@@ -81,12 +98,17 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
     }
 }
 
-/// Collection equality invokes shared `PartialEq` receivers in legacy emission; it never clones or consumes either
-/// operand.
+/// Collection and byte-buffer equality invoke shared `PartialEq` receivers in legacy emission; neither operand is
+/// cloned or consumed.
 pub(super) fn collection_equality_borrows(op: ast::BinaryOp, lhs_ty: &IncanType, rhs_ty: &IncanType) -> bool {
     matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq)
-        && builtin_collection_id(lhs_ty).is_some()
-        && builtin_collection_id(rhs_ty).is_some()
+        && shared_equality_operand(lhs_ty)
+        && shared_equality_operand(rhs_ty)
+}
+
+/// Recognize checked equality operands with owned collection storage, including bytes' primitive spelling.
+fn shared_equality_operand(ty: &IncanType) -> bool {
+    builtin_collection_id(ty).is_some() || matches!(ty, IncanType::Primitive(IncanPrimitiveType::Bytes))
 }
 /// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
 fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {

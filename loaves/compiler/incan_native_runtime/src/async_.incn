@@ -2,6 +2,7 @@
 
 import std.async
 from rust::incan_std_async::runtime import block_on
+from rust::incan_std_async::task import RuntimeFuture
 from rust::std::io import stderr, Write
 from rust::std::process import exit
 from rust::std::string import String as RustString
@@ -15,8 +16,13 @@ async def invoke(entry: () -> None) -> None:
 
 pub def run_async_entry(entry: () -> None) -> None:
     """Initialize canonical panic reporting and preserve legacy's runtime initialization error boundary."""
+    run_future_entry(invoke(entry))
+
+
+pub def run_future_entry[F with RuntimeFuture[None]](future: F) -> None:
+    """Run an owned native future through the canonical executor and preserve its initialization error boundary."""
     initialize_panic_hook()
-    match block_on(invoke(entry)):
+    match block_on(future):
         Ok(_value) => pass
         Err(error) =>
             mut stream = stderr()

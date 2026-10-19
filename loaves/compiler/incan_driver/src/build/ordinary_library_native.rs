@@ -43,8 +43,27 @@ pub(crate) struct OrdinaryLibraryNativeRequest<'a> {
 /// capability can prepare library metadata or run compiler macros.
 pub(crate) struct OrdinaryLibraryNativeProfiles {
     metadata: Arc<OrdinaryNativeMetadataAuthority>,
+    own_facet: Option<StandardSourceNativeFacet>,
+    vocabulary: Option<Arc<super::library_project::standard_vocabulary::PreparedStandardVocabulary>>,
+    /// Declared native facets of this session's original ordinary standard namespace owners.
+    namespace_facets: Vec<StandardSourceNativeFacet>,
     #[cfg(test)]
-    reports: BTreeMap<String, NativeLoafPreparationReport>,
+    reports: Arc<BTreeMap<String, NativeLoafPreparationReport>>,
+}
+
+/// A standard publisher's original source issuer paired with its declared physical Rust facet request.
+#[derive(Clone)]
+struct StandardSourceNativeFacet {
+    publisher: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+    dependency: DependencySpec,
+}
+
+impl StandardSourceNativeFacet {
+    /// Revalidate the original issuer before returning its private, constructor-bound physical request.
+    fn verified_dependency(&self) -> CliResult<&DependencySpec> {
+        self.publisher.verify().map_err(failure)?;
+        Ok(&self.dependency)
+    }
 }
 
 impl OrdinaryLibraryNativeProfiles {
@@ -109,9 +128,159 @@ impl OrdinaryLibraryNativeProfiles {
         )?);
         Ok(Self {
             metadata,
+            own_facet: None,
+            vocabulary: None,
+            namespace_facets: Vec::new(),
             #[cfg(test)]
-            reports,
+            reports: Arc::new(reports),
         })
+    }
+
+    /// Bind this session's own standard Rust facet without preparing another graph or adding a logical self-edge.
+    ///
+    /// Only the original standard source issuer supplies this implicit physical root. Normal consumer aliases and
+    /// checked Incan package edges stay unchanged; every profile still selects the facet from the full native request.
+    pub(crate) fn for_session(self: &Arc<Self>, session: &crate::session::CompilationSession) -> CliResult<Arc<Self>> {
+        let mut namespace_facets = Vec::new();
+        for record in session.provider_plan().active_sdk_records() {
+            if !matches!(
+                record.provenance,
+                incan_provider::ProviderProvenance::StandardPublication { .. }
+            ) {
+                continue;
+            }
+            let namespace = incan_frontend::provider::namespaces::SelectedProviderNamespace::from_plan(
+                session.provider_plan(),
+                &record.identity.stable_key(),
+            )
+            .map_err(failure)?;
+            let publisher = Arc::new(
+                incan_frontend::provider::source_policy::TrustedStandardSourcePublication::discover(
+                    &record.identity.name,
+                )
+                .map_err(failure)?
+                .ok_or_else(|| failure("ordinary namespace has no original standard source"))?,
+            );
+            let root = publisher.verified_package_root().map_err(failure)?;
+            if namespace
+                .record()
+                .artifact
+                .as_ref()
+                .and_then(|artifact| {
+                    incan_frontend::library_manifest_index::dependency_project_root(&artifact.crate_root)
+                })
+                .as_deref()
+                != Some(root)
+            {
+                return Err(failure(
+                    "ordinary namespace native source differs from its original publication",
+                ));
+            }
+            let Some(name) = publisher.verified_native_facet_name().map_err(failure)? else {
+                continue;
+            };
+            let (package, version) = publisher.package_identity();
+            let dependency = DependencySpec {
+                crate_name: name,
+                package: Some(package.to_string()),
+                version: Some(format!("={version}")),
+                features: record.identity.feature_projection.iter().cloned().collect(),
+                default_features: false,
+                optional: false,
+                source: oven_model::manifest::DependencySource::Path {
+                    path: root.to_path_buf(),
+                },
+            };
+            namespace_facets.push(StandardSourceNativeFacet { publisher, dependency });
+        }
+        if session.provider_plan().standard_source_publication().is_none()
+            && self.own_facet.is_none()
+            && namespace_facets.is_empty()
+            && self.namespace_facets.is_empty()
+        {
+            return Ok(Arc::clone(self));
+        }
+        let own_facet = session
+            .provider_plan()
+            .standard_source_publication()
+            .map(|publisher| {
+                let Some(name) = publisher.verified_native_facet_name().map_err(failure)? else {
+                    return Ok(None);
+                };
+                let root = publisher.verified_package_root().map_err(failure)?;
+                let manifest_root = session
+                    .manifest
+                    .as_ref()
+                    .ok_or_else(|| failure("standard native source session has no manifest"))?
+                    .project_root()
+                    .canonicalize()
+                    .map_err(failure)?;
+                if root != manifest_root {
+                    return Err(failure("standard native source facet belongs to another session"));
+                }
+                let (package, version) = publisher.package_identity();
+                let features = session
+                    .package_feature_plan()
+                    .as_ref()
+                    .and_then(|plan| plan.root_package())
+                    .ok_or_else(|| failure("standard native source session has no feature selection"))?
+                    .features
+                    .active_features
+                    .iter()
+                    .cloned()
+                    .collect();
+                Ok::<_, CliError>(Some(StandardSourceNativeFacet {
+                    publisher: Arc::clone(publisher),
+                    dependency: DependencySpec {
+                        crate_name: name,
+                        package: Some(package.to_string()),
+                        version: Some(format!("={version}")),
+                        features,
+                        default_features: true,
+                        optional: false,
+                        source: oven_model::manifest::DependencySource::Path {
+                            path: root.to_path_buf(),
+                        },
+                    },
+                }))
+            })
+            .transpose()?
+            .flatten();
+        Ok(Arc::new(Self {
+            metadata: Arc::clone(&self.metadata),
+            own_facet,
+            vocabulary: self.vocabulary.clone(),
+            namespace_facets,
+            #[cfg(test)]
+            reports: Arc::clone(&self.reports),
+        }))
+    }
+
+    /// Keep the explicit vocabulary producer beside original native profiles without replacing their request owners.
+    pub(super) fn retaining_vocabulary(
+        &self,
+        vocabulary: Arc<super::library_project::standard_vocabulary::PreparedStandardVocabulary>,
+    ) -> CliResult<Arc<Self>> {
+        self.verify()?;
+        vocabulary.verify()?;
+        if self.vocabulary.is_some() {
+            return Err(failure("ordinary context already retains a vocabulary producer"));
+        }
+        Ok(Arc::new(Self {
+            metadata: Arc::clone(&self.metadata),
+            own_facet: self.own_facet.clone(),
+            namespace_facets: self.namespace_facets.clone(),
+            vocabulary: Some(vocabulary),
+            #[cfg(test)]
+            reports: Arc::clone(&self.reports),
+        }))
+    }
+
+    /// Borrow the originally supplied vocabulary capability for checked-demand and canonical lock handoffs.
+    pub(crate) fn prepared_vocabulary(
+        &self,
+    ) -> Option<&Arc<super::library_project::standard_vocabulary::PreparedStandardVocabulary>> {
+        self.vocabulary.as_ref()
     }
 
     /// Borrow the same original complete semantic request through selection, replay and publication handoffs.
@@ -128,7 +297,14 @@ impl OrdinaryLibraryNativeProfiles {
     /// Revalidate every original request and mandatory support declaration without reacquiring owners.
     #[track_caller]
     pub(crate) fn verify(&self) -> CliResult<()> {
-        self.metadata.verify()
+        self.metadata.verify()?;
+        if let Some(vocabulary) = &self.vocabulary {
+            vocabulary.verify()?;
+        }
+        for own in self.own_facet.iter().chain(&self.namespace_facets) {
+            own.verified_dependency()?;
+        }
+        Ok(())
     }
 
     /// Bind a canonical normal/dev dependency surface to every original profile before its lock is published.
@@ -167,7 +343,8 @@ impl OrdinaryLibraryNativeProfiles {
     ///
     /// A source import can explicitly name an already mandatory native facet. This does not introduce another
     /// dependency or grant a namespace: the full requests already bind its original compiler-owned source.
-    /// Other facets, provider records and dependency projections still need their own ordinary authority.
+    /// Other facets require original checked dependency requirements or the retained standard publisher's own
+    /// compiler-pinned declaration. Native selection still verifies each demanded physical facet independently.
     pub(crate) fn provider_semantic_dependencies(
         &self,
         plan: &incan_provider::ProviderPlan,
@@ -184,23 +361,72 @@ impl OrdinaryLibraryNativeProfiles {
             }
         };
         let support = self.metadata.support().dependencies()?;
-        if requirements.stdlib_facets.iter().any(|facet| {
-            !incan_lang::lang::stdlib::facets::is_facet(facet)
-                || !support.iter().any(|dependency| dependency.crate_name == *facet)
-        }) || requirements.dependencies != permitted.dependencies
-            || !requirements.sdk_dependency_rebindings.is_empty()
-            || !requirements.sdk_path_dependencies.is_empty()
-            || !requirements.sdk_artifact_projections.is_empty()
-        {
-            return Err(failure(
-                "ordinary mandatory support does not cover the requested provider, facet or dependency projections",
-            ));
+        let own_facet = plan
+            .standard_source_publication()
+            .map(|source| source.verified_native_facet_name().map_err(failure))
+            .transpose()?
+            .flatten();
+        let unadmitted_facets = requirements
+            .stdlib_facets
+            .iter()
+            .filter(|facet| {
+                !incan_lang::lang::stdlib::facets::is_facet(facet)
+                    || !(support.iter().any(|dependency| dependency.crate_name == **facet)
+                        || permitted.stdlib_facets.contains(facet)
+                        || self
+                            .namespace_facets
+                            .iter()
+                            .any(|source| source.dependency.crate_name == **facet)
+                        || own_facet.as_ref() == Some(*facet))
+            })
+            .collect::<Vec<_>>();
+        let matches = incan_provider::requirements::dependency_specs_match;
+        let additional = requirements
+            .dependencies
+            .iter()
+            .filter(|required| !permitted.dependencies.iter().any(|allowed| matches(required, allowed)))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut dependency_projection_matches = permitted.dependencies.iter().all(|allowed| {
+            requirements
+                .dependencies
+                .iter()
+                .any(|required| matches(required, allowed))
+        });
+        if !additional.is_empty() {
+            if let Some(source) = plan.standard_source_publication() {
+                let root = source.verified_package_root().map_err(failure)?;
+                let declaration =
+                    std::str::from_utf8(source.verified_declaration_bytes().map_err(failure)?).map_err(failure)?;
+                let manifest = oven_model::manifest::ProjectManifest::from_str(declaration, &root.join("loaf.toml"))
+                    .map_err(failure)?;
+                let declared = manifest.rust_dependency_values();
+                dependency_projection_matches &= additional
+                    .iter()
+                    .all(|required| declared.iter().any(|allowed| matches(required, allowed)));
+                // A source requirement such as serde still needs the exact original native root and complete
+                // producer request. The pinned declaration alone grants no physical or semantic ABI authority.
+                if dependency_projection_matches {
+                    self.verify_dependencies(&additional, root)?;
+                }
+            } else {
+                dependency_projection_matches = false;
+            }
+        }
+        let legacy_projection_empty = requirements.sdk_dependency_rebindings.is_empty()
+            && requirements.sdk_path_dependencies.is_empty()
+            && requirements.sdk_artifact_projections.is_empty();
+        if !unadmitted_facets.is_empty() || !dependency_projection_matches || !legacy_projection_empty {
+            return Err(failure(format!(
+                "ordinary mandatory support does not cover the requested provider, facet or dependency projections: unadmitted facets {unadmitted_facets:?}, dependency projection matches {dependency_projection_matches}, legacy projection empty {legacy_projection_empty}, additional source dependencies {additional:?}"
+            )));
         }
         Ok(Vec::new())
     }
 
-    /// Bind source inspection to explicit dependencies and the same original mandatory native support roots.
-    /// Conflicting aliases refuse in the physical selector before an implicit support request can be appended.
+    /// Bind source inspection to explicit dependencies, original publisher path companions, and mandatory support.
+    /// The generic import collector omits registered companions. Only the verified publisher declaration restores
+    /// their exact requests here; a query name or forward native membership cannot grant a new root alias.
     pub(crate) fn inspection_dependencies(
         &self,
         declared: &[DependencySpec],
@@ -213,8 +439,11 @@ impl OrdinaryLibraryNativeProfiles {
             profile: profile.to_string(),
             features: Vec::new(),
         };
-        self.closure(&intent, declared, owner)?;
-        let mut dependencies = declared.to_vec();
+
+        let mut dependencies = self.source_dependencies(declared)?;
+
+        // ---- Exact physical selection before implicit support aliases ----
+        self.closure(&intent, &dependencies, owner)?;
         for support in self.metadata.support().dependencies()? {
             if !dependencies
                 .iter()
@@ -223,16 +452,73 @@ impl OrdinaryLibraryNativeProfiles {
                 dependencies.push(support.clone());
             }
         }
+        for own in self.own_facet.iter().chain(&self.namespace_facets) {
+            let own = own.verified_dependency()?;
+            if !dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == own.crate_name)
+            {
+                dependencies.push(own.clone());
+            }
+        }
         Ok(dependencies)
     }
 
-    /// Select authored dependency aliases and mandatory compiler support from the original producer graph.
+    /// Restore original publisher path companions omitted by the generic import collector.
+    /// Inspection and executable closures must use the same pinned declaration and namespace registry. This only
+    /// projects requests: callers still validate every physical root against the original native producer graph.
+    fn source_dependencies(&self, declared: &[DependencySpec]) -> CliResult<Vec<DependencySpec>> {
+        let mut dependencies = declared.to_vec();
+
+        // ---- Original publisher declaration ----
+        if let Some(own) = &self.own_facet {
+            let publisher = &own.publisher;
+            let root = publisher.verified_package_root().map_err(failure)?;
+            let declaration =
+                std::str::from_utf8(publisher.verified_declaration_bytes().map_err(failure)?).map_err(failure)?;
+            let manifest = oven_model::manifest::ProjectManifest::from_str(declaration, &root.join("loaf.toml"))
+                .map_err(failure)?;
+
+            // ---- Declared namespace companions and exact alias consistency ----
+            for companion in manifest.rust_dependency_values().into_iter().filter(|dependency| {
+                incan_lang::lang::stdlib::is_path_extra_crate_dep(&dependency.crate_name)
+                    && publisher.namespace_roots().iter().any(|root| {
+                        incan_lang::lang::stdlib::find_namespace(root).is_some_and(|namespace| {
+                            namespace
+                                .extra_crate_deps
+                                .iter()
+                                .any(|companion| companion.crate_name == dependency.crate_name)
+                        })
+                    })
+            }) {
+                if let Some(existing) = dependencies
+                    .iter()
+                    .find(|dependency| dependency.crate_name == companion.crate_name)
+                {
+                    if !incan_provider::requirements::dependency_specs_match(existing, &companion) {
+                        return Err(failure(format!(
+                            "ordinary dependency `{}` conflicts with its original publisher declaration",
+                            companion.crate_name
+                        )));
+                    }
+                } else {
+                    dependencies.push(companion);
+                }
+            }
+        }
+
+        Ok(dependencies)
+    }
+
+    /// Select authored aliases, original publisher companions, and mandatory support from the original graph.
     fn closure(
         &self,
         intent: &OvenBuildIntent,
         dependencies: &[DependencySpec],
         owner: &Path,
     ) -> CliResult<NativeLoafClosure> {
+        // ---- Original declaration and mandatory physical roots ----
+        let dependencies = self.source_dependencies(dependencies)?;
         let observation = self.metadata.verify_profile(intent).map_err(|error| {
             failure(format!(
                 "cannot verify ordinary native profile for {}: {error}",
@@ -244,8 +530,27 @@ impl OrdinaryLibraryNativeProfiles {
         let mut roots = graph
             .select_dependency_roots(support.dependencies()?, support.declaration_owner()?, "target")
             .map_err(|error| failure(format!("cannot select mandatory ordinary support: {error}")))?;
+        for own in self.own_facet.iter().chain(&self.namespace_facets) {
+            let own = own.verified_dependency()?;
+            for root in graph
+                .select_dependency_roots(std::slice::from_ref(own), owner, "target")
+                .map_err(failure)?
+            {
+                if let Some(original) = roots.iter().find(|original| original.alias == root.alias) {
+                    if original.record_identity != root.record_identity {
+                        return Err(failure(
+                            "standard publisher's own native facet conflicts with mandatory support",
+                        ));
+                    }
+                } else {
+                    roots.push(root);
+                }
+            }
+        }
+
+        // ---- Exact authored and publisher companion aliases ----
         for root in graph
-            .select_dependency_roots(dependencies, owner, "target")
+            .select_dependency_roots(&dependencies, owner, "target")
             .map_err(|error| {
                 failure(format!(
                     "cannot select ordinary native declarations {dependencies:?} for {}: {error}",
@@ -363,8 +668,12 @@ impl OrdinaryLibraryNativeProfiles {
             oven_store::receipt_generated_project(&request).map_err(failure)?
         };
         // ---- Select and retain the same genuine producer graph for future generated tests ----
-        let (receipt, plan_selection) = self.select_plan(store, &selected_receipt, &physical, owner)?;
+        let closure = self.closure(&selected_receipt.intent, &physical, owner)?;
+        let (receipt, plan_selection) =
+            super::native_loaf_plan::select_native_loaf_plan(store, &selected_receipt, &closure)?;
+        self.metadata.verify_profile(&receipt.intent)?;
         Ok(super::PreparedOvenTestDependencyEnvelope {
+            native_roots: Some(closure.roots().clone()),
             receipt,
             dependency_surface_digest,
             dependencies,

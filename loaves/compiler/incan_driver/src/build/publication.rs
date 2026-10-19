@@ -466,6 +466,22 @@ pub(crate) fn publish_project_inspection_authority(
         dependency_authority.locked_registry_packages,
         &owner_locked_registry_packages,
     )?;
+    let native_roots = test_dependency_envelope
+        .native_roots
+        .as_ref()
+        .map(|roots| {
+            test_dependency_constituent_index
+                .map(
+                    |constituent_index| oven_rustc::rustc::OvenProjectInspectionNativeRoots {
+                        constituent_index,
+                        roots: roots.clone(),
+                    },
+                )
+                .ok_or_else(|| {
+                    CliError::failure("ordinary inspection publication lost its original native constituent")
+                })
+        })
+        .transpose()?;
     // Release-only publication still owns its exact inspection constituent. It cannot advertise a debug test
     // envelope: future tests need an independently prepared debug plan, rather than accepting release artifacts.
     let test_dependency_envelope = test_dependency_constituent_index
@@ -476,6 +492,7 @@ pub(crate) fn publish_project_inspection_authority(
                 &test_dependency_envelope.dependency_root_digests,
                 &registry_source_dependencies,
                 &dev_registry_source_dependencies,
+                test_dependency_envelope.native_roots.as_ref(),
             )
             .map(|dependency_roots| OvenProjectInspectionTestDependencyEnvelope {
                 constituent_index,
@@ -545,6 +562,7 @@ pub(crate) fn publish_project_inspection_authority(
         }
     }
     let payload = OvenProjectInspectionAuthorityPayload {
+        native_roots,
         schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
         project_identity: baked_project_owner_identity(project_root)?,
         source_authority_digest: source_authority_digest.to_string(),

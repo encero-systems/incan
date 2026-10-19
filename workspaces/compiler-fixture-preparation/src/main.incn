@@ -18,7 +18,12 @@ def prepare(arguments: list[str]) -> Result[None, str]:
     runtime.mkdir(true, true).map_err((error) => error.message())?
     synchronize_sources(original.joinpath("src"), runtime.joinpath("src"))?
     manifest = original.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
-    declaration = manifest + "\n[rust-dependencies]\nlibm = \"0.2\"\n"
+    kernel_dependency = "path = \"../../kernel/incan_lang\""
+    if kernel_dependency not in manifest:
+        return Err("runtime manifest must retain its declared language-kernel dependency")
+    kernel = original.joinpath("../../kernel/incan_lang").resolve().map_err((error) => error.message())?
+    kernel_literal = JsonValue.string(kernel.0).to_json().map_err((error) => error.message())?
+    declaration = manifest.replace(kernel_dependency, f"path = {kernel_literal}") + "\n[rust-dependencies]\nlibm = \"0.2\"\n"
     manifest_path = runtime.joinpath("loaf.toml")
     mut manifest_changed = true
     if manifest_path.exists():

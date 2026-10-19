@@ -87,14 +87,55 @@ pub enum IncanType {
     Ref(Box<IncanType>),
     RefMut(Box<IncanType>),
     RustInteropPath(String),
+    /// A dependency-owned builtin carrier selected only by the Body IR bridge from checked identity proof.
+    NativeBuiltin(RuntimeBuiltinType),
+    /// Body IR-only refusal for a checked type whose retained provenance cannot authorize executable storage.
+    Unsupported(String),
     Infer,
     Unknown,
+}
+
+/// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum RuntimeBuiltinType {
+    /// The existing validation runtime error, which owns its message and optional code.
+    ValidationError,
+}
+
+impl RuntimeBuiltinType {
+    /// Return the root binding that checking proves for this builtin runtime storage.
+    pub fn binding_name(&self) -> &'static str {
+        match self {
+            Self::ValidationError => "ValidationError",
+        }
+    }
+
+    /// Recognize the complete root builtin identity; source declarations and aliases with different origins refuse.
+    pub fn from_identity(identity: &crate::CanonicalSymbolId) -> Option<Self> {
+        (identity.namespace == crate::SymbolNamespace::OrdinaryLexical
+            && identity.origin == crate::SymbolOrigin::Builtin
+            && identity.kind == crate::SemanticSourceTargetKind::Builtin
+            && identity.scope_discriminant.is_none()
+            && identity.declaration_span == crate::HirSourceSpan::new(0, 0)
+            && identity.declaration_name == Self::ValidationError.binding_name())
+        .then_some(Self::ValidationError)
+    }
 }
 
 /// Construct a parameterized type for Incan callers whose legacy emitter cannot construct Rust struct-style variants.
 /// This interop boundary is removable when dev.8 retires legacy emission; it preserves the supplied checked arguments.
 pub fn generic(base: String, args: Vec<IncanType>) -> IncanType {
     IncanType::Generic { base, args }
+}
+
+/// Construct a function type for Incan callers whose legacy emitter cannot construct Rust struct-style variants.
+/// This interop boundary is removable when dev.8 retires legacy emission; it preserves the supplied checked parameters
+/// and result type.
+pub fn function_type(params: Vec<IncanCallableParam>, return_type: IncanType) -> IncanType {
+    IncanType::Function {
+        params,
+        return_type: Box::new(return_type),
+    }
 }
 
 impl IncanType {
@@ -122,7 +163,9 @@ impl IncanType {
             | Self::Decimal { .. } => AbiV0Ownership::CopyOrTrivial,
             Self::Ref(_) => AbiV0Ownership::Borrowed,
             Self::RefMut(_) => AbiV0Ownership::MutBorrowed,
-            Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown => AbiV0Ownership::Unknown,
+            Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown | Self::Unsupported(_) => {
+                AbiV0Ownership::Unknown
+            }
             _ => AbiV0Ownership::Owned,
         }
     }
@@ -140,8 +183,8 @@ impl IncanType {
             Self::TypeVar(_) => AbiV0Representation::TypeParameter,
             Self::SelfType => AbiV0Representation::SelfType,
             Self::Ref(_) | Self::RefMut(_) => AbiV0Representation::Borrow,
-            Self::RustInteropPath(_) => AbiV0Representation::RustInterop,
-            Self::Never | Self::Infer | Self::Unknown => AbiV0Representation::Unknown,
+            Self::RustInteropPath(_) | Self::NativeBuiltin(_) => AbiV0Representation::RustInterop,
+            Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
     }
 }
@@ -179,6 +222,8 @@ impl fmt::Display for IncanType {
             Self::Ref(inner) => write!(f, "&{inner}"),
             Self::RefMut(inner) => write!(f, "&mut {inner}"),
             Self::RustInteropPath(path) => write!(f, "rust::{path}"),
+            Self::NativeBuiltin(builtin) => write!(f, "runtime::{}", builtin.binding_name()),
+            Self::Unsupported(description) => write!(f, "unsupported[{description}]"),
             Self::Infer => write!(f, "_"),
             Self::Unknown => write!(f, "?"),
         }

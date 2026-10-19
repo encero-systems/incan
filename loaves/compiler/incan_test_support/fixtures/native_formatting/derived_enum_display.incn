@@ -1,0 +1,15 @@
+@derive(Display)
+enum Message:
+    """Render an owned string payload without consuming repeated reads."""
+
+    Text(str)
+    Empty
+
+
+def main() -> None:
+    """Compare derived display through printing, string conversion and interpolation."""
+    message = Message.Text("Ada\n\"Bo\"")
+    println(message)
+    println(str(message))
+    println(f"{message}")
+    println(Message.Empty)

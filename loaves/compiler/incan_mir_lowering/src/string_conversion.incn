@@ -1,0 +1,207 @@
+"""Source-owned raw newtype string conversion roots, with Incan parsing, composition and error propagation."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, generic
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    NominalDeclaration,
+    NamedCallableTarget,
+    StringConversionContract,
+)
+from pub::incan_mir_plan import (
+    Function,
+    Parameter,
+    PlanType,
+    EnumDeclaration,
+    ExternalFunction,
+    CalleeKind,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned, track_rvalue_moves
+from string_input import owned_string_frame
+from string_conversion_contracts import conversion_name, conversion_trait
+from options import retain_carrier, propagate_result, result_layout
+from unions import native_source_type, collect_unions
+from type_parameters import substitute
+
+
+pub def string_conversion_callee(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &NamedCallableTarget,
+    span: SourceSpan,
+) -> Result[Option[tuple[CalleeKind, PlanType]], str]:
+    """Dispatch only the actual selected Package trait slot at its checked closed receiver, never a method spelling."""
+    if conversion_trait(module)? == "":
+        return Ok(None)
+    match module.string_conversion_contract:
+        StringConversionContract.Selected(selection) =>
+            match target.canonical:
+                Some(identity) =>
+                    if identity != selection.method_identity:
+                        return Ok(None)
+                None => return Ok(None)
+        _ => return Ok(None)
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR string conversion method type arguments")
+    match target.direct_call_id:
+        Some(_local) => return Err("unsupported Body IR string conversion local trait slot")
+        None => pass
+    match target.receiver_type:
+        None => return Err("unsupported Body IR string conversion without checked receiver")
+        Some(receiver) =>
+            closed: RustType = substitute(receiver, builder.type_parameters, builder.type_arguments)?
+            output = generic("Result", [closed, RustType.Primitive(Primitive.Str)])
+            result = native_source_type(builder.nominals, builder.enums, builder.unions, output, builder.intrinsics)?
+            match closed:
+                RustType.Primitive(Primitive.Int) =>
+                    path = "incan_native_runtime::parse_newtype_int"
+                    builder.externals.append(
+                        ExternalFunction(
+                            path=path,
+                            type_arguments=[],
+                            parameters=[PlanType.String],
+                            return_type=result,
+                            span=span,
+                        ),
+                    )
+                    return Ok(Some((CalleeKind.External(path), result)))
+                RustType.Named(name) =>
+                    for declaration in module.nominal_declarations:
+                        if declaration.name == name or declaration.carrier_name() == name:
+                            root = conversion_name(module, declaration)?
+                            if root != "":
+                                return Ok(Some((CalleeKind.Planned(root), result)))
+                    return Err("unsupported Body IR automatic string conversion underlying selection")
+                _ => return Err("unsupported Body IR string conversion receiver profile")
+
+
+pub def lower_string_conversions(
+    module: &BodyIrModule,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[tuple[list[Function], list[ExternalFunction]], str]:
+    """Plan every selected raw chain root before headers or dependent generic SDK calls are admitted."""
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    if conversion_trait(module)? == "":
+        return Ok((functions, externals))
+    for index in range(len(module.nominal_declarations)):
+        declaration = module.nominal_declarations[index]
+        name = conversion_name(module, declaration)?
+        if name == "":
+            continue
+        output = generic("Result", [RustType.Named(str(declaration.name)), RustType.Primitive(Primitive.Str)])
+        retain_carrier(module, intrinsics, output, file)?
+        input_result = generic("Result", [declaration.field_types[0].clone(), RustType.Primitive(Primitive.Str)])
+        retain_carrier(module, intrinsics, input_result, file)?
+        result = native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            collect_unions(module),
+            output,
+            intrinsics,
+        )?
+        underlying_result = native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            collect_unions(module),
+            input_result,
+            intrinsics,
+        )?
+        span = SourceSpan(file=file, line=1, column=1)
+        function, runtime = conversion_function(module, index, name, result, underlying_result, intrinsics, span)?
+        functions.append(function)
+        externals.extend(runtime)
+    return Ok((functions, externals))
+
+
+def conversion_function(
+    module: &BodyIrModule,
+    index: int,
+    name: str,
+    result: PlanType,
+    underlying_result: PlanType,
+    intrinsics: list[EnumDeclaration],
+    span: SourceSpan,
+) -> Result[tuple[Function, list[ExternalFunction]], str]:
+    """Convert the owned string once, propagate Err unchanged, and wrap only the successful underlying value."""
+    declaration = module.nominal_declarations[index]
+    mut builder = owned_string_frame(module, name, result, intrinsics, span)
+    underlying = native_source_type(
+        module.nominal_declarations,
+        module.enum_declarations,
+        collect_unions(module),
+        declaration.field_types[0],
+        intrinsics,
+    )?
+    payload = temporary(builder, underlying, span)
+    if underlying == PlanType.String:
+        builder.emit(plan_assign(payload, RvalueKind.Use(read_place(plan_place(1, span), true, span)), span))
+        forget_owned(builder, 1)
+        builder.owned.append(payload.local)
+    else:
+        parsed = temporary(builder, underlying_result, span)
+        callee = underlying_conversion(module, builder, declaration, underlying_result, span)?
+        terminate_call(builder, callee, [read_place(plan_place(1, span), true, span)], parsed, span)
+        builder.owned.append(parsed.local)
+        propagate_result(builder, parsed, payload, span)?
+    owner = PlanType.Model(index, str(declaration.name))
+    wrapped = temporary(builder, owner, span)
+    construction = RvalueKind.Model(index, [read_place(payload, true, span)])
+    track_rvalue_moves(builder, construction)
+    builder.emit(plan_assign(wrapped, construction, span))
+    builder.owned.append(wrapped.local)
+    result_owner, _layout = result_layout(builder, result)?
+    success = RvalueKind.Enum(result_owner, 0, [read_place(wrapped, true, span)])
+    track_rvalue_moves(builder, success)
+    builder.emit(plan_assign(plan_place(0, span), success, span))
+    drop_all_owned(builder, span)
+    builder.finish(TerminatorKind.Return, span)
+    return Ok(
+        (Function(
+            name=name,
+            parameters=[Parameter(name="value", ty=PlanType.String, span=span)],
+            return_type=result,
+            locals=builder.locals,
+            blocks=builder.blocks,
+            span=span,
+        ), builder.externals),
+    )
+
+
+def underlying_conversion(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: &NominalDeclaration,
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[CalleeKind, str]:
+    """A primitive leaf calls the authored Incan parser; a named edge calls only its previously validated local root."""
+    match owner.field_types[0]:
+        RustType.Primitive(Primitive.Int) =>
+            path = "incan_native_runtime::parse_newtype_int"
+            builder.externals.append(
+                ExternalFunction(
+                    path=path,
+                    type_arguments=[],
+                    parameters=[PlanType.String],
+                    return_type=result,
+                    span=span,
+                ),
+            )
+            return Ok(CalleeKind.External(path))
+        RustType.Named(name) =>
+            match owner.named_type_identities.get(name):
+                Some(identity) =>
+                    for declaration in module.nominal_declarations:
+                        # The foreign map exposes a borrowed identity; compare owned identity values.
+                        if declaration.canonical == identity.clone():
+                            root = conversion_name(module, declaration)?
+                            if root != "":
+                                return Ok(CalleeKind.Planned(root))
+                None => pass
+            return Err("unsupported Body IR automatic string conversion underlying selection")
+        _ => return Err("unsupported Body IR automatic string conversion primitive")

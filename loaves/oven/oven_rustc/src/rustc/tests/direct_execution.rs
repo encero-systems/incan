@@ -388,6 +388,61 @@ fn transitive_caller_owned_library_keeps_its_search_path_and_reuse_evidence_priv
     Ok(())
 }
 
+/// Retained direct and transitive libraries cannot attach stale reuse evidence after their bytes change.
+#[test]
+fn caller_owned_attachment_refuses_changes_after_preparation() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let output = root.path().join("libprepared.rlib");
+    let original = b"prepared output";
+    fs::write(&output, original)?;
+    let empty_plan = OvenRustcArtifactPlan {
+        source_path_projection: None,
+        dependency_search_paths: Vec::new(),
+        native_search_paths: Vec::new(),
+        externs: Vec::new(),
+        compile_environment: BTreeMap::new(),
+        caller_owned_library_digests: BTreeMap::new(),
+    };
+    for expose_extern in [true, false] {
+        let library = OvenCallerOwnedRustcLibrary {
+            crate_name: "prepared".to_string(),
+            output: output.clone(),
+            digest: digest_bytes(original),
+            expose_extern,
+        };
+        let mut prepared_plan = empty_plan.clone();
+        attach_caller_owned_rustc_libraries(&mut prepared_plan, std::slice::from_ref(&library))?;
+        let mut repeated_plan = empty_plan.clone();
+        attach_caller_owned_rustc_libraries(&mut repeated_plan, std::slice::from_ref(&library))?;
+
+        // Preserve size and mtime: replacement-sensitive observations must still detect the changed bytes.
+        let modified = fs::metadata(&output)?.modified()?;
+        fs::write(&output, b"replaced output")?;
+        fs::File::options()
+            .write(true)
+            .open(&output)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let mut changed_plan = empty_plan.clone();
+        let refused = attach_caller_owned_rustc_libraries(&mut changed_plan, std::slice::from_ref(&library));
+        assert!(
+            matches!(refused, Err(OvenRustcError::InvalidInput { field: "caller-owned library", ref message })
+                if message.contains("differs from its prepared digest")),
+            "stale {expose_extern} attachment must refuse: {refused:?}"
+        );
+        assert!(changed_plan.externs.is_empty());
+        assert!(changed_plan.caller_owned_library_digests.is_empty());
+        assert!(changed_plan.dependency_search_paths.is_empty());
+
+        fs::write(&output, original)?;
+        let mut restored_plan = empty_plan.clone();
+        attach_caller_owned_rustc_libraries(&mut restored_plan, std::slice::from_ref(&library))?;
+        fs::remove_file(&output)?;
+        assert!(attach_caller_owned_rustc_libraries(&mut empty_plan.clone(), std::slice::from_ref(&library)).is_err());
+        fs::write(&output, original)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn one_sealed_artifact_reached_twice_under_one_alias_is_attached_once_issue1459()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -1583,4 +1638,11 @@ fn pinned_binary_receipt_proof() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn generated_test_store_tracks_external_consumed_inputs() -> Result<(), Box<dyn std::error::Error>> {
     generated_output_store_cases::generated_test_store_tracks_external_consumed_inputs()
+}
+
+/// Generated executables keep their complete source observations through native publication and reuse.
+#[test]
+#[cfg(unix)]
+fn generated_binary_store_refuses_sibling_edits_before_publication() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::generated_binary_store_refuses_sibling_edits_before_publication()
 }

@@ -1148,6 +1148,9 @@ fn vocab_companion_rustc_inputs(companion_crate_root: &Path) -> ProviderResult<(
 }
 
 /// Compile one temporary vocab companion/helper source through only the already selected Oven closure.
+/// Explicit auxiliary targets use the same normalized compiler/sysroot as ordinary direct-Rustc units. Its host
+/// linker carries the selected compiler component's runtime; installed optional tools and ambient loader paths do
+/// not supply a missing cross-target linker library. Host metadata extraction retains its existing compiler path.
 #[allow(clippy::too_many_arguments)]
 fn run_vocab_direct_rustc(
     context: &OvenVocabDirectRustcContext,
@@ -1192,7 +1195,12 @@ fn run_vocab_direct_rustc(
             parent.display()
         ))
     })?;
-    let mut command = Command::new(&context.rustc);
+    let std_sysroot = target
+        .map(|target| oven_rustc::rustc::normalized_std_sysroot(&context.rustc, target))
+        .transpose()
+        .map_err(|error| ProviderError::failure(format!("failed to prepare vocabulary target toolchain: {error}")))?;
+    let normalized = std_sysroot.as_deref().and_then(oven_rustc::rustc::normalized_rustc);
+    let mut command = Command::new(normalized.as_deref().unwrap_or(&context.rustc));
     command
         .current_dir(current_dir)
         .arg(source)
@@ -1206,6 +1214,9 @@ fn run_vocab_direct_rustc(
         .arg(output);
     if let Some(target) = target {
         command.arg("--target").arg(target);
+    }
+    if let Some(sysroot) = &std_sysroot {
+        command.arg("--sysroot").arg(sysroot);
     }
     for path in dependency_search_paths {
         command.arg("-L").arg(format!("dependency={}", path.display()));
@@ -1536,6 +1547,152 @@ mod tests {
     use super::*;
     use oven_model::manifest::ProjectManifest;
     use std::fs;
+
+    /// Explicit vocabulary targets use the existing normalized compiler and its exact host linker runtime.
+    #[test]
+    #[cfg(unix)]
+    fn vocab_auxiliary_compilation_uses_normalized_toolchain() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        // ---- Selected installation has LLVM only in its compiler component ----
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().canonicalize()?;
+        let installed = root.join("selected toolchain");
+        let host = "fixture-host";
+        let target = "wasm32-wasip1";
+        fs::create_dir_all(installed.join("bin"))?;
+        fs::create_dir_all(installed.join("lib/rustlib/fixture-host/bin"))?;
+        let manifest = installed.join(format!("lib/rustlib/manifest-rust-std-{target}"));
+        fs::write(&manifest, format!("# unique test input {}\n", root.display()))?;
+        fs::write(installed.join("lib/libLLVM.dylib"), b"selected LLVM runtime")?;
+        fs::write(
+            installed.join("lib/rustlib/fixture-host/bin/rust-lld"),
+            b"selected linker",
+        )?;
+        let compiler = installed.join("bin/rustc");
+        fs::write(
+            &compiler,
+            r#"#!/bin/sh
+case "$1" in
+  --print) cd "$(dirname "$0")/.."; pwd; exit 0 ;;
+  -vV) printf 'rustc 1.98.0\nhost: fixture-host\ncommit-hash: fixture-vocab-toolchain\n'; exit 0 ;;
+esac
+printf '%s\n' "$0" "$@" > "$CARGO_MANIFEST_DIR/invocation.txt"
+"#,
+        )?;
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755))?;
+        let source = root.join("source.rs");
+        fs::write(&source, "pub fn value() {}")?;
+        let output = root.join("output.wasm");
+        let record = root.join("invocation.txt");
+        let mut context = OvenVocabDirectRustcContext {
+            rustc: compiler.clone(),
+            dependency_search_paths: Vec::new(),
+            externs: BTreeMap::new(),
+            auxiliary_targets: BTreeMap::new(),
+        };
+
+        // ---- Missing target authority refuses before any compiler process ----
+        let refused = run_vocab_direct_rustc(
+            &context,
+            &root,
+            &source,
+            "probe",
+            "cdylib",
+            "2024",
+            "probe",
+            "1.0.0",
+            &output,
+            None,
+            Some(target),
+            "compile test vocabulary",
+        );
+        assert!(
+            refused
+                .err()
+                .ok_or("missing target unexpectedly accepted")?
+                .to_string()
+                .contains("no sealed direct-Rustc vocabulary closure")
+        );
+        assert!(!record.exists());
+        context.auxiliary_targets.insert(
+            target.into(),
+            OvenVocabAuxiliaryTargetContext {
+                dependency_search_paths: vec![root.join("sealed dependency directory")],
+                externs: BTreeMap::from([("owned_support".into(), root.join("libowned_support.rlib"))]),
+            },
+        );
+
+        // ---- The actual invocation retains target/extern selection inside the normalized installation ----
+        run_vocab_direct_rustc(
+            &context,
+            &root,
+            &source,
+            "probe",
+            "cdylib",
+            "2024",
+            "probe",
+            "1.0.0",
+            &output,
+            None,
+            Some(target),
+            "compile test vocabulary",
+        )?;
+        let arguments = fs::read_to_string(&record)?;
+        let lines = arguments.lines().collect::<Vec<_>>();
+        let invoked = Path::new(lines.first().ok_or("compiler invocation was not recorded")?);
+        assert_ne!(
+            invoked, compiler,
+            "auxiliary link must not use the incomplete installed linker layout"
+        );
+        let sysroot = oven_rustc::rustc::normalized_std_sysroot(&compiler, target)?;
+        assert_eq!(invoked, sysroot.join("bin/rustc"));
+        assert!(
+            lines
+                .windows(2)
+                .any(|pair| pair == ["--sysroot", sysroot.to_string_lossy().as_ref()])
+        );
+        assert!(lines.windows(2).any(|pair| pair == ["--target", target]));
+        assert!(lines.iter().any(|value| value.starts_with("owned_support=")));
+        assert_eq!(
+            fs::read(sysroot.join(format!("lib/rustlib/{host}/bin/rust-lld")))?,
+            b"selected linker"
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            fs::read_link(sysroot.join(format!("lib/rustlib/{host}/lib/libLLVM.dylib")))?,
+            installed.join("lib/libLLVM.dylib")
+        );
+        assert!(!installed.join(format!("lib/rustlib/{host}/lib/libLLVM.dylib")).exists());
+        fs::remove_file(&manifest)?;
+        let refused = run_vocab_direct_rustc(
+            &context,
+            &root,
+            &source,
+            "probe",
+            "cdylib",
+            "2024",
+            "probe",
+            "1.0.0",
+            &output,
+            None,
+            Some(target),
+            "compile test vocabulary",
+        );
+        assert!(
+            refused
+                .err()
+                .ok_or("missing target component unexpectedly accepted")?
+                .to_string()
+                .contains("manifest-rust-std-wasm32-wasip1")
+        );
+        assert_eq!(
+            fs::read_to_string(&record)?,
+            arguments,
+            "missing component must not invoke the compiler again"
+        );
+        Ok(())
+    }
 
     fn write_vocab_companion_crate(
         project_root: &Path,

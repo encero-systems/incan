@@ -175,6 +175,7 @@ pub fn bake_publisher_link(
         executable_owner_root: request.executable_owner_root,
         executable_owner: request.link.executable.owner.clone(),
         executable_owner_paths,
+        executable_runtime_files: &request.link.executable.runtime_files,
         executable_digest: &request.link.executable.digest,
         objects,
         environment,
@@ -1277,6 +1278,7 @@ mod publisher_link_tests {
             name: "fixture-native".to_string(),
             target: "aarch64-apple-darwin".to_string(),
             executable: RustFactExecutable {
+                runtime_files: Vec::new(),
                 name: "fake-cc".to_string(),
                 owner: oven_store::publisher_owner::publisher_owner_identity(&root.join("tool"), ["bin/fake-cc"])?,
                 path: "bin/fake-cc".to_string(),
@@ -1759,6 +1761,7 @@ mod publisher_link_tests {
             name: "pair".to_string(),
             target: target.to_string(),
             executable: RustFactExecutable {
+                runtime_files: Vec::new(),
                 name: "clang".to_string(),
                 owner: oven_store::publisher_owner::publisher_owner_identity(
                     owner,

@@ -587,11 +587,7 @@ pub fn ensure_direct_rust_inspect_workspace(
         ),
     ]));
     let declaration = toml::to_string(&declaration).map_err(|error| CliError::failure(error.to_string()))?;
-    let mut source = String::new();
-    for (index, path) in derive_paths.iter().enumerate() {
-        source.push_str(&format!("#[derive({path})]\nstruct __IncanDeriveProbe{index};\n"));
-    }
-    source.push_str("fn main() {}\n");
+    let source = direct_rust_inspect_probe_source(derive_paths);
     let selection = serde_json::to_string(selection_inputs).map_err(|error| CliError::failure(error.to_string()))?;
     let fingerprint = oven_store::digest_bytes(format!("{declaration}\0{source}\0{selection}").as_bytes());
     let root = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
@@ -602,6 +598,17 @@ pub fn ensure_direct_rust_inspect_workspace(
     fs::write(root.join(::rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")
         .map_err(|error| CliError::failure(error.to_string()))?;
     Ok(root)
+}
+
+/// Render the direct inspection root from its requested derive probes, shared by generation and retained validation.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn direct_rust_inspect_probe_source(derive_paths: &[String]) -> String {
+    let mut source = String::new();
+    for (index, path) in derive_paths.iter().enumerate() {
+        source.push_str(&format!("#[derive({path})]\nstruct __IncanDeriveProbe{index};\n"));
+    }
+    source.push_str("fn main() {}\n");
+    source
 }
 
 /// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.
@@ -850,6 +857,17 @@ pub fn collect_rust_inspect_query_paths_from_programs<'a>(
 /// `@rust.derive(...)` plus syntactically valid explicit Rust macro paths. The preparation boundary later limits those
 /// paths to declared dependency namespaces before generating the probe workspace.
 pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<String> {
+    collect_rust_inspect_derive_probe_uses(modules)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// Retain canonical derive demand and its original argument span for the shared manifest dependency resolver.
+/// This collector identifies authored uses only; declaration and original native ownership remain separate checks.
+pub(crate) fn collect_rust_inspect_derive_probe_uses(
+    modules: &[ParsedModule],
+) -> Vec<(String, incan_frontend::ast::Span)> {
     use incan_frontend::ast::{Declaration, Decorator, DecoratorArg, Expr, Literal};
 
     /// Return decorators only for declarations that can emit a concrete Rust type.
@@ -886,7 +904,7 @@ pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<
         })
     }
 
-    let mut probes = BTreeSet::new();
+    let mut probes = std::collections::BTreeMap::new();
     for module in modules {
         let mut imported_paths = HashMap::new();
         for declaration in &module.ast.declarations {
@@ -929,14 +947,14 @@ pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<
                         (incan_lang::lang::decorators::DecoratorId::Derive, Expr::Ident(name))
                         | (incan_lang::lang::decorators::DecoratorId::RustDerive, Expr::Ident(name)) => {
                             if let Some(path) = imported_paths.get(name) {
-                                probes.insert(path.clone());
+                                probes.entry(path.clone()).or_insert(argument.span);
                             }
                         }
                         (
                             incan_lang::lang::decorators::DecoratorId::RustDerive,
                             Expr::Literal(Literal::String(path)),
                         ) if path.contains("::") && is_valid_rust_path(path) => {
-                            probes.insert(path.clone());
+                            probes.entry(path.clone()).or_insert(argument.span);
                         }
                         _ => {}
                     }

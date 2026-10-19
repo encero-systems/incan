@@ -1,7 +1,8 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule
-from traits import specialize_traits
+from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
+from traits import specialize_project_traits
+from canonical_nominals import qualify_nominal_modules
 
 
 pub def project_context(
@@ -9,7 +10,8 @@ pub def project_context(
     entry: int,
 ) -> Result[tuple[BodyIrModule, list[BodyIrModule]], str]:
     """Retain original canonical identities while joining layouts and specialized bodies for native planning."""
-    mut context = modules[entry].clone()
+    qualified = qualify_nominal_modules(modules)?
+    mut context = qualified[entry].clone()
     context.bodies.clear()
     context.nominal_declarations.clear()
     context.enum_declarations.clear()
@@ -18,10 +20,12 @@ pub def project_context(
     context.trait_declarations.clear()
     context.trait_implementations.clear()
     context.static_declarations.clear()
+    context.decorated_bindings.clear()
     context.stdlib_delegations.clear()
+    context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
-    for module in modules:
-        specialized = specialize_traits(module)?
+    for module in qualified:
+        specialized = specialize_project_traits(module, qualified)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
         checked.append(specialized.clone())
@@ -29,13 +33,11 @@ pub def project_context(
             context.bodies.push(body.clone())
         # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
         for index in range(len(module.nominal_declarations)):
-            declaration = module.nominal_declarations[index].clone()
-            # Native carrier types still use checked names. Equal names from different owners must refuse rather
-            # than selecting the first layout until carrier admission accepts complete nominal identities.
-            for retained in range(len(context.nominal_declarations)):
-                if context.nominal_declarations[retained].name == declaration.name:
-                    return Err(f"unsupported Body IR ambiguous project nominal carrier {declaration.name}")
-            context.nominal_declarations.push(declaration.clone())
+            mut declaration = module.nominal_declarations[index].clone()
+            # A producer-retained carrier key names the exact canonical owner; older unqualified layouts stay refused.
+            declaration.name = declaration.carrier_name()
+            if not retains_nominal(context, declaration)?:
+                context.nominal_declarations.push(declaration.clone())
         for index in range(len(module.enum_declarations)):
             declaration = module.enum_declarations[index].clone()
             for retained in range(len(context.enum_declarations)):
@@ -57,7 +59,24 @@ pub def project_context(
         for index in range(len(module.static_declarations)):
             declaration = module.static_declarations[index].clone()
             context.static_declarations.push(declaration.clone())
+        for index in range(len(module.decorated_bindings)):
+            context.decorated_bindings.push(module.decorated_bindings[index].clone())
         for index in range(len(module.stdlib_delegations)):
             declaration = module.stdlib_delegations[index].clone()
             context.stdlib_delegations.push(declaration.clone())
+        for index in range(len(module.native_union_declarations)):
+            declaration = module.native_union_declarations[index].clone()
+            context.native_union_declarations.push(declaration.clone())
     return Ok((context, checked))
+
+
+def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:
+    """Reuse one exact published record; canonical duplicates with differing layout or execution facts remain refused."""
+    for declaration in context.nominal_declarations:
+        if declaration.canonical == candidate.canonical:
+            if declaration != candidate:
+                return Err(f"unsupported Body IR conflicting project nominal records {candidate.name}")
+            return Ok(true)
+        if declaration.name == candidate.name:
+            return Err(f"unsupported Body IR ambiguous project nominal carrier {candidate.name}")
+    return Ok(false)

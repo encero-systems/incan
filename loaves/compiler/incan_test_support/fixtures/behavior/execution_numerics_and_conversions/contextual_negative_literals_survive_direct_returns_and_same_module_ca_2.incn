@@ -17,16 +17,16 @@ def called_minimum() -> i128:
   return accept_i128(-170141183460469231731687303715884105728)
 
 def direct_f32() -> f32:
-  """Return the fixture expression `-1`."""
-  return -1
+  """Return the fixture expression `-1.0`."""
+  return -1.0
 
 def accept_f64(value: f64) -> f64:
   """Return `value` for this fixture."""
   return value
 
 def called_f64() -> f64:
-  """Return the fixture expression `accept_f64(-2)`."""
-  return accept_f64(-2)
+  """Return the fixture expression `accept_f64(-2.0)`."""
+  return accept_f64(-2.0)
 
 
 def main() -> None:

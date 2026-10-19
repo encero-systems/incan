@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::ast::{Expr, ParamKind, Span, Spanned, Visibility};
 use crate::library_exports::{CheckedParamDefault, CheckedPresetValue};
 use crate::symbols::{
-    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, NewtypePrimitiveConstraint, ResolvedType,
-    TypeBoundInfo,
+    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo, NewtypePrimitiveConstraint,
+    ResolvedType, TypeBoundInfo,
 };
 use crate::testing_markers::TestingFixtureScope;
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
@@ -23,7 +23,7 @@ use incan_semantics_core::{
     CanonicalStableDeclarationContext, CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind,
     IncanPrimitiveType, IncanType, SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue,
     SemanticRegistryEntry, SemanticRegistrySubjectKind, SemanticRegistryValue, SemanticSourceTarget,
-    SemanticSourceTargetKind, SymbolNamespace,
+    SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
 
 use super::{ConstValue, const_eval};
@@ -52,6 +52,8 @@ use super::{ConstValue, const_eval};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
+    /// Original checked source authority retained only for Body IR lowering; compatibility callers leave it absent.
+    pub(crate) body_ir_source_cache: Option<super::stdlib_loader::StdlibAstCache>,
     /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
     pub traits: TraitArtifacts,
     /// Derive expansion metadata imported from dependency modules and manifests.
@@ -78,6 +80,16 @@ pub struct TypeCheckInfo {
     pub c_abi: CAbiInteropArtifacts,
     /// Source import and alias paths accepted by typechecking, keyed by their active local binding.
     pub import_bindings: CheckedImportBindings,
+    /// Active builtin type identities used only by the Body IR bridge; no checker decision or legacy consumer reads
+    /// this snapshot.
+    pub body_ir_runtime_types: BTreeMap<String, CanonicalSymbolId>,
+    /// Atomic accepted-body refinements consumed only by Body IR; no checker or legacy consumer reads this group.
+    pub(crate) body_ir_newtypes: super::native_newtype_facts::NativeNewtypeFacts,
+    /// Accepted zero-argument iterator sum item types within the direct profile, keyed by the exact checked call span.
+    ///
+    /// Source newtype trait adoptions and source `sum` members need explicit dispatch and stay outside this snapshot.
+    /// Only Body IR reads it; checking decisions and legacy-consumed facts are unchanged.
+    pub(crate) body_ir_iterator_sum_items: BTreeMap<(usize, usize), ResolvedType>,
 }
 
 /// Checked source-path facts for active import-derived bindings.
@@ -666,16 +678,80 @@ pub struct TraitArtifacts {
     /// so lowering cannot look them up in the current module's span-keyed declaration table. This checked map carries
     /// the already-resolved identity across that boundary without reconstructing it from either spelling.
     pub method_identities: HashMap<(String, String), CanonicalSymbolId>,
+    /// Visible trait slots, local or imported, whose checked declaration supplies a default body.
+    ///
+    /// A consumer still requires that body's executable representation; this fact never supplies a missing body.
+    pub default_method_identities: HashSet<CanonicalSymbolId>,
+    /// Visible trait slots declared by the active compiled SDK providers, including through aliases and facades.
+    ///
+    /// Their protocol contracts do not imply executable source bodies among the project's modules.
+    pub sdk_method_identities: HashSet<CanonicalSymbolId>,
     /// Checked trait slots selected by calls on an open `Self` receiver, keyed by the whole call span.
     ///
     /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
     /// resolved call identities because legacy default expansion selects each adopter's implementation later.
     pub self_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Declared result types of the trait slots called on an open `Self` receiver in the standard library's own trait
+    /// defaults, keyed by the whole call span.
+    ///
+    /// The standard library's source leaves such a call's checked type open, because legacy expands those defaults by
+    /// its own rules. Body IR, which publishes the defaults' executable representation, takes the slot's declared
+    /// result from here instead; no legacy route reads it.
+    pub self_method_result_types: HashMap<(usize, usize), ResolvedType>,
+    /// Declared parameters of the same slots, keyed by the whole call span, so Body IR binds the call's arguments to
+    /// the slot's declaration as it binds any checked call; no legacy route reads it.
+    pub self_method_params: HashMap<(usize, usize), Vec<CallableParam>>,
+    /// The active SDK provider's identity of a standard-library trait slot whose call resolved through the stdlib
+    /// source cache, keyed by the whole call span.
+    ///
+    /// A supertrait the program does not import resolves its slots from the stdlib source, so the call's resolved
+    /// identity names the source module (`std.derives.comparison`) while the program's other slots, and the bodies the
+    /// SDK publishes, carry the provider's package identity. Body IR names the call by the provider identity recorded
+    /// here; the resolved identity, which legacy reads, is unchanged.
+    pub provider_slot_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Compiler-owned requirements inferred for otherwise unresolved calls on rigid declaration parameters. Only
+    /// Body IR consumes these span-keyed targets; legacy call identities and explicit bound selections stay intact.
+    pub inferred_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Checked type arguments of each source `with Trait[...]` adoption clause, keyed by the clause's span.
     ///
     /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no
     /// later stage re-resolves the written clause.
     pub adoption_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// Implicit arguments of bare source adoption clauses, retained only for Body IR by the clause's span. The
+    /// existing semantic instantiation rule supplies owner parameter witnesses; legacy's explicit-only snapshot stays
+    /// unchanged. Ambiguous or incomplete adoptions contribute no fact.
+    pub body_ir_adoption_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
+}
+
+impl TraitArtifacts {
+    /// Whether a visible trait name resolves to a standard-library or compiled SDK protocol: the checker recorded slots
+    /// for it, and every one carries such an identity.
+    pub fn is_standard_trait(&self, name: &str) -> bool {
+        let mut slots = self
+            .method_identities
+            .iter()
+            .filter(|((trait_name, _), _)| trait_name == name)
+            .peekable();
+        slots.peek().is_some() && slots.all(|(_, identity)| self.is_standard_slot(identity))
+    }
+
+    /// Whether a trait slot belongs to a standard-library or compiled SDK protocol.
+    pub fn is_standard_slot(&self, identity: &CanonicalSymbolId) -> bool {
+        self.sdk_method_identities.contains(identity)
+            || matches!(&identity.origin, SymbolOrigin::Module(path) if incan_lang::lang::stdlib::is_any_stdlib_path(path))
+    }
+
+    /// Retain one visible slot's identity under its trait key, and whether its checked declaration has a default body.
+    pub(crate) fn record_method(&mut self, trait_name: &str, method_name: &str, method: &MethodInfo) {
+        let Some(identity) = &method.identity else {
+            return;
+        };
+        self.method_identities
+            .insert((trait_name.to_owned(), method_name.to_owned()), identity.clone());
+        if method.has_body {
+            self.default_method_identities.insert(identity.clone());
+        }
+    }
 }
 
 /// Derive expansion metadata imported from dependency modules and manifests.
@@ -693,9 +769,45 @@ pub struct DerivationArtifacts {
     pub trait_rust_derive_paths: HashMap<String, Vec<String>>,
 }
 
+/// Transient requirements for one exact mutable empty-list initializer; only successful checked uses can close it.
+#[derive(Debug, Clone)]
+pub(crate) struct BodyIrEmptyListRequirement {
+    /// Source span of the syntactically empty initializer whose element is still unknown.
+    pub(crate) initializer: (usize, usize),
+    /// The declaration's only authorized write; any additional write prevents publication for this initializer.
+    pub(crate) declaration_write: (usize, usize),
+    /// Checked builtin collection name, preserved when the agreed element replaces its hole.
+    pub(crate) list_name: String,
+    /// Agreed fully closed append element, absent until a validated append supplies one.
+    pub(crate) element: Option<ResolvedType>,
+    /// A conflict, reassignment or unproven method prevents later appends from reinstating a grant.
+    pub(crate) invalidated: bool,
+    /// Exact receiver and length-argument reads whose checked contracts do not escape the candidate binding.
+    pub(crate) permitted_reads: HashSet<(usize, usize)>,
+}
+
 /// Expression-local resolution facts keyed by source spans.
 #[derive(Debug, Default, Clone)]
 pub struct ExpressionArtifacts {
+    /// Candidate empty-list constraints collected during checking and consumed by successful final publication.
+    /// Legacy never reads this state; overload transactions preserve it with the rest of TypeCheckInfo.
+    pub(crate) body_ir_empty_list_requirements: HashMap<CanonicalSymbolId, BodyIrEmptyListRequirement>,
+    /// Body IR-only callable-name reads selected by checking the receiver, keyed by the full field expression span.
+    /// Ordinary source fields and metadata on type expressions do not enter this set; legacy member tables stay
+    /// intact.
+    pub(crate) body_ir_callable_name_reads: std::collections::BTreeSet<(usize, usize)>,
+    /// Executable expression types closed from checked value contracts, consumed only by Body IR. Legacy keeps its
+    /// original contextual expression snapshot, including holes that Rust inference completes later.
+    pub body_ir_expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// Closed value contracts for exact checked lexical bindings; shadowed names never share an entry.
+    pub body_ir_binding_types: HashMap<CanonicalSymbolId, ResolvedType>,
+    /// Checked nominal pattern owners reached through an import alias when the legacy internal-name lookup has no
+    /// lexical symbol. Only Body IR consumes these additive facts; missing identities remain unsupported patterns.
+    pub body_ir_nominal_pattern_owners: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Agreed types required by validated function calls for exact parameter identities; `None` records a conflict.
+    /// Only Body IR's implicit closure contracts consume these requirements; legacy parameter snapshots stay
+    /// unchanged.
+    pub body_ir_parameter_requirements: HashMap<CanonicalSymbolId, Option<ResolvedType>>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
     /// Canonical named-type leaves of each checked expression type, addressed by generic/tuple child indices.
@@ -807,17 +919,32 @@ pub struct ReferenceArtifacts {
 }
 
 /// Const evaluation facts needed by runtime and emission boundaries.
+/// Additive Body IR values do not replace legacy's classification or scalar evaluation tables.
 #[derive(Debug, Default, Clone)]
 pub struct ConstArtifacts {
+    /// Exact immutable sized-integer constructor values selected by the const checker, keyed by initializer span.
+    pub(crate) body_ir_newtype_values: HashMap<(usize, usize), BodyIrNewtypeConstantValue>,
     /// Const category classification (RFC 008): const name -> kind.
     pub const_kinds: HashMap<String, const_eval::ConstKind>,
     /// Computed const values (when available), keyed by const name.
     pub const_values: HashMap<String, ConstValue>,
 }
 
+/// A validated const expression's newtype owner and full numeric value, without a backend-selected layout.
+#[derive(Debug, Clone)]
+pub(crate) struct BodyIrNewtypeConstantValue {
+    /// Canonical lexical newtype binding selected during const validation.
+    pub owner: CanonicalSymbolId,
+    /// Complete checked numeric kind and value; source `int` and noninteger carriers are outside this slice.
+    pub value: incan_semantics_core::body_ir::TypedNumericConstant,
+}
+
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
+    /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
+    pub(crate) body_ir_diverging_import_calls: HashMap<(usize, usize), Vec<String>>,
     /// Source-proven receiver and returned-borrow relationships keyed by the exact checked method-call span.
     /// Unknown metadata never authorizes a shared alias; lowering must not reconstruct this from method names.
     pub receiver_contracts: HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
@@ -924,16 +1051,42 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Body IR-only canonical trait adoptions, retaining marker protocols and ordered checked arguments.
+    /// Legacy conformance, derive selection, and method tables never consume this snapshot.
+    pub body_ir_trait_adoptions: HashMap<String, Vec<BodyIrCheckedTraitAdoption>>,
+    /// Body IR-only checked local inheritance and ordered ancestor field identities; legacy class layouts stay intact.
+    pub body_ir_class_inheritance: HashMap<String, BodyIrClassInheritance>,
+    /// Body IR-only source trait slots adopted by checked derive bundles, keyed by the adopting declaration.
+    pub body_ir_derived_methods: HashMap<String, Vec<BodyIrDerivedMethod>>,
     /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.
     pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
-    /// Explicit and automatic native derives selected by checking for each source enum.
+    /// Explicit and automatic native derives selected by checking for each source enum; a std.serde.json protocol
+    /// selects serde's derive path, as for models.
     pub enum_derives: HashMap<String, Vec<String>>,
     /// Explicit builtin, canonical serde, and implicit native derives selected for source models, in legacy emission
-    /// order. Derived Display remains a semantic selection, not a Rust macro.
+    /// order, except that the builtins a `@rust.derive(...)` names follow the `@derive(...)` selections whichever
+    /// decorator comes first (the order of a Rust derive list has no observable effect). Derived Display remains a
+    /// semantic selection, not a Rust macro.
     pub model_derives: HashMap<String, Vec<String>>,
+    /// Body IR-only native derive paths after checked RFC 024 module and trait expansion. Descriptor is omitted
+    /// because its checked structural opt-in has no native macro; legacy keeps consuming `model_derives` unchanged.
+    pub body_ir_model_derives: HashMap<String, Vec<String>>,
+    /// The same native derive selection for source classes, whose automatic derives match a model's.
+    pub class_derives: HashMap<String, Vec<String>>,
+    /// Serde derives a source class's trait adoptions imply, directly or through a supertrait, keyed by class name.
+    ///
+    /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
+    pub class_adoption_derives: HashMap<String, Vec<String>>,
+    /// Source models whose `@rust.derive(...)` decorators name only Rust builtin derives, all of which
+    /// [`model_derives`](Self::model_derives) includes. A model naming any other derive macro is absent: that macro's
+    /// expansion is not part of its retained derives.
+    pub rust_builtin_derive_models: HashSet<String>,
     /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
     /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Active compiler-owned native nominal bindings for Body IR only. Legacy continues to consume the ordinary
+    /// nominal table; a real source binding under the same spelling cannot authorize this foreign ABI.
+    pub body_ir_native_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
     pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
     /// Checked local model field types keyed by exact field declaration span.
@@ -1056,6 +1209,9 @@ pub struct DeclarationArtifacts {
     /// are checked through the same function and so also populate this table, even though Body IR does not lower
     /// their bodies (#1102's own deliberate scope) — the fact simply goes unread for those owners.
     pub method_bindings_by_span: HashMap<(usize, usize), FunctionBindingInfo>,
+    /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
+    /// Legacy property metadata and callable binding tables remain unchanged.
+    pub body_ir_property_bindings: HashMap<(usize, usize), BodyIrPropertyBindingInfo>,
     /// Function declaration emitted names keyed by source declaration span.
     ///
     /// Present when top-level overloads need Rust-level name disambiguation while preserving one source name.
@@ -1092,6 +1248,13 @@ pub struct DeclarationArtifacts {
     /// This relation is captured before substitution, so native representation can follow the input callable
     /// without inferring representation identity from structurally equal result types.
     pub generic_identity_decorator_applications: HashSet<(usize, usize)>,
+    /// Validated decorator substitutions and ordered factory arguments retained exclusively for Body IR.
+    /// Legacy keeps its original expression and call-site tables; this snapshot closes the factory only after its
+    /// returned decorator has been checked against the decorated declaration.
+    pub body_ir_decorator_applications: HashMap<(usize, usize), BodyIrDecoratorApplication>,
+    /// Static receivers of checked two-segment decorator factories, retained separately from the selected method at
+    /// the same synthetic span. Legacy reference and expression-type tables remain unchanged.
+    pub body_ir_decorator_static_receivers: HashMap<(usize, usize), BodyIrDecoratorStaticReceiver>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
     /// Local function declarations that take a decorated method's receiver, keyed by declaration span (#1790).
@@ -1109,6 +1272,62 @@ pub struct DeclarationArtifacts {
     /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
     /// parameters at the same offsets.
     pub mut_param_markers: HashMap<(usize, usize, String), bool>,
+}
+
+/// A checked decorator application before substitution, with the bindings needed for its native instance.
+#[derive(Debug, Clone)]
+pub struct BodyIrDecoratorApplication {
+    /// Returned decorator signature before applying the validated bindings.
+    pub callable_type: ResolvedType,
+    /// Generic variable bindings established by ordinary callable argument validation. A checked generic identity
+    /// method application additionally retains its receiver's passing reference here, exclusively for Body IR.
+    pub type_bindings: HashMap<String, ResolvedType>,
+    /// Factory type arguments in the resolved declaration's parameter order, before application substitution.
+    pub factory_type_args: Vec<ResolvedType>,
+}
+
+/// The checked static value a decorator factory method borrows, without conflating it with the selected method.
+#[derive(Debug, Clone)]
+pub struct BodyIrDecoratorStaticReceiver {
+    /// Source binding used for this receiver; aliases keep their canonical storage identity below.
+    pub binding_name: String,
+    /// Canonical checked static declaration, including its provider module.
+    pub identity: CanonicalSymbolId,
+    /// Static carrier before the factory result overwrites the shared synthetic expression span.
+    pub ty: ResolvedType,
+}
+
+/// Checked local inheritance facts for direct execution, without changing the legacy class or symbol tables.
+#[derive(Debug, Clone)]
+pub struct BodyIrClassInheritance {
+    /// Canonical parent edge and nearest inherited source-method implementations.
+    pub inheritance: incan_semantics_core::body_ir::ClassInheritance,
+    /// Parent-first physical field identities, preserving each field's declaring class.
+    pub field_identities: Vec<CanonicalSymbolId>,
+}
+
+/// Checked nominal conformance before Body IR projects declaration binders and final inferred clause arguments.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrCheckedTraitAdoption {
+    /// Actual trait declaration selected by the checked binding or provider member.
+    pub trait_identity: CanonicalSymbolId,
+    /// Checked arguments, retaining legacy's representation until Body IR applies its binder projection.
+    pub arguments: Vec<ResolvedType>,
+    /// Complete checked method identities; `None` cannot authorize an empty native marker.
+    pub methods: Option<Vec<CanonicalSymbolId>>,
+    /// Physical adoption or derive clause used to select the final Body IR-only inferred argument witness.
+    pub span: Span,
+}
+
+/// A checked source trait slot introduced by a derive bundle; this does not supply its executable body.
+#[derive(Debug, Clone)]
+pub struct BodyIrDerivedMethod {
+    /// Source slot identity retained from the resolved trait's method metadata.
+    pub method: CanonicalSymbolId,
+    /// Whether that resolved slot supplies a default body; consumers still require its retained source body.
+    pub has_default: bool,
+    /// Checked adoption arguments paired with the trait's declared parameters.
+    pub type_arguments: Vec<(String, ResolvedType)>,
 }
 
 /// Where a local function declaration takes a decorated method's receiver, and how the method takes it (#1790).
@@ -1355,7 +1574,8 @@ pub struct NewtypeConstructionInfo {
     ///
     /// The checker's derive relation decides both, so a newtype implements what the checker says it does.
     pub automatic_derives: Vec<String>,
-    /// Explicit derive selections checked on the source newtype, retained for direct nominal carriers.
+    /// Explicit derive selections checked on the source newtype, then serde's derive for each `std.serde.json`
+    /// protocol its trait adoptions provide, retained for direct nominal carriers.
     pub explicit_derives: Vec<String>,
     /// Declared type parameters in source order.
     pub type_params: Vec<String>,
@@ -1407,9 +1627,66 @@ pub enum PartialProjectionTargetKind {
     Unknown,
 }
 
+/// One checked public declaration reached through explicit source facade links at an otherwise unresolved call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrReexportCallInfo {
+    /// The manifest's minted declaring identity, never the facade or consumer spelling.
+    pub canonical: CanonicalSymbolId,
+    /// Exact fixed scalar parameters whose written arguments validated without coercion or inference.
+    pub parameters: Vec<CallableParam>,
+}
+
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
+    /// Body IR-only layout requirements for checked constructor field arguments, keyed by the written field span.
+    /// Each pair retains the selected field and constructor owner; navigation keeps the field identity while
+    /// executable dependency selection loads its checked layout instead of treating private storage as a callable.
+    pub body_ir_constructor_field_requirements: HashMap<(usize, usize), (CanonicalSymbolId, CanonicalSymbolId)>,
+    /// Validated fixed scalar calls through source re-exports ending at a checked public library declaration.
+    /// Only Body IR consumes their target and slots; legacy retains its unresolved module placeholder.
+    pub body_ir_reexport_calls: HashMap<(usize, usize), BodyIrReexportCallInfo>,
+    /// Primitive string slice members selected from checked receiver and int bounds. Only Body IR consumes these
+    /// identities; legacy retains its unknown method result and ordinary reference tables.
+    pub body_ir_string_slice_members: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Body IR-only calls whose selected instance method declares an exact Self result, keyed by call span.
+    /// The retained canonical method prevents a speculative or subsequently replaced overload from authorizing
+    /// receiver-carrier propagation; legacy keeps its existing substituted expression result unchanged.
+    pub body_ir_self_result_methods: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Validated async function calls, keyed by complete call span and selected canonical function. Body IR
+    /// uses their eventual output as a future argument; legacy expression snapshots retain the eventual output alone.
+    pub body_ir_async_call_targets: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Body IR-only tuple constructor facts selected by an active std.web surface binding. Legacy keeps its existing
+    /// construction table; the canonical owner is checked from the original Rust re-export at this call site.
+    pub body_ir_native_constructor_bindings: HashMap<(usize, usize), (CanonicalSymbolId, ConstructorFieldBinding)>,
+    /// Complete default-only class bindings checked through a published module's selected type declaration.
+    /// The canonical owner authenticates this private fallback; legacy's constructor slot table stays unchanged.
+    pub body_ir_module_constructor_bindings: HashMap<(usize, usize), (CanonicalSymbolId, ConstructorFieldBinding)>,
+    /// Native surface payload types missing from legacy's expression snapshot. An already checked String symbol or
+    /// literal authorizes Html's fixed String slot; legacy expression typing remains unchanged.
+    pub body_ir_native_argument_types: HashMap<(usize, usize), ResolvedType>,
+    /// Checked variable identities accompanying native payload types when legacy did not visit the argument. This
+    /// selects the existing parameter/local, never a same-spelled external or a new semantic binding.
+    pub body_ir_native_argument_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Complete argument types for Body IR native instances, normalized from checked call relationships only.
+    ///
+    /// Concrete constructor carriers and ordinary checked arguments share this ordered fact. Legacy never reads this
+    /// additive table: its own contextual types and monomorph decisions remain untouched.
+    pub body_ir_call_type_arguments: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// Closed call-site parameters under the same checked instantiation, preserving declaration roles and defaults.
+    /// Only Body IR reads this contract; legacy parameter snapshots retain their original inferred holes.
+    pub body_ir_call_parameter_types: HashMap<(usize, usize), Vec<CallableParam>>,
+    /// Checked static factory constraints that conflict with their destination. Only Body IR reads this denial;
+    /// later supplemental value propagation cannot authorize a closed result at the same call span.
+    pub body_ir_factory_result_conflicts: HashSet<(usize, usize)>,
+    /// Executable constructor carriers recovered from original declared fields and checked values after contextual
+    /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
+    pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,
+    /// Executable call results under the same retained argument binding, consumed only by Body IR.
+    pub body_ir_call_result_types: HashMap<(usize, usize), ResolvedType>,
+    /// Selected frozen codec members whose legacy registry omits an identity. This independent Body IR fact is
+    /// recorded only at the existing checked builtin branch; legacy reference and method tables stay unchanged.
+    pub body_ir_native_codec_members: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Concrete owner types inferred from checked nominal constructor fields before an open caller context masks them.
     ///
     /// Body IR retains these executable carriers while legacy checking preserves its contextual expression type.
@@ -1597,6 +1874,11 @@ pub struct TestingArtifacts {
 /// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
+    /// Receiver value identities retained only for Body IR before synthetic truthiness dispatch reuses their spans.
+    /// The legacy reference at that span still selects `__bool__`; this separate record never changes that table.
+    pub(crate) body_ir_truthiness_receivers: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Independent checked hook calls for Body IR, separate from the legacy iteration record and written call facts.
+    pub body_ir_iterations: HashMap<(usize, usize), BodyIrIterationHooksInfo>,
     /// RFC 068: Custom `for` iteration protocol choices keyed by iterable expression span.
     ///
     /// Lowering consumes this so a structural `__iter__` / `__next__` pair can become an explicit loop that calls the
@@ -1703,12 +1985,50 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
+    body_ir_string_slice_member: Option<CanonicalSymbolId>,
     inferred_constructor_type: Option<ResolvedType>,
     inferred_call_result_type: Option<ResolvedType>,
     method_call: Option<ResolvedMethodCall>,
     identity: Option<CanonicalSymbolId>,
     callable_params: Option<Vec<CallableParam>>,
     monomorph_type_args: Option<Vec<ResolvedType>>,
+    body_ir_constructor_type: Option<ResolvedType>,
+    body_ir_call_type_arguments: Option<Vec<ResolvedType>>,
+    body_ir_call_result_type: Option<ResolvedType>,
+    body_ir_async_call_target: Option<CanonicalSymbolId>,
+    body_ir_self_result_method: Option<CanonicalSymbolId>,
+    body_ir_self_method_identity: Option<CanonicalSymbolId>,
+    body_ir_self_method_result_type: Option<ResolvedType>,
+    body_ir_self_method_params: Option<Vec<CallableParam>>,
+    body_ir_provider_slot_identity: Option<CanonicalSymbolId>,
+    body_ir_inferred_method_identity: Option<CanonicalSymbolId>,
+}
+
+/// Exact checker-selected calls behind one structural or fallible iteration; only Body IR consumes this record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrIterationHooksInfo {
+    /// Call that materializes the iterator before the first poll.
+    pub iter: BodyIrProtocolCallInfo,
+    /// Call that advances the materialized iterator inside the loop.
+    pub next: BodyIrProtocolCallInfo,
+}
+
+/// Retained signature and identity for one synthetic hook, never inferred by a backend from its spelling.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrProtocolCallInfo {
+    /// Exact source or active SDK declaration; absent remains a named refusal.
+    pub canonical: Option<CanonicalSymbolId>,
+    /// Exact checked trait instantiation for this Body IR-only hook snapshot; the written call's facts stay intact.
+    pub dispatch: Option<ResolvedMethodDispatch>,
+    /// Checked ordinary parameters, excluding the receiver, including their default-presence contract.
+    pub params: Option<Vec<CallableParam>>,
+    /// Checked method-scoped instantiation arguments, independent of the written iterable's generic call.
+    pub type_args: Vec<ResolvedType>,
+    /// Checked result after receiver and trait arguments have been applied.
+    pub return_type: ResolvedType,
+    /// Declared instance receiver mode; an absent or ambiguous receiver remains refused.
+    pub receiver_is_mutable: Option<bool>,
 }
 
 /// Typechecker-resolved custom iteration protocol consumed by IR lowering.
@@ -1921,6 +2241,19 @@ pub struct FunctionBindingInfo {
     pub identity: Option<CanonicalSymbolId>,
 }
 
+/// Checked facts needed to retain a property as a canonical immutable getter on the direct route.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrPropertyBindingInfo {
+    /// Zero-argument callable signature, excluding the implicit receiver, under the property declaration's identity.
+    pub callable: FunctionBindingInfo,
+    /// Declared owner frame, whose parameters close through a checked concrete receiver at a read.
+    pub receiver_type: ResolvedType,
+    /// Ordered binders declared by that owner, never inferred from the getter's result spelling.
+    pub owner_parameters: Vec<String>,
+    /// Exact implicit receiver binding created when the getter body is checked; absent for abstract requirements.
+    pub receiver_identity: Option<CanonicalSymbolId>,
+}
+
 /// Typechecker-resolved binding of one `model`/`class` construction's arguments to the declared field layout, or a
 /// newtype's single positional argument to tuple slot zero.
 ///
@@ -1991,6 +2324,12 @@ impl DeclarationArtifacts {
 }
 
 impl TypeCheckInfo {
+    /// Borrow the checked compilation's source authority through an existing cache clone. Only explicit compatibility
+    /// lowering, which has no checked source handoff, may discover ambient standard-library source.
+    pub(crate) fn body_ir_stdlib_cache(&self) -> super::stdlib_loader::StdlibAstCache {
+        self.body_ir_source_cache.clone().unwrap_or_default()
+    }
+
     /// Return the caller-visible `mut` parameter names of the callee the call at `span` resolved to, if any.
     pub fn caller_visible_mut_arguments(&self, span: Span) -> Option<&[String]> {
         self.calls
@@ -2169,7 +2508,7 @@ impl TypeCheckInfo {
                     SemanticFactValue::stable_declaration_context(context.clone()),
                 ));
             }
-            if let Some(owner) = self.calls.compiler_generated_member_identities.get(identity) {
+            if let Some(owner) = self.body_ir_reference_requirement(span, identity) {
                 facts.push(SemanticFact::new(
                     subject.clone(),
                     SemanticFactKind::RequiredReferenceTarget,
@@ -2256,7 +2595,9 @@ impl TypeCheckInfo {
                         .unwrap_or_else(|| format!("{module_identity}::package"));
                     (CompilerNodeId::package(&package_identity), package_identity)
                 }
-                SemanticRegistrySubjectKind::Function | SemanticRegistrySubjectKind::Method => continue,
+                SemanticRegistrySubjectKind::Function | SemanticRegistrySubjectKind::Method => {
+                    continue;
+                }
             };
             facts.push(SemanticFact::new(
                 subject,
@@ -2638,6 +2979,15 @@ impl TypeCheckInfo {
             .map(Vec::as_slice)
     }
 
+    /// Return closed checked call parameters for Body IR, preserving the legacy signature when no complete fact exists.
+    pub fn body_ir_call_site_callable_params(&self, span: Span) -> Option<&[CallableParam]> {
+        self.calls
+            .body_ir_call_parameter_types
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+            .or_else(|| self.call_site_callable_params(span))
+    }
+
     /// Return the resolved winner-binding type for the `race for` arm whose awaitable is at `span` (#1164).
     pub fn race_arm_binding_type(&self, span: Span) -> Option<&ResolvedType> {
         self.calls.race_arm_binding_types.get(&(span.start, span.end))
@@ -2651,6 +3001,49 @@ impl TypeCheckInfo {
     /// Return the resolved `model`/`class` construction field binding recorded for `span`, if any (#1158).
     pub fn constructor_field_binding(&self, span: Span) -> Option<&ConstructorFieldBinding> {
         self.calls.constructor_field_bindings.get(&(span.start, span.end))
+    }
+
+    /// Return checked ordinary, module-default or native tuple slots only to Body IR, leaving legacy's getter
+    /// unchanged. A module fallback must still match the exact canonical owner selected at this call.
+    pub fn body_ir_constructor_field_binding(&self, span: Span) -> Option<&ConstructorFieldBinding> {
+        self.constructor_field_binding(span)
+            .or_else(|| {
+                self.calls
+                    .body_ir_module_constructor_bindings
+                    .get(&(span.start, span.end))
+                    .filter(|(owner, _)| self.resolved_identity(span) == Some(owner))
+                    .map(|(_, binding)| binding)
+            })
+            .or_else(|| {
+                self.calls
+                    .body_ir_native_constructor_bindings
+                    .get(&(span.start, span.end))
+                    .map(|(_, binding)| binding)
+            })
+    }
+
+    /// The exact foreign owner checked for a native surface construction; ordinary source calls retain their
+    /// existing expression identity instead.
+    pub fn body_ir_native_constructor_identity(&self, span: Span) -> Option<&CanonicalSymbolId> {
+        self.calls
+            .body_ir_native_constructor_bindings
+            .get(&(span.start, span.end))
+            .map(|(owner, _)| owner)
+    }
+
+    /// Record a validated native tuple construction in the direct-route table only, never in legacy's slot table.
+    pub fn record_body_ir_native_constructor(&mut self, span: Span, owner: CanonicalSymbolId) {
+        self.calls.body_ir_native_constructor_bindings.insert(
+            (span.start, span.end),
+            (
+                owner,
+                ConstructorFieldBinding {
+                    argument_slots: vec![0],
+                    defaulted_slots: Vec::new(),
+                    field_count: 1,
+                },
+            ),
+        );
     }
 
     /// Record the resolved field binding for one nominal construction call site, including a newtype's tuple slot
@@ -2706,6 +3099,26 @@ impl TypeCheckInfo {
             .selected_function_emitted_names
             .get(&(span.start, span.end))
             .map(String::as_str)
+    }
+
+    /// Select checked executable context without changing the reference's navigation identity.
+    /// Constructor requirements apply only while the exact checked field still occupies this reference site;
+    /// replacing its binding cannot reuse an earlier constructor's layout authorization.
+    fn body_ir_reference_requirement(
+        &self,
+        span: (usize, usize),
+        identity: &CanonicalSymbolId,
+    ) -> Option<&CanonicalSymbolId> {
+        self.calls
+            .compiler_generated_member_identities
+            .get(identity)
+            .or_else(|| {
+                self.calls
+                    .body_ir_constructor_field_requirements
+                    .get(&span)
+                    .filter(|(field, _)| field == identity)
+                    .map(|(_, owner)| owner)
+            })
     }
 
     /// Return whether `identity` names a compiler-generated member rather than a source declaration.
@@ -2910,13 +3323,42 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
+            body_ir_string_slice_member: self.calls.body_ir_string_slice_members.remove(&key),
             inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
             inferred_call_result_type: self.calls.inferred_call_result_types.remove(&key),
             method_call: self.calls.resolved_method_calls.remove(&key),
             identity: self.references.resolved_identities.remove(&key),
             callable_params: self.calls.call_site_callable_params.remove(&key),
             monomorph_type_args: self.calls.call_site_monomorph_type_args.remove(&key),
+            body_ir_constructor_type: self.calls.body_ir_constructor_types.remove(&key),
+            body_ir_call_type_arguments: self.calls.body_ir_call_type_arguments.remove(&key),
+            body_ir_call_result_type: self.calls.body_ir_call_result_types.remove(&key),
+            body_ir_async_call_target: self.calls.body_ir_async_call_targets.remove(&key),
+            body_ir_self_result_method: self.calls.body_ir_self_result_methods.remove(&key),
+            body_ir_self_method_identity: self.traits.self_method_identities.remove(&key),
+            body_ir_self_method_result_type: self.traits.self_method_result_types.remove(&key),
+            body_ir_self_method_params: self.traits.self_method_params.remove(&key),
+            body_ir_provider_slot_identity: self.traits.provider_slot_identities.remove(&key),
+            body_ir_inferred_method_identity: self.traits.inferred_method_identities.remove(&key),
         }
+    }
+
+    /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
+    pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
+        let key = (span.start, span.end);
+        self.calls.body_ir_reexport_calls.remove(&key);
+        self.calls.body_ir_string_slice_members.remove(&key);
+        self.calls.body_ir_constructor_types.remove(&key);
+        self.calls.body_ir_call_type_arguments.remove(&key);
+        self.calls.body_ir_call_result_types.remove(&key);
+        self.calls.body_ir_async_call_targets.remove(&key);
+        self.calls.body_ir_self_result_methods.remove(&key);
+        self.traits.self_method_identities.remove(&key);
+        self.traits.self_method_result_types.remove(&key);
+        self.traits.self_method_params.remove(&key);
+        self.traits.provider_slot_identities.remove(&key);
+        self.traits.inferred_method_identities.remove(&key);
     }
 
     /// Make `facts`, as [`Self::take_call_site_facts`] returned them, the facts of the call at `span`, dropping any a
@@ -2934,6 +3376,17 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(&mut self.calls.body_ir_reexport_calls, key, facts.body_ir_reexport_call);
+        put(
+            &mut self.calls.body_ir_string_slice_members,
+            key,
+            facts.body_ir_string_slice_member,
+        );
+        put(
+            &mut self.calls.body_ir_self_result_methods,
+            key,
+            facts.body_ir_self_result_method,
+        );
         put(
             &mut self.calls.inferred_constructor_types,
             key,
@@ -2951,6 +3404,51 @@ impl TypeCheckInfo {
             &mut self.calls.call_site_monomorph_type_args,
             key,
             facts.monomorph_type_args,
+        );
+        put(
+            &mut self.calls.body_ir_constructor_types,
+            key,
+            facts.body_ir_constructor_type,
+        );
+        put(
+            &mut self.calls.body_ir_call_type_arguments,
+            key,
+            facts.body_ir_call_type_arguments,
+        );
+        put(
+            &mut self.calls.body_ir_call_result_types,
+            key,
+            facts.body_ir_call_result_type,
+        );
+        put(
+            &mut self.calls.body_ir_async_call_targets,
+            key,
+            facts.body_ir_async_call_target,
+        );
+        put(
+            &mut self.traits.self_method_identities,
+            key,
+            facts.body_ir_self_method_identity,
+        );
+        put(
+            &mut self.traits.self_method_result_types,
+            key,
+            facts.body_ir_self_method_result_type,
+        );
+        put(
+            &mut self.traits.self_method_params,
+            key,
+            facts.body_ir_self_method_params,
+        );
+        put(
+            &mut self.traits.provider_slot_identities,
+            key,
+            facts.body_ir_provider_slot_identity,
+        );
+        put(
+            &mut self.traits.inferred_method_identities,
+            key,
+            facts.body_ir_inferred_method_identity,
         );
     }
 

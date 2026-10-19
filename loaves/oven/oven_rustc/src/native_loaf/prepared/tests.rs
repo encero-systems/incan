@@ -645,13 +645,13 @@ fn dev7_native_loaf_prepared_empty_dependencies_bypass_all_inputs() -> TestResul
     Ok(())
 }
 
-/// A forged new-key hint cannot hide another compatible local source candidate; incompatible features stay harmless.
+/// A canonical package key replays its Rust library alias, but a forged hint cannot hide compatible local candidates.
 #[test]
 fn dev7_native_loaf_prepared_local_current_candidate_ambiguity_refuses() -> TestResult {
     let fixture = Fixture::new()?;
     let parent = fixture.root.path().join("current/loaf.toml");
     let mut declaration = std::fs::read_to_string(&parent)?;
-    declaration.push_str("\n[dependencies]\nchild_alias={loaf='child',version='^1.0',features=['chosen']}\n");
+    declaration.push_str("\n[dependencies]\nchild={loaf='child',version='^1.0',features=['chosen']}\n");
     std::fs::write(&parent, declaration)?;
     for (directory, version) in [("child", "1.0.0"), ("alternative", "1.1.0")] {
         std::fs::create_dir_all(fixture.root.path().join(directory).join("src"))?;
@@ -662,7 +662,7 @@ fn dev7_native_loaf_prepared_local_current_candidate_ambiguity_refuses() -> Test
         std::fs::write(
             fixture.root.path().join(directory).join("loaf.toml"),
             format!(
-                "[project]\nname='child'\nversion='{version}'\n[project.features]\nchosen=[]\n[rust]\nname='child'\nedition='2021'\n"
+                "[project]\nname='child'\nversion='{version}'\n[project.features]\nchosen=[]\n[rust]\nname='child_library'\nedition='2021'\n"
             ),
         )?;
     }
@@ -691,7 +691,7 @@ fn dev7_native_loaf_prepared_local_current_candidate_ambiguity_refuses() -> Test
         NativeLoafOrigin::Local,
         &[],
     )?;
-    let parent = fixture.publish(&current, &mut graph, &[("child_alias", &child)])?;
+    let parent = fixture.publish(&current, &mut graph, &[("child_library", &child)])?;
     let roots = vec![
         graph
             .units

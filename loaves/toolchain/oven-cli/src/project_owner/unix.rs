@@ -13,14 +13,14 @@ use std::time::Duration;
 
 use super::protocol::{self, Reply, Request};
 use super::{
-    BindingInspectionIntent, BuildIntent, CheckIntent, NativeBuildIntent, SourceFormatIntent, TestExecutionIntent,
-    TestListIntent,
+    BindingInspectionIntent, BuildIntent, CheckIntent, LockIntent, NativeBuildIntent, SourceFormatIntent,
+    TestExecutionIntent, TestListIntent,
 };
 use incan_driver::error::{CliError, CliResult};
 use sha2::{Digest, Sha256};
 
 const INTERNAL_COMMAND: &str = "--internal-project-owner";
-const PROTOCOL: &str = "incan.project-owner/3";
+const PROTOCOL: &str = "incan.project-owner/4";
 
 /// Convert a transport failure into the existing command failure contract.
 fn transport_error(error: impl std::fmt::Display) -> CliError {
@@ -165,9 +165,7 @@ fn ensure_connection(executable: &Path, path: &Path, generation: &str) -> io::Re
         let _delivered = sender.send(result);
     });
     let result = match receiver.recv_timeout(Duration::from_secs(15)) {
-        Ok(Ok(value)) if value["pid"].as_u64() == Some(u64::from(child.id())) && value["generation"] == generation => {
-            connect(path)
-        }
+        Ok(Ok(value)) if compatible_readiness(&value, child.id(), generation) => connect(path),
         Ok(Ok(_)) => Err(io::Error::other("incompatible owner readiness acknowledgment")),
         Ok(Err(error)) => Err(error),
         Err(error) => Err(io::Error::other(format!("owner readiness failed: {error}"))),
@@ -181,6 +179,13 @@ fn ensure_connection(executable: &Path, path: &Path, generation: &str) -> io::Re
     let _joined = readiness.join();
     drop(lock);
     result
+}
+
+/// Require the spawned host's own protocol version; echoing a caller generation cannot establish compatibility.
+fn compatible_readiness(value: &serde_json::Value, child: u32, generation: &str) -> bool {
+    value["pid"].as_u64() == Some(u64::from(child))
+        && value["generation"] == generation
+        && value["protocol"] == PROTOCOL
 }
 
 /// Submit one build and render only this request's progress; transport failure is terminal.
@@ -203,6 +208,14 @@ pub(super) fn submit(
     let test_output = test_config.map(|config| {
         crate::test_runner::output::TestOutputSink::rendered(config.report_format, config.verbose, config.use_color)
     });
+    // Standalone Oven joins its adjacent Incan host. Source bootstrap and test hosts keep their own executable:
+    // they contain their current linked driver and must not silently delegate to an older ambient compiler.
+    let compiler = if executable.file_stem().is_some_and(|name| name == "oven") {
+        Some(incan_driver::build::native_runtime_inputs::compiler_for_toolchain_command(executable, None)?)
+    } else {
+        None
+    };
+    let executable = compiler.as_deref().unwrap_or(executable);
     let (path, generation) = coordinates(executable).map_err(transport_error)?;
     let mut stream = ensure_connection(executable, &path, &generation).map_err(transport_error)?;
     configure_reply_timeout(&stream, &intent).map_err(transport_error)?;
@@ -223,10 +236,12 @@ pub(super) fn submit(
     }
 }
 
-/// Let the runner own test deadlines; a quiet valid test must not fail because the build transport timed out.
-/// Other commands keep the existing bounded reply wait, and all requests retain bounded writes and frames.
+/// Leave build and test deadlines to command execution instead of limiting how long a valid owner may be quiet.
+/// Readiness, lifecycle requests, writes and frame sizes retain their existing bounds; this does not retry a command
+/// or authorize another execution route after a transport failure.
 fn configure_reply_timeout(stream: &UnixStream, intent: &serde_json::Value) -> io::Result<()> {
-    if intent.get("test_execute").is_some() {
+    if intent.get("test_execute").is_some() || intent.get("native_build").is_some() || intent.get("file_path").is_some()
+    {
         stream.set_read_timeout(None)?;
     }
     Ok(())
@@ -382,6 +397,29 @@ fn dispatch(
         protocol::write(stream, &reply)?;
         return Ok(false);
     }
+    if request.intent.get("lock").is_some() {
+        let (result, warnings) = incan_driver::diagnostics::capture_warning_output(|| {
+            serde_json::from_value::<LockIntent>(request.intent)
+                .map_err(transport_error)
+                .and_then(|intent| owner.prepare_lock(&intent.lock))
+                .and_then(|result| serde_json::to_value(result).map_err(transport_error))
+        });
+        for message in warnings {
+            protocol::write(stream, &Reply::Diagnostic { message })?;
+        }
+        let reply = match result {
+            Ok(result) => Reply::Complete {
+                pid: std::process::id(),
+                result,
+            },
+            Err(error) => Reply::Failure {
+                message: error.message,
+                exit_code: error.exit_code.0,
+            },
+        };
+        protocol::write(stream, &reply)?;
+        return Ok(false);
+    }
     if request.intent.get("check").is_some() {
         let result = serde_json::from_value::<CheckIntent>(request.intent)
             .map_err(transport_error)
@@ -483,7 +521,7 @@ fn serve(path: &Path, generation: &str, ready_path: &Path) -> io::Result<()> {
     let mut ready = UnixStream::connect(ready_path)?;
     protocol::write(
         &mut ready,
-        &serde_json::json!({"pid":std::process::id(),"generation":generation}),
+        &serde_json::json!({"pid":std::process::id(),"generation":generation,"protocol":PROTOCOL}),
     )?;
     drop(ready);
     let mut owner = incan_driver::build::executable::ExecutableBuildOwner::default();
@@ -552,15 +590,56 @@ mod tests {
         Ok(())
     }
 
-    /// Test execution leaves timeout enforcement to its scheduler while build replies stay bounded.
+    /// An older adjacent compiler must not join by echoing the new client's generation and expected process ID.
+    #[test]
+    fn readiness_requires_host_protocol_and_process_identity() {
+        let current = serde_json::json!({"pid":7,"generation":"current","protocol":PROTOCOL});
+        assert!(compatible_readiness(&current, 7, "current"));
+        assert!(!compatible_readiness(&current, 8, "current"));
+        assert!(!compatible_readiness(&current, 7, "changed"));
+        let old = serde_json::json!({"pid":7,"generation":"current","protocol":"incan.project-owner/3"});
+        assert!(!compatible_readiness(&old, 7, "current"));
+        let absent = serde_json::json!({"pid":7,"generation":"current"});
+        assert!(!compatible_readiness(&absent, 7, "current"));
+    }
+
+    /// Execution owns command deadlines; quiet builds and tests retain bounded writes without a reply deadline.
     #[test]
     fn test_execution_uses_runner_deadlines() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Lifecycle requests keep their bounded reply wait ----
         let (client, _server) = UnixStream::pair()?;
-        client.set_read_timeout(Some(Duration::from_secs(600)))?;
-        configure_reply_timeout(&client, &serde_json::json!({"operation": "ping"}))?;
-        assert_eq!(client.read_timeout()?, Some(Duration::from_secs(600)));
-        configure_reply_timeout(&client, &serde_json::json!({"test_execute": {}}))?;
-        assert_eq!(client.read_timeout()?, None);
+        for operation in ["ping", "stop"] {
+            client.set_read_timeout(Some(Duration::from_secs(600)))?;
+            configure_reply_timeout(&client, &serde_json::json!({"operation": operation}))?;
+            assert_eq!(client.read_timeout()?, Some(Duration::from_secs(600)));
+        }
+
+        // ---- Quiet execution replies outlive the former short transport deadline ----
+        for intent in [
+            serde_json::json!({"test_execute": {}}),
+            serde_json::json!({"native_build": {}}),
+            serde_json::json!({"file_path": "/project/src/main.incn"}),
+        ] {
+            let (mut client, mut server) = UnixStream::pair()?;
+            client.set_read_timeout(Some(Duration::from_millis(25)))?;
+            client.set_write_timeout(Some(Duration::from_secs(10)))?;
+            configure_reply_timeout(&client, &intent)?;
+            assert_eq!(client.read_timeout()?, None, "{intent}");
+            assert_eq!(client.write_timeout()?, Some(Duration::from_secs(10)));
+            let reply = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(75));
+                protocol::write(
+                    &mut server,
+                    &Reply::Complete {
+                        pid: std::process::id(),
+                        result: serde_json::json!({"completed": true}),
+                    },
+                )
+            });
+            let result = protocol::read::<Reply>(&mut client);
+            reply.join().map_err(|_| "quiet reply writer panicked")??;
+            assert!(matches!(result?, Reply::Complete { result, .. } if result["completed"] == true));
+        }
         Ok(())
     }
 
@@ -711,6 +790,25 @@ mod tests {
         };
         assert!(!dispatch(&mut server, "current", invalid_native, &mut owner)?);
         assert!(matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { .. }));
+        let invalid_lock = Request {
+            generation: "current".to_string(),
+            intent: serde_json::json!({"lock": {"unrecognized": true}}),
+        };
+        assert!(!dispatch(&mut server, "current", invalid_lock, &mut owner)?);
+        assert!(matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { .. }));
+        let relative_lock = Request {
+            generation: "current".to_string(),
+            intent: serde_json::json!({"lock": {
+                "directory": ".", "entry": null,
+                "features": incan_provider::FeatureSelection::default(),
+                "sdk_profile": null, "cargo_features": oven_model::lock::CargoFeatureSelection::default(),
+            }}),
+        };
+        assert!(!dispatch(&mut server, "current", relative_lock, &mut owner)?);
+        assert!(
+            matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { message, .. }
+            if message.contains("absolute lock request paths"))
+        );
         let invalid_collection = Request {
             generation: "current".to_string(),
             intent: serde_json::json!({"test_list": {"unrecognized": true}}),

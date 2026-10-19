@@ -1473,3 +1473,112 @@ def read_bad(data: JsonValue) -> Option[JsonValue]:
         "Expected JsonValue index-key diagnostic; got: {errs:?}"
     );
 }
+
+/// #1337/#1767: module calls consume the same checked provider signature and identity as a direct import.
+#[test]
+fn checked_provider_module_calls_preserve_signature_and_identity() -> Result<(), Box<dyn std::error::Error>> {
+    for (import, call) in [
+        ("from std.toml import parse", "parse"),
+        ("from std import toml", "toml.parse"),
+        ("import std.toml as config", "config.parse"),
+    ] {
+        let plan = sdk_provider_plan_for_module(
+            "incan_stdlib_fixture",
+            "toml",
+            "parse",
+            "pub def parse(value: int) -> int:\n    return value + 1\n",
+        )?;
+        let call_expression = format!("{call}(41)");
+        let source = format!("{import}\n\ndef run() -> int:\n    return {call_expression}\n");
+        let ast = parse_program(&source, "checked provider module callable");
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+        checker.set_provider_plan(Arc::new(plan));
+        let expected = checker
+            .sdk_provider_member_identity(
+                &ImportPath::simple(vec!["std".to_string(), "toml".to_string()]),
+                "parse",
+            )
+            .ok_or("fixture has no canonical provider callable")?;
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("{import}: {errors:?}"))?;
+        let start = source.rfind(call).ok_or("missing call")?;
+        // Qualified calls parse as MethodCall and record their identity on the whole expression. Plain Call records
+        // the callable identifier, matching the existing access and call checking boundaries.
+        let recorded_expression = if call.contains('.') {
+            call_expression.as_str()
+        } else {
+            call
+        };
+        let span = Span::new(start, start + recorded_expression.len());
+        assert_eq!(checker.type_info().resolved_identity(span), Some(&expected), "{import}");
+        if call.contains('.') {
+            let target = checker
+                .type_info()
+                .source_target(span)
+                .ok_or("missing module call target")?;
+            assert_eq!(target.module_path, ["std", "toml"]);
+            assert_eq!(target.name, "parse");
+            assert!(target.is_function());
+        }
+    }
+    Ok(())
+}
+
+/// Checked provider constants remain usable through a module binding without consulting source stubs.
+#[test]
+fn checked_provider_module_constants_preserve_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let plan = sdk_provider_plan_for_module("incan_stdlib_fixture", "math", "ANSWER", "pub const ANSWER: int = 42\n")?;
+    let source = "from std import math\n\ndef run() -> int:\n    return math.ANSWER\n";
+    let ast = parse_program(source, "checked provider module constant");
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(Arc::new(plan));
+    let expected = checker
+        .sdk_provider_member_identity(
+            &ImportPath::simple(vec!["std".to_string(), "math".to_string()]),
+            "ANSWER",
+        )
+        .ok_or("fixture has no canonical provider constant")?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("checked constant: {errors:?}"))?;
+    let start = source.find("math.ANSWER").ok_or("missing constant reference")?;
+    assert_eq!(
+        checker
+            .type_info()
+            .resolved_identity(Span::new(start, start + "math.ANSWER".len())),
+        Some(&expected)
+    );
+    Ok(())
+}
+
+/// An active incomplete provider must not recover a missing public or private member from source stubs.
+#[test]
+fn checked_provider_module_members_refuse_unpublished_exports() -> Result<(), Box<dyn std::error::Error>> {
+    for (module, missing, expression) in [
+        ("toml", "parse", "toml.parse(\"value = 1\")"),
+        ("toml", "hidden", "toml.hidden()"),
+        ("math", "PI", "math.PI"),
+    ] {
+        let plan = sdk_provider_plan_for_module(
+            "incan_stdlib_fixture",
+            module,
+            "helper",
+            "pub def helper() -> int:\n    return 42\n\ndef hidden() -> int:\n    return 7\n",
+        )?;
+        let source = format!("from std import {module}\n\ndef run() -> None:\n    value = {expression}\n");
+        let ast = parse_program(&source, "unpublished checked provider member");
+        let mut checker = TypeChecker::new();
+        checker.set_provider_plan(Arc::new(plan));
+        let errors = match checker.check_program(&ast) {
+            Err(errors) => errors,
+            Ok(_) => return Err(format!("unpublished {module}.{missing} was accepted").into()),
+        };
+        assert!(
+            errors.iter().any(|error| error.message.contains(missing)),
+            "{module}.{missing}: {errors:?}"
+        );
+    }
+    Ok(())
+}

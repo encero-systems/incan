@@ -178,6 +178,53 @@ fn frozen_text<'tcx>(tcx: TyCtxt<'tcx>, sources: &Sources<'_>, text: &Operand) -
     ))
 }
 
+/// Build the dependency-owned frozen byte wrapper over a static allocation, validating its exact field shape and
+/// every unsigned byte before any MIR is constructed. Empty literals keep a valid zero-length slice.
+fn frozen_bytes<'tcx>(tcx: TyCtxt<'tcx>, values: &[i64], span: Span) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: "FrozenBytes".into(),
+        reason: reason.into(),
+    };
+    let ty = native_type(tcx, &PlanType::FrozenBytes)?;
+    let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
+        return Err(invalid("frozen byte carrier is not an ADT"));
+    };
+    if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
+        return Err(invalid("frozen byte carrier must have one field"));
+    }
+    let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)]
+        .ty(tcx, *args)
+        .skip_normalization();
+    if !matches!(field.kind(), rustc_middle::ty::Ref(region, pointee, rustc_hir::Mutability::Not)
+        if region.is_static() && matches!(pointee.kind(), rustc_middle::ty::Slice(element) if *element == tcx.types.u8))
+    {
+        return Err(invalid("frozen byte carrier field is not a static shared byte slice"));
+    }
+    let bytes = values
+        .iter()
+        .map(|value| u8::try_from(*value))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| invalid("frozen literal contains a non-byte value"))?;
+    let alloc_id = tcx.allocate_bytes_dedup(&bytes, mir::interpret::CTFE_ALLOC_SALT);
+    let meta = u64::try_from(bytes.len())
+        .map_err(|_| invalid("frozen byte literal length exceeds its native representation"))?;
+    let literal = mir::Operand::Constant(Box::new(mir::ConstOperand {
+        span,
+        user_ty: None,
+        const_: mir::Const::Val(mir::ConstValue::Slice { alloc_id, meta }, field),
+    }));
+    Ok(mir::Rvalue::Aggregate(
+        Box::new(mir::AggregateKind::Adt(
+            definition.did(),
+            rustc_abi::VariantIdx::from_usize(0),
+            *args,
+            None,
+            None,
+        )),
+        IndexVec::from_raw(vec![literal]),
+    ))
+}
+
 /// Map an operation name; overflow variants are selected only for integer arithmetic.
 pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
     match op {
@@ -228,6 +275,8 @@ pub fn rvalue<'tcx>(
         }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
         RvalueKind::FrozenText(text) => frozen_text(tcx, sources, text)?,
+        RvalueKind::FrozenBytes(values) => frozen_bytes(tcx, values, rustc_span::DUMMY_SP)?,
+        RvalueKind::FrozenCollection(ty, values) => crate::frozen_values::construct(tcx, ty, values)?,
         RvalueKind::TagToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
@@ -289,7 +338,8 @@ pub fn rvalue<'tcx>(
             ),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
-        RvalueKind::Tuple(elements) => mir::Rvalue::Aggregate(
+        // A range value's native layout is the tuple of its declared fields.
+        RvalueKind::Tuple(elements) | RvalueKind::Range(elements) => mir::Rvalue::Aggregate(
             Box::new(mir::AggregateKind::Tuple),
             IndexVec::from_raw(
                 elements

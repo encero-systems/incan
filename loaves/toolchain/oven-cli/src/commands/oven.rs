@@ -6,6 +6,7 @@
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
 mod case_partition;
+mod cold_compiler;
 pub mod compile_closure;
 pub mod convert_cargo;
 mod equivalence;
@@ -18,11 +19,13 @@ pub(crate) mod native_compiler_tests;
 mod options;
 mod partition_reconciliation;
 mod sdk_handoff;
+mod standard_packages;
 mod suite_environment;
 mod suite_execution;
 mod suite_retention;
 mod support;
 
+pub use cold_compiler::oven_bootstrap_compiler;
 pub use equivalence::oven_equivalence;
 pub use gate::{oven_gate_consumer_graph, oven_gate_registry_pin};
 pub use harvest::oven_harvest;
@@ -33,6 +36,7 @@ use loaf_bake::{finish_loaf_bake_after_publication, loaf_envelope_default_limits
 pub(crate) use loaf_bake_evidence::*;
 pub use partition_reconciliation::oven_reconcile_partitions;
 pub use sdk_handoff::oven_sdk_handoff;
+pub use standard_packages::oven_prepare_standard_packages;
 pub(crate) use suite_environment::*;
 pub(crate) use suite_execution::*;
 pub use suite_retention::oven_retain_suite_output;
@@ -3857,13 +3861,44 @@ mod tests {
         Ok(())
     }
 
+    /// A compatibility probe preserves its explicit authorities while suppressing inherited ordinary-route selection.
     #[test]
     fn loaf_fixture_probe_pins_the_explicit_baker_authorities() {
         let mut command = Command::new("incan");
         command.env("RUSTC", "/ambient/rustc");
+        command.env("INCAN_SDK_NATIVE_COMPILER_GRAPH", "/ambient/compiler-graph.json");
+        command.env("INCAN_SDK_INVENTORY", "/explicit/sdk-inventory.json");
+        command.env(
+            super::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV,
+            "/explicit/inspection-authority.json",
+        );
 
         super::pin_loaf_fixture_rustc(&mut command, Path::new("/explicit/stable/rustc"));
         super::isolate_loaf_fixture_toolchain_data(&mut command, Path::new("/isolated/toolchain"));
+
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(name, _)| *name == "INCAN_SDK_NATIVE_COMPILER_GRAPH")
+                .map(|(_, value)| value),
+            Some(None),
+            "the child must explicitly remove the ordinary graph selector, including an inherited value"
+        );
+        for (name, expected) in [
+            ("INCAN_SDK_INVENTORY", "/explicit/sdk-inventory.json"),
+            (
+                super::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV,
+                "/explicit/inspection-authority.json",
+            ),
+        ] {
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(key, _)| *key == name)
+                    .and_then(|(_, value)| value),
+                Some(std::ffi::OsStr::new(expected))
+            );
+        }
 
         assert_eq!(
             command

@@ -17,6 +17,7 @@ runs:
       with:
         name: test-linux-sdk-provider-store
         path: ${{ inputs.store }}
+    # Source transport exported the same platform graph used by this run's SDK producer.
     - name: Validate the exact SDK handoff
       shell: bash
       env:
@@ -27,3 +28,12 @@ runs:
         --artifact "$HANDOFF_STORE"
         --path-file "$HANDOFF_PATH_FILE"
         --env-file "$GITHUB_ENV"
+    - name: Prepare ordinary standard-package publications
+      shell: bash
+      env:
+        HANDOFF_STORE: ${{ inputs.store }}
+        HANDOFF_PATH_FILE: ${{ inputs.path-file }}
+      run: >-
+        make -s test-prewarm-standard-packages
+        INCAN_TEST_SDK_PROVIDER_STORE="$HANDOFF_STORE"
+        INCAN_TEST_SDK_PROVIDER_PATH_FILE="$HANDOFF_PATH_FILE"

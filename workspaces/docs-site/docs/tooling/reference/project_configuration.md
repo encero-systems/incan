@@ -16,7 +16,7 @@ my_project/
 └── oven.lock            # Generated lock file (commit to VCS)
 ```
 
-You can scaffold a full new project (manifest, entry point, starter test, README, and `.gitignore`) with `incan new`. Use `incan init` when you already have a directory and want to add Incan project files there.
+For scaffolding and existing-directory setup, see [Create a project](../../language/how-to/project_lifecycle.md#create-a-project).
 
 Lock publication requires a discoverable SDK inventory when the existing project or workspace-member state in `oven.lock` records an SDK. A lock writer does not replace that state with an SDK-less lock. Without recorded SDK state, a lock without SDK state is valid.
 
@@ -37,7 +37,7 @@ requires-incan = ">=0.2"
 
 `requires-incan` is enforced by project-aware execution commands. If the active compiler does not satisfy the requirement, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail before compiling, locking, or launching scripts. Single-file or inline commands without a discovered project manifest do not infer a toolchain requirement.
 
-Declared `version` and `license` values are preserved in the generated compatibility manifest used by the explicit Oven publisher transition. The plural Incan `license-files` field remains source-package metadata and is not translated to Cargo's singular `license-file` field. `incan build --lib` is the Oven Alpha caller-owned library-artifact workflow: it uses a receipt-selected direct-`rustc` plan, emits `.incnlib` metadata and debug/release `rlib` outputs, and ordinary executable `incan build`, `incan run`, and `incan test` never fall back to it.
+Declared `version` and `license` values are preserved in the generated compatibility manifest used by the explicit Oven publisher transition. The plural Incan `license-files` field remains source-package metadata and is not translated to Cargo's singular `license-file` field. The outputs and selection rules for `incan build --lib` are specified in the [CLI build reference](cli_reference.md#incan-build).
 
 ### `[project.scripts]`
 
@@ -51,7 +51,7 @@ migrate = "src/migrate.incn"  # This is an example of a named entry point called
 
 `incan new` and `incan init` set `main = "src/main.incn"` by default. When `main` is set, `incan lock` can run without a `FILE` argument.
 
-A script must not resolve to the conventional library entry point, `src/lib.incn`, including through a path alias. The manifest diagnostic names the conflicting script and path. Remove that script entry: Oven detects `src/lib.incn` as a library automatically.
+A script must not resolve to the conventional library entry point, `src/lib.incn`, including through a path alias. The manifest diagnostic names the conflicting script and path. Oven detects `src/lib.incn` as a library automatically; it is not a script entry point.
 
 ### `[project.features]`
 
@@ -129,13 +129,13 @@ The directory where the compiler and test runner look for user modules. Resoluti
 2. **Convention**: if a `src/` directory exists at the project root, it is used automatically
 3. **Fallback**: the project root itself (flat layout)
 
-Most projects use the conventional `src/` layout and don't need to set this field. It exists for projects that keep their source in a different directory (e.g. `lib/`).
+For layout selection and examples, see [Choose a source layout](../../language/how-to/project_lifecycle.md#choose-a-source-layout).
 
 ## `[interop.c]`
 
 The interop section declares package-owned build inputs and compatibility requirements for checked bindings. It describes what the package requires; it does not claim that Oven has already selected a compiler, SDK, sysroot, or installed library.
 
-Each binding kind names itself, so C declarations live under `[interop.c]`. Earlier releases spelled this table `[oven.interop]`; that spelling is not read, and a manifest still using it is rejected with a message naming the replacement. Renaming the tables is the whole migration — their contents are unchanged.
+Each binding kind names itself, so C declarations live under `[interop.c]`. Earlier releases spelled this table `[oven.interop]`; that spelling is not read, and a manifest still using it is rejected with a message naming the replacement. The replacement tables have the same fields and values.
 
 ```toml
 [interop.c]
@@ -223,13 +223,13 @@ Each `[[interop.c.targets.shims]]` entry accepts:
 
 All declared paths must be normalized relative paths to regular package files. Absolute paths, parent traversal, symlinks, directories, backslashes, and ambient search paths are rejected.
 
-`incan lock` writes normalized requirements and content hashes for package-owned files under the versioned `semantic.oven.interop` lock key. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
+`incan lock` writes normalized requirements and content hashes for package-owned files under the versioned `semantic.oven.interop` lock key. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher requires a current lock and selected compiler/SDK evidence. Its immutable plan contains the declared C/C++ shim archives, bundled runtime files and declared system capabilities; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
 
 ## `[envs]`
 
-Named project environments define reusable command contexts for `incan env`. They are useful when a project has different test, build, or release workflows that need different environment variables, working directories, or script arguments. The ambient `default` environment is always available; defining `[envs.default]` customizes it.
+Named project environments define reusable command contexts for `incan env`. The ambient `default` environment is always available; defining `[envs.default]` customizes it. Setup examples are in [Project lifecycle](../../language/how-to/project_lifecycle.md).
 
 ```toml
 [envs.default]
@@ -305,15 +305,7 @@ This section is optional and applies to library projects exporting vocab entries
 | ------- | ------ | ------------------------------------------------------------------------------------- |
 | `crate` | string | Path to the vocab companion crate directory, relative to project root unless absolute |
 
-For an Oven Alpha library build, the compiler:
-
-1. resolves `[vocab].crate`
-2. validates that the directory contains `Cargo.toml` and `src/lib.rs`
-3. reads the companion crate's checked registration through compiler-owned vocabulary support in the selected direct-`rustc` plan
-4. derives the vocab payload from the companion crate's `library_vocab()` registration
-5. packages the resulting metadata into the built `.incnlib` artifact
-
-If the companion crate registers a desugarer via `incan_vocab::DesugarerRegistration`, `incan build --lib` also packages the matching Wasm artifact from the compiler-owned direct-`rustc` output. Any intermediate serialized metadata is a tooling concern (rather than part of the author-facing contract).
+The companion directory must contain `Cargo.toml` and `src/lib.rs`. Its checked `library_vocab()` registration supplies the vocab metadata in the built `.incnlib`. A registered `incan_vocab::DesugarerRegistration` also requires the matching Wasm artifact, which `incan build --lib` packages with the library. Intermediate serialized metadata is not an author-facing contract. See [Vocab companion preparation](../explanation/projects_today.md#vocab-companion-preparation) for the compilation boundary.
 
 ## `[dependencies]`
 
@@ -337,6 +329,61 @@ Incan dependency table fields:
 | `features` | list of strings | Public Incan features requested from the dependency. |
 
 Feature requests are unified additively across every active dependency edge. They are Incan package features, not Cargo features; Rust crates continue to use the explicitly separate `[rust-dependencies]` and `--cargo-*` surfaces.
+
+## `[rust]`
+
+The Loaf's Rust library facet. All fields are optional; nested source, binary and dependency tables are documented separately below.
+
+```toml
+[rust]
+name = "policy_bridge"
+type = "lib"
+edition = "2024"
+path = "src/lib.rs"
+```
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `name` | string | Explicit Rust unit name. Nonempty ASCII letters, digits and underscores, with no leading digit. For a caller-library bake, omission selects `[project].name`, or `rust_unit` if no project name exists. |
+| `type` | string | `lib` or `proc-macro`; other values are refused. The sibling-Incan caller bake supports libraries and refuses procedural-macro callers. |
+| `edition` | string | `2015`, `2018`, `2021` or `2024`. The caller-library bake defaults to `2024`. |
+| `path` | string | Library entry point, relative to the project directory. Defaults to `lib.rs` inside the Rust source directory. An explicit path must be a plain relative `.rs` path inside that directory, without `.` or `..` components or surrounding whitespace. |
+| `build-script` | bool | Records whether the upstream Rust package declares a build script. A binding with `true` requires a recorded build fact before compilation. |
+
+### Sibling Incan callers
+
+Rust binaries and libraries can select a sibling Incan library through `[dependencies]`:
+
+```toml
+[dependencies]
+policy = { loaf = "policy", path = "../policy" }
+```
+
+`incan oven bake --project <rust-project>` supports caller paths of the form `policy::caller::incan::<name>`. Selected public exports may contain scalars, `list`, `Option`, `Result`, public-field models, positional-payload enums, and functions composed from those types. Missing, private, generic, asynchronous, callable-valued, Rust-native, or otherwise unsupported exports are refused by name before Rust compilation. Libraries can reexport supported caller items. Source entry points must be regular files, not symlinks.
+
+| Caller-library output | Path or behavior |
+| --- | --- |
+| Compiled library | `target/rust/library/<profile>/lib<crate_name>.rlib`, for `debug` or `release`. `crate_name` replaces hyphens in the selected unit name with underscores; a fallback project name `my-library` produces `libmy_library.rlib`. |
+| Receipt | `target/rust/receipts/library/<name>-<profile>.json`, retaining the selected unit name. |
+| Target namespace | Library receipts and caller projections are separate from binary targets, even when their names match. |
+| Unchanged explicit bake | Reuses the exact recorded output; missing mutable output projections are restored from the Store. |
+
+This explicit caller-library bake does not provide ordinary transitive Rust library discovery or replace project-level build/run preparation. See [Rust caller preparation](../explanation/projects_today.md#rust-caller-preparation) for the projection and dependency boundaries.
+
+## `[rust.source]`
+
+Optional Rust source ownership within a mixed Loaf.
+
+```toml
+[rust.source]
+root = "rust"
+```
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `root` | string | Required when this table is present. Nonempty project-relative directory, without parent traversal. It must differ from the Incan `[build].source-root` (default `src`). |
+
+With this table omitted, the Rust source directory is `<project>/src`. With `root = "rust"`, it is `<project>/rust/src`. An explicit `[rust].path` is still relative to the project directory, so a library in that layout uses `path = "rust/src/lib.rs"`. Library and test-root discovery share this source directory.
 
 ## `[[rust.bin]]`
 
@@ -369,18 +416,7 @@ sysroot_dependencies = ["rustc_driver"]
 
 Oven authorizes this selection only with pinned rustc 1.98.0 and installed rustc-dev metadata and driver library. Unknown, repeated or incomplete selections are refused. The executable root must name `extern crate rustc_driver`. Units without the declaration receive no unstable permission.
 
-For the first driver build, Oven strips ambient `RUSTC_BOOTSTRAP`, then sets it to this unit's normalized crate name on this invocation only. The invocation has a matching explicit `--crate-name` and `-Zallow-features=rustc_private`. The receipt identity records the capability, crate name, feature allowlist, bootstrap-derived `Cheat` session permission, pinned loader policy, complete compiler identity, canonical sysroot and driver library path and digest. Fact-record environments remain unable to declare `RUSTC_BOOTSTRAP`.
-
-A Rust unit's declared `[rust-dependencies]` closure is composed with its sibling Incan caller closure during the explicit bake. Dependency compilation does not receive the driver's unstable grant.
-
-A Rust-only project may consume a sibling Incan library with this dependency form:
-
-```toml
-[dependencies]
-policy = { loaf = "policy", path = "../policy" }
-```
-
-`incan oven bake --project <rust-project>` scans each Rust unit for `policy::caller::incan::<name>` paths, validates those names against the sibling library's checked public exports, emits only that caller projection, and builds both the Incan library and Rust binary through receipted direct `rustc`. The selected caller surface supports scalars, `list`, `Option`, `Result`, public-field models, positional-payload enums, and functions composed from those types. Missing, private, generic, asynchronous, callable-valued, Rust-native, or otherwise unsupported exports are refused by name before Rust compilation.
+The unstable grant applies only to the declared driver unit, not its dependencies. Fact-record environments cannot declare `RUSTC_BOOTSTRAP`. The [compiler-internals preparation explanation](../explanation/projects_today.md#compiler-internals-preparation) describes the invocation and receipt identity.
 
 A project with at least one `[[rust.bin]]` entry and no `[project.scripts].main` uses these roles for a plain `incan build`. A project with a `main` script builds that Incan entrypoint instead.
 
@@ -455,7 +491,7 @@ fancy_logging = { version = "0.3", optional = true }
 metrics = { version = "1.0", features = ["prometheus"], optional = true }
 ```
 
-These declarations are Cargo-compatibility inputs, not public Incan package features. Oven Alpha does not ask Cargo to activate an optional Rust dependency during a normal build. The selected toolchain Loaf must already authorize the requested Rust dependency/feature closure; otherwise the command stops with unsupported-envelope guidance. Use `[project.features]` for public Incan features, but do not use `dep:` there to name a Rust dependency: `dep:` activates an optional Incan dependency from `[dependencies]`.
+These declarations are Cargo-compatibility inputs, not public Incan package features. Oven Alpha does not ask Cargo to activate an optional Rust dependency during a normal build. The selected toolchain Loaf must already authorize the requested Rust dependency/feature closure; otherwise the command stops with unsupported-envelope guidance. Public Incan features belong to `[project.features]`; a `dep:` reference there activates an optional Incan dependency from `[dependencies]`, not a Rust dependency.
 
 ## `[[rust.facts.link]]` and `[[rust.facts.tool]]`
 
@@ -490,7 +526,7 @@ outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
 
 `link` fields are `name`, `target`, `executable`, `environment`, `sources`, `objects`, and `library`. `objects` is non-empty, sorted by unique `name`, and each entry has exactly `name`, `language`, and `arguments`. An object name is one portable relative `.o` file name. `language` accepts `c`, `cpp`, or `assembly`. Arguments remain ordered. `{ literal = "..." }` records non-path text, `{ input = "..." }` and `{ output = "..." }` name declared source and object paths, and `{ owner = "..." }` names a portable relative path below the executable's immutable owner root. Each object must contain at least one input and exactly one output equal to its own `name`; absolute or traversing owner paths, a literal object file name, another output name, a missing output, or an extra output is refused. Every declared source must be referenced by at least one object. Source and object names share one logical namespace. A source with `kind = "tree"` may use `path = "."` to declare the complete checksummed crate source; `.` remains invalid for file sources, outputs, and owner arguments, and every other path must be non-empty with only normal relative components. Source paths may overlap, including file sources contained within an include-tree source; source-to-output and output-to-output overlaps are refused. `library` has exactly `name` and `kind`; only `static` is supported, and `dynamic` is refused. A link declaration does not name an archive path, archive digest, product digest, archiver, or producer receipt; those belong to the admitted asset and receipt.
 
-A publisher link bake resolves `executable.path` and every owner argument below the caller-held immutable executable-owner root, verifies the executable digest, clears the ambient environment, and invokes the compiler once per object. The owner closure is the executable path plus every `{ owner = "..." }` path referenced by the record; a directory includes all of its descendants recursively. Its canonical inventory lists every entry once, sorted by owner-relative path, with one UTF-8 line `<kind>\t<path>\t<value>\n`: `file` uses the `sha256:` digest of its bytes, `symlink` uses its link text, and `dir` has an empty value. The owner identity is the `sha256:` digest of those inventory bytes. Before execution, the publisher reproduces this identity from the supplied owner root or refuses. Read confinement admits data reads of exactly the closure—subpaths for declared directories and literals for declared files or symlinks—and metadata-only reads on every ancestor directory; no other owner content is readable. Logical argv records an owner argument as `owner:<path>`, so no physical host spelling enters the receipt. After every invocation succeeds, the product root must contain exactly the declared objects. The Oven writes `lib<library.name>.a` in object-name order with the indexed Darwin, BSD, GNU, or COFF archive format rustc selects for the target. The receipt binds each object's logical arguments and digest plus the archive digest, and consumers import only the verified archive.
+The executable owner closure is the executable path plus every `{ owner = "..." }` path referenced by the record; a directory includes all of its descendants recursively. Its canonical inventory lists every entry once, sorted by owner-relative path, with one UTF-8 line `<kind>\t<path>\t<value>\n`: `file` uses the `sha256:` digest of its bytes, `symlink` uses its link text, and `dir` has an empty value. The owner identity is the `sha256:` digest of those inventory bytes. A supplied owner root whose reproduced identity differs from the declaration is refused. Read confinement admits data reads of exactly the closure—subpaths for declared directories and literals for declared files or symlinks—and metadata-only reads on every ancestor directory; no other owner content is readable. Logical argv records an owner argument as `owner:<path>`, so no physical host spelling enters the receipt. The compiler-output set must exactly match the declared objects. The archive is `lib<library.name>.a`, with objects in name order and the indexed Darwin, BSD, GNU, or COFF archive format rustc selects for the target. The receipt binds each object's logical arguments and digest plus the archive digest, and consumers import only the verified archive.
 
 Publisher executable roots are configured outside projects. The release publisher accepts repeatable `--link-owner <ROOT>` arguments and also reads `link-owner` as a list of paths under `[publisher]` in `$INCAN_HOME/config.toml`, or `~/.incan/config.toml` when `INCAN_HOME` is unset. A path grants no identity by itself: Oven inventories the exact closure the selected record names and uses the root only when the resulting identity equals `executable.owner`. Missing and multiply matching roots are refusals.
 
@@ -498,11 +534,11 @@ Publisher executable roots are configured outside projects. The release publishe
 
 `out.name` and `tool.outputs[].path` use the same path namespace relative to `OUT_DIR`. A generated file or tree is declared exactly once: either as a committed `out` input or as a `tool` output. Equal or overlapping paths across those fields are refused.
 
-A publisher tool invocation resolves `executable.path` only below `executable.owner`, verifies the executable digest immediately before execution, clears the ambient environment, supplies the declared arguments and environment in order, and exposes only the complete declared input closure and product root. The supported publisher-tool execution host is macOS, where a deny-by-default Seatbelt profile confines reads and writes; a host without equivalent filesystem and process-tree confinement refuses the publisher operation. Missing or substituted executables, input digest drift, path escape, symlinks, missing products, extra products, unsuccessful exit, timeout, or bounded-output overflow refuse publication.
+Publisher tools receive only the declared arguments, environment, input closure and product root; executable resolution is confined to `executable.owner`. Publisher execution uses Seatbelt on macOS and bubblewrap on supported GNU/Linux x86_64 or aarch64 hosts. Linux requires `/usr/bin/bwrap` with working unprivileged user, PID and network namespaces; missing or refused confinement fails the operation. Linux exposes only the declared executable, owner closure, inputs and writable product root. It does not expose the host filesystem, shell or system library directories. Missing or substituted executables, input digest drift, path escape, symlinks, missing products, extra products, unsuccessful exit, timeout, or bounded-output overflow refuse publication.
 
-The producer receipt binds the executable bytes, portable argument and environment declarations, input catalog, generated product catalog, build host, compilation target, and sorted consuming-unit identities. A link receipt binds each object's logical arguments and digest plus the archive digest. Each product becomes a `GeneratedOutput`-owned generated input of the selected consuming unit. Consumer builds accept only those receipt-bound asset bytes and never resolve or execute the producer tool.
+The producer receipt binds the executable bytes, portable argument and environment declarations, input catalog, generated product catalog, build host, compilation target, and sorted consuming-unit identities. A link receipt binds each object's logical arguments and digest plus the archive digest. Each product becomes a `GeneratedOutput`-owned generated input of the selected consuming unit. Consumer builds accept only those receipt-bound asset bytes and never resolve or execute the producer tool. See [Publisher preparation](../explanation/projects_today.md#publisher-preparation) for the execution and confinement sequence.
 
-`executable` has the exact fields `name`, `owner`, `path`, and `digest`. `owner` and `digest` are lowercase `sha256:` identities, and `path` is relative to that immutable owner. Oven never serializes an absolute executable location or resolves ambient `PATH` during consumption.
+`executable` has the fields `name`, `owner`, `path`, `digest`, and optional `runtime_files`. The latter is a list of `{ path, digest }` members sorted by unique portable owner-relative path, omitted when empty. Every digest is the exact lowercase `sha256:` file identity. Runtime files join the existing owner identity and receipt; directories, symlinks and changed bytes refuse before owner selection and again before execution. On Linux their unique basenames are the loader names, and their parent directories supply the deterministic `LD_LIBRARY_PATH`; declared `LD_*` environment entries are refused. Runtime parent paths containing `:`, `;` or `$` are refused. A declared `ld-linux-x86-64.so.2` or `ld-linux-aarch64.so.1` is additionally mounted at that host architecture’s GNU interpreter path. No runtime files are discovered automatically. A publisher may stage genuine observed shared-library bytes as regular files under their required loader names; this staging and the complete runtime list must precede owner identity recording. Script interpreters are not implicit on Linux. Empty runtime lists preserve prior serialization and receipt identities. `owner` and `digest` are lowercase `sha256:` identities, and `path` is relative to that immutable owner. Oven never serializes an absolute executable location or resolves ambient `PATH` during consumption.
 
 Each `arguments` entry has exactly one of `literal`, `input`, or `output`. Each `environment` entry has `name` and exactly one of `literal` or `input`. No environment in a fact record, neither the record's own compile environment nor a `link` or `tool` environment, may name `RUSTC_BOOTSTRAP`; a manifest that does is refused. `sources`, `inputs`, and `outputs` have `name`, `kind`, and `path`; `kind` is `file` or `tree`. A source or input also has `digest`; a tree additionally has a sorted `members` list of `{ path, digest }` entries whose canonical catalog digest must equal the tree digest.
 
@@ -526,7 +562,7 @@ tokio = { version = "1.35", features = ["full"] }
 
 ### Git
 
-Specify a git repository URL with exactly one of `branch`, `tag`, or `rev`:
+A Git source has a repository URL and exactly one of `branch`, `tag`, or `rev`:
 
 ```toml
 [rust-dependencies]

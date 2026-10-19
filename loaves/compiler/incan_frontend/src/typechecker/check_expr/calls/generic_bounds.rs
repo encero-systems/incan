@@ -7,6 +7,7 @@ use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
+use crate::typechecker::type_info::BodyIrDecoratorApplication;
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
@@ -33,6 +34,7 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let identity = method_info.identity.clone();
+        let returns_receiver = method_info.receiver.is_some() && method_info.return_type == ResolvedType::SelfType;
         if let Some(identity) = identity.clone() {
             self.type_info.record_resolved_identity(call_site_span, identity);
         }
@@ -47,6 +49,17 @@ impl TypeChecker {
             receiver_ty,
             expected_return_ty,
         );
+        let site = (call_site_span.start, call_site_span.end);
+        self.type_info.calls.body_ir_self_result_methods.remove(&site);
+        if returns_receiver
+            && self.errors.len() == first_error
+            && let Some(identity) = &identity
+        {
+            self.type_info
+                .calls
+                .body_ir_self_result_methods
+                .insert(site, identity.clone());
+        }
         if let Some(identity) = identity {
             self.attach_related_declaration_to_new_errors(first_error, &identity);
         }
@@ -81,6 +94,8 @@ impl TypeChecker {
     /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements, and the
     /// side an `Ok(...)` or `Err(...)` argument leaves open settled. The arguments that bind one type parameter bind it
     /// to one type, and a bounded type parameter no argument fixes is refused (#1561).
+    /// Successful single-function calls additionally retain exact parameter requirements for Body IR without replacing
+    /// ordinary bindings.
     pub(in crate::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -221,9 +236,23 @@ impl TypeChecker {
                     &type_bindings,
                     &info.return_type,
                 );
+                self.retain_body_ir_constructor_call_instantiation(
+                    call_span,
+                    &info.type_params,
+                    &arguments,
+                    &type_bindings,
+                    &info.return_type,
+                    &info.type_param_bound_details,
+                );
             }
         }
 
+        if explicit_type_args.is_empty() && self.errors.len() == errors_before_call {
+            self.retain_body_ir_call_arguments(info, args, &type_bindings, call_span, callee_identity.as_ref());
+        }
+        if explicit_arity_ok && self.errors.len() == errors_before_call {
+            self.retain_body_ir_parameter_requirements(&resolved_params, args, callee_identity.as_ref());
+        }
         substitute_resolved_type(&info.return_type, &type_bindings)
     }
 
@@ -404,7 +433,7 @@ impl TypeChecker {
 
     /// Pair each argument with the type of the parameter it binds, as [`Self::arguments_with_parameters`] pairs them,
     /// leaving out an argument that binds no parameter.
-    fn arguments_with_parameter_types<'a, 'p>(
+    pub(super) fn arguments_with_parameter_types<'a, 'p>(
         params: &'p [CallableParam],
         args: &'a [CallArg],
     ) -> Vec<(&'a Spanned<Expr>, &'p ResolvedType)> {
@@ -691,6 +720,7 @@ impl TypeChecker {
         type_params: &[String],
         bindings: &std::collections::HashMap<String, ResolvedType>,
     ) {
+        self.retain_body_ir_factory_arguments(call_span, type_params, bindings);
         let mut out: Vec<ResolvedType> = Vec::new();
         for p in type_params {
             let Some(ty) = bindings.get(p) else {
@@ -705,6 +735,37 @@ impl TypeChecker {
             .calls
             .call_site_monomorph_type_args
             .insert((call_span.start, call_span.end), out);
+    }
+
+    /// Preserve checked partial factory inference before the legacy complete-only record is considered.
+    /// Only the exact explicitly checked factory span participates. The selected single-function identity and the
+    /// decorator application must subsequently validate this provisional record before Body IR can consume it.
+    fn retain_body_ir_factory_arguments(
+        &mut self,
+        call_span: Span,
+        parameters: &[String],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) {
+        if self.body_ir_decorator_factory_span != Some(call_span) {
+            return;
+        }
+        let arguments = parameters
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .cloned()
+                    .unwrap_or_else(|| ResolvedType::TypeVar(parameter.clone()))
+            })
+            .collect();
+        self.type_info.declarations.body_ir_decorator_applications.insert(
+            (call_span.start, call_span.end),
+            BodyIrDecoratorApplication {
+                callable_type: ResolvedType::Unknown,
+                type_bindings: std::collections::HashMap::new(),
+                factory_type_args: arguments,
+            },
+        );
     }
 
     /// Retain concrete inferred call arguments from checked constructor facts without changing legacy contextual types.
@@ -739,6 +800,71 @@ impl TypeChecker {
             (call_span.start, call_span.end),
             substitute_resolved_type(return_type, &concrete),
         );
+    }
+
+    /// Close one executable call from Body IR-only constructor facts, preserving every legacy-read call table.
+    ///
+    /// This uses the same checked structural binding relation as ordinary call inference, but only settled bindings
+    /// satisfying the declared bounds cross the Body IR boundary. Missing constructor or parameter facts leave the
+    /// call's existing representation unchanged; native lowering does not infer arguments from runtime operands.
+    fn retain_body_ir_constructor_call_instantiation(
+        &mut self,
+        span: Span,
+        parameters: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        returned: &ResolvedType,
+        bounds: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
+    ) {
+        let mut concrete = bindings
+            .iter()
+            .filter(|(_, ty)| Self::is_settled_type_argument(ty))
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut has_constructor = false;
+        for (expression, parameter) in arguments {
+            if let Some(actual) = self
+                .type_info
+                .calls
+                .body_ir_constructor_types
+                .get(&(expression.span.start, expression.span.end))
+            {
+                has_constructor = true;
+                self.infer_type_param_bindings(parameter, actual, &mut concrete);
+            }
+        }
+        if !has_constructor
+            || parameters.iter().any(|parameter| {
+                concrete
+                    .get(parameter)
+                    .is_none_or(|ty| !Self::is_settled_type_argument(ty))
+            })
+        {
+            return;
+        }
+        for (parameter, requirements) in bounds {
+            let Some(actual) = concrete.get(parameter) else {
+                return;
+            };
+            if requirements
+                .iter()
+                .any(|bound| !self.type_satisfies_explicit_bound_info(actual, bound, &concrete))
+            {
+                return;
+            }
+        }
+        let ordered = parameters
+            .iter()
+            .filter_map(|parameter| concrete.get(parameter).cloned())
+            .collect();
+        self.type_info
+            .calls
+            .body_ir_call_type_arguments
+            .insert((span.start, span.end), ordered);
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .insert((span.start, span.end), substitute_resolved_type(returned, &concrete));
     }
 
     /// Seed owner type-parameter bindings from the concrete receiver type.
@@ -956,6 +1082,15 @@ impl TypeChecker {
         }
         if self.errors.len() == errors_before_call {
             self.record_call_site_monomorph_if_complete(call_site_span, &method_info.type_params, &type_bindings);
+            self.retain_body_ir_newtype_method_result(&method_info, receiver_ty, args, &type_bindings, call_site_span);
+            self.retain_body_ir_factory_owner(
+                &method_info,
+                receiver_ty,
+                args,
+                &type_bindings,
+                expected_return_ty,
+                call_site_span,
+            );
             if explicit_type_args.is_empty() {
                 self.retain_constructor_call_instantiation(
                     call_site_span,
@@ -963,6 +1098,14 @@ impl TypeChecker {
                     &arguments,
                     &type_bindings,
                     &return_type,
+                );
+                self.retain_body_ir_constructor_call_instantiation(
+                    call_site_span,
+                    &method_info.type_params,
+                    &arguments,
+                    &type_bindings,
+                    &return_type,
+                    &method_info.type_param_bound_details,
                 );
             }
         }

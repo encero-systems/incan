@@ -10,6 +10,8 @@ pub mod bake;
 pub mod caller_facet;
 pub mod caller_owned;
 pub mod check;
+pub mod checked_emission;
+pub mod cold_bootstrap;
 pub mod executable;
 mod file_freshness;
 pub mod inline_command;
@@ -21,6 +23,7 @@ pub mod library_metadata;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
+pub mod lock_preparation;
 mod lock_reuse;
 pub mod native_loaf_plan;
 pub mod native_runtime_inputs;
@@ -62,6 +65,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::ProjectGenerator;
+use crate::backend::project::RunProfile;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::build::output_paths::{project_relative_entrypoint, validated_project_output_relative_path};
@@ -122,6 +126,9 @@ pub const OVEN_PROJECT_OUTPUT_ARTIFACT_PATH: &str = "output/native";
 /// This deliberately contains no Cargo target path or command. Generated Rust and the final binary are caller-owned;
 /// the selected native closure retains its store lease until the direct-Rustc bake and any child execution complete.
 pub struct OvenPreparedProject {
+    /// Original ordinary language and native owners retained through compilation; no copied SDK authority.
+    pub(crate) ordinary_session: Option<Arc<crate::session::CompilationSession>>,
+    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
     /// Command-owned native admission retained through compilation and child execution.
     pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub generator: ProjectGenerator,
@@ -149,8 +156,14 @@ pub struct OvenPreparedProject {
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
 
+/// One executable preparation request, shared by direct and retained-owner callers.
+///
+/// The executable profile selects both fresh compilation and completed-output reuse; it does not select SDK profiles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildCommandOptions {
+    /// Requested executable profile. Older requests without this field retain the established release default.
+    #[serde(default)]
+    pub executable_profile: RunProfile,
     pub cargo_policy: CargoPolicy,
     pub package_features: FeatureSelection,
     pub sdk_profile: Option<String>,
@@ -387,7 +400,7 @@ pub struct OvenPackagedLibraryMetadataFile {
 }
 
 /// One profile-specific public-library handoff record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenPackagedLibraryLoafProfile {
     /// Original producer receipt whose source, provider, lock, and toolchain facts authorized the closure.
     pub receipt: oven_store::OvenReceipt,
@@ -782,6 +795,8 @@ pub struct OvenProjectDependencySurface<'a> {
 
 /// Receipt-selected dependency closure prepared once for every generated native-test batch in a project bake.
 pub struct PreparedOvenTestDependencyEnvelope {
+    /// Original ordinary native root map, sealed by the selected receipt; legacy envelopes leave this absent.
+    pub native_roots: Option<BTreeMap<String, String>>,
     /// Receipt for the immutable non-package constituent selected by the authority.
     pub receipt: oven_store::OvenReceipt,
     /// Complete normal/dev/test surface, including roots owned by separately validated package Loafs.
@@ -896,6 +911,8 @@ pub struct CompiledProviderMetadataInputs<'a> {
 pub struct ProjectSourceAuthorityDigester {
     /// Typed canonical lock inputs; unlike final source digests, these revalidate their observations on lookup.
     retained_inputs: retained_inputs::RetainedProjectInputs,
+    /// Opt-in original authored input observations for cold publication, separate from portable content identity.
+    source_observations: Option<oven_model::observed_inputs::InputObservations>,
     /// Only this root may omit its own Incan sources when hashing development dependency authority.
     pub development_root: Option<PathBuf>,
     pub project_digests: HashMap<PathBuf, String>,

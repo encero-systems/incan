@@ -18,7 +18,24 @@ from rust::incan_std_core::strings import (
     str_le as runtime_less_equal,
     str_gt as runtime_greater,
     str_ge as runtime_greater_equal,
+    str_slice as runtime_slice,
 )
+from lists import optional_index
+
+
+pub def slice_text(value: &str, has_start: bool, start: int, has_end: bool, end: int, has_step: bool, step: int) -> str:
+    """Copy a Unicode slice through legacy's core helper, preserving omitted bounds, steps, and errors."""
+    return runtime_slice(
+        value,
+        optional_index(has_start, start),
+        optional_index(has_end, end),
+        optional_index(has_step, step),
+    )
+
+
+pub def slice_text_bounds(value: &str, start: int, end: int) -> str:
+    """Copy a Unicode-scalar slice through legacy's core function, preserving both signed endpoints."""
+    return runtime_slice(value, Some(start), Some(end), None)
 
 
 pub def starts_text(value: &str, prefix: &str) -> bool:

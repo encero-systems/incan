@@ -47,6 +47,176 @@ fn configured_native_inputs_require_complete_coordinates() -> TestResult {
     Ok(())
 }
 
+/// Independent consumer subsets keep each admitted record's coordinates, without weakening composition conflicts.
+#[test]
+fn native_closure_coordinates_follow_records_across_consumer_subsets() -> TestResult {
+    // This control intentionally publishes two fresh native units; retain the outer harness reuse requirement.
+    if std::env::var_os("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE").is_some() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "build::native_loaf_plan::tests::native_closure_coordinates_follow_records_across_consumer_subsets",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return Ok(());
+    }
+    use oven_rustc::native_loaf::{
+        NativeLoafClosure, NativeLoafConsumerRequest, prepare_declared_native_loafs_in_store,
+    };
+    use oven_rustc::plan::composition::merge_packaged_provider_artifact_manifests;
+    use std::collections::BTreeSet;
+
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path().canonicalize()?;
+    write_checkout(&root)?;
+    std::fs::create_dir_all(root.join("additional/src"))?;
+    std::fs::write(
+        root.join("additional/loaf.toml"),
+        "[project]\nname='additional'\nversion='1.0.0'\n[rust]\nname='additional'\ntype='lib'\nedition='2024'\n",
+    )?;
+    std::fs::write(root.join("additional/src/lib.rs"), "pub const VALUE: u8 = 11;\n")?;
+    std::fs::write(
+        root.join("graph.json"),
+        r#"{"index_commit":"0000000000000000000000000000000000000000","registry_lock":"lock.json","facets":[{"project":"dependency","features":[],"domain":"target"},{"project":"additional","features":[],"domain":"target"}]}"#,
+    )?;
+    let mut dependencies =
+        oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))?.rust_dependency_values();
+    dependencies.push(oven_model::manifest::DependencySpec {
+        crate_name: "additional".into(),
+        version: None,
+        features: Vec::new(),
+        default_features: false,
+        source: oven_model::manifest::DependencySource::Path {
+            path: root.join("additional"),
+        },
+        optional: false,
+        package: None,
+    });
+    let rustc = resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let receipt = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            &root,
+            "coordinate-consumer",
+            "1.0.0",
+            &target,
+            rustc_identity(&rustc)?,
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("compiler-main", root.join("src/main.rs")),
+    )?;
+    let store = OvenStore::new(
+        root.join("store"),
+        OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+    );
+    let prepared = prepare_declared_native_loafs_in_store(
+        &NativeLoafConsumerRequest {
+            graph: &root.join("graph.json"),
+            index: &root,
+            blobs: &root,
+            output: &root.join("native-hints"),
+            rustc: &rustc,
+            target: &target,
+            profile: "debug",
+            dependencies: &dependencies,
+            declaration_owner: &root,
+            domain: "target",
+        },
+        &store,
+    )?;
+
+    // ---- Subset coordinates: both singleton graphs formerly assigned their distinct owners units/0 ----
+    let mut union = super::empty_manifest(&receipt);
+    let mut union_roots = Vec::new();
+    super::append_native_loaf_closure(prepared.closure(), &receipt, &mut union, &mut union_roots, "units")?;
+    assert_eq!(union_roots.len(), 2);
+    let mut subsets = Vec::new();
+    for (index, unit) in prepared.closure().graph().units().values().enumerate() {
+        let closure = NativeLoafClosure::admit(&store, &[unit.declared_root(&format!("member_{index}"))?])?;
+        let mut manifest = super::empty_manifest(&receipt);
+        let mut roots = Vec::new();
+        super::append_native_loaf_closure(&closure, &receipt, &mut manifest, &mut roots, "units")?;
+        assert_eq!(roots.len(), 1);
+        let singleton = roots.first().ok_or("singleton owner missing")?;
+        let original = union_roots
+            .iter()
+            .find(|candidate| candidate.identity == singleton.identity)
+            .ok_or("union lost singleton native owner")?;
+        assert_eq!(
+            singleton.prefix, original.prefix,
+            "consumer membership must not rename an admitted native record"
+        );
+        assert_eq!(singleton.store, original.store);
+        assert_eq!(singleton.receipt_identity, original.receipt_identity);
+        super::seal_source_roles(&receipt, &mut manifest);
+        manifest.validate_shape(&receipt.intent)?;
+        subsets.push(manifest);
+    }
+    let [first, second] = subsets.as_slice() else {
+        return Err("expected two singleton manifests".into());
+    };
+    assert!(
+        first
+            .dependency_search_paths
+            .iter()
+            .all(|path| !second.dependency_search_paths.contains(path))
+    );
+
+    // ---- Composition: either order preserves both recorded source-role directories ----
+    let mut composed_views = Vec::new();
+    for inputs in [
+        [("first", first), ("second", second)],
+        [("second", second), ("first", first)],
+    ] {
+        let composed = merge_packaged_provider_artifact_manifests(&inputs, &receipt.intent)?;
+        let expected = union.dependency_search_paths.iter().cloned().collect::<BTreeSet<_>>();
+        assert_eq!(
+            composed
+                .dependency_search_paths
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            expected
+        );
+        assert_eq!(
+            composed.source_search_closure("compiler-main")?.publisher_paths.len(),
+            2
+        );
+        composed_views.push(composed);
+    }
+    assert_eq!(composed_views.first(), composed_views.last());
+
+    // ---- Refusals: one sealed coordinate cannot change bytes, and distinct target externs cannot share an alias ----
+    let mut corrupted = first.clone();
+    corrupted.externs.first_mut().ok_or("first extern missing")?.digest = oven_store::digest_bytes(b"changed");
+    super::seal_source_roles(&receipt, &mut corrupted);
+    let same_owner =
+        merge_packaged_provider_artifact_manifests(&[("original", first), ("changed", &corrupted)], &receipt.intent);
+    assert!(same_owner.is_err_and(|error| error.to_string().contains("conflicting sealed bytes")));
+    let mut conflicting = second.clone();
+    conflicting
+        .externs
+        .first_mut()
+        .ok_or("second extern missing")?
+        .crate_name = first.externs.first().ok_or("first extern missing")?.crate_name.clone();
+    super::seal_source_roles(&receipt, &mut conflicting);
+    let direct =
+        merge_packaged_provider_artifact_manifests(&[("first", first), ("second", &conflicting)], &receipt.intent);
+    assert!(direct.is_err_and(|error| error.to_string().contains("direct target Rust crate")));
+    Ok(())
+}
+
 /// Source-current bootstrap plans share native generations while output relocation reuses the executable.
 #[test]
 fn declared_bootstrap_dependencies_share_command_store() -> TestResult {

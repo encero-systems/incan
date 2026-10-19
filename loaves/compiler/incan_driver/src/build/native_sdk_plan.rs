@@ -610,7 +610,13 @@ fn native_unit_root_aliases(
     name: &str,
     dependencies: &[DependencySpec],
 ) -> CliResult<Vec<String>> {
-    if unit.binding.domain != "target" && !unit.relative_path.ends_with(".dylib") {
+    if unit.binding.domain != "target"
+        && !oven_rustc::rustc::OvenRustcRegistryLeafKind::ProcMacro.admits_artifact_extension(
+            Path::new(&unit.relative_path)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+        )
+    {
         return Ok(Vec::new());
     }
     let mut aliases = std::collections::BTreeSet::new();
@@ -755,6 +761,76 @@ fn seal_source_roles(receipt: &oven_store::OvenReceipt, manifest: &mut OvenRustc
 mod tests {
     use super::{native_unit_manifest, native_unit_root_aliases, seal_source_roles};
     use std::path::Path;
+
+    /// Recognized host macro extensions retain aliases; host libraries remain supporting-only.
+    #[test]
+    fn native_sdk_host_macro_aliases_are_platform_independent() -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = oven_rustc::sdk_closure::SdkNativeArtifact {
+            binding: oven_rustc::sdk_closure::SdkLockedUnit {
+                loaf: "incan_derive".into(),
+                version: "1.0.0".into(),
+                archive_digest: oven_store::digest_bytes(b"source"),
+                domain: "host".into(),
+                features: vec!["selected".into()],
+                target_predicates: Vec::new(),
+                edges: None,
+            },
+            store_identity: "classification-only".into(),
+            receipt_identity: "classification-only".into(),
+            relative_path: String::new(),
+            digest: oven_store::digest_bytes(b"output"),
+        };
+
+        // ---- Generated model support has no authored Rust import ----
+        for extension in ["so", "dylib", "dll"] {
+            unit.relative_path = if extension == "dll" {
+                "incan_derive.dll".into()
+            } else {
+                format!("libincan_derive.{extension}")
+            };
+            assert_eq!(
+                native_unit_root_aliases(&unit, "incan_derive", &[])?,
+                ["incan_derive"],
+                "{extension}"
+            );
+        }
+        unit.relative_path = "libincan_derive.rlib".into();
+        assert!(native_unit_root_aliases(&unit, "incan_derive", &[])?.is_empty());
+        unit.binding.domain = "target".into();
+        assert_eq!(native_unit_root_aliases(&unit, "incan_derive", &[])?, ["incan_derive"]);
+
+        // ---- Explicit registry macros retain package, version, feature and alias selection ----
+        unit.binding.domain = "host".into();
+        unit.binding.loaf = "crates-io/derive-probe".into();
+        let mut dependency = oven_model::manifest::DependencySpec {
+            crate_name: "renamed_macro".into(),
+            package: Some("derive-probe".into()),
+            version: Some("1".into()),
+            features: vec!["selected".into()],
+            default_features: false,
+            optional: false,
+            source: oven_model::manifest::DependencySource::Registry,
+        };
+        for extension in ["so", "dylib", "dll"] {
+            unit.relative_path = if extension == "dll" {
+                "derive_probe.dll".into()
+            } else {
+                format!("libderive_probe.{extension}")
+            };
+            assert!(native_unit_root_aliases(&unit, "derive_probe", &[])?.is_empty());
+            assert_eq!(
+                native_unit_root_aliases(&unit, "derive_probe", std::slice::from_ref(&dependency))?,
+                ["renamed_macro"]
+            );
+            dependency.version = Some("2".into());
+            assert!(native_unit_root_aliases(&unit, "derive_probe", std::slice::from_ref(&dependency))?.is_empty());
+            dependency.version = Some("1".into());
+            dependency.features.push("absent".into());
+            assert!(native_unit_root_aliases(&unit, "derive_probe", std::slice::from_ref(&dependency))?.is_empty());
+            dependency.features.truncate(1);
+        }
+        Ok(())
+    }
 
     /// Retained projection must match every logical input and reject a replaced engine or selected native file.
     #[test]

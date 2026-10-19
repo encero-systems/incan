@@ -1,0 +1,124 @@
+"""Checked source polling authority for ordinary SDK iterator storage bounds."""
+
+from rust::incan_semantics_core import (
+    CanonicalSymbolId,
+    SymbolOrigin,
+    SemanticSourceTargetKind,
+    SymbolNamespace,
+    IncanType as RustType,
+    generic,
+)
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import IteratorMethods, EnumDeclaration, PlanType
+from classes import frame_type, function_name
+from unions import native_source_type, collect_unions
+from trait_links import contains
+from native_arguments import uses_native_argument
+from decls import library_item
+
+
+pub def iterator_methods(
+    module: &BodyIrModule,
+    owner: int,
+    intrinsics: list[EnumDeclaration],
+) -> Result[Option[IteratorMethods], str]:
+    """Authorize only a concrete source adopter actually retained as an SDK storage argument; native bounds remain checked."""
+    declaration = module.nominal_declarations[owner]
+    if library_item(declaration) != "" or not uses_native_argument(module, str(declaration.name))?:
+        return Ok(None)
+    mut selected: Option[IteratorMethods] = None
+    for protocol in module.trait_declarations:
+        if not standard_protocol(protocol):
+            continue
+        mut arguments: list[RustType] = []
+        mut next: Option[CanonicalSymbolId] = None
+        mut slots: list[str] = []
+        for implementation in module.trait_implementations:
+            if implementation.owner != declaration.canonical or implementation.method.origin != protocol.origin or not contains(
+                protocol,
+                implementation.method,
+            ):
+                continue
+            name = str(implementation.method.declaration_name)
+            if name in slots:
+                return Err("unsupported Body IR ambiguous native iterator slot")
+            slots.append(name)
+            if name == "__next__":
+                identity = implementation.implementation
+                if identity == implementation.method or identity.origin != declaration.canonical.origin or not contains(
+                    declaration.canonical,
+                    identity,
+                ):
+                    return Err("unsupported Body IR native iterator without source poll")
+                next = Some(identity.clone())
+                continue
+            # The native SDK trait owns its sum default. An override must not be silently replaced by that default.
+            if name == "sum" and implementation.implementation != implementation.method:
+                return Err("unsupported Body IR native iterator sum override")
+            if implementation.implementation != implementation.method:
+                continue
+            current = [binding.argument.clone() for binding in implementation.type_arguments]
+            if len(current) != 1:
+                return Err("unsupported Body IR native iterator default arguments")
+            if len(arguments) == 0:
+                arguments = current
+            elif arguments != current:
+                return Err("unsupported Body IR inconsistent native iterator arguments")
+        if len(slots) == 0:
+            continue
+        if len(arguments) != 1 or "sum" not in slots:
+            return Err("unsupported Body IR incomplete native iterator contract")
+        match next:
+            None => return Err("unsupported Body IR native iterator without checked poll")
+            Some(identity) =>
+                mut bodies: list[Body] = []
+                for body in module.bodies:
+                    if body.canonical == Some(identity.clone()):
+                        bodies.append(body.clone())
+                if len(bodies) != 1 or not poll_abi(module, bodies[0], owner, arguments[0], intrinsics)?:
+                    return Err("unsupported Body IR unavailable or invalid native iterator poll body")
+                if selected != None:
+                    return Err("unsupported Body IR ambiguous native iterator declaration")
+                selected = Some(
+                    IteratorMethods(
+                        item=native_source_type(
+                            module.nominal_declarations,
+                            module.enum_declarations,
+                            collect_unions(module),
+                            arguments[0],
+                            intrinsics,
+                        )?,
+                        next=function_name(module, bodies[0]),
+                    ),
+                )
+    return Ok(selected)
+
+
+pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
+    """Authenticate the standard declaring trait rather than a source trait with the same spelling."""
+    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical or identity.declaration_name != "Iterator":
+        return false
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_core" and path == ["derives", "collection"]
+        SymbolOrigin.Module(path) => return path == ["std", "derives", "collection"]
+        _ => return false
+
+
+def poll_abi(
+    module: &BodyIrModule,
+    body: &Body,
+    owner: int,
+    item: &RustType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[bool, str]:
+    """Require the unique concrete mutable receiver, exact Option[item] result, and a fully retained poll body."""
+    if len(body.type_parameters) != 0 or len(body.params) != 1:
+        return Ok(false)
+    match body.first_representation_gap():
+        Some(_gap) => return Ok(false)
+        None => pass
+    reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
+    if frame_type(module, body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
+        return Ok(false)
+    return Ok(body.return_type == generic("Option", [item.clone()]))

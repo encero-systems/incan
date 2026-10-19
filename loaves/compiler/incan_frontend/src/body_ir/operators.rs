@@ -1,4 +1,4 @@
-//! Lowering for binary operators, including dispatch to a user-defined operator method.
+//! Lower binary operators and checked truthiness, length and operator hooks without rediscovering their dispatch.
 
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::numeric_values::common_lossless_integer_type;
@@ -8,6 +8,72 @@ use super::primitives::*;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Lower an operator value and capture a scalar storage read before evaluating the next operand.
+    fn lower_binary_operand(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let value = self.lower_expr_to_operand(expression, scope, out);
+        self.retain_evaluated_value_read(expression, value, scope, out)
+    }
+
+    /// Capture a global scalar or owned-text value at its evaluation point before a later operand or argument can
+    /// mutate storage. Mutable arguments and live collection handles retain their separate borrowing contracts.
+    /// Enum reads still require the admitted declaration identity; numeric, boolean and text carriers come from the
+    /// checked expression.
+    pub(super) fn retain_evaluated_value_read(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        value: bir::Operand,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let bir::Operand::Place(read) = &value else {
+            return value;
+        };
+        if read.place.global().is_none() {
+            return value;
+        }
+        let ty = self.resolve_ty(expression.span);
+        if numeric_carrier_id(&ty).is_some()
+            || matches!(
+                ty,
+                IncanType::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Str)
+            )
+        {
+            return self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out);
+        }
+        let IncanType::Named(name) = &ty else {
+            return value;
+        };
+        let Some(identity) = self.type_info.declarations.named_type_identities.get(name).or_else(|| {
+            self.type_info
+                .expressions
+                .expression_type_identities
+                .get(&(expression.span.start, expression.span.end))?
+                .get(&Vec::new())
+        }) else {
+            return value;
+        };
+        let published = library_nominals::sdk_identity(identity);
+        let local = self.local_enum_declarations.values().any(|declaration| {
+            declaration.canonical == *identity
+                || published.as_ref().is_some_and(|canonical| {
+                    library_nominals::sdk_identity(&declaration.canonical).as_ref() == Some(canonical)
+                })
+        });
+        let sdk = published.as_ref().is_some_and(|canonical| {
+            canonical.kind == SemanticSourceTargetKind::Enum
+                && library_type_identities(self.type_info).contains(canonical)
+        });
+        if !local && !sdk {
+            return value;
+        }
+        self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out)
+    }
+
     /// Lower a binary-operator expression. Bails out to an explicit unsupported placeholder *before* evaluating
     /// either operand when `op` has no Body IR v0 handling at all (see [`Self::binary_op_is_supported`]), so an
     /// unsupported operator's sub-expressions are never partially lowered. Source boolean operators retain conditional
@@ -29,6 +95,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let rhs_ty = self.resolve_ty(rhs.span);
         let result_ty = self.resolve_ty(span);
 
+        // Legacy represents membership as a receiver-first method call, negating it for `not in`.
+        if let Some(dispatch) = self.type_info.resolved_operator_call(span)
+            && dispatch.kind == ResolvedOperatorKind::Contains
+        {
+            let method = dispatch.method.clone();
+            let value = self.lower_operator_dispatch(&method, rhs, &[lhs], result_ty.clone(), span, scope, out);
+            return if op == ast::BinaryOp::NotIn {
+                self.push_assign_temp(
+                    bir::Rvalue::UnaryOp(bir::UnOp::Not, value),
+                    result_ty,
+                    scope,
+                    hir_span_value,
+                    out,
+                )
+            } else {
+                value
+            };
+        }
+
         // A user-defined operator is a method call, not a primitive operation. The typechecker already resolved
         // which dunder this spelling dispatches to, so lowering follows that decision rather than falling through
         // to the primitive operator set -- which would represent `a + b` on two `Vec2` values as machine addition.
@@ -36,7 +121,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && dispatch.kind == ResolvedOperatorKind::Binary
         {
             let method = dispatch.method.clone();
-            return self.lower_operator_dispatch(&method, lhs, rhs, result_ty, scope, hir_span_value, out);
+            return self.lower_operator_dispatch(&method, lhs, &[rhs], result_ty, span, scope, out);
         }
 
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
@@ -45,6 +130,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if matches!(op, ast::BinaryOp::And | ast::BinaryOp::Or) {
             return self.lower_boolean_short_circuit(lhs, op, rhs, scope, hir_span_value, out);
         }
+        let contextual_types = if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq) {
+            self.retain_comparison_field_carriers(lhs, rhs)
+        } else {
+            Default::default()
+        };
+        let lhs_ty = self.resolve_ty(lhs.span);
+        let rhs_ty = self.resolve_ty(rhs.span);
         let (lhs_operand, rhs_operand) = if collection_equality_borrows(op, &lhs_ty, &rhs_ty) {
             (
                 self.lower_collection_equality_operand(lhs, scope, out),
@@ -52,10 +144,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             )
         } else {
             (
-                self.lower_expr_to_operand(lhs, scope, out),
-                self.lower_expr_to_operand(rhs, scope, out),
+                self.lower_binary_operand(lhs, scope, out),
+                self.lower_binary_operand(rhs, scope, out),
             )
         };
+        self.restore_constructor_argument_carriers(contextual_types);
         self.lower_binary_from_operands(
             op,
             &lhs_ty,
@@ -152,40 +245,192 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a user-defined operator to the dunder method call the typechecker resolved for it.
     ///
-    /// RFC 028 lets a type define `__add__`, `__and__`, `__contains__` and friends, and the typechecker records
-    /// which method one operator spelling dispatches to. Body IR must follow that decision: representing `a + b` on
-    /// two `Vec2` values as [`bir::BinOp::Add`] would claim a primitive machine operation where the source calls a
-    /// method, which is a wrong representation rather than an honest refusal — no `Unsupported` marker, nothing for
-    /// a consumer to notice.
+    /// RFC 028 lets a type define `__add__`, `__getitem__`, `__invert__` and friends, and the typechecker records
+    /// which method one operator spelling dispatches to, with that method's identity at the operator's span. Body IR
+    /// must follow that decision: representing `a + b` on two `Vec2` values as [`bir::BinOp::Add`] would claim a
+    /// primitive machine operation where the source calls a method, which is a wrong representation rather than an
+    /// honest refusal — no `Unsupported` marker, nothing for a consumer to notice.
     ///
-    /// The left operand becomes the receiver and the right becomes the single argument, matching how
-    /// [`Self::lower_method_call`] arranges an ordinary method call: `args[0]` is the receiver, borrowed. The
-    /// binding is [`bir::ArgumentBinding::UnresolvedPositional`] because an operator spelling names no parameter
-    /// and this stage resolves no declared slot for it.
+    /// The operand the operator reads first becomes the receiver, borrowed and evaluated before the arguments,
+    /// matching how [`Self::lower_method_call`] arranges an ordinary method call: `args[0]` is the receiver.
+    /// Checking resolved the dunder against exactly these positional arguments, so they fill its declared slots in
+    /// order. Checked by-value parameter slots capture scalar/text global reads before later argument effects; mutable
+    /// or unknown slots keep their place behavior. An operator whose identity checking did not record keeps no
+    /// canonical target and stays refused.
+    ///
+    /// Hooks on generic owners keep their checked identities; frame specialization closes their receivers, and
+    /// f-string lowering retains the original type-parameter display contract before that specialization.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_operator_dispatch(
         &mut self,
         method: &str,
-        lhs: &ast::Spanned<ast::Expr>,
-        rhs: &ast::Spanned<ast::Expr>,
+        receiver: &ast::Spanned<ast::Expr>,
+        arguments: &[&ast::Spanned<ast::Expr>],
         result_ty: IncanType,
+        operator_span: ast::Span,
         scope: bir::ScopeId,
-        span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        // Source evaluation observes the receiver before the argument, exactly as for a written method call.
-        let receiver_place = self.lower_expr_to_place(lhs, scope, out);
-        let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
-        let argument = self.lower_expr_to_operand(rhs, scope, out);
+        // Source evaluation observes the receiver before the arguments, exactly as for a written method call.
+        let receiver_place = self.lower_expr_to_place(receiver, scope, out);
+        let mut elements = vec![bir::ArgumentElement::One(bir::Operand::place(
+            receiver_place,
+            bir::OwnershipFact::Borrow,
+            false,
+        ))];
+        for (index, argument) in arguments.iter().enumerate() {
+            let by_value = self
+                .type_info
+                .body_ir_newtypes
+                .callable_params(operator_span, self.type_info)
+                .or_else(|| self.type_info.body_ir_call_site_callable_params(operator_span))
+                .and_then(|parameters| parameters.get(index))
+                .is_some_and(|parameter| !parameter.is_mut);
+            let mut operand = self.lower_expr_to_operand(argument, scope, out);
+            if by_value {
+                operand = self.owned_parameter_operand(argument, operand);
+                operand = self.retain_evaluated_value_read(argument, operand, scope, out);
+            }
+            elements.push(bir::ArgumentElement::One(operand));
+        }
+        let target = self.checked_operator_target(method, arguments.len(), operator_span);
         self.push_call_temp(
-            bir::Callee::Method(bir::MethodTarget::synthesized(method)),
-            vec![bir::ArgumentElement::One(receiver), bir::ArgumentElement::One(argument)],
+            bir::Callee::Method(target),
+            elements,
             result_ty,
             scope,
-            span,
+            hir_span(operator_span),
             false,
             out,
         )
+    }
+
+    /// Retain the checked operator's method identity and positional slots; an absent identity remains unproven.
+    fn checked_operator_target(&self, method: &str, arguments: usize, span: ast::Span) -> bir::MethodTarget {
+        bir::MethodTarget {
+            native_trait_delegation: None,
+            name: method.to_string(),
+            intrinsic_carrier: None,
+            reflection: None,
+            sdk_trait: None,
+            canonical: self
+                .type_info
+                .resolved_identity(span)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
+                .cloned(),
+            type_args: Vec::new(),
+            binding: bir::ArgumentBinding::resolved_positional(arguments),
+        }
+    }
+
+    /// Lower a checked slice hook as a receiver-first call with three closed Option[int] parts.
+    ///
+    /// The checker has already validated the slice contract and recorded its selected method. Written parts are
+    /// evaluated once in start/end/step order, after the receiver; omitted parts retain typed None storage. Builtin
+    /// slices never enter this path and keep their separate projection and evaluation contract.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_slice_hook_dispatch(
+        &mut self,
+        method: &str,
+        receiver: &ast::Spanned<ast::Expr>,
+        slice: &ast::SliceExpr,
+        result_ty: IncanType,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        // ---- Receiver: evaluate before the written slice parts ----
+        let receiver = self.lower_expr_to_place(receiver, scope, out);
+        let mut arguments = vec![bir::ArgumentElement::One(bir::Operand::place(
+            receiver,
+            bir::OwnershipFact::Borrow,
+            false,
+        ))];
+
+        // ---- Parts: retain three typed Option slots ----
+        let option_int = IncanType::Generic {
+            base: "Option".to_string(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        };
+        for part in [&slice.start, &slice.end, &slice.step] {
+            let value = match part {
+                Some(expression) => {
+                    let payload = self.lower_expr_to_operand(expression, scope, out);
+                    bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, fixed_elements(vec![payload]))
+                }
+                None => bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::None)),
+            };
+            let part = self.push_assign_temp(value, option_int.clone(), scope, hir_span(span), out);
+            arguments.push(bir::ArgumentElement::One(part));
+        }
+
+        // ---- Dispatch: honor the checked source method ----
+        let target = self.checked_operator_target(method, 3, span);
+        self.push_call_temp(
+            bir::Callee::Method(target),
+            arguments,
+            result_ty,
+            scope,
+            hir_span(span),
+            false,
+            out,
+        )
+    }
+
+    /// Lower a unary, index, slice, length or identifier truthiness expression through its checked source method.
+    ///
+    /// `~value` and `-value` call the operand's hook with no arguments; `base[index]` calls `__getitem__` on the base
+    /// with the index. A slice supplies three checked Option[int] parts. Length uses its single checked receiver.
+    /// Truthiness needs the separately retained receiver identity and returns bool; other truthiness receiver
+    /// shapes remain named unsupported. Every other expression returns `None` and keeps its ordinary lowering.
+    pub(super) fn lower_operator_hook_expr(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let dispatch = self.type_info.resolved_operator_call(expr.span)?;
+        let (method, kind) = (dispatch.method.clone(), dispatch.kind);
+        let ty = self.resolve_ty(expr.span);
+        match (&expr.node, kind) {
+            (ast::Expr::Ident(_), ResolvedOperatorKind::Truthiness)
+                if self
+                    .type_info
+                    .protocols
+                    .body_ir_truthiness_receivers
+                    .contains_key(&(expr.span.start, expr.span.end)) =>
+            {
+                let bool_ty = IncanType::Primitive(IncanPrimitiveType::Bool);
+                Some(self.lower_operator_dispatch(&method, expr, &[], bool_ty, expr.span, scope, out))
+            }
+            (_, ResolvedOperatorKind::Truthiness) => Some(self.unsupported_operand(
+                "truthiness receiver without a retained identifier value".to_string(),
+                scope,
+                hir_span(expr.span),
+                out,
+            )),
+            (ast::Expr::Call(_, type_args, args), ResolvedOperatorKind::Len) if type_args.is_empty() => {
+                let [ast::CallArg::Positional(receiver)] = args.as_slice() else {
+                    return Some(self.unsupported_operand(
+                        "length protocol call without one retained positional receiver".to_string(),
+                        scope,
+                        hir_span(expr.span),
+                        out,
+                    ));
+                };
+                Some(self.lower_operator_dispatch(&method, receiver, &[], ty, expr.span, scope, out))
+            }
+            (ast::Expr::Unary(_, operand), ResolvedOperatorKind::Unary) => {
+                Some(self.lower_operator_dispatch(&method, operand, &[], ty, expr.span, scope, out))
+            }
+            (ast::Expr::Index(base, index), ResolvedOperatorKind::Index) => {
+                Some(self.lower_operator_dispatch(&method, base, &[&**index], ty, expr.span, scope, out))
+            }
+            (ast::Expr::Slice(base, slice), ResolvedOperatorKind::Slice) => {
+                Some(self.lower_slice_hook_dispatch(&method, base, slice, ty, expr.span, scope, out))
+            }
+            _ => None,
+        }
     }
 
     /// Whether `op` between operands of `lhs_ty`/`rhs_ty` has any Body IR v0 handling (either the string-helper
@@ -252,7 +497,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // `contains` in Rust does. Emit the helper's own order here rather than documenting a reversal, because a
             // backend binding these positionally has no way to know one helper disagrees with the other eight.
             let arguments = match helper {
-                bir::HelperOp::StrContains | bir::HelperOp::StrNotContains => vec![rhs_operand, lhs_operand],
+                bir::HelperOp::StrContains | bir::HelperOp::StrNotContains => {
+                    vec![rhs_operand, lhs_operand]
+                }
                 _ => vec![lhs_operand, rhs_operand],
             };
             return self.push_call_temp(
@@ -267,6 +514,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         if let Some(helper) = collection_helper_for_binop(op, lhs_ty, rhs_ty) {
+            let lhs_operand = if matches!(op, ast::BinaryOp::In | ast::BinaryOp::NotIn) {
+                match numeric_destinations::collection_numeric_destination(lhs_ty, rhs_ty) {
+                    Some(carrier) => self.promote_operand(lhs_ty, lhs_operand, &carrier, scope, span, out),
+                    None => lhs_operand,
+                }
+            } else {
+                lhs_operand
+            };
             self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
             // Membership helpers take `(haystack, needle)` while the source reads needle-first, matching the
@@ -382,7 +637,7 @@ fn comparison_carrier(op: bir::BinOp, lhs_ty: &IncanType, rhs_ty: &IncanType) ->
 }
 
 /// The numeric identity of a checked carrier: `int` is `i64` and `float` is `f64`; `bool` and non-numerics have none.
-fn numeric_carrier_id(ty: &IncanType) -> Option<NumericTypeId> {
+pub(super) fn numeric_carrier_id(ty: &IncanType) -> Option<NumericTypeId> {
     match ty {
         IncanType::Primitive(IncanPrimitiveType::Int) => Some(NumericTypeId::I64),
         IncanType::Primitive(IncanPrimitiveType::Float) => Some(NumericTypeId::F64),

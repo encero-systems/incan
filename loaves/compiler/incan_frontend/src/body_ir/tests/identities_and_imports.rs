@@ -5,7 +5,949 @@
 //! their targets.
 
 use super::*;
+use crate::library_exports::collect_checked_public_exports;
+use crate::library_manifest::LibraryManifest;
+use crate::library_manifest_index::{LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry};
+use std::collections::HashMap;
 
+/// Check a nominal carrier's retained declaration rather than requiring an unambiguous source spelling.
+fn has_nominal_owner(body: &bir::Body, ty: &IncanType, owner: &CanonicalSymbolId) -> bool {
+    matches!(ty, IncanType::Named(name) if body.named_type_identities.get(name) == Some(owner))
+}
+
+/// Check a published root module from its actual exports and retain the same provider's executable model layout.
+fn checked_package_counter(
+    source: &str,
+) -> Result<(ast::Program, TypeCheckInfo, bir::BodyIrModule), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Counter:\n  pub value: int\n";
+    let tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider_program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider_path = Vec::new();
+    let mut provider_checker = TypeChecker::new();
+    provider_checker.set_current_module_path(Some(provider_path.clone()));
+    provider_checker.set_current_package_identity(Some("provider".to_owned()));
+    provider_checker
+        .check_program(&provider_program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let exports = collect_checked_public_exports(&provider_program, &provider_checker);
+    let manifest = LibraryManifest::from_checked_exports("provider", "0.1.0", &exports);
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "provider".to_owned(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "provider",
+                "provider",
+                std::path::PathBuf::from("tests/module-counter-artifact"),
+            ),
+        },
+    )]));
+    let provider = build_body_ir_module_v0(&provider_program, &provider_path, provider_checker.type_info());
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_owned()]));
+    checker.set_library_manifest_index(index);
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    Ok((program, checker.type_info().clone(), provider))
+}
+
+/// An inferred type argument keeps the same checked package carrier as the value constructed through a module binding.
+#[test]
+fn inferred_package_nominal_type_argument_keeps_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import pub::provider as p\n\ndef identity[T](value: T) -> T:\n    return value\n\ndef main() -> None:\n    item = identity(p.Counter(value=7))\n    println(item.value)\n";
+    let (program, facts, provider) = checked_package_counter(source)?;
+    let owner = provider
+        .nominal_declarations
+        .first()
+        .ok_or("provider Counter missing")?
+        .canonical
+        .clone();
+    let key = bir::nominal_carrier_key(&owner).ok_or("provider Counter has no source carrier")?;
+    let module =
+        build_body_ir_module_v0_with_executable_context(&program, &["consumer".to_owned()], &facts, &[provider]);
+    let body = body_named(&module, "main")?;
+    let call = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } if target.name == "identity" => Some(target),
+            _ => None,
+        })
+        .ok_or("inferred identity call missing")?;
+    assert_eq!(body.named_type_identities.get(&key), Some(&owner));
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named(key.clone()))
+    );
+    assert_eq!(
+        call.type_args,
+        vec![IncanType::Named(key)],
+        "checked call arguments: {call:?}"
+    );
+    Ok(())
+}
+
+/// The imported alias carrier and stored field keep their declaring owner while method selection retains its checked
+/// target.
+#[test]
+fn imported_model_alias_keeps_carrier_with_method_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source =
+        "pub model Account:\n  pub type_ [alias=\"type\"]: str\n  def get_type(self) -> str:\n    return self.type\n";
+    let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"y\")\n";
+    let provider = build(provider_source, &["db", "schema"])?;
+    let owner = provider
+        .nominal_declarations
+        .first()
+        .ok_or("missing provider model")?
+        .canonical
+        .clone();
+    let expected = body_named(&provider, "get_type")?
+        .canonical
+        .clone()
+        .ok_or("provider method identity missing")?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        std::slice::from_ref(&provider),
+    )?;
+    let source = "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef main() -> None:\n  println(make_aliased().get_type())\n  println(Account(type=\"z\").type)\n";
+    let module = build_with_published_imports(
+        source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let methods = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{body:#?}"
+    );
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].name, "get_type");
+    assert_eq!(methods[0].canonical.as_ref(), Some(&expected));
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("A".to_owned()))
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| has_nominal_owner(body, &local.ty, &owner))
+    );
+    Ok(())
+}
+
+/// Both module spellings preserve construction's exact nominal owner and field binding instead of a function call.
+#[test]
+fn module_nominal_construction_retains_owner_and_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import pub::provider as p\nimport pub::provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n";
+    let (program, type_info, provider) = checked_package_counter(source)?;
+    let declaration = provider
+        .nominal_declarations
+        .first()
+        .ok_or("provider model missing")?
+        .clone();
+    assert!(
+        type_info
+            .references
+            .resolved_identities
+            .values()
+            .any(|identity| identity == &declaration.canonical)
+    );
+    let field = declaration
+        .field_identities
+        .first()
+        .ok_or("provider field identity missing")?;
+    for written in ["value=42", "value=7"] {
+        let start = source.find(written).ok_or("written field argument missing")?;
+        assert_eq!(
+            type_info.resolved_identity(ast::Span { start, end: start + 5 }),
+            Some(field)
+        );
+    }
+    let module =
+        build_body_ir_module_v0_with_executable_context(&program, &["consumer".to_owned()], &type_info, &[provider]);
+    let body = body_named(&module, "main")?;
+    let constructors: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(constructors.len(), 2, "{}", body.render_snapshot());
+    for target in constructors {
+        assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+        assert_eq!(
+            target.direct_declaration_id.as_ref(),
+            Some(&declaration.direct_declaration_id)
+        );
+        assert_eq!(target.canonical_field_layout.as_ref(), Some(&declaration.fields));
+    }
+    Ok(())
+}
+
+/// Construction requires the module receiver, selected nominal owner, and argument field identities independently.
+#[test]
+fn module_nominal_construction_requires_checked_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "import pub::provider as p\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  println(first.value)\n";
+    let (program, checked, provider) = checked_package_counter(source)?;
+    let module_path = vec!["consumer".to_owned()];
+    for missing in [
+        SemanticSourceTargetKind::Module,
+        SemanticSourceTargetKind::Model,
+        SemanticSourceTargetKind::Field,
+    ] {
+        let mut type_info = checked.clone();
+        assert!(
+            type_info
+                .references
+                .resolved_identities
+                .values()
+                .any(|identity| identity.kind == missing)
+        );
+        type_info
+            .references
+            .resolved_identities
+            .retain(|_, identity| identity.kind != missing);
+        let module = build_body_ir_module_v0_with_executable_context(
+            &program,
+            &module_path,
+            &type_info,
+            std::slice::from_ref(&provider),
+        );
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), _),
+                    ..
+                }
+            )),
+            "{missing:?}: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// A module-qualified function value requires both independent checked identities; spelling cannot supply either.
+#[test]
+fn module_function_values_require_receiver_and_member_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub def calculate(value: int) -> int:\n  return value * 2\n";
+    let source = "import provider as p\n\ndef main() -> None:\n  calculate = p.calculate\n  println(calculate(2))\n";
+    let provider_tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&provider_tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["consumer".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&program, &[("provider", &provider)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    for missing in [SemanticSourceTargetKind::Module, SemanticSourceTargetKind::Function] {
+        let mut type_info = checker.type_info().clone();
+        assert!(
+            type_info
+                .references
+                .resolved_identities
+                .values()
+                .any(|identity| identity.kind == missing)
+        );
+        type_info
+            .references
+            .resolved_identities
+            .retain(|_, identity| identity.kind != missing);
+        let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Assign { rvalue: bir::Rvalue::Closure { body, .. }, .. } if body.function_item
+            )),
+            "{missing:?}: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// A function reached through aliased or ordinary module bindings retains a function-item read, not an unknown field.
+#[test]
+fn module_function_values_retain_checked_callable_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub def calculate(value: int) -> int:\n  return value * 2\n";
+    let source = "import provider as p\nimport provider\n\ndef apply(f: (int) -> int, value: int) -> int:\n  return f(value)\n\ndef main() -> None:\n  first = p.calculate\n  println(first(2))\n  println(apply(p.calculate, 3))\n  second = provider.calculate\n  println(second(4))\n";
+    let provider = build(provider_source, &["provider"])?;
+    let expected = body_named(&provider, "calculate")?
+        .canonical
+        .clone()
+        .ok_or("provider function identity missing")?;
+    let module = build_with_published_imports(
+        source,
+        &["consumer"],
+        &[("provider", &["provider"], provider_source)],
+        &[provider],
+    )?;
+    let body = body_named(&module, "main")?;
+    let items: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } if body.function_item => Some(body),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(items.len(), 3, "{}", body.render_snapshot());
+    for item in items {
+        let [statement] = item.stmts.as_slice() else {
+            return Err("function item must forward one selected call".into());
+        };
+        let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+        else {
+            return Err("function item lacks a canonical named target".into());
+        };
+        assert_eq!(target.canonical.as_ref(), Some(&expected), "{target:#?}");
+    }
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A method after a provider's private alias return retains the providing model's exact method and result carrier.
+#[test]
+fn imported_alias_return_retains_method_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+    );
+    let factory_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+    );
+    let consumer_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+    );
+    let provider = build(provider_source, &["db", "schema"])?;
+    let expected = body_named(&provider, "get_type")?
+        .canonical
+        .clone()
+        .ok_or("provider method identity missing")?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        std::slice::from_ref(&provider),
+    )?;
+    let module = build_with_published_imports(
+        consumer_source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let method = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("imported alias method call missing")?;
+    assert_eq!(method.canonical.as_ref(), Some(&expected), "{body:#?}");
+    assert!(
+        matches!(&method.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.is_empty() && defaulted_slots.is_empty()),
+        "{method:#?}"
+    );
+    assert!(
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A different provider owner or a source binding colliding with a retained carrier cannot supply the alias method.
+#[test]
+fn imported_alias_method_rejects_a_different_provider_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+    );
+    let factory_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+    );
+    let consumer_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+    );
+    let provider = build(provider_source, &["db", "schema"])?;
+    let owner = &provider
+        .nominal_declarations
+        .first()
+        .ok_or("missing provider model")?
+        .canonical;
+    let encoded = bir::nominal_carrier_key(owner).ok_or("missing nominal carrier key")?;
+    let shadowed_source =
+        format!("{consumer_source}\nmodel {encoded}:\n  def get_type(self) -> str:\n    return \"wrong owner\"\n");
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        std::slice::from_ref(&provider),
+    )?;
+    let wrong_owner = build(provider_source, &["other"])?;
+    for (source, context, reserved_name) in [
+        (consumer_source, [wrong_owner, factory.clone()], false),
+        (shadowed_source.as_str(), [provider, factory], true),
+    ] {
+        let result = build_with_published_imports(
+            source,
+            &["consumer"],
+            &[
+                ("db_schema", &["db", "schema"], provider_source),
+                ("store_json_store", &["store", "json_store"], factory_source),
+            ],
+            &context,
+        );
+        if reserved_name {
+            let error = result
+                .err()
+                .ok_or("source carrier key must be rejected before Body IR")?;
+            assert!(error.to_string().contains("INCAN-T0111"), "{error}");
+            continue;
+        }
+        let module = result?;
+        let body = body_named(&module, "main")?;
+        let method = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .ok_or("alias method call missing")?;
+        assert!(method.canonical.is_none(), "{method:#?}");
+    }
+    Ok(())
+}
+
+/// A module-qualified function value requires both independent checked identities; spelling cannot supply either.
+#[test]
+fn module_function_values_require_receiver_and_member_identities_calls_composed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub def calculate(value: int) -> int:\n  return value * 2\n";
+    let source = "import provider as p\n\ndef main() -> None:\n  calculate = p.calculate\n  println(calculate(2))\n";
+    let provider_tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&provider_tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["consumer".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&program, &[("provider", &provider)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    for missing in [SemanticSourceTargetKind::Module, SemanticSourceTargetKind::Function] {
+        let mut type_info = checker.type_info().clone();
+        assert!(
+            type_info
+                .references
+                .resolved_identities
+                .values()
+                .any(|identity| identity.kind == missing)
+        );
+        type_info
+            .references
+            .resolved_identities
+            .retain(|_, identity| identity.kind != missing);
+        let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Assign { rvalue: bir::Rvalue::Closure { body, .. }, .. } if body.function_item
+            )),
+            "{missing:?}: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+/// A same-spelled owner from another module cannot supply the missing alias receiver's method.
+#[test]
+fn imported_alias_method_rejects_a_different_provider_owner_calls_composed() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+    );
+    let factory_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+    );
+    let consumer_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+    );
+    let provider = build(provider_source, &["db", "schema"])?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        &[provider],
+    )?;
+    let wrong_owner = build(provider_source, &["other"])?;
+    let module = build_with_published_imports(
+        consumer_source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[wrong_owner, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let method = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("alias method call missing")?;
+    assert!(method.canonical.is_none(), "{method:#?}");
+    Ok(())
+}
+
+/// A user model with a builtin wrapper spelling keeps the field identity its providing module published.
+#[test]
+fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Json[T]:\n  pub value: T\n";
+    let provider = build(provider_source, &["models"])?;
+    let field = provider.nominal_declarations[0].field_identities[0].clone();
+    let module = build_with_published_imports(
+        "from models import Json\n\ndef read(wrapper: Json[int]) -> int:\n  return wrapper.value\n",
+        &["consumer"],
+        &[("models", &["models"], provider_source)],
+        &[provider],
+    )?;
+    let body = body_named(&module, "read")?;
+    let read = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("field read missing")?;
+    let [
+        bir::PlaceElem::Field {
+            name,
+            canonical,
+            structural,
+        },
+    ] = read.place.projection.as_slice()
+    else {
+        return Err("field projection missing".into());
+    };
+    assert_eq!(name, "value");
+    assert!(!structural);
+    assert_eq!(canonical.as_ref(), Some(&field));
+    Ok(())
+}
+
+/// Imported model aliases retain the declaring carrier at callable return and construction boundaries.
+#[test]
+fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Account:\n  pub type_ [alias=\"type\"]: str\n";
+    let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"x\")\n";
+    let provider = build(provider_source, &["db", "schema"])?;
+    let owner = provider
+        .nominal_declarations
+        .first()
+        .ok_or("missing provider model")?
+        .canonical
+        .clone();
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        std::slice::from_ref(&provider),
+    )?;
+    let factory_body = body_named(&factory, "make_aliased")?;
+    assert!(has_nominal_owner(factory_body, &factory_body.return_type, &owner));
+    let module = build_with_published_imports(
+        "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef run() -> int:\n  value = make_aliased()\n  return 1\n",
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "run")?;
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("A".to_owned())),
+        "{body:#?}"
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| has_nominal_owner(body, &local.ty, &owner)),
+        "{body:#?}"
+    );
+    Ok(())
+}
+
+/// Package-owned math constants retain their proven Rust values through module and renamed imports.
+#[test]
+fn math_constants_retain_values_through_imports() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.math\nfrom std.math import PI as CIRCLE, NAN as NOT_A_NUMBER\n\ndef finite() -> float:\n  return math.PI + math.E + math.TAU + CIRCLE\n\ndef infinite() -> float:\n  return math.INFINITY\n\ndef not_a_number() -> f64:\n  return NOT_A_NUMBER\n",
+        &["app", "math_constants"],
+    )?;
+    let finite = body_named(&module, "finite")?.render_snapshot();
+    for value in [std::f64::consts::PI, std::f64::consts::E, std::f64::consts::TAU] {
+        assert!(finite.contains(&format!("const({value})")), "{finite}");
+    }
+    let infinite = body_named(&module, "infinite")?.render_snapshot();
+    assert!(infinite.contains("const(inf)"), "{infinite}");
+    let nan = body_named(&module, "not_a_number")?.render_snapshot();
+    assert!(nan.contains("const(NaN)"), "{nan}");
+    Ok(())
+}
+
+/// A same-spelled local or user declaration keeps its own value rather than selecting a stdlib constant.
+#[test]
+fn math_constant_names_do_not_replace_user_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.math\nconst PI: float = 99.0\n\ndef local(PI: float) -> float:\n  return PI\n\ndef declared() -> float:\n  return PI\n",
+        &["app", "math_shadow"],
+    )?;
+    let local = body_named(&module, "local")?.render_snapshot();
+    assert!(!local.contains("const("), "{local}");
+    let declared = body_named(&module, "declared")?.render_snapshot();
+    assert!(declared.contains("const(99)"), "{declared}");
+    assert!(!declared.contains(&std::f64::consts::PI.to_string()), "{declared}");
+    Ok(())
+}
+
+/// A stale declaration span or foreign package owner cannot grant a math constant's value.
+#[test]
+fn math_constants_require_exact_source_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let tokens = lexer::lex("import std.math\n\ndef main() -> float:\n  return math.PI\n")
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["app".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    for foreign_owner in [false, true] {
+        let mut info = checker.type_info().clone();
+        let mut changed = false;
+        for identity in info.references.resolved_identities.values_mut() {
+            if identity.kind == SemanticSourceTargetKind::Const && identity.declaration_name == "PI" {
+                if foreign_owner {
+                    identity.origin = incan_semantics_core::SymbolOrigin::Package {
+                        library: "unowned_library".to_string(),
+                        module_path: vec!["math".to_string()],
+                    };
+                } else {
+                    identity.declaration_span.start += 1;
+                }
+                changed = true;
+            }
+        }
+        assert!(changed, "the control must corrupt a retained constant identity");
+        let module = build_body_ir_module_v0(&program, &path, &info);
+        let body = body_named(&module, "main")?.render_snapshot();
+        assert!(!body.contains("const(3.141592653589793)"), "{body}");
+    }
+    Ok(())
+}
+
+/// An imported static factory receiver keeps its canonical owner and stored type, rejecting conflicting provider
+/// records.
+#[test]
+fn imported_static_decorator_factory_retains_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let registry_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/probe_registry.incn"
+    );
+    let decorated_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/probe_decorated.incn"
+    );
+    for project_carriers in [false, true] {
+        let registry = if project_carriers {
+            build_with_published_imports(registry_source, &["probe_registry"], &[], &[])?
+        } else {
+            build(registry_source, &["probe_registry"])?
+        };
+        let storage = registry.static_declarations.first().ok_or("missing registry static")?;
+        let identity = storage.canonical.clone();
+        let receiver_type = storage.ty.clone();
+        if project_carriers {
+            let owner = &registry
+                .nominal_declarations
+                .first()
+                .ok_or("registry class missing")?
+                .canonical;
+            let key = bir::nominal_carrier_key(owner).ok_or("registry class has no source carrier")?;
+            assert_eq!(receiver_type, IncanType::Named(key), "provider static carrier");
+        }
+        let module = build_with_published_imports(
+            decorated_source,
+            &["probe_decorated"],
+            &[("probe_registry", &["probe_registry"], registry_source)],
+            std::slice::from_ref(&registry),
+        )?;
+        assert_eq!(module.decorated_bindings.len(), 1, "{}", module.render_snapshot());
+        let initializer = module
+            .static_declarations
+            .iter()
+            .find_map(|storage| match &storage.initial {
+                bir::StaticInitializer::Computed(body) if storage.canonical.declaration_name == "decorated" => {
+                    Some(body)
+                }
+                _ => None,
+            })
+            .ok_or("missing decorated initializer")?;
+        let receiver = initializer
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    args,
+                    ..
+                } if target.name == "add" => match args.first() {
+                    Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => read.place.global(),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or("missing static factory receiver")?;
+        assert_eq!(receiver.identity, identity);
+        assert_eq!(receiver.ty, receiver_type, "project-aware provider: {project_carriers}");
+        if project_carriers {
+            let mut conflicting = registry.clone();
+            conflicting.static_declarations[0].ty = IncanType::Unknown;
+            let refused = build_with_published_imports(
+                decorated_source,
+                &["probe_decorated"],
+                &[("probe_registry", &["probe_registry"], registry_source)],
+                &[registry, conflicting],
+            )?;
+            let selects_conflicting_storage = refused
+                .static_declarations
+                .iter()
+                .filter_map(|storage| match &storage.initial {
+                    bir::StaticInitializer::Computed(body) => Some(body),
+                    _ => None,
+                })
+                .flat_map(|body| &body.block.stmts)
+                .any(|statement| match &statement.kind {
+                    bir::StatementKind::Call { args, .. } => args.iter().any(|argument| match argument {
+                        bir::ArgumentElement::One(bir::Operand::Place(read)) => {
+                            read.place.global().is_some_and(|global| global.identity == identity)
+                        }
+                        _ => false,
+                    }),
+                    _ => false,
+                });
+            assert!(
+                !selects_conflicting_storage,
+                "conflicting provider types cannot authorize a global place"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Constructor field types retain an indirectly reached newtype's exact owner throughout the original project locals.
+#[test]
+fn indirect_constructor_field_types_keep_project_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let ids_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/ids.incn"
+    );
+    let records_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/records.incn"
+    );
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/constructor_arguments_name_field_types_the_module_does_not_import/main.incn"
+    );
+    let ids = build_with_published_imports(ids_source, &["ids"], &[], &[])?;
+    let owner = ids
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.canonical.declaration_name == "EvidenceId")
+        .ok_or("EvidenceId declaration missing")?
+        .canonical
+        .clone();
+    let key = bir::nominal_carrier_key(&owner).ok_or("EvidenceId has no source carrier")?;
+    let records = build_with_published_imports(
+        records_source,
+        &["records"],
+        &[("ids", &["ids"], ids_source)],
+        std::slice::from_ref(&ids),
+    )?;
+    let (module, facts) = build_with_published_imports_and_facts(
+        source,
+        &["main"],
+        &[("ids", &["ids"], ids_source), ("records", &["records"], records_source)],
+        &[ids, records],
+    )?;
+    let body = body_named(&module, "main")?;
+    let mut retained = false;
+    for local in &body.locals {
+        let mut leaves = Vec::new();
+        super::super::named_leaf_paths(&local.ty, &mut Vec::new(), &mut leaves);
+        for (_, leaf) in leaves {
+            if let super::super::RetainedTypeLeaf::Named(name) = leaf {
+                assert_ne!(
+                    name,
+                    "EvidenceId",
+                    "indirect field owner erased in local: {local:?}; expression identities: {:?}; native identities: {:?}",
+                    facts
+                        .expressions
+                        .expression_type_identities
+                        .get(&(local.span.start, local.span.end)),
+                    facts.declarations.body_ir_native_type_identities
+                );
+                retained |= name == key;
+            }
+        }
+    }
+    assert!(retained, "the original must retain a concrete EvidenceId use");
+    assert_eq!(body.named_type_identities.get(&key), Some(&owner));
+    Ok(())
+}
+
+/// Checked literal integer arithmetic retains one value without changing legacy's evaluation table.
+#[test]
+fn literal_integer_constant_arithmetic_retains_values() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = 3 + 4 * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
+        &["app"],
+    )?;
+    assert!(
+        module
+            .constant_declarations
+            .iter()
+            .any(|item| item.value == bir::Constant::Int(i64::MIN))
+    );
+    assert!(
+        module
+            .constant_declarations
+            .iter()
+            .any(|item| item.value == bir::Constant::Int(23))
+    );
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("const(-9223372036854775808)"), "{snapshot}");
+    assert!(snapshot.contains("const(23)"), "{snapshot}");
+    Ok(())
+}
+
+/// Overflow and symbolic operands remain absent rather than fabricating a wrapped compile-time value.
+#[test]
+fn unproven_integer_constant_arithmetic_stays_unretained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const OVER: int = 9223372036854775807 + 1\nconst BASE: int = 4\nconst SYMBOLIC: int = BASE + 1\n\ndef main() -> None:\n  println(OVER)\n  println(SYMBOLIC)\n",
+        &["app"],
+    )?;
+    assert!(
+        !module
+            .constant_declarations
+            .iter()
+            .any(|item| matches!(item.canonical.declaration_name.as_str(), "OVER" | "SYMBOLIC"))
+    );
+    Ok(())
+}
+
+/// An imported model's constructor and field reads retain the same concrete types as its declaring module.
+#[test]
+fn imported_model_default_fill_retains_consumer_types() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/records.incn"
+    );
+    let provider = build(provider_source, &["records"])?;
+    let module = build_with_published_imports(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill/main.incn"
+        ),
+        &["main"],
+        &[("records", &["records"], provider_source)],
+        &[provider],
+    )?;
+    for body in &module.bodies {
+        assert!(
+            body.locals
+                .iter()
+                .all(|local| !matches!(local.ty, IncanType::Unknown | IncanType::Infer)),
+            "{}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
 /// Lower a module that imports from other modules, declaring each dependency's flattened cache name *and* its
 /// real path segments.
 ///
@@ -17,6 +959,28 @@ fn build_with_imports(
     module_path: &[&str],
     imports: &[(&str, &[&str], &str)],
 ) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
+    build_with_published_imports(source, module_path, imports, &[])
+}
+
+/// Like [`build_with_imports`], with the already lowered `context` modules a project build publishes beside it, so
+/// their retained facts (published constants among them) reach the consumer as they do in a project compilation.
+pub(super) fn build_with_published_imports(
+    source: &str,
+    module_path: &[&str],
+    imports: &[(&str, &[&str], &str)],
+    context: &[bir::BodyIrModule],
+) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
+    let (module, _) = build_with_published_imports_and_facts(source, module_path, imports, context)?;
+    Ok(module)
+}
+
+/// Keep the original checked facts beside the project representation so tests can diagnose a lost source-identity path.
+pub(super) fn build_with_published_imports_and_facts(
+    source: &str,
+    module_path: &[&str],
+    imports: &[(&str, &[&str], &str)],
+    context: &[bir::BodyIrModule],
+) -> Result<(bir::BodyIrModule, TypeCheckInfo), Box<dyn std::error::Error>> {
     let mut import_programs = Vec::new();
     for (name, segments, import_source) in imports {
         let tokens = lexer::lex(import_source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
@@ -42,7 +1006,47 @@ fn build_with_imports(
     checker
         .check_with_imports(&program, &import_refs)
         .map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
-    Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+    let facts = checker.type_info().clone();
+    let module = build_body_ir_module_v0_with_executable_context(&program, &module_path, &facts, context);
+    Ok((module, facts))
+}
+
+/// A const read through a module binding is the providing module's published value, as a bare imported name read is,
+/// so no global storage is left for it.
+#[test]
+fn module_member_constants_read_their_published_values() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = r#"
+pub const LABEL: str = "orders"
+pub const LIMIT: int = 3
+"#;
+    let consumer_source = r#"
+import provider
+
+def read() -> int:
+  println(provider.LABEL)
+  return provider.LIMIT
+"#;
+    let provider = build(provider_source, &["provider"])?;
+    let module = build_with_published_imports(
+        consumer_source,
+        &["consumer"],
+        &[("provider", &["provider"], provider_source)],
+        &[provider],
+    )?;
+    let snapshot = body_named(&module, "read")?.render_snapshot();
+    assert!(
+        !snapshot.contains("@const:provider::"),
+        "a published constant must not stay a global read: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("const(3)"),
+        "missing published integer constant: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("orders"),
+        "missing published text constant: {snapshot}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1024,4 +2028,310 @@ def use_str() -> int:
         assert_eq!(resolved.span, fact.declaration_span);
     }
     Ok(())
+}
+
+/// An adopter of an imported trait without type parameters retains each slot under the trait module's identity: its
+/// own method fills the required slot, and the slot's default, whose body the trait module retains, fills the other.
+#[test]
+fn imported_trait_slots_retain_the_trait_modules_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let shapes = r#"
+pub trait Measured:
+    def width(self) -> int: ...
+
+    def doubled(self) -> int:
+        return self.width() * 2
+"#;
+    let consumer = r#"
+from shapes import Measured
+
+
+model Card with Measured:
+    side: int
+
+    def width(self) -> int:
+        return self.side
+"#;
+    let module = build_with_imports(consumer, &["consumer"], &[("shapes", &["shapes"], shapes)])?;
+    let slot = |name: &str| {
+        module
+            .trait_implementations
+            .iter()
+            .find(|implementation| implementation.method.declaration_name == name)
+            .ok_or_else(|| Box::<dyn std::error::Error>::from(format!("the imported slot `{name}` must be retained")))
+    };
+    let shapes_origin = incan_semantics_core::SymbolOrigin::Module(vec!["shapes".to_string()]);
+    let consumer_origin = incan_semantics_core::SymbolOrigin::Module(vec!["consumer".to_string()]);
+    assert_eq!(module.trait_implementations.len(), 2);
+
+    let width = slot("width")?;
+    assert_eq!(width.owner.declaration_name, "Card");
+    assert_eq!(width.method.origin, shapes_origin);
+    assert_eq!(width.implementation.origin, consumer_origin);
+    assert_ne!(width.implementation, width.method);
+    assert!(width.type_arguments.is_empty());
+
+    let doubled = slot("doubled")?;
+    assert_eq!(doubled.owner.declaration_name, "Card");
+    assert_eq!(doubled.method.origin, shapes_origin);
+    assert_eq!(
+        doubled.implementation, doubled.method,
+        "the default fills its own slot under the trait module's identity"
+    );
+    assert!(doubled.type_arguments.is_empty());
+    Ok(())
+}
+
+/// An adopter of a standard-library protocol retains each slot its own method fills with that method, never with the
+/// protocol's default for the same slot.
+#[test]
+fn std_protocol_slots_retain_the_adopters_own_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from std.derives.comparison import Ord
+
+
+model Reversed with Ord:
+    value: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value > other.value
+"#;
+    let module = build(source, &["m", "std_protocol_slots"])?;
+    let less = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "__lt__")
+        .ok_or("the protocol slot the adopter fills must be retained")?;
+    assert_eq!(less.owner.declaration_name, "Reversed");
+    assert_eq!(less.implementation.declaration_name, "__lt__");
+    assert_eq!(less.implementation.origin, less.owner.origin);
+    assert_ne!(less.implementation, less.method);
+    assert!(
+        module
+            .trait_implementations
+            .iter()
+            .filter(|implementation| ["__eq__", "__lt__"].contains(&implementation.method.declaration_name.as_str()))
+            .all(|implementation| implementation.implementation != implementation.method),
+        "an own method must fill its slot: {:?}",
+        module.trait_implementations
+    );
+    Ok(())
+}
+
+/// An Ord-only consumer retains checked provider Eq slots without a direct-adoption binder for the inherited key.
+#[test]
+fn ord_adopters_retain_inherited_comparison_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/lowering_declarations/ne_reaches_the_eq_default_of_an_ord_only_adopter.incn"
+    );
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = include_str!("../../../../../stdlib/core/src/derives/comparison.incn");
+    let tokens = lexer::lex(provider).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["m".to_owned(), "ordinal_comparison".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker.register_dependency_module_path_segments(
+        "std_derives_comparison",
+        vec!["std".to_owned(), "derives".to_owned(), "comparison".to_owned()],
+    );
+    checker
+        .check_with_imports(&program, &[("std_derives_comparison", &provider)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut info = checker.type_info().clone();
+    for name in ["__eq__", "__ne__"] {
+        assert!(
+            info.traits
+                .method_identities
+                .contains_key(&("std.derives.comparison.Eq".to_owned(), name.to_owned()))
+        );
+    }
+    // Provider slots are checked, but an inherited key need not have a direct-adoption binder in the SDK snapshot.
+    info.traits.type_params.remove("std.derives.comparison.Eq");
+    let module = build_body_ir_module_v0(&program, &path, &info);
+    for owner in ["Ordered", "Qualified", "Level"] {
+        for name in ["__eq__", "__ne__"] {
+            let implementation = module
+                .trait_implementations
+                .iter()
+                .find(|implementation| {
+                    implementation.owner.declaration_name == owner && implementation.method.declaration_name == name
+                })
+                .ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "missing {owner}.{name}; binders={:?}; supertraits={:?}; slots={:?}; implementations={:?}",
+                        info.traits.type_params,
+                        info.traits.direct_supertraits,
+                        info.traits.method_identities.keys().collect::<Vec<_>>(),
+                        module.trait_implementations,
+                    ))
+                })?;
+            assert!(implementation.type_arguments.is_empty());
+            if name == "__eq__" {
+                assert_eq!(implementation.implementation.origin, implementation.owner.origin);
+                assert_ne!(implementation.implementation, implementation.method);
+            } else {
+                assert_eq!(implementation.implementation, implementation.method);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// An adopter of a standard-library protocol with type parameters retains the slot its own method fills, exactly as an
+/// adopter of a protocol without them does.
+#[test]
+fn generic_std_protocol_slots_retain_the_adopters_own_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from std.traits.callable import Callable1
+
+
+model Observer with Callable1[int, None]:
+    def __call__(self, value: int) -> None:
+        println(value)
+"#;
+    let module = build(source, &["m", "generic_std_protocol_slots"])?;
+    let call = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "__call__")
+        .ok_or("the generic protocol slot the adopter fills must be retained")?;
+    assert_eq!(call.owner.declaration_name, "Observer");
+    assert_eq!(call.implementation.declaration_name, "__call__");
+    assert_eq!(call.implementation.origin, call.owner.origin);
+    assert_ne!(call.implementation, call.method);
+    assert!(
+        module
+            .trait_implementations
+            .iter()
+            .all(|implementation| implementation.implementation != implementation.method),
+        "a protocol default must not be retained: {:?}",
+        module.trait_implementations
+    );
+    Ok(())
+}
+
+/// In the standard library's own trait defaults, a call on an open `Self` receiver keeps its checker type open for
+/// legacy, but Body IR still retains the slot it selects and the slot's declared result.
+#[test]
+fn std_trait_default_self_calls_retain_their_slot_and_result() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub trait Eq:
+    def __eq__(self, other: Self) -> bool: ...
+
+    def __ne__(self, other: Self) -> bool:
+        return not self.__eq__(other)
+
+
+pub trait Source[T]:
+    def __next__(mut self) -> Option[T]: ...
+
+    def count(mut self) -> int:
+        mut total = 0
+        while true:
+            match self.__next__():
+                Some(_) =>
+                    total += 1
+                None => return total
+"#;
+    let module = build(source, &["std", "derives", "self_calls"])?;
+    for name in ["__ne__", "count"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("the trait default must be lowered")?;
+        assert!(
+            body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+            "{name}: {:?}",
+            body.locals
+        );
+    }
+    let ne = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "__ne__")
+        .ok_or("the Eq default must be lowered")?;
+    let Some(bir::StatementKind::Call {
+        callee: bir::Callee::Method(target),
+        ..
+    }) = ne.block.stmts.first().map(|statement| &statement.kind)
+    else {
+        return Err(format!("first statement: {:?}", ne.block.stmts.first()).into());
+    };
+    let slot = target.canonical.as_ref().ok_or("the Self call must retain its slot")?;
+    assert_eq!(slot.declaration_name, "__eq__");
+    Ok(())
+}
+
+/// Standard-library defaults compose checked Self calls with conditional boolean evaluation without consulting
+/// legacy's intentionally open expression types.
+#[test]
+fn std_trait_boolean_defaults_retain_conditional_calls() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub trait Compare:
+    def less(self, other: Self) -> bool: ...
+    def equal(self, other: Self) -> bool: ...
+
+    def inclusive(self, other: Self) -> bool:
+        return self.less(other) or self.equal(other)
+
+    def both(self, other: Self) -> bool:
+        return self.less(other) and self.equal(other)
+"#;
+    let module = build(source, &["std", "derives", "boolean_defaults"])?;
+    for name in ["inclusive", "both"] {
+        let body = body_named(&module, name)?;
+        let snapshot = body.render_snapshot();
+        assert!(!snapshot.contains("unsupported"), "{snapshot}");
+        assert!(body.locals.iter().all(|local| local.ty != IncanType::Unknown));
+        assert!(
+            body.block
+                .stmts
+                .iter()
+                .any(|statement| matches!(statement.kind, bir::StatementKind::If { .. })),
+            "the second call must remain conditional: {snapshot}"
+        );
+    }
+    Ok(())
+}
+
+/// An adopter of a standard-library protocol without type parameters retains the protocol's own default for a slot it
+/// does not fill itself, beside the slots its own methods fill.
+#[test]
+fn std_protocol_defaults_fill_the_slots_the_adopter_leaves() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from std.derives.comparison import Eq
+
+
+model Key with Eq:
+    id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+"#;
+    let module = build(source, &["m", "std_protocol_defaults"])?;
+    let record = |name: &str| {
+        module
+            .trait_implementations
+            .iter()
+            .find(|implementation| implementation.method.declaration_name == name)
+    };
+    let own = record("__eq__").ok_or("the slot the adopter fills must be retained")?;
+    assert_eq!(own.owner.declaration_name, "Key");
+    assert_ne!(own.implementation, own.method);
+    let default = record("__ne__").ok_or("the protocol default must fill the slot the adopter leaves")?;
+    assert_eq!(default.owner.declaration_name, "Key");
+    assert_eq!(default.implementation, default.method);
+    assert!(default.type_arguments.is_empty());
+    Ok(())
+}
+
+/// Keep the historical alias-carrier selector on the stronger exact-owner and exact-method identity control.
+#[test]
+fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    imported_model_alias_keeps_carrier_with_method_resolution()
 }

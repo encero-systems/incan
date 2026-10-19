@@ -3,6 +3,7 @@
 use super::args::*;
 use super::control_flow::intersect_range_layouts;
 use super::free_vars::*;
+use super::primitives::collection_member_types;
 use super::reads::*;
 use super::*;
 
@@ -24,7 +25,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let ty = self.resolve_ty(span);
+        let ty = self.refine_task_storage(
+            &self.resolve_ty(span),
+            &IncanType::Generic {
+                base: "List".into(),
+                args: vec![self.retained_expression_type(&comp.expr)],
+            },
+        );
+        // An `Ok(...)` or `Err(...)` element is built with the element type the checker settled for the
+        // comprehension, which fixes the side the constructor leaves open.
+        if let Some([element_ty]) = collection_member_types(&ty, CollectionTypeId::List) {
+            self.settle_open_result_value(&comp.expr, element_ty);
+        }
         let list_local = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
@@ -41,7 +53,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             element: &comp.expr,
         };
         self.lower_scoped_comprehension_clauses(&clauses, &terminal, scope, hir_span_value, out);
-        self.temp_operand(list_local, &ty)
+        self.temp_operand(list_local, &self.locals[list_local.index()].ty)
     }
 
     /// Lower a dict comprehension `{key: value for pattern in iter if filter}` the same way
@@ -366,7 +378,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 //
                 // The item type comes from the pattern's own span, which the typechecker now records for
                 // comprehension clauses exactly as it does for a statement `for`.
-                let item_ty = self.resolve_ty(pattern.span);
+                let item_ty = self.for_item_type(pattern, &self.retained_expression_type(iter));
                 let loop_scope = self.new_scope(Some(scope), span);
                 // One counter, used by both helpers: a clause name is read by the remaining clauses and by the
                 // terminal, and the two helpers must agree on that or a binding's last-use lands in the wrong place.
@@ -406,11 +418,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         match terminal {
             ComprehensionTerminal::ListPush { list_local, element } => {
                 let element_operand = self.lower_expr_to_operand(element, scope, out);
+                // The comprehension's own checked binder is now installed. Preserve that operand's concrete task
+                // storage, never an outer same-spelled binding observed before this lexical scope was entered.
+                if let Some(actual) = self.retained_operand_type(&element_operand) {
+                    let actual_list = IncanType::Generic {
+                        base: "List".into(),
+                        args: vec![actual],
+                    };
+                    self.locals[list_local.index()].ty =
+                        self.refine_task_storage(&self.locals[list_local.index()].ty, &actual_list);
+                }
                 let span = hir_span(element.span);
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Call {
                         destination: None,
                         callee: bir::Callee::Method(bir::MethodTarget {
+                            native_trait_delegation: None,
                             canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
                             ..bir::MethodTarget::synthesized("push")
                         }),
@@ -429,12 +452,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ComprehensionTerminal::DictInsert { dict_local, key, value } => {
                 let key_operand = self.lower_expr_to_operand(key, scope, out);
+                let key_operand = self.retain_evaluated_value_read(key, key_operand, scope, out);
                 let value_operand = self.lower_expr_to_operand(value, scope, out);
                 let span = hir_span(value.span);
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Call {
                         destination: None,
                         callee: bir::Callee::Method(bir::MethodTarget {
+                            native_trait_delegation: None,
                             canonical: Some(crate::symbols::canonical_builtin_member_identity("Dict", "insert")),
                             ..bir::MethodTarget::synthesized("insert")
                         }),

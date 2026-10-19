@@ -72,7 +72,17 @@ make gate-incql \
   INCQL_EQUIVALENCE_REPORT=/path/to/incql-equivalence.json
 ```
 
-The checkout must be clean and match the revision and committed root `oven.lock` digest in `scripts/incql_gate_pin.json`. The gate removes derived `.incan` and `target` outputs but preserves every committed lock. The equivalence report is the output named by `OVEN_EQUIV_ATTESTATION` when running `make test-oven-artifact-equivalence`. A passing gate requires the complete attested registry closure and runs the Oven quickstart with Cargo and publisher-only native/tool commands unavailable. See the [`make gate-incql` contract](../../tooling/reference/cli_reference.md#make-gate-incql) for the accepted evidence and refusal conditions.
+Before running the gate, use a clean checkout at the revision and committed root `oven.lock` digest in `scripts/incql_gate_pin.json`. Supply the equivalence report named by `OVEN_EQUIV_ATTESTATION` when running `make test-oven-artifact-equivalence`.
+
+The gate performs these steps:
+
+1. Validate the checkout with `incan oven gate registry-pin` and stage IncQL's source-relative vocab companion path from the canonical Incan vocab crate.
+2. Remove derived `.incan` and `target` outputs while preserving committed root and example locks.
+3. Bake the IncQL library and quickstart consumer with Cargo and publisher-only native/tool commands unavailable.
+4. Validate both locks with `incan oven gate consumer-graph --expect scripts/incql_gate_expectations.toml`, passing the equivalence report. Refuse a Cargo-layout executable and require an Oven executable.
+5. Run the quickstart, check its completion marker and forbidden-command log, and run `registry-pin` again.
+
+The pin, digest, typed-lock, expectation and equivalence checks run in Rust. A passing gate requires the complete attested consumer registry closure and the quickstart completion marker. See the [`make gate-incql` contract](../../tooling/reference/cli_reference.md#make-gate-incql) for accepted inputs, retained outputs and refusal conditions.
 
 ## Build a toolchain release archive
 
@@ -111,6 +121,12 @@ gh workflow run ci.yml --ref <branch> -f heavy=false -f reference=true
 ```
 
 The Linux compiler and SDK handoff job restores the compatible SDK cache or prepares the SDK once, then publishes the selected provider artifact. Documentation and generated-reference jobs consume that artifact independently. Heavy runs also supply it to Linux C ABI, Oven preparation and release checks. macOS prepares its own platform-specific SDK.
+
+The native graph and its lock must match the runner platform. CI selects the checked-in Darwin or Linux compiler graph before fetching its pinned index and source archives; the source cache key includes both platform locks. A missing platform graph or lock fails preparation.
+
+Linux jobs that fetch native sources, restore the SDK store or consume its handoff run on Ubuntu 24.04. The source-fetch action checks out a pinned incan.pub source revision and runs its shared native-owner preparation script in a fresh runner-temporary directory. The script reconstructs the compiler, resource tree, declared runtime files and header sysroot from digest-pinned package archives, then CI exports that private root as `INCAN_OVEN_LINK_OWNERS` before SDK preparation or validation. The source revision supplies transport code and its recipe; the selected graph and compiler's index pin remain the authority for admitted native facts.
+
+Cargo builds the initial bootstrap executable. The subsequent native bootstrap produces the compiler together with its receipt, output record and two bound helper executables. CI transfers that complete bundle and restores executable permissions before consuming the SDK handoff. After validating the SDK, each fresh consumer prepares the ordinary standard packages with the source-current compiler before running project commands. That preparation uses the existing standard-package registry and a separate producer graph; ordinary commands keep the selected broad compiler graph. SDK validation and ordinary package preparation are separate required steps, and either failure stops the job.
 
 After the run finishes, download its preparation evidence:
 

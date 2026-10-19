@@ -28,7 +28,7 @@ pub fn bake_trusted_direct_rustc_library_in_store(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
     store: &OvenStore,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
-    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Library, false)
+    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Library, false, None)
 }
 
 /// Reuse or compile one admitted executable in the bounded store, retaining its lease through execution.
@@ -39,7 +39,53 @@ pub fn bake_trusted_direct_rustc_run_in_store(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
     store: &OvenStore,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
-    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Binary, false)
+    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Binary, false, None)
+}
+
+/// Reuse or compile a generated executable while retaining its complete original source observations.
+///
+/// This explicit producer boundary receives the same source request that created the selected receipt. Native plan
+/// binding may add build inputs, but cannot replace source evidence, project or intent. The existing Store executor
+/// rechecks the original observations before reuse and before publication, including source edits later restored.
+pub fn bake_trusted_direct_rustc_run_in_store_with_generated_sources(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    store: &OvenStore,
+    sources: &oven_store::OvenGeneratedProjectRequest,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    let (source_receipt, observations) =
+        oven_store::receipt_generated_project_with_observations(sources).map_err(recipe_error)?;
+    if source_receipt.project != request.receipt.project
+        || source_receipt.intent != request.receipt.intent
+        || source_receipt.sources.supplemental_digests != request.receipt.sources.supplemental_digests
+        || !source_receipt
+            .sources
+            .build_unit_inputs
+            .iter()
+            .all(|(name, value)| request.receipt.sources.build_unit_inputs.get(name) == Some(value))
+    {
+        return Err(recipe_error(
+            "generated source request differs from its admitted receipt",
+        ));
+    }
+    bake_native_in_store(
+        request,
+        store,
+        OvenDirectRustcOutputKind::Binary,
+        false,
+        Some(&observations),
+    )
+}
+
+/// Reject changed or unsupported original source observations before outputs can enter the immutable Store.
+fn verify_generated_observations(
+    observations: Option<&oven_model::observed_inputs::InputObservations>,
+) -> Result<(), OvenRustcError> {
+    if observations.is_some_and(|observations| !observations.supports_retention() || !observations.current()) {
+        return Err(recipe_error(
+            "generated source inputs changed during compilation; output was not published",
+        ));
+    }
+    Ok(())
 }
 
 /// Retain receipt-qualified libtest binaries across edits, restored sources and compatible caller projections.
@@ -50,7 +96,7 @@ pub fn bake_trusted_direct_rustc_test_in_store(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
     store: &OvenStore,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
-    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Binary, true)
+    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Binary, true, None)
 }
 
 /// Keep publication, selection and projection identical for libraries and executables.
@@ -59,7 +105,9 @@ fn bake_native_in_store(
     store: &OvenStore,
     kind: OvenDirectRustcOutputKind,
     test_harness: bool,
+    generated_observations: Option<&oven_model::observed_inputs::InputObservations>,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    verify_generated_observations(generated_observations)?;
     let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::build_native_in_store", input = %request.source.display(), test_harness).entered();
     let (domain, filename) = match (kind, test_harness) {
         (OvenDirectRustcOutputKind::Library, false) => ("generated-rust-library-v2", "library.rlib"),
@@ -72,6 +120,7 @@ fn bake_native_in_store(
         .artifact_plan
         .map_or(&request.artifacts.compile_environment, |plan| &plan.compile_environment);
     if let Some(bake) = reuse_native(request, store, &expected, environment, domain, filename)? {
+        verify_generated_observations(generated_observations)?;
         tracing::trace!(target: "incan::invocation", decision = "reuse_native_artifact", native_compilations = 0_u64);
         return Ok(bake);
     }
@@ -109,6 +158,7 @@ fn bake_native_in_store(
         (OvenDirectRustcOutputKind::Binary, true) => bake_trusted_direct_rustc_test(&staged_request)?,
         _ => return Err(recipe_error("unsupported shared native output kind")),
     };
+    verify_generated_observations(generated_observations)?;
     let staged_sidecar = caller_output_receipt_path(&bake.output)?;
     let record: OvenDirectRustcOutputRecord =
         serde_json::from_slice(&fs::read(&staged_sidecar).map_err(|source| OvenRustcError::Io {

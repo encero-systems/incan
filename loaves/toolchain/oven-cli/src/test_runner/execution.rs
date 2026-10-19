@@ -2381,13 +2381,22 @@ fn run_file_tests_batch_oven(
     // supplies those crates directly, so treating their internal `rust.module("incan_std_<facet>::...")` markers as
     // user Cargo imports would create a duplicate, path-unstable dependency. Every other inline Rust import remains
     // part of the explicit publisher's generated manifest and therefore its Oven build-unit identity.
-    let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules)
+    #[allow(unused_mut)]
+    let mut inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules)
         .into_iter()
         .filter(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name))
         .collect::<Vec<_>>();
     let mut dependency_modules = Vec::with_capacity(1 + source_dependency_modules.len());
     dependency_modules.push(module_for_imports.clone());
     dependency_modules.extend(source_dependency_modules.clone());
+    #[cfg(feature = "rust_inspect")]
+    for (index, module) in dependency_modules.iter().enumerate() {
+        inline_imports.extend(incan_driver::modules::collect_declared_rust_derive_dependency_uses(
+            module,
+            manifest.as_ref(),
+            index == 0,
+        ));
+    }
     let mut requirements = match incan_provider::requirements::collect_project_requirements(
         &dependency_modules,
         &library_manifest_index,
@@ -2422,6 +2431,13 @@ fn run_file_tests_batch_oven(
     {
         return failure(error.message);
     }
+    // Compiled Incan providers contribute link requirements, not Rust source roots. Preserve the authored Rust
+    // inspection surface before merging those generated outputs, as ordinary executable preparation does.
+    let inspection_registry_dependencies =
+        match merge_test_runner_dependencies(&resolved.dependencies, &resolved.dev_dependencies) {
+            Ok(dependencies) => dependencies,
+            Err(message) => return failure(message),
+        };
     if let Err(error) =
         incan_provider::requirements::merge_project_requirement_dependencies(&mut resolved, &requirements)
     {
@@ -2492,11 +2508,6 @@ fn run_file_tests_batch_oven(
     ) {
         return failure(error.message);
     }
-    let inspection_registry_dependencies =
-        match merge_test_runner_dependencies(&resolved.dependencies, &resolved.dev_dependencies) {
-            Ok(dependencies) => dependencies,
-            Err(message) => return failure(message),
-        };
     if let Some(authority) = command_context.project_source_authorities.as_ref() {
         build_unit_inputs.insert(
             "project-inspection-authority".to_string(),
@@ -2508,7 +2519,11 @@ fn run_file_tests_batch_oven(
         let _trace = trace_test_stage("test_inspection_workspace");
         let metadata_query_paths =
             incan_driver::rust_inspect_workspace::collect_rust_inspect_query_paths(&dependency_modules);
-        match incan_driver::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
+        let configured = match incan_driver::build::native_loaf_plan::ConfiguredNativeLoafInputs::discover() {
+            Ok(configured) => configured,
+            Err(error) => return failure(error.message),
+        };
+        match incan_driver::lock::rust_inspect::prepare_rust_inspect_workspace_for_command(
             RustInspectWorkspaceRequest {
                 project_root: &project_root,
                 project_name: project_name.as_str(),
@@ -2543,7 +2558,9 @@ fn run_file_tests_batch_oven(
                 prepared_project_source_authorities: command_context.project_source_authorities.clone(),
                 explicit_oven_bake: false,
             },
+            configured.as_ref(),
             command_context.native_sdk_context.as_deref(),
+            &rustc,
         ) {
             Ok(workspace) => workspace,
             Err(error) => return failure(error.message),
@@ -2598,6 +2615,12 @@ fn run_file_tests_batch_oven(
         (frontend_start.elapsed(), Duration::ZERO)
     } else {
         let stage = trace_test_stage("test_analysis");
+        #[cfg(feature = "rust_inspect")]
+        if let Some(workspace) = rust_inspect_manifest_dir.as_ref()
+            && let Err(error) = workspace.verify_ordinary_native()
+        {
+            return failure(error.message);
+        }
         let analysis = match session.analyze_modules(
             &dependency_modules,
             #[cfg(feature = "rust_inspect")]
@@ -2608,6 +2631,12 @@ fn run_file_tests_batch_oven(
             Ok(analysis) => analysis,
             Err(analysis_failure) => return failure(analysis_failure.render_human()),
         };
+        #[cfg(feature = "rust_inspect")]
+        if let Some(workspace) = rust_inspect_manifest_dir.as_ref()
+            && let Err(error) = workspace.verify_ordinary_native()
+        {
+            return failure(error.message);
+        }
         generation_sources = analysis.test_generation_sources();
         let Some(main_type_info) = analysis
             .type_info_for_module_path(&module_for_imports.path_segments)
@@ -2755,6 +2784,12 @@ fn run_file_tests_batch_oven(
         (frontend_elapsed, generation_elapsed)
     };
 
+    #[cfg(feature = "rust_inspect")]
+    if let Some(workspace) = rust_inspect_manifest_dir.as_ref()
+        && let Err(error) = workspace.verify_ordinary_native()
+    {
+        return failure(error.message);
+    }
     let stage = trace_test_stage("test_receipt");
     let receipt_start = Instant::now();
     let mut receipt_request = OvenGeneratedProjectRequest::new(
@@ -2813,7 +2848,11 @@ fn run_file_tests_batch_oven(
     } else {
         None
     };
-    let plan_selection = match shared_plan_selection.or(owned_plan_selection.as_deref()) {
+    let plan_selection = match shared_plan_selection
+        .as_ref()
+        .map(|prepared| prepared.selection())
+        .or(owned_plan_selection.as_deref())
+    {
         Some(selection) => selection,
         None => {
             return failure("Oven test dependency plan selection lost its exact authority".to_string());
@@ -2833,11 +2872,17 @@ fn run_file_tests_batch_oven(
         Ok(plan) => plan,
         Err(error) => return failure(error.to_string()),
     };
-    let inline_libraries_to_materialize =
+    let inline_libraries_to_materialize = if shared_plan_selection
+        .as_ref()
+        .is_some_and(|prepared| prepared.seals_current_project_paths())
+    {
+        Vec::new()
+    } else {
         incan_driver::build::plan_authority::declared_rust_libraries_missing_from_selected_plan(
             &inline_path_dependencies,
             &artifact_plan,
-        );
+        )
+    };
 
     let mut registry_authority = plan_selection.registry_leaf_authority();
     let mut provider_compiler_runtime_libraries = Vec::new();

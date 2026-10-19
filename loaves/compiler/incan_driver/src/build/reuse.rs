@@ -719,10 +719,7 @@ pub fn try_reuse_baked_project(
     let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
     let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
     trace_reuse_timing(started, "source and compiler authority");
-    let ordinary_library_identity = if targets.len() == 1
-        && targets[0].0 == OvenBakeProjectTarget::Library
-        && super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_some()
-    {
+    let ordinary_library_identity = if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_some() {
         Some(super::source_authority::ordinary_library_preparation_identity_digest(
             None,
         )?)
@@ -749,6 +746,16 @@ pub fn try_reuse_baked_project(
         selected_outputs.push(selected);
     }
     trace_reuse_timing(started, "output selection");
+    // The ordinary native publisher does not manufacture Cargo inspection authority for registry roots (#1698).
+    // Such an output still has exact checked/native owners, but this shortcut cannot validate its inspection
+    // capsule. Re-enter canonical preparation, which revalidates the complete current native requests and metadata.
+    if ordinary_library_identity.is_some()
+        && selected_outputs
+            .iter()
+            .any(|(_, output, _, _)| output.payload.inspection_authority.is_none())
+    {
+        return Ok(None);
+    }
     let authority_ref = selected_outputs
         .first()
         .and_then(|(_, output, _, _)| output.payload.inspection_authority.as_ref())

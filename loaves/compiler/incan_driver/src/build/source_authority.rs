@@ -25,7 +25,7 @@ use oven_interop::{
 use oven_model::lock::{IncanLock, LOCK_FILENAME};
 use oven_model::manifest::{DependencySource, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_model::oven_interop::locked_oven_interop_targets;
-use oven_store::{digest_bytes, digest_project_source_tree, digest_source_tree};
+use oven_store::{digest_bytes, digest_source_tree};
 
 /// Bind exact compiler bytes independently of release compatibility and source authority.
 pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
@@ -187,8 +187,36 @@ fn digest_project_authority_file(path: &Path, bytes: &[u8]) -> CliResult<String>
 }
 
 impl ProjectSourceAuthorityDigester {
+    /// Retain the original authored Incan file/listing and model generations for cold emission.
+    ///
+    /// Existing native command owners independently guard Rust source/declaration and provider artifact inputs.
+    /// This optional witness supplements, rather than replaces, canonical source and dependency content identities.
+    pub(super) fn observing_authored_sources() -> Self {
+        Self {
+            source_observations: Some(Default::default()),
+            ..Default::default()
+        }
+    }
+
+    /// Reject changed-and-restored authored inputs before consuming or publishing cold generated output.
+    pub(super) fn ensure_original_sources_current(&self) -> CliResult<()> {
+        let current = self
+            .source_observations
+            .as_ref()
+            .is_some_and(|inputs| inputs.supports_retention() && inputs.current());
+        if !current {
+            return Err(CliError::failure(
+                "original authored inputs changed during cold compilation",
+            ));
+        }
+        self.retained_inputs.ensure_original_models_current()
+    }
+
     /// Start a new request without carrying command-local graph digests into another input generation.
     pub(super) fn begin_request(&mut self) {
+        if self.source_observations.is_some() {
+            self.source_observations = Some(Default::default());
+        }
         self.project_digests.clear();
         self.rust_crate_digests.clear();
         self.rust_source_closure_digests.clear();
@@ -439,6 +467,7 @@ impl ProjectSourceAuthorityDigester {
                     manifest,
                     self.development_root.as_ref() == Some(&canonical_root),
                     &mut self.retained_inputs,
+                    &mut self.source_observations,
                 )?,
             ),
             (
@@ -450,6 +479,7 @@ impl ProjectSourceAuthorityDigester {
         library_dependencies.sort_by_key(|(name, _)| *name);
         for (name, dependency) in library_dependencies {
             let child_manifest = dependency.path.join(LOAF_MANIFEST_FILENAME);
+            observe_authored_input(&mut self.source_observations, &child_manifest);
             let child_digest = match fs::symlink_metadata(&child_manifest) {
                 Ok(_) => self.digest_project_node(&dependency.path, visiting)?,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -863,15 +893,29 @@ pub(super) fn project_lock_authority(
         .map_err(|error| CliError::failure(format!("failed to serialize canonical Oven lock authority: {error}")))
 }
 
+/// Record one original authored input while preserving the canonical traversal and optional ordinary fast path.
+fn observe_authored_input(observations: &mut Option<oven_model::observed_inputs::InputObservations>, path: &Path) {
+    if let Some(inputs) = observations {
+        inputs.observe(path);
+    }
+}
+
 /// Hash only the declared Incan project inputs that can affect a normal build.
 fn digest_baked_project_build_tree(
     project_root: &Path,
     manifest: &ProjectManifest,
     omit_incan_sources: bool,
     inputs: &mut super::retained_inputs::RetainedProjectInputs,
+    observations: &mut Option<oven_model::observed_inputs::InputObservations>,
 ) -> CliResult<String> {
     /// Record one regular authority file under a caller-selected portable key.
-    fn append_named_file(path: &Path, record_key: String, records: &mut BTreeMap<String, String>) -> CliResult<()> {
+    fn append_named_file(
+        path: &Path,
+        record_key: String,
+        records: &mut BTreeMap<String, String>,
+        observations: &mut Option<oven_model::observed_inputs::InputObservations>,
+    ) -> CliResult<()> {
+        observe_authored_input(observations, path);
         let metadata = fs::symlink_metadata(path).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot read project build authority at {}: {error}",
@@ -902,13 +946,18 @@ fn digest_baked_project_build_tree(
     }
 
     /// Record one regular project input by its portable path and content digest.
-    fn append_file(root: &Path, path: &Path, records: &mut BTreeMap<String, String>) -> CliResult<()> {
+    fn append_file(
+        root: &Path,
+        path: &Path,
+        records: &mut BTreeMap<String, String>,
+        observations: &mut Option<oven_model::observed_inputs::InputObservations>,
+    ) -> CliResult<()> {
         let relative = path
             .strip_prefix(root)
             .map_err(|_| CliError::failure(format!("project build authority escaped {}", root.display())))?
             .to_string_lossy()
             .replace('\\', "/");
-        append_named_file(path, relative, records)
+        append_named_file(path, relative, records, observations)
     }
 
     /// Traverse a regular source directory deterministically and record its input files.
@@ -923,7 +972,9 @@ fn digest_baked_project_build_tree(
         records: &mut BTreeMap<String, String>,
         already_recorded: &HashSet<PathBuf>,
         omit_incan_sources: bool,
+        observations: &mut Option<oven_model::observed_inputs::InputObservations>,
     ) -> CliResult<()> {
+        observe_authored_input(observations, directory);
         let (entries, before) = super::file_freshness::directory_entries(directory).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot reconcile project build authority at {}: {error}",
@@ -954,11 +1005,11 @@ fn digest_baked_project_build_tree(
                 ) {
                     continue;
                 }
-                collect_directory(root, &path, records, already_recorded, omit_incan_sources)?;
+                collect_directory(root, &path, records, already_recorded, omit_incan_sources, observations)?;
             } else if !already_recorded.contains(&path)
                 && !(omit_incan_sources && path.extension().is_some_and(|extension| extension == "incn"))
             {
-                append_file(root, &path, records)?;
+                append_file(root, &path, records, observations)?;
             }
         }
         if super::file_freshness::stat_directory(directory).map_err(|error| CliError::failure(error.to_string()))?
@@ -974,9 +1025,10 @@ fn digest_baked_project_build_tree(
     let mut records = BTreeMap::new();
     let mut already_recorded = HashSet::new();
     let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
-    append_file(project_root, &manifest_path, &mut records)?;
+    append_file(project_root, &manifest_path, &mut records, observations)?;
     already_recorded.insert(manifest_path);
     let lockfile = inputs.lock_path(project_root)?;
+    observe_authored_input(observations, &lockfile);
     if let Some(authority) = inputs.authority(&lockfile, project_root)? {
         records.insert(LOCK_FILENAME.to_string(), authority);
     }
@@ -1015,6 +1067,7 @@ fn digest_baked_project_build_tree(
             &mut records,
             &already_recorded,
             omit_incan_sources,
+            observations,
         )?;
     } else if omit_incan_sources {
         let mut configured_records = BTreeMap::new();
@@ -1024,6 +1077,7 @@ fn digest_baked_project_build_tree(
             &mut configured_records,
             &HashSet::new(),
             true,
+            observations,
         )?;
         let payload = serde_json::to_vec(&configured_records).map_err(|error| {
             CliError::failure(format!("failed to serialize configured dependency authority: {error}"))
@@ -1032,7 +1086,11 @@ fn digest_baked_project_build_tree(
     } else {
         records.insert(
             "configured-source-root".to_string(),
-            digest_project_source_tree(&canonical_source_root).map_err(|error| {
+            oven_store::project_source_tree_evidence_observed(&canonical_source_root, &mut |path| {
+                observe_authored_input(observations, path)
+            })
+            .and_then(|evidence| evidence.digest())
+            .map_err(|error| {
                 CliError::failure(format!(
                     "Oven Alpha cannot digest configured source authority at {}: {error}",
                     canonical_source_root.display()
@@ -1059,7 +1117,12 @@ fn digest_baked_project_build_tree(
             )));
         }
         if !omit_incan_sources {
-            append_named_file(&entrypoint, format!("declared-executable:{relative}"), &mut records)?;
+            append_named_file(
+                &entrypoint,
+                format!("declared-executable:{relative}"),
+                &mut records,
+                observations,
+            )?;
         }
     }
 
@@ -1075,7 +1138,11 @@ fn digest_baked_project_build_tree(
                 companion_root.display()
             ))
         })?;
-        let companion_digest = digest_project_source_tree(&companion_root).map_err(|error| {
+        let companion_digest = oven_store::project_source_tree_evidence_observed(&companion_root, &mut |path| {
+            observe_authored_input(observations, path)
+        })
+        .and_then(|evidence| evidence.digest())
+        .map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot digest vocabulary companion source authority at {}: {error}",
                 companion_root.display()
@@ -1090,7 +1157,12 @@ fn digest_baked_project_build_tree(
         } else {
             project_root.join(configured_path)
         };
-        append_named_file(&path, format!("contract-model-bundle:{index}"), &mut records)?;
+        append_named_file(
+            &path,
+            format!("contract-model-bundle:{index}"),
+            &mut records,
+            observations,
+        )?;
     }
 
     let locked_interop_targets = locked_oven_interop_targets(manifest).map_err(|error| {
@@ -1111,6 +1183,7 @@ fn digest_baked_project_build_tree(
         );
 
         let receipt_path = default_interop_execution_receipt_path(project_root, &target.target);
+        observe_authored_input(observations, &receipt_path);
         let receipt_metadata = match fs::symlink_metadata(&receipt_path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
