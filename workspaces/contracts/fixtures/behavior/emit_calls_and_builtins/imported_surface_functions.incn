@@ -1,0 +1,13 @@
+# behavior: a sleep function imported by name or alias completes before execution continues
+# pending: needs the compiled async standard package
+# expect-stdout:
+#   slept
+
+from std.async.time import sleep_ms, sleep_ms as pause
+
+
+async def main() -> None:
+    """Wait through both spellings of the imported sleep function."""
+    await sleep_ms(1)
+    await pause(1)
+    println("slept")
