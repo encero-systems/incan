@@ -10,7 +10,6 @@
 //! - `format` — Source formatting
 //! - `init` — Project scaffolding
 //! - `lifecycle` — Project lifecycle commands (`version` and `env`)
-//! - `stdlib_loader` — RFC 023: Stdlib module loading for compilation
 
 pub mod binding_inspect;
 pub mod build;
@@ -24,7 +23,6 @@ pub mod interop_plan;
 pub mod lifecycle;
 pub mod feature_inspect;
 pub mod representation_inspect;
-pub mod stdlib_loader;
 pub mod workspace;
 
 #[cfg(test)]
