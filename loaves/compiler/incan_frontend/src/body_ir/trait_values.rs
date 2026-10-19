@@ -228,7 +228,9 @@ fn retain_call_inputs(
     let Some(inputs) = target.canonical.as_ref().and_then(|identity| signatures.get(identity)) else {
         return;
     };
-    let bir::ArgumentBinding::Resolved { arguments, .. } = &target.binding else {
+    // A named call written out of declaration order keeps its declaration-order binding; carriers map by slot either
+    // way.
+    let Some(arguments) = target.binding.slot_arguments() else {
         return;
     };
     let carriers = inputs

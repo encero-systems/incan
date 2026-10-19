@@ -3428,6 +3428,19 @@ impl ArgumentBinding {
         }
     }
 
+    /// Return the slot records of either resolved binding, one per surrounding argument operand in operand order.
+    ///
+    /// Both [`Self::Resolved`] and [`Self::ResolvedDeclarationOrder`] pair operand `i` with `arguments[i]`, so a
+    /// consumer that only maps declared slots to already evaluated operands reads them the same way. A consumer that
+    /// sequences evaluation or ownership must still match the variant. [`Self::UnresolvedPositional`] makes no slot
+    /// claim and yields `None`.
+    pub fn slot_arguments(&self) -> Option<&[BoundArgument]> {
+        match self {
+            Self::Resolved { arguments, .. } | Self::ResolvedDeclarationOrder { arguments, .. } => Some(arguments),
+            Self::UnresolvedPositional => None,
+        }
+    }
+
     /// Render the non-trivial parts of this binding as snapshot suffixes.
     ///
     /// Slot and written-order lists are each emitted only when they differ from the identity mapping, and defaults
