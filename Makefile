@@ -693,6 +693,9 @@ test-prewarm-oven-loafs: test-prewarm-sdk
 			--c-sysroot "$(INCAN_TEST_C_SYSROOT)" \
 			--format "$(INCAN_TEST_OVEN_BAKE_FORMAT)" $(if $(INCAN_TEST_OVEN_BAKE_REPORT),> "$(INCAN_TEST_OVEN_BAKE_REPORT)",)
 
+# The policy toolchain root mirrors an installed toolchain: `bin/` beside `stdlib/`. The ordinary route discovers its
+# compiler-bound support sources (core and derive) only at that fixed coordinate next to the executable, so the staged
+# root carries the checkout's tracked standard-library source tree there.
 .PHONY: test-prewarm-oven-release-loafs
 test-prewarm-oven-release-loafs: test-prewarm-sdk
 	@echo "\033[1mBaking or reusing the release standard-library Loaf family...\033[0m"
@@ -716,6 +719,9 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		policy_toolchain_root="$$policy_home/toolchain"; \
 		mkdir -p "$$policy_toolchain_root/bin"; \
 		sh "$(CURDIR)/scripts/stage_compiler_bundle.sh" "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$policy_toolchain_root/bin/incan"; \
+		mkdir -p "$$policy_toolchain_root/stdlib"; \
+		(cd "$(CURDIR)/loaves/stdlib" && git ls-files -z | tar --null -T - -cf -) | tar -C "$$policy_toolchain_root/stdlib" -xf -; \
+		test -f "$$policy_toolchain_root/stdlib/derive/incan_derive/loaf.toml"; \
 		test ! -e "$$policy_toolchain_root/share/incan/oven/loafs/envelope.json"; \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 			INCAN_HOME="$$policy_home" \
