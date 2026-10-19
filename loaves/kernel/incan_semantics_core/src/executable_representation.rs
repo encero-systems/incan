@@ -1198,7 +1198,7 @@ mod tests {
             trait_declarations: Vec::new(),
             trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module("lib"),
-            stdlib_delegations: Vec::new(),
+            loaf_callables: Vec::new(),
             public_exports: Vec::new(),
             native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
@@ -1611,6 +1611,7 @@ mod tests {
         variant.kind = SemanticSourceTargetKind::Variant;
         variant.namespace = SymbolNamespace::Member;
         let value = crate::body_ir::EnumDeclaration {
+            native_item: String::new(),
             native_type_arguments: Vec::new(),
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
             canonical: owner.clone(),

@@ -35,7 +35,7 @@ pub def display_functions(
                         DisplayFunction(owner=owner, callee=CalleeKind.Planned(function_name(module, body))),
                     )
                 mut native_display = false
-                for delegation in module.stdlib_delegations:
+                for delegation in module.loaf_callables:
                     if delegation.canonical != selected.clone():
                         continue
                     if len(delegation.type_parameters) != 0 or len(delegation.native_type_arguments) != 0:

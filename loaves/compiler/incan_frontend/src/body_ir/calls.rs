@@ -1660,7 +1660,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     name: method,
                     intrinsic_carrier: None,
                     reflection: None,
-                    sdk_trait: None,
+                    loaf_trait: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -2441,7 +2441,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             reflection: self.checked_reflection_operation(span),
             name: name.to_string(),
             intrinsic_carrier,
-            sdk_trait: None,
+            loaf_trait: None,
             // Checked provider and inferred targets precede retained source aliases and registry numeric helpers.
             canonical,
             type_args: resolved_type_args,

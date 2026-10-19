@@ -217,7 +217,7 @@ pub(super) fn append_registrations(
                     canonical: Some(identity.clone()),
                     intrinsic_carrier: None,
                     reflection: None,
-                    sdk_trait: None,
+                    loaf_trait: None,
                     native_trait_delegation: None,
                     type_args: Vec::new(),
                     binding: bir::ArgumentBinding::Resolved {

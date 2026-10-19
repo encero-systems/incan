@@ -139,7 +139,7 @@ from rust::incan_semantics_core::body_ir import (
     Statement as RustStatement,
     StatementKind as RustStatementKind,
     UnsafeAcknowledgment as RustUnsafeAcknowledgment,
-    StdlibDelegation as RustStdlibDelegation,
+    LoafCallable as RustLoafCallable,
     UnOp,
     PlaceElem,
     MethodTarget,
@@ -2947,7 +2947,7 @@ def lower_value_enum_ordinal(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Encode a source value enum through its retained raw getter and the SDK's proven scalar OrdinalKey implementation."""
-    match target.sdk_trait:
+    match target.loaf_trait:
         None => return Ok(false)
         Some(dispatch) =>
             if str(dispatch.native_item) != "incan_stdlib_data::collections::OrdinalKey::ordinal_bytes":
@@ -3006,7 +3006,7 @@ def lower_value_enum_ordinal_encoding(
 ) -> Result[bool, str]:
     """Retain legacy's source-module and ordered raw-value schema for an authenticated associated OrdinalKey call."""
     mut authenticated = false
-    for delegation in module.stdlib_delegations:
+    for callable in module.loaf_callables:
         if Some(delegation.canonical.clone()) == target.canonical:
             match delegation.rust_path():
                 Some(path) =>
@@ -3356,7 +3356,7 @@ def lower_method_call(
         None => pass
     # A source adopter resolves its checked slot through its own implementation or the published default. Its slot
     # cannot grant a native SDK trait implementation. SDK-owned receivers call their compiled crate methods.
-    for delegation in module.stdlib_delegations:
+    for callable in module.loaf_callables:
         if receiver_fills_source_slot(
             module,
             target,
@@ -3383,7 +3383,7 @@ def concrete_iterator_collect(
     span: SourceSpan,
 ) -> Result[MethodTarget, str]:
     """Resolve a builtin opaque-Iterator terminal only through its concrete SDK owner's unique retained default (#1698)."""
-    if len(arguments) != 1 or len(target.type_args) != 0 or target.sdk_trait != None or target.native_trait_delegation != None:
+    if len(arguments) != 1 or len(target.type_args) != 0 or target.loaf_trait != None or target.native_trait_delegation != None:
         return Err("unsupported Body IR opaque Iterator.collect call contract")
     mut owner = -1
     match argument_type(builder, arguments, 0, span)?:
@@ -3546,7 +3546,7 @@ def lower_sdk_element_method(
         Some(PlanType.Model(owner, _name)) =>
             if library_item(module.nominal_declarations[owner]) == "":
                 return Ok(false)
-            for delegation in module.stdlib_delegations:
+            for callable in module.loaf_callables:
                 if target.canonical == Some(delegation.canonical):
                     lower_library_method(module, builder, delegation, target, arguments, destination, span)?
                     return Ok(true)
@@ -3583,7 +3583,7 @@ def retain_sdk_factory_result(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Keep a selected SDK default's concrete result where its checked interface still uses a tuple iterator frame."""
-    if target.sdk_trait == None or body.canonical != target.canonical or not target.has_valid_native_trait_selection():
+    if target.loaf_trait == None or body.canonical != target.canonical or not target.has_valid_native_trait_selection():
         return Ok(None)
     match target.native_trait_delegation:
         None => return Ok(None)
@@ -3849,7 +3849,7 @@ def lower_global_method(
                         builder.unions,
                         builder.intrinsics,
                     ):
-                        for delegation in module.stdlib_delegations:
+                        for callable in module.loaf_callables:
                             if Some(delegation.canonical) == target.canonical:
                                 lower_static_sdk_method(
                                     module,
@@ -3872,7 +3872,7 @@ def lower_global_method(
 def lower_static_sdk_method(
     module: &BodyIrModule,
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     read: &RustPlaceOperand,
     global: &RustGlobalPlace,
@@ -3883,7 +3883,7 @@ def lower_static_sdk_method(
     """Call a checked SDK method under the actual static guard after evaluating its bound ordinary arguments."""
     if len(read.place.projection) != 0 or len(arguments) != len(delegation.parameters):
         return Err("unsupported Body IR SDK static method argument arity or projected receiver")
-    if target.sdk_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
+    if target.loaf_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
         return Err("unsupported Body IR SDK static method explicit trait or method binders")
     match target.binding:
         RustArgumentBinding.Resolved(arguments=bound, defaulted_slots=defaults) =>
@@ -4070,7 +4070,7 @@ def lower_static_method_body(
 def lower_library_method(
     module: &BodyIrModule,
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
@@ -4086,7 +4086,7 @@ def lower_library_method(
     An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
     The receiver closes owner placeholders, and the recorded native arguments select the exact compiled trait item.
     """
-    if len(target.type_args) != 0 and target.sdk_trait == None:
+    if len(target.type_args) != 0 and target.loaf_trait == None:
         return Err("unsupported Body IR type arguments on a stdlib method")
     if len(delegation.parameters) == 0 or len(arguments) == 0:
         return Err("unsupported Body IR stdlib method without a receiver")
@@ -4162,7 +4162,7 @@ def lower_library_method(
                 PlanType.Future(outputs) =>
                     if len(outputs) != 1:
                         return Err("unsupported Body IR SDK method future output arity")
-                    if target.sdk_trait != None:
+                    if target.loaf_trait != None:
                         return Err("unsupported Body IR SDK trait method future")
                     callee = CalleeKind.FutureMethod(path, type_arguments)
                     return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
@@ -4185,13 +4185,13 @@ def lower_library_method(
 def library_method_arguments(
     module: &BodyIrModule,
     builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     reference: Place,
     names: list[str],
 ) -> Result[list[RustType], str]:
     """Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders."""
-    match target.sdk_trait:
+    match target.loaf_trait:
         None => return library_receiver_arguments(module, builder, reference, names)
         Some(selected) =>
             if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
@@ -4222,7 +4222,7 @@ def library_method_arguments(
 
 def library_method_result(
     builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     destination: &Option[RustPlace],
     names: list[str],
@@ -4230,7 +4230,7 @@ def library_method_result(
     span: SourceSpan,
 ) -> Result[PlanType, str]:
     """Use the frontend-retained concrete SDK factory result, with native metadata still checking the exact return carrier."""
-    if target.sdk_trait != None:
+    if target.loaf_trait != None:
         match destination:
             Some(place) => return Ok(place_type(builder.locals, scalar_place(builder, place, span)?))
             None => pass
@@ -4432,7 +4432,7 @@ def lower_named_target(
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>
             match program_body_index(module, target):
-                None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
+                None => return lower_loaf_call(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
                     if len(body.type_parameters) != 0:
@@ -4760,7 +4760,7 @@ def callable_argument(
 # =====================================================================================================================
 
 
-def lower_stdlib_delegation(
+def lower_loaf_call(
     module: &BodyIrModule,
     mut builder: Builder,
     target: &RustNamedCallableTarget,
@@ -4769,29 +4769,27 @@ def lower_stdlib_delegation(
     span: SourceSpan,
 ) -> Result[None, str]:
     """
-    Call the native item an imported stdlib function runs as.
+    Call the compiled item of a function a linked Loaf declares (DD-0007).
 
-    A forwarder the frontend proved transparent, whose only statement returns one Rust call with every parameter passed
-    through in order, calls that Rust function directly. Any other stdlib function calls the item its SDK crate
-    compiled. Either is the call the legacy route makes, selected by the checker's canonical identity and native path,
-    never by a spelling, and the driver checks its signature against the crate's metadata.
+    The callable is selected by the checker's canonical identity, never by a spelling, and its declaration record
+    supplies the signature the driver checks against the Loaf's metadata.
     """
     match target.direct_call_id:
-        Some(_identity) => return Err("Body IR imported delegation has a local call identity")
+        Some(_identity) => return Err("Body IR Loaf call has a local call identity")
         None => pass
-    for delegation in module.stdlib_delegations:
+    for callable in module.loaf_callables:
         match target.canonical:
-            None => return Err("unsupported Body IR unproven stdlib call target")
+            None => return Err("unsupported Body IR unproven Loaf call target")
             Some(identity) =>
-                if identity != delegation.canonical:
+                if identity != callable.canonical:
                     continue
-        return lower_delegated_call(builder, delegation, target, arguments, destination, span)
+        return lower_delegated_call(builder, callable, target, arguments, destination, span)
     return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}")
 
 
 def lower_delegated_call(
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &RustNamedCallableTarget,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
@@ -4872,7 +4870,7 @@ def lower_delegated_call(
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
 
 
-def testing_comparison_path(delegation: &RustStdlibDelegation, published_path: str) -> Result[str, str]:
+def testing_comparison_path(delegation: &RustLoafCallable, published_path: str) -> Result[str, str]:
     """Select language assertion semantics only from the standard package slot and its exact published native symbol."""
     identity = delegation.canonical
     if identity.kind != SemanticSourceTargetKind.Function:
@@ -4931,7 +4929,7 @@ def library_function_arguments(
 
 def library_call_operands(
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     binding: &RustArgumentBinding,
     arguments: &list[RustArgumentElement],
     types: list[PlanType],

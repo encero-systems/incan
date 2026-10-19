@@ -34,7 +34,7 @@ from layout_types import native_source_type as retained_source_type
 pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
     """Retain each union shape once across checked frame and declaration types."""
     mut unions: list[RustType] = []
-    for delegation in module.stdlib_delegations:
+    for delegation in module.loaf_callables:
         if len(delegation.type_parameters) != 0:
             continue
         for parameter in delegation.parameters:

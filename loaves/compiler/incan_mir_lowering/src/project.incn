@@ -21,7 +21,7 @@ pub def project_context(
     context.trait_implementations.clear()
     context.static_declarations.clear()
     context.decorated_bindings.clear()
-    context.stdlib_delegations.clear()
+    context.loaf_callables.clear()
     context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
     for module in qualified:
@@ -61,9 +61,9 @@ pub def project_context(
             context.static_declarations.push(declaration.clone())
         for index in range(len(module.decorated_bindings)):
             context.decorated_bindings.push(module.decorated_bindings[index].clone())
-        for index in range(len(module.stdlib_delegations)):
-            declaration = module.stdlib_delegations[index].clone()
-            context.stdlib_delegations.push(declaration.clone())
+        for index in range(len(module.loaf_callables)):
+            declaration = module.loaf_callables[index].clone()
+            context.loaf_callables.push(declaration.clone())
         for index in range(len(module.native_union_declarations)):
             declaration = module.native_union_declarations[index].clone()
             context.native_union_declarations.push(declaration.clone())

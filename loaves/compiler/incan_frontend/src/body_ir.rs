@@ -305,7 +305,7 @@ pub fn build_body_ir_module(
             &enum_declarations,
         ),
         enum_declarations,
-        stdlib_delegations: Vec::new(),
+        loaf_callables: Vec::new(),
         public_exports: public_exports::collect(program, type_info),
         native_union_declarations: Vec::new(),
         static_declarations,

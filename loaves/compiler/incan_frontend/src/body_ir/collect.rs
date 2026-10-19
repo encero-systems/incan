@@ -447,6 +447,7 @@ pub(super) fn collect_local_enum_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::EnumDeclaration {
+                native_item: String::new(),
                 native_type_arguments: Vec::new(),
                 direct_declaration_id: CompilerNodeId::declaration_span(
                     module_identity,

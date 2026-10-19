@@ -136,7 +136,8 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
         .map(|module| module.module_id.path().to_owned())
         .collect::<Vec<_>>();
     let mut sources = vec![String::new(); bodies.len()];
-    let entry = entry + bodies.len();
+    let loaf_modules = bodies.len();
+    let entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
     let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
@@ -161,8 +162,39 @@ fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
+    // ---- Loaf declarations: named, not compiled here (DD-0007) ----
+    // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program calls
+    // the Loaf's compiled item. A governed body, one with type parameters, stays and is instantiated where it is called.
+    let mut loaf_callables = Vec::new();
+    for module in bodies.iter_mut().take(loaf_modules) {
+        for declaration in &mut module.nominal_declarations {
+            if declaration.native_item.is_empty()
+                && let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical, &declaration.name)
+            {
+                declaration.native_item = item;
+            }
+        }
+        for declaration in &mut module.enum_declarations {
+            if let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical, &declaration.name) {
+                declaration.native_item = item;
+            }
+        }
+        module.bodies.retain(|body| {
+            if !body.type_parameters.is_empty() {
+                return true;
+            }
+            match incan_semantics_core::body_ir::LoafCallable::from_body(body) {
+                Some(callable) => {
+                    loaf_callables.push(callable);
+                    false
+                }
+                None => true,
+            }
+        });
+    }
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
     entry_module.string_conversion_contract = string_conversion_contract;
+    entry_module.loaf_callables = loaf_callables;
     Ok(CheckedProgram {
         modules: bodies,
         sources,

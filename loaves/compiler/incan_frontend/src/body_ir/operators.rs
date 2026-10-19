@@ -306,7 +306,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             name: method.to_string(),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: None,
+            loaf_trait: None,
             canonical: self
                 .type_info
                 .resolved_identity(span)

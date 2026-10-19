@@ -44,7 +44,7 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
 
 /// Retain the public native members of SDK task carriers found in this module's checked types.
 /// Storage stays opaque; every call still requires the adapter to verify this contract against linked native metadata.
-pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
+pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
     collect(facts)
         .iter()
         .flat_map(|declaration| {
@@ -90,7 +90,7 @@ pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> boo
 
 /// Bind only a registry-owned SDK task receiver to its published native method signature.
 /// These contracts mirror task.rs; they grant no source field access or equal-spelled source/foreign method behavior.
-pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) -> Option<bir::StdlibDelegation> {
+pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) -> Option<bir::LoafCallable> {
     let (owner, template, parameters) = match receiver {
         IncanType::Named(owner)
             if surface_types::from_str(owner) == Some(surface_types::SurfaceTypeId::TaskJoinError) =>
@@ -145,7 +145,7 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         scope_discriminant: None,
         declaration_span: HirSourceSpan::new(0, 0),
     };
-    Some(bir::StdlibDelegation {
+    Some(bir::LoafCallable {
         canonical,
         target,
         parameters: vec![IncanType::Ref(Box::new(template))],

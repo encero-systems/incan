@@ -81,10 +81,10 @@ pub struct BodyIrModule {
     /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
     #[serde(default)]
     pub enum_declarations: Vec<EnumDeclaration>,
-    /// Checked stdlib wrappers that forward every parameter unchanged to a Rust function. Other imported
-    /// implementations are absent and must refuse.
+    /// The callables of the linked Loaves this module calls, as their declaration records state them (DD-0007).
+    /// A call of one names the Loaf's compiled item.
     #[serde(default)]
-    pub stdlib_delegations: Vec<StdlibDelegation>,
+    pub loaf_callables: Vec<LoafCallable>,
     /// Names this module re-exports with `pub from ... import`, each bound to the declaration it names. A library unit
     /// publishes its entry module's re-exports under these names; its own declarations keep their source names.
     #[serde(default)]
@@ -294,37 +294,74 @@ pub struct PublicExport {
     pub target: CanonicalSymbolId,
 }
 
-/// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
+/// A callable a linked Loaf declares, as its declaration record states it (DD-0007). A consumer calls the Loaf's
+/// compiled item; the driver checks the signature recorded here against the rlib's metadata.
 ///
 /// Every field is encoded, including empty vectors, because the executable representation uses positional records.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StdlibDelegation {
-    /// Exact source declaration identity selected by checking, independent of the caller's spelling.
+pub struct LoafCallable {
+    /// Exact declaration identity selected by checking, independent of the caller's spelling.
     pub canonical: CanonicalSymbolId,
-    /// Checked Rust item selected by the wrapper call; consumers must validate its callable signature against native
-    /// metadata and must not recover its path from the source callable's name.
-    pub target: CanonicalSymbolId,
+    /// The compiled item path, `<crate>::<module path>::<item>`, which the declaration's identity encodes.
+    pub item: String,
     /// Declaration-order parameter types; argument binding still belongs to the call site.
     pub parameters: Vec<IncanType>,
-    /// The declared wrapper result type, verified against native metadata before execution.
+    /// The declared result type, verified against native metadata before execution.
     pub return_type: IncanType,
     /// The callee's own type parameters in declaration order, which `parameters` and `return_type` name. A call
     /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
     #[serde(default)]
     pub type_parameters: Vec<String>,
-    /// Declaration-owned native instantiation for an explicit SDK trait implementation, Self first and then the
-    /// trait's arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the
-    /// existing function or owner-binder instantiation; consumers must not reconstruct these arguments from names.
+    /// Declaration-owned native instantiation for an explicit trait implementation, Self first and then the trait's
+    /// arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the function or
+    /// owner-binder instantiation; consumers must not reconstruct these arguments from names.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
     /// [`CallableParamDefault::Source`] computation without statements whose result is the constant the call passes,
-    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant. A record listing none admits no
-    /// omitted argument.
+    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant.
     #[serde(default)]
     pub parameter_defaults: Vec<CallableParamDefault>,
+}
+
+/// The compiled item a linked Loaf declares `canonical` as, `<crate>::<module path>::<item>` (DD-0007): `None` for
+/// an identity no Loaf declares.
+pub fn loaf_item_path(canonical: &CanonicalSymbolId, item: &str) -> Option<String> {
+    let crate::SymbolOrigin::Package { library, module_path } = &canonical.origin else {
+        return None;
+    };
+    Some(
+        std::iter::once(library.as_str())
+            .chain(module_path.iter().map(String::as_str))
+            .chain(std::iter::once(item))
+            .collect::<Vec<_>>()
+            .join("::"),
+    )
+}
+
+impl LoafCallable {
+    /// The declaration record of a Loaf's callable body: its parameters, result, type parameters and defaults, and the
+    /// compiled item its package identity names. `None` for a body no Loaf declares.
+    pub fn from_body(body: &Body) -> Option<Self> {
+        let canonical = body.canonical.clone()?;
+        let item = loaf_item_path(&canonical, &crate::encode_incan_symbol_identity(&canonical))?;
+        Some(Self {
+            item,
+            parameters: body.params.iter().map(|param| param.ty.clone()).collect(),
+            return_type: body.return_type.clone(),
+            type_parameters: body.type_parameters.clone(),
+            native_type_arguments: Vec::new(),
+            parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
+            canonical,
+        })
+    }
+
+    /// The compiled item a call of this callable names.
+    pub fn rust_path(&self) -> Option<String> {
+        Some(self.item.clone())
+    }
 }
 
 impl PublicExport {
@@ -332,24 +369,6 @@ impl PublicExport {
     pub fn rust_path(&self) -> Option<String> {
         match &self.target.origin {
             crate::SymbolOrigin::RustCrate(path) => Some(path.join("::")),
-            _ => None,
-        }
-    }
-}
-
-impl StdlibDelegation {
-    /// Materialize only a checker-proven Rust call target path, never a source-module identity. An unresolved
-    /// `RustItem` still requires native metadata validation before execution.
-    pub fn rust_path(&self) -> Option<String> {
-        match &self.target.origin {
-            crate::SymbolOrigin::RustCrate(path)
-                if matches!(
-                    self.target.kind,
-                    crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::RustItem
-                ) =>
-            {
-                Some(path.join("::"))
-            }
             _ => None,
         }
     }
@@ -508,8 +527,9 @@ pub struct NominalDeclaration {
     /// Checked explicit and derive-expanded adoptions; an absent older fact grants no native trait authority.
     #[serde(default)]
     pub trait_adoptions: Vec<TraitAdoption>,
-    /// Exact foreign runtime item selected by the direct-route bridge. Empty keeps the ordinary source or SDK
-    /// declaration; consumers validate a nonempty item against its retained canonical owner before linking it.
+    /// The compiled item that owns this layout: a linked Loaf's item (DD-0007) or a foreign runtime item the direct-route
+    /// bridge selects. Empty for a layout this compilation declares; consumers validate a nonempty item against its
+    /// retained canonical owner before linking it.
     #[serde(default)]
     pub native_item: String,
     /// Checked local class parent and nearest source method implementations; absent for noninherited carriers.
@@ -891,6 +911,9 @@ pub struct FieldlessEnumDeclaration {
 /// Canonical payload layout of a checked source or SDK enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
+    /// The compiled item a linked Loaf declares this enum as (DD-0007); empty for an enum this compilation declares.
+    #[serde(default)]
+    pub native_item: String,
     /// Exact source-local declaration identity derived from the enum's span.
     pub direct_declaration_id: CompilerNodeId,
     /// Exact checker identity of the enum owner.
@@ -3755,10 +3778,10 @@ pub struct MethodTarget {
     /// Source methods and older publications carry None, so a spelling alone never grants reflection behavior.
     #[serde(default)]
     pub reflection: Option<ReflectionOperation>,
-    /// Exact SDK trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
-    /// Older publications and calls without checked trait dispatch retain None and grant no generic SDK dispatch.
+    /// Exact Loaf trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
+    /// Calls without checked trait dispatch into a Loaf retain None.
     #[serde(default)]
-    pub sdk_trait: Option<StdlibTraitCall>,
+    pub loaf_trait: Option<LoafTraitCall>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -3767,12 +3790,12 @@ pub struct MethodTarget {
     /// Resolved explicit call-site type arguments, in declared type-parameter order. Empty when the call site wrote
     /// none.
     pub type_args: Vec<IncanType>,
-    /// SDK trait item and native instantiation selected at this exact checked call site. Declaration records alone
+    /// Loaf trait item and native instantiation selected at this exact checked call site. Declaration records alone
     /// cannot distinguish two calls of one generic trait slot. A source implementation keeps dispatch priority;
     /// consumers validate the entire recorded native signature before using this selection. Boxed so ordinary method
     /// calls do not reserve the full native signature when no delegation is selected.
     #[serde(default)]
-    pub native_trait_delegation: Option<Box<StdlibDelegation>>,
+    pub native_trait_delegation: Option<Box<LoafCallable>>,
     /// Resolved binding of the surrounding call's arguments *after* the receiver to this method's declared
     /// parameters.
     pub binding: ArgumentBinding,
@@ -3804,7 +3827,7 @@ impl MethodTarget {
             name: name.into(),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: None,
+            loaf_trait: None,
             canonical: None,
             type_args: Vec::new(),
             native_trait_delegation: None,
@@ -3823,12 +3846,12 @@ impl MethodTarget {
     }
 }
 
-/// A checked SDK trait slot, separate from the method's own type arguments and the concrete receiver frame.
+/// A checked trait slot a Loaf declares, separate from the method's own type arguments and the concrete receiver frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StdlibTraitCall {
-    /// Declaring SDK trait identity, authenticated against the exact method declaration.
+pub struct LoafTraitCall {
+    /// Declaring trait identity, authenticated against the exact method declaration.
     pub trait_identity: CanonicalSymbolId,
-    /// Compiled SDK item path for that declaration, never inferred by the lowering from a method spelling.
+    /// Compiled Loaf item path for that declaration, never inferred by the lowering from a method spelling.
     pub native_item: String,
     /// Checked trait instantiation in declaration order; Self comes from the concrete nominal frame or checked scalar
     /// receiver.
@@ -5587,7 +5610,7 @@ mod tests {
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
-            stdlib_delegations: Vec::new(),
+            loaf_callables: Vec::new(),
             public_exports: Vec::new(),
             native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
