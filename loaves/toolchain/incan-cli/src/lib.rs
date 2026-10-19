@@ -53,7 +53,7 @@ use commands::provider_inspect::ProviderInspectionFormat;
 use commands::representation_inspect::RepresentationInspectionFormat;
 use commands::workspace::WorkspaceInspectFormat;
 use incan_driver::build_report::{BuildReportFormat, BuildReportOptions};
-use incan_driver::cargo_policy::{CargoPolicy, CargoPolicyCliFlags};
+use incan_driver::lock::policy::{LockPolicy, LockPolicyCliFlags};
 use incan_provider::FeatureSelection;
 use incan_provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
 use oven_cli::workspace_scope::{
@@ -68,7 +68,7 @@ use oven_model::workspace::WorkspaceMember;
 
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
 pub use oven_cli::cli::{
-    LockArgs, OvenCommand, OvenInteropAdapterArgument, OvenInteropCommand, OvenLegacyCargoCommand,
+    LockArgs, OvenCommand, OvenInteropAdapterArgument, OvenInteropCommand,
     OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
     PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
 };
@@ -145,9 +145,6 @@ pub enum Command {
         /// Select Incan package features for this compilation
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this compilation
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
         /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
@@ -166,21 +163,6 @@ pub enum Command {
         /// Disable INCAN_FROZEN for this invocation
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo argument surface; normal Oven commands reject it
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-        cargo_args: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-        cargo_features: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-no-default-features", hide = true)]
-        cargo_no_default_features: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-all-features", hide = true)]
-        cargo_all_features: bool,
-        /// Retired generated-Cargo target override; normal Oven commands reject it
-        #[arg(long = "generated-cargo-target-dir", value_name = "PATH", hide = true)]
-        generated_cargo_target_dir: Option<PathBuf>,
         /// Explicitly request the release build profile. This is the default for `incan build` and exists for
         /// first-contact command symmetry.
         #[arg(long)]
@@ -197,9 +179,6 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path; may be repeated
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
     },
 
     /// Type check a file or project entrypoint
@@ -249,9 +228,6 @@ pub enum Command {
         /// Select Incan package features for this compilation
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Select a non-persistent SDK profile for this compilation
-        #[command(flatten)]
-        sdk_profile: SdkProfileCliFlags,
         /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
@@ -270,18 +246,6 @@ pub enum Command {
         /// Disable INCAN_FROZEN for this invocation
         #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
         no_frozen: bool,
-        /// Retired Cargo argument surface; normal Oven commands reject it
-        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-        cargo_args: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-        cargo_features: Vec<String>,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-no-default-features", hide = true)]
-        cargo_no_default_features: bool,
-        /// Retired Cargo feature surface; normal Oven commands reject it
-        #[arg(long = "cargo-all-features", hide = true)]
-        cargo_all_features: bool,
         /// Build and run with the optimized Oven release profile
         #[arg(long)]
         release: bool,
@@ -682,49 +646,33 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             lib_mode,
             output_dir,
             package_features,
-            sdk_profile,
             locked,
             offline,
             no_offline,
             frozen,
             no_frozen,
             no_locked,
-            cargo_args,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-            generated_cargo_target_dir,
             release,
             report,
             report_output,
             workspace,
             members,
-            cargo_passthrough,
         }) => execute_build(
             BuildCommandRequest {
                 file,
                 lib_mode,
                 output_dir: output_dir.map(|path| path.to_string_lossy().to_string()),
                 options: incan_driver::build::BuildCommandOptions {
-                    executable_profile: incan_driver::backend::project::RunProfile::Release,
-                    cargo_policy: CargoPolicy::from_cli_and_env(
-                        CargoPolicyCliFlags {
-                            offline,
-                            no_offline,
-                            locked,
-                            no_locked,
-                            frozen,
-                            no_frozen,
-                        },
-                        cargo_args,
-                        cargo_passthrough,
-                    ),
+                    executable_profile: incan_driver::build::RunProfile::Release,
+                    lock_policy: LockPolicy::from_cli_and_env(LockPolicyCliFlags {
+                        offline,
+                        no_offline,
+                        locked,
+                        no_locked,
+                        frozen,
+                        no_frozen,
+                    }),
                     package_features: package_features.into(),
-                    sdk_profile: sdk_profile.sdk_profile,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    generated_cargo_target_dir,
                 },
                 report_options: BuildReportOptions {
                     format: report,
@@ -817,17 +765,12 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             file,
             command,
             package_features,
-            sdk_profile,
             locked,
             offline,
             no_offline,
             frozen,
             no_frozen,
             no_locked,
-            cargo_args,
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
             release,
             workspace,
             members,
@@ -835,23 +778,15 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         }) => execute_workspace_run(
             RunInput { file, code: command },
             RunOptions {
-                cargo_policy: CargoPolicy::from_cli_and_env(
-                    CargoPolicyCliFlags {
-                        offline,
-                        no_offline,
-                        locked,
-                        no_locked,
-                        frozen,
-                        no_frozen,
-                    },
-                    cargo_args,
-                    Vec::new(),
-                ),
+                lock_policy: LockPolicy::from_cli_and_env(LockPolicyCliFlags {
+                    offline,
+                    no_offline,
+                    locked,
+                    no_locked,
+                    frozen,
+                    no_frozen,
+                }),
                 package_features: package_features.into(),
-                sdk_profile: sdk_profile.sdk_profile,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
                 release,
                 program_args,
             },
@@ -1559,12 +1494,8 @@ struct RunInput {
 }
 
 struct RunOptions {
-    cargo_policy: CargoPolicy,
+    lock_policy: LockPolicy,
     package_features: FeatureSelection,
-    sdk_profile: Option<String>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     release: bool,
     program_args: Vec<String>,
 }
@@ -1665,12 +1596,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         }
         commands::run_inline_source(
             &code,
-            opts.cargo_policy.clone(),
+            opts.lock_policy.clone(),
             opts.package_features.clone(),
-            opts.sdk_profile.clone(),
-            opts.cargo_features.clone(),
-            opts.cargo_no_default_features,
-            opts.cargo_all_features,
             opts.release,
             opts.program_args,
         )
@@ -1679,12 +1606,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         let file = resolve_run_entry_file(input.file)?;
         commands::run_file(
             &file.to_string_lossy(),
-            opts.cargo_policy,
+            opts.lock_policy,
             opts.package_features,
-            opts.sdk_profile,
-            opts.cargo_features,
-            opts.cargo_no_default_features,
-            opts.cargo_all_features,
             opts.release,
             opts.program_args,
         )

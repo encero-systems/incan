@@ -187,7 +187,7 @@ pub fn env_run(
         print_run_preview(&preview)?;
         return Ok(ExitCode::SUCCESS);
     }
-    incan_driver::cargo_policy::enforce_toolchain_constraints(&preview.resolved_env.requires_incan)?;
+    incan_driver::project::enforce_toolchain_constraints(&preview.resolved_env.requires_incan)?;
     reject_recursive_env_run(&preview)?;
 
     let Some((program, args)) = preview.argv.split_first() else {

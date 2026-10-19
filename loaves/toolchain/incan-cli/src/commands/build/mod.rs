@@ -1,46 +1,23 @@
 //! Build and run pipeline for Incan projects.
 //!
-//! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
-//! resolution, project generation, and receipt-bound direct-`rustc` Oven execution.
+//! `incan build` and `incan run` submit executable builds to the shared project owner, which reuses a completed
+//! Oven output or builds through the direct route; `incan run` then executes the binary the build reports. Library
+//! builds return as direct-route library units.
 
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
-use std::{env, fs};
 
-use crate::commands::build_report::{emit_build_report, emit_workspace_build_report};
+use crate::commands::build_report::emit_workspace_build_report;
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::backend::selection::{default_backend_receipt_path, write_backend_receipt};
-use incan_driver::build::bake::{
-    bake_oven_library, bake_oven_project, publish_configured_ordinary_library, publish_ordinary_project_output,
-};
 use incan_driver::build::inline_command::{inline_command_project, wrap_inline_command_source};
-use incan_driver::build::library_exports::resolve_library_project_root;
-use incan_driver::build::library_outputs::{
-    library_output_path, library_publication_receipts, write_library_manifest_artifacts,
-};
-use incan_driver::build::library_project::prepare_library_project;
-use incan_driver::build::output_materialization::{
-    completed_library_output_report, completed_output_default_backend_receipt, materialize_completed_library_outputs,
-    materialize_project_output, select_default_library_project_outputs, select_default_project_output,
-    verify_stored_project_output_native, warn_for_completed_output_lock_fingerprint_drift,
-};
-use incan_driver::build::output_paths::{normalized_project_entrypoint, project_root_for_completed_output};
-use incan_driver::build::oven_project::prepare_oven_project;
-use incan_driver::build::plan_authority::explicit_bake_profiles;
 use incan_driver::build::rust_extern::{RustExternBuildFailureKind, RustExternDeclContext};
-use incan_driver::build::{
-    BuildCommandOptions, CompletedOutputPolicy, OvenBakeProjectTarget, OvenPreparedProject, OvenProjectPlanMode,
-    elapsed_ms, library_publication,
-};
-use incan_driver::build_report::{BuildReportMode, BuildReportOptions, artifact_report};
-use incan_driver::cargo_policy::CargoPolicy;
-use incan_driver::cargo_policy::reject_normal_cargo_controls;
-use incan_driver::project::resolve_project_root;
+use incan_driver::build::{BuildCommandOptions, RunProfile};
+use incan_driver::build_report::BuildReportOptions;
+use incan_driver::lock::policy::LockPolicy;
 use incan_frontend::diagnostics;
 use incan_provider::FeatureSelection;
-use incan_provider::requirements::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
 use oven_rustc::rustc::clear_inherited_cargo_environment;
 
 /// Print human build progress to stderr when stdout is reserved for a machine-readable report.
@@ -50,28 +27,6 @@ fn print_build_progress(report_options: &BuildReportOptions, message: impl AsRef
     } else {
         println!("{}", message.as_ref());
     }
-}
-
-/// Capture the default project's publication inputs before frontend work for ordinary build and run.
-///
-/// Both commands publish through the same completed-output Loaf boundary. Non-default feature/provider selections
-/// and standalone sources retain their existing preparation behavior until that boundary represents their inputs.
-fn ordinary_project_output_authority(
-    file_path: &str,
-    package_features: &FeatureSelection,
-    sdk_profile: Option<&str>,
-) -> CliResult<Option<(String, String)>> {
-    if package_features != &FeatureSelection::default() || sdk_profile.is_some() {
-        return Ok(None);
-    }
-    project_root_for_completed_output(&normalized_project_entrypoint(file_path)?)?
-        .map(|root| {
-            Ok((
-                incan_driver::build::source_authority::digest_baked_project_source_authority(&root)?,
-                incan_driver::build::source_authority::ordinary_preparation_identity_digest()?,
-            ))
-        })
-        .transpose()
 }
 
 #[allow(dead_code)]
@@ -150,15 +105,14 @@ fn format_rust_extern_wrapped_diagnostics(stderr: &str, contexts: &[RustExternDe
     if rendered.is_empty() { None } else { Some(rendered) }
 }
 
-/// Build an Incan file to a Rust project.
+
+/// Build an Incan file to a native executable.
 pub fn build_file(
     file_path: &str,
     output_dir: Option<&String>,
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
-    reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-    incan_driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     let report = build_file_report(file_path, output_dir, options, &report_options)?;
     emit_workspace_build_report(&report, &report_options)?;
     Ok(ExitCode::SUCCESS)
@@ -176,215 +130,27 @@ pub(crate) fn build_file_report(
     })
 }
 
-/// Validate RFC 031 library-mode preconditions.
+/// Refuse `incan build --lib` until libraries build as direct-route library units.
 pub fn build_library(
     file_path: Option<&str>,
     output_dir: Option<&String>,
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
-    let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    if !artifact_only {
-        // A nested dependency-library build is not the user's project, so it does not repeat the warning for a
-        // directory they did not invoke a command in. Without an explicit entry file the library root is the
-        // working directory, which is where `incan build --lib` was run.
-        let library_root = match file_path {
-            Some(path) => resolve_project_root(Path::new(path)),
-            None => PathBuf::from("."),
-        };
-        incan_driver::project::warn_once_about_ignored_cargo_manifest(&library_root);
-    }
-    if !artifact_only {
-        reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-        let completed_output_policy = CompletedOutputPolicy {
-            cargo_policy: &options.cargo_policy,
-            package_features: &options.package_features,
-            sdk_profile: options.sdk_profile.as_deref(),
-            cargo_features: &options.cargo_features,
-            cargo_no_default_features: options.cargo_no_default_features,
-            cargo_all_features: options.cargo_all_features,
-        };
-        if output_dir.is_none()
-            && !report_options.enabled()
-            && let Some(outputs) = select_default_library_project_outputs(file_path, &completed_output_policy)?
-        {
-            let project_root = resolve_library_project_root(file_path)?;
-            warn_for_completed_output_lock_fingerprint_drift(&project_root, outputs.iter())?;
-            // Prefer the release output's backend receipt, but accept the profile this project actually baked.
-            // A bake narrowed by `explicit_bake_profiles` has no release output to find, and the default backend
-            // receipt records the selected plan rather than anything profile-specific.
-            let backend_receipt = outputs
-                .iter()
-                .find(|output| output.profile == "release")
-                .or_else(|| outputs.first())
-                .and_then(completed_output_default_backend_receipt)
-                .ok_or_else(|| CliError::failure("completed Oven library output has no verified backend receipt"))?;
-            for selected in outputs {
-                materialize_project_output(&project_root, &selected)?;
-                println!(
-                    "✓ Oven library build reused sealed project Loaf: {}",
-                    selected.native_output.display()
-                );
-            }
-            write_backend_receipt(&backend_receipt, &default_backend_receipt_path(&project_root))?;
-            return Ok(ExitCode::SUCCESS);
-        }
-    }
-    let report = build_library_report(file_path, output_dir, options, &report_options)?;
-    emit_build_report(&report, &report_options)?;
-    Ok(ExitCode::SUCCESS)
+    build_library_report(file_path, output_dir, options, &report_options).map(|_| ExitCode::SUCCESS)
 }
 
-/// Build one library project and retain its completed report for workspace-level aggregation.
+/// Build one library project for workspace-level aggregation; refused until direct-route library units exist.
 pub(crate) fn build_library_report(
     file_path: Option<&str>,
-    output_dir: Option<&String>,
-    options: BuildCommandOptions,
-    report_options: &BuildReportOptions,
+    _output_dir: Option<&String>,
+    _options: BuildCommandOptions,
+    _report_options: &BuildReportOptions,
 ) -> CliResult<incan_driver::build_report::BuildReport> {
-    let total_start = Instant::now();
-    let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
-    if !artifact_only {
-        reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
-        let completed_output_policy = CompletedOutputPolicy {
-            cargo_policy: &options.cargo_policy,
-            package_features: &options.package_features,
-            sdk_profile: options.sdk_profile.as_deref(),
-            cargo_features: &options.cargo_features,
-            cargo_no_default_features: options.cargo_no_default_features,
-            cargo_all_features: options.cargo_all_features,
-        };
-        let mut completed = if output_dir.is_none() {
-            select_default_library_project_outputs(file_path, &completed_output_policy)?
-        } else {
-            None
-        };
-        let prepared_ordinary = completed.is_none()
-            && output_dir.is_none()
-            && options.cargo_features.is_empty()
-            && !options.cargo_no_default_features
-            && !options.cargo_all_features
-            && options.sdk_profile.is_none()
-            && publish_configured_ordinary_library(
-                &resolve_library_project_root(file_path)?,
-                &options.package_features,
-            )?;
-        if prepared_ordinary {
-            completed = Some(
-                select_default_library_project_outputs(file_path, &completed_output_policy)?.ok_or_else(|| {
-                    CliError::failure("ordinary library publication did not produce current completed outputs")
-                })?,
-            );
-        }
-        if let Some(outputs) = completed {
-            let project_root = resolve_library_project_root(file_path)?;
-            warn_for_completed_output_lock_fingerprint_drift(&project_root, outputs.iter())?;
-            // Prefer the release output's backend receipt, but accept the profile this project actually baked.
-            // A bake narrowed by `explicit_bake_profiles` has no release output to find, and the default backend
-            // receipt records the selected plan rather than anything profile-specific.
-            let backend_receipt = outputs
-                .iter()
-                .find(|output| output.profile == "release")
-                .or_else(|| outputs.first())
-                .and_then(completed_output_default_backend_receipt)
-                .ok_or_else(|| CliError::failure("completed Oven library output has no verified backend receipt"))?;
-            return materialize_completed_library_outputs(&project_root, &outputs, &backend_receipt, || {
-                let mut report = completed_library_output_report(&project_root, &outputs, total_start)?;
-                if prepared_ordinary {
-                    if let Some(elapsed) = report.timings_ms.remove("completed_project_output_reuse") {
-                        report
-                            .timings_ms
-                            .insert("ordinary_library_preparation".to_string(), elapsed);
-                    }
-                    report.notes = vec![
-                        "Prepared an ordinary library Loaf; source and dependency details are retained in its checked metadata."
-                            .to_string(),
-                    ];
-                }
-                Ok(report)
-            });
-        }
-    }
-    let project_root = resolve_library_project_root(file_path)?;
-    let publication = library_publication::LibraryPublication::begin(
-        &project_root,
-        &library_output_path(&project_root, output_dir.map(String::as_str))?,
-        library_publication_receipts(&project_root)?,
-    )?;
-    let result = (|| {
-        let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
-        let mut prepared = prepare_library_project(
-            file_path,
-            output_dir.map(String::as_str),
-            options.cargo_policy,
-            &options.package_features,
-            options.sdk_profile.as_deref(),
-            options.cargo_features,
-            options.cargo_no_default_features,
-            options.cargo_all_features,
-            generated_cargo_target_dir.as_deref(),
-            !artifact_only,
-            !artifact_only,
-            OvenProjectPlanMode::ConsumeOnly,
-            None,
-        )?;
-
-        if artifact_only {
-            write_library_manifest_artifacts(&mut prepared)?;
-            print_build_progress(report_options, "✓ Library dependency artifact prepared!");
-            print_build_progress(
-                report_options,
-                format!("Generated manifest: {}", prepared.manifest_path.display()),
-            );
-            let mut timings_ms = prepared.timings_ms.clone();
-            timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-            let report = prepared.report.finish(timings_ms);
-            return Ok(report);
-        }
-
-        if prepared.oven.is_some() {
-            let oven_build_start = Instant::now();
-            let oven = prepared.oven.as_ref().ok_or_else(|| {
-                CliError::failure("normal Oven library build lost its prepared direct-rustc selection")
-            })?;
-            let mut bakes = Vec::new();
-            for profile in explicit_bake_profiles() {
-                bakes.push((profile, bake_oven_library(&prepared, oven, profile, None)?));
-            }
-            // The manifest selects this build's immutable semantic content only after every native profile succeeds.
-            write_library_manifest_artifacts(&mut prepared)?;
-            let oven_build_ms = elapsed_ms(oven_build_start);
-            print_build_progress(report_options, "✓ Oven library build successful!");
-            for (profile, bake) in &bakes {
-                print_build_progress(report_options, format!("{profile} library: {}", bake.output.display()));
-            }
-            print_build_progress(
-                report_options,
-                format!("Generated manifest: {}", prepared.manifest_path.display()),
-            );
-            let mut report_draft = prepared.report.clone();
-            for (profile, bake) in &bakes {
-                report_draft
-                    .artifacts
-                    .push(artifact_report(format!("rust_library_{profile}"), &bake.output));
-            }
-            // Published only now that the whole build — codegen, Oven plan selection, and both
-            // debug/release rustc bakes above — has actually succeeded (#986); `prepare_library_project`
-            // itself never persists this (see the matching comment there).
-            if let Some(backend_receipt) = report_draft.backend.as_ref() {
-                write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
-            }
-            let mut timings_ms = prepared.timings_ms.clone();
-            timings_ms.insert("oven_build".to_string(), oven_build_ms);
-            timings_ms.insert("total".to_string(), elapsed_ms(total_start));
-            return Ok(report_draft.finish(timings_ms));
-        }
-
-        Err(CliError::failure(
-            "normal `incan build --lib` requires a prepared Oven direct-rustc selection; Cargo library execution is not an available fallback",
-        ))
-    })();
-    publication.finish(result)
+    Err(CliError::failure(format!(
+        "{}: `incan build --lib` does not build yet; libraries return as direct-route library units",
+        file_path.unwrap_or(".")
+    )))
 }
 
 /// Output format for `incan inspect backend-selection`.
@@ -438,84 +204,27 @@ pub fn inspect_backend_selection(path: &Path, format: BackendSelectionInspectFor
 }
 
 /// Build and run an Incan file.
-#[allow(clippy::too_many_arguments)] // Public CLI dispatch keeps the parsed command axes explicit at this boundary.
 pub fn run_file(
     file_path: &str,
-    cargo_policy: CargoPolicy,
+    lock_policy: LockPolicy,
     package_features: FeatureSelection,
-    sdk_profile: Option<String>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     release: bool,
     program_args: Vec<String>,
 ) -> CliResult<ExitCode> {
-    reject_normal_cargo_controls(&cargo_policy, None)?;
-    incan_driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
-    let profile = if release { "release" } else { "debug" };
-    let completed_output_policy = CompletedOutputPolicy {
-        cargo_policy: &cargo_policy,
-        package_features: &package_features,
-        sdk_profile: sdk_profile.as_deref(),
-        cargo_features: &cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-    };
-    if let Some(selected) = select_default_project_output(
-        file_path,
-        &completed_output_policy,
-        OvenBakeProjectTarget::Executable,
-        profile,
-    )? {
-        let project_root =
-            project_root_for_completed_output(&normalized_project_entrypoint(file_path)?)?.ok_or_else(|| {
-                CliError::failure("selected Oven project-output Loaf has no manifest-backed project root")
-            })?;
-        warn_for_completed_output_lock_fingerprint_drift(&project_root, [&selected])?;
-        verify_stored_project_output_native(&selected)?;
-        let mut command = Command::new(&selected.native_output);
-        command.current_dir(project_root);
-        clear_inherited_cargo_environment(&mut command);
-        command.args(&program_args);
-        let status = command.status().map_err(|error| {
-            CliError::failure(format!(
-                "failed to run selected Oven project-output Loaf {}: {error}",
-                selected.native_output.display()
-            ))
-        })?;
-        return Ok(ExitCode(status.code().unwrap_or(ExitCode::FAILURE.0)));
-    }
-    let completed_authority = ordinary_project_output_authority(file_path, &package_features, sdk_profile.as_deref())?;
-    let prepared = prepare_oven_project(
-        file_path,
-        None,
-        &cargo_policy,
-        &package_features,
-        sdk_profile.as_deref(),
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-        profile,
-        OvenProjectPlanMode::ConsumeOnly,
-        None,
-    )?;
-    run_oven_prepared_project(prepared, profile, &program_args, completed_authority)
+    let report = crate::project_owner::build(file_path, None, run_options(lock_policy, package_features, release), |message| {
+        eprintln!("{message}");
+    })?;
+    run_reported_executable(&report, &program_args)
 }
 
 /// Build and run inline Incan source from `incan run -c`.
-#[allow(clippy::too_many_arguments)] // Inline and file execution intentionally share the explicit CLI contract.
 pub fn run_inline_source(
     source: &str,
-    cargo_policy: CargoPolicy,
+    lock_policy: LockPolicy,
     package_features: FeatureSelection,
-    sdk_profile: Option<String>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     release: bool,
     program_args: Vec<String>,
 ) -> CliResult<ExitCode> {
-    reject_normal_cargo_controls(&cargo_policy, None)?;
     let wrapped_source = wrap_inline_command_source(source);
     let inline_project = inline_command_project(&wrapped_source)?;
     let source_path = inline_project.source_path;
@@ -543,49 +252,46 @@ pub fn run_inline_source(
             source_path.display()
         ))
     })?;
-
     let source_arg = source_path.to_string_lossy().to_string();
-    let result = prepare_oven_project(
+    let result = crate::project_owner::build(
         &source_arg,
-        Some(inline_project.output_dir.as_str()),
-        &cargo_policy,
-        &package_features,
-        sdk_profile.as_deref(),
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-        if release { "release" } else { "debug" },
-        OvenProjectPlanMode::ConsumeOnly,
-        None,
+        Some(&inline_project.output_dir),
+        run_options(lock_policy, package_features, release),
+        |message| eprintln!("{message}"),
     )
-    .and_then(|prepared| {
-        run_oven_prepared_project(prepared, if release { "release" } else { "debug" }, &program_args, None)
-    });
+    .and_then(|report| run_reported_executable(&report, &program_args));
     let _ = fs::remove_file(&source_path);
     result
 }
 
-/// Run a receipt-selected native Oven executable while retaining its entry lease for the full process lifetime.
-fn run_oven_prepared_project(
-    prepared: OvenPreparedProject,
-    profile: &str,
-    program_args: &[String],
-    completed_authority: Option<(String, String)>,
-) -> CliResult<ExitCode> {
-    let bake = bake_oven_project(&prepared, profile, None)?;
-    if let Some((source_authority, preparation_identity)) = completed_authority {
-        let mut report = prepared.report.clone();
-        report.artifacts.push(artifact_report("binary", &bake.output));
-        let report = report.finish(prepared.prepare_timings.clone());
-        publish_ordinary_project_output(&prepared, &bake, &source_authority, &preparation_identity, &report)?;
+/// The executable build `incan run` requests: the debug profile unless `--release` asks otherwise.
+fn run_options(lock_policy: LockPolicy, package_features: FeatureSelection, release: bool) -> BuildCommandOptions {
+    BuildCommandOptions {
+        executable_profile: if release { RunProfile::Release } else { RunProfile::Debug },
+        lock_policy,
+        package_features,
     }
-    let mut command = Command::new(&bake.output);
-    command.current_dir(&prepared.project_root);
+}
+
+/// Run the binary a successful executable build reported, from its project root, with the program's arguments.
+///
+/// The child gets no inherited Cargo state; its exit code becomes the command's exit code.
+fn run_reported_executable(report: &serde_json::Value, program_args: &[String]) -> CliResult<ExitCode> {
+    let binary = report["artifacts"]
+        .as_array()
+        .and_then(|artifacts| artifacts.iter().find(|artifact| artifact["kind"] == "binary"))
+        .and_then(|artifact| artifact["path"].as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::failure("the executable build reported no binary artifact to run"))?;
+    let mut command = Command::new(&binary);
+    if let Some(project_root) = report["project"]["project_root"].as_str() {
+        command.current_dir(Path::new(project_root));
+    }
     clear_inherited_cargo_environment(&mut command);
     command.args(program_args);
     let status = command
         .status()
-        .map_err(|error| CliError::failure(format!("failed to run Oven binary {}: {error}", bake.output.display())))?;
+        .map_err(|error| CliError::failure(format!("failed to run {}: {error}", binary.display())))?;
     Ok(ExitCode(status.code().unwrap_or(ExitCode::FAILURE.0)))
 }
 
