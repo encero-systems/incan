@@ -110,6 +110,16 @@ pub fn str_concat(lhs: &str, rhs: &str) -> String {
     semantics_str_concat(lhs, rhs)
 }
 
+/// Describe why `bytes` is not UTF-8, or return `None` when it is.
+///
+/// ## Returns
+///
+/// - (`Option<String>`): Rust's `Utf8Error` display, so strict decoding reports the exact legacy message without the
+///   caller holding the error value.
+pub fn utf8_error_message(bytes: &[u8]) -> Option<String> {
+    std::str::from_utf8(bytes).err().map(|error| error.to_string())
+}
+
 /// Count Unicode scalar values in a string at runtime.
 ///
 /// ## Parameters
