@@ -12,7 +12,6 @@ pub mod behavior_roots;
 pub mod builtin_stdlib;
 pub mod canonical_projection;
 pub mod cli_project;
-pub mod emitted_symbol_artifact;
 pub mod package_project;
 
 use std::path::{Path, PathBuf};

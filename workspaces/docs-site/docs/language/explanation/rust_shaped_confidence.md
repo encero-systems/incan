@@ -101,7 +101,7 @@ def archive_user(user: User) -> ArchivedUser:
 
 The `print_user` method only reads. The `rename_user` method mutates, so the receiver says `mut self`. The `archive_user` function returns a new value from the supplied user. Incan is not pretending those operations are the same. It is letting the source code describe the operation in Incan terms, then letting the compiler choose the generated Rust shape.
 
-The compiler-side duckborrowing planner decides when generated Rust should move, borrow, mutably borrow, clone, call `.into()`, or materialize owned `String` storage. The contributor docs describe it as "the backend ownership-planning layer that lets Incan keep value-oriented source semantics while emitting valid, predictable Rust."[^incan-duckborrowing]
+The compiler-side duckborrowing planner decides when generated Rust should move, borrow, mutably borrow, clone, call `.into()`, or materialize owned `String` storage. The contributor docs describe it as "the backend ownership-planning layer that lets Incan keep value-oriented source semantics while emitting valid, predictable Rust."
 
 For user code, the rule of thumb is:
 
@@ -312,12 +312,10 @@ If the answer is yes, Incan is worth considering on its own terms.
 - [Rust interop](../how-to/rust_interop.md)
 - [Models and classes](models_and_classes/index.md)
 - [Derives and traits](derives_and_traits.md)
-- [Duckborrowing](../../contributing/explanation/duckborrowing.md)
 - [Decorators and callable values (how-to)](../how-to/decorators.md)
 
 [^rust-ownership]: The Rust Book: [What Is Ownership?](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html).
 [^rust-borrowing]: The Rust Book: [References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html).
 [^rust-traits]: The Rust Book: [Defining Shared Behavior with Traits](https://doc.rust-lang.org/book/ch10-02-traits.html).
 [^rust-result]: The Rust Book: [Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html).
-[^incan-duckborrowing]: Incan contributor docs: [Duckborrowing](../../contributing/explanation/duckborrowing.md).
 [^incan-rust-interop]: Incan docs: [Rust interop](../how-to/rust_interop.md).

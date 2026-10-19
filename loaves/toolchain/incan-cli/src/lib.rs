@@ -8,7 +8,6 @@
 //! - `explain <code>` - Explain stable diagnostic codes
 //! - `build <file>` - Compile to Rust and build executable
 //! - `build --lib` - Validate library-mode preconditions
-//! - `inspect rust <file|project>` - Inspect current generated Rust backend output
 //! - `inspect codegraph <file|dir>` - Export compiler-backed codegraph records as JSONL
 //! - `run [file]` - Compile and run the program, defaulting to `[project.scripts].main`
 //! - `init [path]` - Create a starter project scaffold in an existing directory
@@ -53,7 +52,7 @@ use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::provider_inspect::ProviderInspectionFormat;
 use commands::representation_inspect::RepresentationInspectionFormat;
 use commands::workspace::WorkspaceInspectFormat;
-use incan_driver::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
+use incan_driver::build_report::{BuildReportFormat, BuildReportOptions};
 use incan_driver::cargo_policy::{CargoPolicy, CargoPolicyCliFlags};
 use incan_provider::FeatureSelection;
 use incan_provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
@@ -114,14 +113,6 @@ pub struct Cli {
     #[arg(long = "format", value_enum, default_value = "text", requires = "check_file")]
     pub check_format: DiagnosticOutputFormat,
 
-    /// Emit generated Rust code (debug)
-    #[arg(long = "emit-rust", value_name = "FILE", conflicts_with = "file")]
-    pub emit_rust_file: Option<PathBuf>,
-
-    /// Enable strict mode for --emit-rust (warning-clean output)
-    #[arg(long = "strict", requires = "emit_rust_file")]
-    pub strict: bool,
-
     /// Disable the ASCII logo banner
     #[arg(long = "no-banner")]
     pub no_banner: bool,
@@ -136,22 +127,6 @@ pub enum ColorMode {
     Auto,
     Always,
     Never,
-}
-
-/// Output encoding for generated-cache inspection and pruning reports.
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CacheOutputFormat {
-    /// Human-readable cache summary.
-    Text,
-    /// Stable machine-readable JSON report.
-    Json,
-}
-
-/// Managed cache category selected by cache-management commands.
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CacheCategory {
-    /// Cargo artifacts produced from generated Rust projects.
-    GeneratedCargo,
 }
 
 #[derive(Subcommand, Debug)]
@@ -387,12 +362,6 @@ pub enum Command {
         command: ToolsCommand,
     },
 
-    /// Inspect or prune Incan-managed generated-build caches
-    Cache {
-        #[command(subcommand)]
-        command: CacheCommand,
-    },
-
     /// Run the explicit Oven Alpha receipt, bounded-store, and native direct-rustc workflow
     Oven {
         #[command(subcommand)]
@@ -496,18 +465,6 @@ pub enum InspectCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
-    },
-    /// Generate and inspect current Rust backend output
-    Rust {
-        /// Source file or project root to inspect
-        #[arg(value_name = "PATH")]
-        path: PathBuf,
-        /// Inspect the library build surface rooted at `src/lib.incn`
-        #[arg(long = "lib")]
-        lib_mode: bool,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: RustInspectionFormat,
     },
     /// Export compiler-backed codegraph records
     Codegraph {
@@ -666,38 +623,6 @@ pub enum WorkspaceCommand {
     },
 }
 
-/// Generated-build cache management subcommands.
-#[derive(Subcommand, Debug)]
-pub enum CacheCommand {
-    /// Report managed generated-build cache usage and active domains
-    Inspect {
-        /// Cache category to inspect
-        #[arg(long, value_enum, default_value = "generated-cargo")]
-        category: CacheCategory,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: CacheOutputFormat,
-    },
-    /// Prune idle domains toward a soft limit or remove selected exact identities
-    Prune {
-        /// Cache category to prune
-        #[arg(long, value_enum, default_value = "generated-cargo")]
-        category: CacheCategory,
-        /// Preview removals without changing the cache
-        #[arg(long)]
-        dry_run: bool,
-        /// Override the configured cache limit for this prune, in bytes
-        #[arg(long = "max-bytes", value_name = "BYTES")]
-        max_bytes: Option<u64>,
-        /// Remove only the selected compatibility identity (repeatable)
-        #[arg(long = "identity", value_name = "SHA256", conflicts_with = "max_bytes")]
-        identities: Vec<String>,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: CacheOutputFormat,
-    },
-}
-
 // ============================================================================
 // CLI entry point
 // ============================================================================
@@ -752,9 +677,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     }
     if let Some(file) = cli.check_file {
         return commands::check_path(&file, cli.check_format);
-    }
-    if let Some(file) = cli.emit_rust_file {
-        return commands::emit_rust(&file.to_string_lossy(), cli.strict);
     }
 
     // Handle subcommands
@@ -847,7 +769,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     format,
                 })
             }
-            InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
             InspectCommand::Codegraph {
                 path,
                 format,
@@ -989,24 +910,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             } => commands::workspace_inspect(format, workspace, members),
         },
         Some(Command::Tools { command }) => oven_cli::run_tools_command(command),
-        Some(Command::Cache { command }) => match command {
-            CacheCommand::Inspect { category, format } => {
-                commands::inspect_generated_cache(category, matches!(format, CacheOutputFormat::Json))
-            }
-            CacheCommand::Prune {
-                category,
-                dry_run,
-                max_bytes,
-                identities,
-                format,
-            } => commands::prune_generated_cache(
-                category,
-                max_bytes,
-                dry_run,
-                &identities,
-                matches!(format, CacheOutputFormat::Json),
-            ),
-        },
         Some(Command::Oven { command }) => oven_cli::run_oven_command(command),
         Some(Command::New {
             name,
@@ -2016,63 +1919,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_generated_cache_commands() -> Result<(), clap::Error> {
-        let inspect = parse_cli(["incan", "cache", "inspect", "--format", "json"])?;
-        assert!(matches!(
-            inspect.command,
-            Some(Command::Cache {
-                command: CacheCommand::Inspect {
-                    category: CacheCategory::GeneratedCargo,
-                    format: CacheOutputFormat::Json
-                }
-            })
-        ));
-
-        let prune = parse_cli(["incan", "cache", "prune", "--dry-run", "--max-bytes", "1048576"])?;
-        let Some(Command::Cache {
-            command:
-                CacheCommand::Prune {
-                    category,
-                    dry_run,
-                    max_bytes,
-                    identities,
-                    format,
-                },
-        }) = prune.command
-        else {
-            return Err(expected_command("cache prune"));
-        };
-        assert_eq!(category, CacheCategory::GeneratedCargo);
-        assert!(dry_run);
-        assert_eq!(max_bytes, Some(1_048_576));
-        assert!(identities.is_empty());
-        assert_eq!(format, CacheOutputFormat::Text);
-
-        let selective = parse_cli([
-            "incan",
-            "cache",
-            "prune",
-            "--category",
-            "generated-cargo",
-            "--identity",
-            "abc",
-            "--identity",
-            "def",
-        ])?;
-        assert!(matches!(
-            selective.command,
-            Some(Command::Cache {
-                command: CacheCommand::Prune {
-                    category: CacheCategory::GeneratedCargo,
-                    identities,
-                    ..
-                }
-            }) if identities == ["abc", "def"]
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn test_cli_parse_oven_commands() -> Result<(), clap::Error> {
         let bake = parse_cli([
             "incan",
@@ -3048,9 +2894,6 @@ mod tests {
 
         let cli = parse_cli(["incan", "--check", "test.incn"])?;
         assert!(cli.check_file.is_some());
-
-        let cli = parse_cli(["incan", "--emit-rust", "test.incn"])?;
-        assert!(cli.emit_rust_file.is_some());
         Ok(())
     }
 

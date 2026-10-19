@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::Instant;
 use std::{env, fs};
 
-use crate::commands::build_report::{emit_build_report, emit_rust_inspection_report, emit_workspace_build_report};
+use crate::commands::build_report::{emit_build_report, emit_workspace_build_report};
 use crate::{CliError, CliResult, ExitCode};
 use incan_driver::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
 use incan_driver::build::bake::{
@@ -35,7 +35,7 @@ use incan_driver::build::{
     elapsed_ms, library_publication,
 };
 use incan_driver::build_report::{
-    BuildReportMode, BuildReportOptions, RustInspectionFormat, artifact_report, rust_inspection_report,
+    BuildReportMode, BuildReportOptions, artifact_report,
 };
 use incan_driver::cargo_policy::CargoPolicy;
 use incan_driver::cargo_policy::reject_normal_cargo_controls;
@@ -436,56 +436,6 @@ pub fn inspect_backend_selection(path: &Path, format: BackendSelectionInspectFor
             println!("{json}");
         }
     }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Generate and inspect the same Oven Alpha Rust projection used by normal commands without running its binary.
-pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -> CliResult<ExitCode> {
-    let path_arg = path.to_string_lossy();
-    let report = if lib_mode {
-        let prepared = prepare_library_project(
-            Some(path_arg.as_ref()),
-            None,
-            CargoPolicy::default(),
-            &FeatureSelection::default(),
-            None,
-            Vec::new(),
-            false,
-            false,
-            None,
-            true,
-            false,
-            OvenProjectPlanMode::ConsumeOnly,
-            None,
-        )?;
-        rust_inspection_report(
-            BuildReportMode::Library,
-            prepared.report.generated,
-            prepared.report.source_files,
-            prepared.report.notes,
-        )?
-    } else {
-        let prepared = prepare_oven_project(
-            path_arg.as_ref(),
-            None,
-            &CargoPolicy::default(),
-            &FeatureSelection::default(),
-            None,
-            Vec::new(),
-            false,
-            false,
-            "release",
-            OvenProjectPlanMode::ConsumeOnly,
-            None,
-        )?;
-        rust_inspection_report(
-            BuildReportMode::Executable,
-            prepared.report.generated,
-            prepared.report.source_files,
-            prepared.report.notes,
-        )?
-    };
-    emit_rust_inspection_report(&report, format)?;
     Ok(ExitCode::SUCCESS)
 }
 

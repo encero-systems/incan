@@ -63,21 +63,6 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
     check_path(Path::new(file_path), DiagnosticOutputFormat::Text)
 }
 
-/// Emit generated Rust code.
-///
-/// If `strict` is true, the output uses stricter clippy attributes to produce warning-clean code suitable for direct
-/// use in Rust projects.
-pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
-    let source = incan_driver::build::checked_emission::CheckedRustSource::discover(Path::new(file_path))?;
-    let emitted = source.emit(
-        strict,
-        #[cfg(feature = "rust_inspect")]
-        None,
-    )?;
-    println!("{}", emitted.source);
-    Ok(ExitCode::SUCCESS)
-}
-
 #[cfg(test)]
 mod tests {
     use incan_test_support::{incan_command, strip_ansi_escapes};

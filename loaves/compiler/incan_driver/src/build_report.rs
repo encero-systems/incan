@@ -47,14 +47,6 @@ impl BuildReportOptions {
     }
 }
 
-/// Generated Rust inspection output format.
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RustInspectionFormat {
-    Text,
-    Json,
-}
-
 /// High-level build mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -438,26 +430,6 @@ fn render_backend_requirement(requirement: &BackendImplementationRequirement) ->
     }
 }
 
-/// Versioned generated Rust inspection report.
-#[derive(Debug, Clone, Serialize)]
-pub struct RustInspectionReport {
-    pub schema_version: u32,
-    pub compiler_version: &'static str,
-    pub mode: BuildReportMode,
-    pub generated: GeneratedRustProjectReport,
-    pub source_files: Vec<SourceFileReport>,
-    pub rust_files: Vec<RustFileReport>,
-    pub notes: Vec<String>,
-}
-
-/// One emitted Rust source file.
-#[derive(Debug, Clone, Serialize)]
-pub struct RustFileReport {
-    pub path: String,
-    pub size_bytes: u64,
-    pub crate_root: bool,
-}
-
 /// Build the generated Rust project location block shared by build and inspection reports.
 pub fn generated_project_report(
     project_path: &Path,
@@ -564,30 +536,6 @@ pub fn interop_report(
     }
 }
 
-/// Collect generated Rust files and package them with source breadcrumbs for `incan inspect rust`.
-pub fn rust_inspection_report(
-    mode: BuildReportMode,
-    generated: GeneratedRustProjectReport,
-    source_files: Vec<SourceFileReport>,
-    notes: Vec<String>,
-) -> CliResult<RustInspectionReport> {
-    let crate_root = PathBuf::from(&generated.crate_root);
-    let project_path = PathBuf::from(&generated.project_path);
-    let src_dir = project_path.join("src");
-    let mut rust_files = Vec::new();
-    collect_rust_files(&src_dir, &crate_root, &mut rust_files)?;
-    rust_files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(RustInspectionReport {
-        schema_version: BUILD_REPORT_SCHEMA_VERSION,
-        compiler_version: INCAN_VERSION,
-        mode,
-        generated,
-        source_files,
-        rust_files,
-        notes,
-    })
-}
-
 /// Convert a filesystem path into the lossy UTF-8 string form used by JSON reports.
 pub fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
@@ -621,37 +569,4 @@ fn git_reference(reference: &GitReference) -> String {
         GitReference::Tag(tag) => format!("tag={tag}"),
         GitReference::Rev(rev) => format!("rev={rev}"),
     }
-}
-
-/// Recursively collect generated Rust source files below `dir`.
-fn collect_rust_files(dir: &Path, crate_root: &Path, output: &mut Vec<RustFileReport>) -> CliResult<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(dir).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read generated Rust directory {}: {error}",
-            dir.display()
-        ))
-    })? {
-        let entry = entry
-            .map_err(|error| CliError::failure(format!("failed to read generated Rust directory entry: {error}")))?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rust_files(&path, crate_root, output)?;
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            let metadata = entry.metadata().map_err(|error| {
-                CliError::failure(format!(
-                    "failed to stat generated Rust file {}: {error}",
-                    path.display()
-                ))
-            })?;
-            output.push(RustFileReport {
-                path: path_string(&path),
-                size_bytes: metadata.len(),
-                crate_root: path == crate_root,
-            });
-        }
-    }
-    Ok(())
 }

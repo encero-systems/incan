@@ -6,9 +6,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::{CliError, CliResult};
-use incan_driver::build_report::{
-    BuildReport, BuildReportFormat, BuildReportOptions, RustInspectionFormat, RustInspectionReport,
-};
+use incan_driver::build_report::{BuildReport, BuildReportFormat, BuildReportOptions};
 
 /// Write or print a build report according to CLI options.
 pub(crate) fn emit_build_report(report: &BuildReport, options: &BuildReportOptions) -> CliResult<()> {
@@ -44,30 +42,6 @@ pub(crate) fn emit_workspace_build_report(report: &Value, options: &BuildReportO
             } else {
                 println!("{json}");
             }
-        }
-    }
-    Ok(())
-}
-
-/// Render generated Rust inspection output.
-pub(crate) fn emit_rust_inspection_report(
-    report: &RustInspectionReport,
-    format: RustInspectionFormat,
-) -> CliResult<()> {
-    match format {
-        RustInspectionFormat::Text => {
-            println!("Generated Rust project: {}", report.generated.project_path);
-            println!("Crate root: {}", report.generated.crate_root);
-            println!("Rust files:");
-            for file in &report.rust_files {
-                println!("- {}", file.path);
-            }
-        }
-        RustInspectionFormat::Json => {
-            let json = serde_json::to_string_pretty(report).map_err(|error| {
-                CliError::failure(format!("failed to serialize generated Rust inspection JSON: {error}"))
-            })?;
-            println!("{json}");
         }
     }
     Ok(())
