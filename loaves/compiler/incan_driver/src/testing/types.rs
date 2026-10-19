@@ -247,7 +247,8 @@ pub struct TestRunConfig<'a> {
     pub isolate: bool,
     pub test_features: Vec<String>,
     pub package_features: FeatureSelection,
-    pub sdk_profile: Option<String>,
+    /// The build profile whose Loaf artifacts the run reads; the default profile when absent.
+    pub profile: Option<String>,
     pub timeout: Option<&'a str>,
     pub no_capture: bool,
     pub lock_policy: LockPolicy,

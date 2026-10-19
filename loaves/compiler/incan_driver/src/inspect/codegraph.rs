@@ -16,16 +16,17 @@ use incan_codegraph::{
     CodegraphCBindingEnumVariant, CodegraphCBindingFacadeRecord, CodegraphCBindingOutcome, CodegraphCBindingParameter,
     CodegraphCBindingRecord, CodegraphCBindingResource, CodegraphCBindingStruct, CodegraphCBindingStructField,
     CodegraphCBindingSymbol, CodegraphCBindingType, CodegraphCallRecord, CodegraphCanonicalSymbolId,
-    CodegraphCapabilityRecord, CodegraphCapabilityScopeDimension, CodegraphComponentSelectionReason,
-    CodegraphContainmentRecord, CodegraphDeclarationRecord, CodegraphDependencyFeatureProjection,
+    CodegraphCapabilityRecord, CodegraphCapabilityScopeDimension,
+    CodegraphContainmentRecord, CodegraphDeclarationRecord,
     CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration, CodegraphDiagnosticRelatedSpan,
-    CodegraphExportRecord, CodegraphFeatureActivationReason, CodegraphFeatureReasonProjection, CodegraphFileRecord,
+    CodegraphExportRecord, CodegraphFileRecord,
     CodegraphHeaderRecord, CodegraphIdentitySpan, CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage,
+    CodegraphLoafProjection,
     CodegraphMode, CodegraphModuleRecord, CodegraphNamespaceRecord, CodegraphPackage,
-    CodegraphPackageFeatureProjection, CodegraphProvenance, CodegraphProviderParticipation,
-    CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord, CodegraphReferenceRecord,
-    CodegraphRegistryRecord, CodegraphRegistryReexportProjection, CodegraphSdkComponentProjection,
-    CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
+    CodegraphProvenance,
+    CodegraphRecord, CodegraphReferenceRecord,
+    CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
+    CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
     CodegraphStableDeclarationLocation, CodegraphSymbolOrigin,
 };
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
@@ -53,19 +54,11 @@ use incan_frontend::typechecker::{
     CapabilityDeclarationInfo, c_binding_descriptor_identity,
 };
 use incan_lang::version::INCAN_VERSION;
-use incan_provider::{
-    BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, FeatureSelection,
-    ProviderParticipation, ProviderPlan, ProviderProvenance,
-};
+use crate::features::FeatureSelection;
 
-// The one edge that remains, and it is inherited rather than new. Everything named here is `common.rs` session
-// and discovery, which the workspace layout rewrite (#1478) already sends to `incan_driver`; `oven/legacy_cargo.rs`,
-// `lsp/backend.rs` and `backend/project/cargo_toml.rs` reach the same place today. Cutting it means extracting
-// incan_driver out of an 8,691-line module with ten dependents (#1479), not editing this file. When that lands the
-// edge resolves with no further work here.
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::modules::{
-    collect_modules_detailed_with_selections, collect_modules_detailed_with_session,
+    collect_modules_detailed_with_selection, collect_modules_detailed_with_session,
     collect_modules_detailed_with_session_at_path,
 };
 use crate::project::{discover_effective_project_manifest, read_source, resolve_project_root};
@@ -121,18 +114,18 @@ pub fn collect_codegraph_records(
     path: &Path,
     allow_errors: bool,
     feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
+    profile: &str,
 ) -> CodegraphResult<Vec<CodegraphRecord>> {
     let package = package_identity(path)?;
     let package_name = package.as_ref().and_then(|package| package.name.clone());
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
     builder.semantic_contexts =
-        collect_codegraph_semantic_contexts(path, feature_selection, sdk_profile_override, allow_errors)?;
+        collect_codegraph_semantic_contexts(path, feature_selection, profile, allow_errors)?;
 
     if path.is_dir() {
         let files = discover_incan_files(path)?;
         let (modules, analysis) =
-            directory_modules_diagnostics_and_info(&files, feature_selection, sdk_profile_override)?;
+            directory_modules_diagnostics_and_info(&files, feature_selection, profile)?;
         if !analysis.diagnostics.is_empty() && !allow_errors {
             return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
         }
@@ -172,7 +165,7 @@ pub fn collect_codegraph_records(
                 if !sessions.contains_key(&project_root) {
                     sessions.insert(
                         project_root.clone(),
-                        CompilationSession::discover_with_selections(file, feature_selection, sdk_profile_override)?,
+                        CompilationSession::discover(file, feature_selection, profile)?,
                     );
                 }
                 let Some(session) = sessions.get(&project_root) else {
@@ -189,7 +182,7 @@ pub fn collect_codegraph_records(
             return Err(CodegraphError::failure(render_diagnostics(builder.diagnostics())));
         }
     } else {
-        let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
+        let session = CompilationSession::discover(path, feature_selection, profile)?;
         match collect_modules_detailed_with_session(path.to_path_buf(), &session) {
             Ok(modules) => {
                 let analysis = typecheck_diagnostics_and_info(&session, &modules, package_name.as_deref())?;
@@ -212,7 +205,7 @@ pub fn collect_codegraph_records(
                 builder.collect_diagnostics(analysis.diagnostics);
             }
             Err(failure) if allow_errors => {
-                builder.collect_tolerant_failure(path, failure, feature_selection, sdk_profile_override)?;
+                builder.collect_tolerant_failure(path, failure, feature_selection, profile)?;
             }
             Err(failure) => return Err(CodegraphError::failure(failure.render_human())),
         }
@@ -238,7 +231,7 @@ type DirectoryTypecheckArtifacts = (Vec<ParsedModule>, CheckedCodegraphAnalysis)
 fn directory_modules_diagnostics_and_info(
     files: &[PathBuf],
     feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
+    profile: &str,
 ) -> CodegraphResult<DirectoryTypecheckArtifacts> {
     let file_set = files.iter().cloned().collect::<BTreeSet<_>>();
     let mut modules_by_path = BTreeMap::new();
@@ -255,7 +248,7 @@ fn directory_modules_diagnostics_and_info(
         if !sessions.contains_key(&project_root) {
             sessions.insert(
                 project_root.clone(),
-                CompilationSession::discover_with_selections(file, feature_selection, sdk_profile_override)?,
+                CompilationSession::discover(file, feature_selection, profile)?,
             );
         }
         let Some(session) = sessions.get(&project_root) else {
@@ -562,11 +555,11 @@ fn package_identity(path: &Path) -> CodegraphResult<Option<CodegraphPackage>> {
     }))
 }
 
-/// Build the typed provider/component/feature header projection from the same sessions used by codegraph checking.
+/// Build the Loaf header projection from the same sessions used by codegraph checking.
 fn collect_codegraph_semantic_contexts(
     path: &Path,
     feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
+    profile: &str,
     allow_errors: bool,
 ) -> CodegraphResult<Vec<CodegraphSemanticContext>> {
     let files = if path.is_dir() {
@@ -574,217 +567,37 @@ fn collect_codegraph_semantic_contexts(
     } else {
         vec![path.to_path_buf()]
     };
-    let mut projects: BTreeMap<PathBuf, (PathBuf, BTreeMap<PathBuf, ParsedModule>)> = BTreeMap::new();
+    let mut representatives: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
     for file in files {
-        let project_root = resolve_project_root(&file);
-        let (_, modules_by_path) = projects
-            .entry(project_root.clone())
-            .or_insert_with(|| (file.clone(), BTreeMap::new()));
-        if let Ok(modules) =
-            collect_modules_detailed_with_selections(&file.to_string_lossy(), feature_selection, sdk_profile_override)
-        {
-            for module in modules {
-                if resolve_project_root(&module.file_path) == project_root {
-                    modules_by_path.insert(module.file_path.clone(), module);
-                }
-            }
-        }
+        representatives.entry(resolve_project_root(&file)).or_insert(file);
     }
-
     let mut contexts = Vec::new();
-    for (project_root, (representative, modules_by_path)) in projects {
-        let session = match CompilationSession::discover_with_selections(
-            &representative,
-            feature_selection,
-            sdk_profile_override,
-        ) {
+    for (project_root, representative) in representatives {
+        let session = match CompilationSession::discover(&representative, feature_selection, profile) {
             Ok(session) => session,
             Err(_) if allow_errors => continue,
             Err(error) => return Err(error.into()),
         };
-        let modules = modules_by_path.into_values().collect::<Vec<_>>();
-        let provider_plan = match session.provider_plan_for_modules(&modules) {
-            Ok(plan) => plan,
-            Err(_) if allow_errors => Arc::clone(session.provider_plan()),
-            Err(error) => return Err(error.into()),
-        };
-        contexts.push(codegraph_semantic_context(&project_root, &session, &provider_plan));
+        contexts.push(codegraph_semantic_context(&project_root, &session));
     }
     Ok(contexts)
 }
 
-/// Convert compiler-owned semantic plans to the storage-agnostic codegraph wire contract.
-fn codegraph_semantic_context(
-    project_root: &Path,
-    session: &CompilationSession,
-    provider_plan: &ProviderPlan,
-) -> CodegraphSemanticContext {
-    let sdk = session
-        .sdk_inventory()
-        .as_ref()
-        .zip(session.sdk_components().as_ref())
-        .map(|(inventory, components)| CodegraphSdkProjection {
-            identity: inventory.identity(),
-            profile: components.profile.clone(),
-            components: inventory
-                .components
-                .values()
-                .map(|component| CodegraphSdkComponentProjection {
-                    id: component.id.clone(),
-                    version: component.version.clone(),
-                    available: component.available,
-                    enabled: components.enabled.contains(&component.id),
-                    mandatory: component.mandatory,
-                    dependencies: component.dependencies.iter().cloned().collect(),
-                    reason: components
-                        .reasons
-                        .get(&component.id)
-                        .map(codegraph_component_selection_reason),
-                })
-                .collect(),
-        });
-    let packages = session
-        .package_feature_plan()
-        .iter()
-        .flat_map(|plan| plan.packages())
-        .map(|package| CodegraphPackageFeatureProjection {
-            package: package.package_name.clone(),
-            project_root: path_string(&package.project_root),
-            active_features: package.features.active_features.iter().cloned().collect(),
-            active_optional_dependencies: package.features.active_optional_dependencies.iter().cloned().collect(),
-            dependency_features: package
-                .features
-                .dependency_features
-                .iter()
-                .map(|(dependency, features)| CodegraphDependencyFeatureProjection {
-                    dependency: dependency.clone(),
-                    features: features.iter().cloned().collect(),
-                })
-                .collect(),
-            required_sdk_components: package.features.required_sdk_components.iter().cloned().collect(),
-            reasons: package
-                .features
-                .reasons
-                .iter()
-                .map(|(feature, reasons)| CodegraphFeatureReasonProjection {
-                    feature: feature.clone(),
-                    reasons: reasons.iter().map(codegraph_feature_activation_reason).collect(),
-                })
-                .collect(),
-        })
-        .collect();
-    let providers = provider_plan
-        .records()
-        .map(|provider| CodegraphProviderProjection {
-            identity: provider.identity.stable_key(),
-            available: provider.available,
-            enabled: provider.enabled,
-            participation: codegraph_provider_participation(provider_plan.participation(provider)),
-            provenance: codegraph_provider_provenance(&provider.provenance),
-            namespace_claims: provider.namespace_claims.iter().cloned().collect(),
-            used_modules: provider_plan.used_modules(provider).into_iter().collect(),
-            active_features: provider.identity.feature_projection.iter().cloned().collect(),
-            implementation_facets: provider_plan
-                .linked_implementation_facets(provider)
-                .into_iter()
-                .map(|facet| facet.id.clone())
-                .collect(),
-            backend_requirements: provider_plan
-                .linked_backend_requirements(provider)
-                .iter()
-                .map(codegraph_backend_requirement)
-                .collect(),
-            manifest_path: provider
-                .artifact
-                .as_ref()
-                .map(|artifact| path_string(&artifact.manifest_path)),
-        })
-        .collect();
+/// Project the Loaves a session indexed into the storage-agnostic codegraph wire contract.
+fn codegraph_semantic_context(project_root: &Path, session: &CompilationSession) -> CodegraphSemanticContext {
     CodegraphSemanticContext {
         project_root: path_string(project_root),
-        sdk,
-        packages,
-        providers,
-    }
-}
-
-/// Project one compiler component-selection reason into the versioned codegraph schema.
-fn codegraph_component_selection_reason(reason: &ComponentSelectionReason) -> CodegraphComponentSelectionReason {
-    match reason {
-        ComponentSelectionReason::Mandatory => CodegraphComponentSelectionReason::Mandatory,
-        ComponentSelectionReason::Profile { profile } => CodegraphComponentSelectionReason::Profile(profile.clone()),
-        ComponentSelectionReason::Explicit => CodegraphComponentSelectionReason::Explicit,
-        ComponentSelectionReason::Dependency { required_by } => {
-            CodegraphComponentSelectionReason::Dependency(required_by.clone())
-        }
-    }
-}
-
-/// Project one package-feature activation reason into the versioned codegraph schema.
-fn codegraph_feature_activation_reason(reason: &FeatureActivationReason) -> CodegraphFeatureActivationReason {
-    match reason {
-        FeatureActivationReason::Default => CodegraphFeatureActivationReason::Default,
-        FeatureActivationReason::Requested => CodegraphFeatureActivationReason::Requested,
-        FeatureActivationReason::AllFeatures => CodegraphFeatureActivationReason::AllFeatures,
-        FeatureActivationReason::IncludedBy(feature) => CodegraphFeatureActivationReason::IncludedBy(feature.clone()),
-        FeatureActivationReason::DependencyRequest { package, dependency } => {
-            CodegraphFeatureActivationReason::DependencyRequest {
-                package: package.clone(),
-                dependency: dependency.clone(),
-            }
-        }
-    }
-}
-
-/// Project provider availability, enablement, and use into the versioned codegraph participation enum.
-fn codegraph_provider_participation(participation: ProviderParticipation) -> CodegraphProviderParticipation {
-    match participation {
-        ProviderParticipation::Unavailable => CodegraphProviderParticipation::Unavailable,
-        ProviderParticipation::Disabled => CodegraphProviderParticipation::Disabled,
-        ProviderParticipation::Enabled => CodegraphProviderParticipation::Enabled,
-        ProviderParticipation::Used => CodegraphProviderParticipation::Used,
-    }
-}
-
-/// Project provider authority and origin into portable codegraph provenance.
-fn codegraph_provider_provenance(provenance: &ProviderProvenance) -> CodegraphProviderProvenance {
-    match provenance {
-        ProviderProvenance::ProjectDependency {
-            dependency_key,
-            manifest_path,
-        } => CodegraphProviderProvenance::ProjectDependency {
-            dependency_key: dependency_key.clone(),
-            manifest_path: path_string(manifest_path),
-        },
-        ProviderProvenance::Sdk {
-            sdk_identity,
-            component_id,
-            inventory_path,
-        } => CodegraphProviderProvenance::Sdk {
-            sdk_identity: sdk_identity.clone(),
-            component_id: component_id.clone(),
-            inventory_path: inventory_path.as_ref().map(|path| path_string(path)),
-        },
-        ProviderProvenance::StandardPublication {
-            package_name,
-            manifest_path,
-        } => CodegraphProviderProvenance::StandardPublication {
-            package_name: package_name.clone(),
-            manifest_path: path_string(manifest_path),
-        },
-        ProviderProvenance::Compiler => CodegraphProviderProvenance::Compiler,
-    }
-}
-
-/// Render one private provider implementation requirement in the stable codegraph vocabulary.
-fn codegraph_backend_requirement(requirement: &BackendImplementationRequirement) -> String {
-    match requirement {
-        BackendImplementationRequirement::CargoFeature { crate_name, feature } => {
-            format!("cargo-feature:{crate_name}/{feature}")
-        }
-        BackendImplementationRequirement::CargoDependency { dependency } => {
-            format!("cargo-dependency:{}", dependency.crate_name)
-        }
+        loaves: session
+            .loaves()
+            .entries()
+            .map(|entry| CodegraphLoafProjection {
+                key: entry.key.clone(),
+                name: entry.artifact.identity.name.clone(),
+                version: entry.artifact.identity.version.clone(),
+                digest: entry.artifact.identity.digest.clone(),
+                standard: matches!(entry.namespace, incan_frontend::loaf_index::LoafNamespace::Standard { .. }),
+            })
+            .collect(),
     }
 }
 
@@ -980,11 +793,11 @@ impl CodegraphBuilder {
         path: &Path,
         failure: CliDiagnosticFailure,
         feature_selection: &FeatureSelection,
-        sdk_profile_override: Option<&str>,
+        profile: &str,
     ) -> CodegraphResult<()> {
         let before = self.diagnostics.len();
         if path.is_file() {
-            self.collect_tolerant_file(path, feature_selection, sdk_profile_override)?;
+            self.collect_tolerant_file(path, feature_selection, profile)?;
         }
         if self.diagnostics.len() == before {
             self.collect_diagnostics(stable_diagnostics(failure));
@@ -997,9 +810,9 @@ impl CodegraphBuilder {
         &mut self,
         path: &Path,
         feature_selection: &FeatureSelection,
-        sdk_profile_override: Option<&str>,
+        profile: &str,
     ) -> CodegraphResult<()> {
-        let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
+        let session = CompilationSession::discover(path, feature_selection, profile)?;
         self.collect_tolerant_file_with_session(path, &session)
     }
 
@@ -3741,903 +3554,3 @@ fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incan_frontend::{lexer, parser, typechecker};
-    use incan_lang::lang::c_abi::ScalarTypeId;
-    use std::path::PathBuf;
-
-    #[test]
-    fn own_root_analysis_replaces_an_earlier_dependency_snapshot() {
-        let provider = Path::new("src/provider.incn");
-        let consumer = Path::new("src/consumer.incn");
-        let mut analyses = BTreeMap::new();
-
-        retain_root_analysis(&mut analyses, consumer, provider, "dependency-context");
-        retain_root_analysis(&mut analyses, provider, provider, "provider-root-context");
-        retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
-
-        assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
-    }
-
-    #[test]
-    fn own_root_analysis_replaces_dependency_copies_for_every_checked_projection() {
-        let provider = Path::new("src/provider.incn");
-        let consumer = Path::new("src/consumer.incn");
-        for mut analyses in [BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new()] {
-            retain_root_analysis(&mut analyses, consumer, provider, "dependency-context");
-            retain_root_analysis(&mut analyses, provider, provider, "provider-root-context");
-            retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
-            assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
-        }
-    }
-
-    #[test]
-    fn directory_analysis_keeps_provider_origin_through_a_reexport() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let source_root = temp.path().join("src");
-        fs::create_dir_all(&source_root)?;
-        fs::write(
-            temp.path().join("loaf.toml"),
-            "[project]\nname = \"identity_graph\"\nversion = \"0.1.0\"\n",
-        )?;
-        let provider_path = source_root.join("provider.incn");
-        let facade_path = source_root.join("facade.incn");
-        let main_path = source_root.join("main.incn");
-        fs::write(
-            &provider_path,
-            "pub def helper() -> int:\n    return 7\n\npub run = alias helper\n",
-        )?;
-        fs::write(&facade_path, "pub from provider import run as h\n")?;
-        fs::write(
-            &main_path,
-            "from facade import h as run_helper\n\ndef entrypoint() -> int:\n    return run_helper()\n",
-        )?;
-
-        let files = vec![facade_path.clone(), main_path, provider_path.clone()];
-        let (_, analysis) = directory_modules_diagnostics_and_info(&files, &FeatureSelection::default(), None)?;
-        let provider = analysis
-            .semantic_snapshots_by_path
-            .get(&provider_path)
-            .and_then(|snapshot| {
-                snapshot
-                    .hir
-                    .declarations
-                    .iter()
-                    .find(|declaration| declaration.name.as_deref() == Some("helper"))
-            })
-            .and_then(|declaration| declaration.canonical.as_ref())
-            .ok_or("provider helper identity absent")?;
-        let reexport = analysis
-            .semantic_snapshots_by_path
-            .get(&facade_path)
-            .and_then(|snapshot| {
-                snapshot
-                    .hir
-                    .declarations
-                    .iter()
-                    .find(|declaration| declaration.name.as_deref() == Some("h"))
-            })
-            .and_then(|declaration| declaration.canonical.as_ref())
-            .ok_or("facade re-export identity absent")?;
-
-        assert_eq!(
-            reexport, provider,
-            "a temporary graph root must retain its source-relative provider identity"
-        );
-        assert!(matches!(
-            &provider.origin,
-            SymbolOrigin::Module(path) if path.as_slice() == ["provider"]
-        ));
-        Ok(())
-    }
-
-    /// Execution requirements and inspection consume one checked consumer snapshot, including aliases and nested
-    /// owners.
-    #[test]
-    fn checked_relationships_match_execution_selection_for_aliases_defaults_closures_and_types()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use incan_frontend::library_manifest_index::{
-            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
-        };
-        use incan_semantics_core::dependencies::CheckedDependencyGraph;
-        let producer = "pub def base() -> int:\n    return 20\n\npub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n";
-        let tokens = lexer::lex(producer).map_err(|errors| format!("{errors:?}"))?;
-        let producer_ast = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let mut producer_checker = typechecker::TypeChecker::new();
-        producer_checker.set_current_module_path(Some(vec!["lib".into()]));
-        producer_checker.set_current_package_identity(Some("arithmetic".into()));
-        producer_checker
-            .check_program(&producer_ast)
-            .map_err(|errors| format!("{errors:?}"))?;
-        let exports = incan_frontend::library_exports::collect_checked_public_exports(&producer_ast, &producer_checker);
-        let manifest =
-            incan_frontend::library_manifest::LibraryManifest::from_checked_exports("arithmetic", "1.2.3", &exports);
-        let index = LibraryManifestIndex::from_entries(std::collections::HashMap::from([(
-            "renamed".into(),
-            LibraryManifestIndexEntry::Loaded {
-                manifest: Box::new(manifest),
-                metadata: LibraryArtifactMetadata::from_manifest_path(
-                    "renamed",
-                    "arithmetic",
-                    PathBuf::from("/published/arithmetic.incnlib"),
-                    PathBuf::from("/published"),
-                ),
-            },
-        )]));
-        let source = r#"from pub::renamed import base as starting, Pair as Item, Mode as State
-
-def with_default(value: int = starting()) -> int:
-    return value
-
-model Local:
-    value: int = starting()
-
-    def unused(self) -> int:
-        return starting() + 1
-
-    property read -> int:
-        return self.value
-
-def carry(item: Item) -> Result[Item, State]:
-    return Ok(item)
-
-def main() -> int:
-    callback: (int) -> int = (value) => value + starting()
-    local = Local()
-    item = Item(value=callback(with_default()))
-    carry(item)
-    if State.Ready == State.Ready:
-        return item.value + local.read
-    return 0
-"#;
-        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let ast = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let path = vec!["main".to_string()];
-        let mut checker = typechecker::TypeChecker::new();
-        checker.set_current_module_path(Some(path.clone()));
-        checker.set_library_manifest_index(index);
-        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
-        let snapshot = incan_frontend::hir::build_semantic_module_snapshot_v0(&ast, &path, checker.type_info());
-        let graph = CheckedDependencyGraph::from_fact_stores([&snapshot.facts]);
-        let main = checker
-            .type_info()
-            .declarations
-            .declaration_identities
-            .values()
-            .find(|identity| identity.declaration_name == "main")
-            .ok_or("main identity absent")?
-            .clone();
-        let reachable = graph.reachable_from([main]);
-        assert!(!reachable.iter().any(|identity| identity.declaration_name == "unused"));
-        let package_requirements = reachable
-            .iter()
-            .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
-            .map(codegraph_canonical_identity)
-            .collect::<Vec<_>>();
-        for name in ["base", "Pair", "Mode"] {
-            assert!(
-                package_requirements
-                    .iter()
-                    .any(|identity| identity.declaration_name == name),
-                "missing {name}"
-            );
-        }
-        let file_path = PathBuf::from("/main.incn");
-        let module = ParsedModule {
-            name: "main".into(),
-            path_segments: path,
-            file_path: file_path.clone(),
-            source: source.into(),
-            ast,
-        };
-        let mut builder = CodegraphBuilder::new(&file_path, None, false);
-        builder.set_semantic_snapshots(BTreeMap::from([(file_path, snapshot.clone())]));
-        builder.seed_canonical_target_ids(std::slice::from_ref(&module));
-        builder.collect_parsed_module(&module, Vec::new());
-        let references = builder
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                CodegraphRecord::Reference(reference) => Some(reference),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        for (span, checked) in snapshot.facts.checked_reference_sites() {
-            let reference = references
-                .iter()
-                .find(|reference| {
-                    reference
-                        .span
-                        .as_ref()
-                        .is_some_and(|source| source.start == span.start && source.end == span.end)
-                        && reference.canonical_identity == Some(codegraph_canonical_identity(checked.target))
-                })
-                .ok_or("checked site missing from CodeGraph")?;
-            assert_eq!(
-                reference.canonical_identity,
-                Some(codegraph_canonical_identity(checked.target))
-            );
-            assert_eq!(
-                reference.canonical_owner,
-                checked.owner.map(codegraph_canonical_identity)
-            );
-            if let Some(owner) = checked.owner {
-                assert!(graph.dependencies(owner).any(|target| target == checked.target));
-            }
-        }
-        for name in ["main", "with_default", "value", "unused", "read"] {
-            assert!(
-                references.iter().any(|reference| reference
-                    .canonical_owner
-                    .as_ref()
-                    .is_some_and(|owner| owner.declaration_name == name)),
-                "missing closest owner {name}"
-            );
-        }
-        assert!(references.iter().any(|reference| {
-            reference.name == "starting"
-                && reference
-                    .canonical_identity
-                    .as_ref()
-                    .is_some_and(|identity| identity.declaration_name == "base")
-        }));
-        Ok(())
-    }
-
-    #[test]
-    fn nested_public_imports_preserve_canonical_codegraph_paths_and_bindings_issue948() {
-        let module_import = ImportDecl {
-            visibility: Visibility::Private,
-            kind: ImportKind::PubLibrary {
-                library: "modulelib".to_string(),
-                path: vec!["hyperquant".to_string(), "index".to_string()],
-            },
-            alias: None,
-        };
-        assert_eq!(
-            import_shape(&module_import),
-            (
-                "pub_library".to_string(),
-                "pub::modulelib.hyperquant.index".to_string(),
-                Vec::new()
-            )
-        );
-        assert_eq!(import_export_names(&module_import), vec!["index".to_string()]);
-
-        let from_import = ImportDecl {
-            visibility: Visibility::Private,
-            kind: ImportKind::PubFrom {
-                library: "modulelib".to_string(),
-                path: vec!["hyperquant".to_string(), "index".to_string()],
-                items: vec![ImportItem {
-                    name: "HyperquantIndex".to_string(),
-                    alias: Some("Index".to_string()),
-                }],
-            },
-            alias: None,
-        };
-        assert_eq!(
-            import_shape(&from_import),
-            (
-                "pub_from".to_string(),
-                "pub::modulelib.hyperquant.index".to_string(),
-                vec!["HyperquantIndex as Index".to_string()]
-            )
-        );
-        assert_eq!(import_export_names(&from_import), vec!["Index".to_string()]);
-    }
-
-    #[test]
-    fn codegraph_projects_a_checked_capability_and_its_requirement() -> Result<(), String> {
-        // RFC 104 requires its authority contract to be inspectable without executing source. Codegraph publishes
-        // what the typechecker proved at the declaration site; it never re-reads a `capability` block or re-resolves
-        // a `requires` reference to reconstruct that contract (#1027).
-        let source = r#"
-from std.runtime import host
-
-pub capability load_policy:
-    description = "Load a policy document from disk"
-    scope:
-        tenant: str
-    requires = [host.fs.read]
-"#;
-        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
-        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
-        let mut checker = typechecker::TypeChecker::new();
-        checker.set_current_module_path(Some(vec!["policy".to_string()]));
-        checker
-            .check_program(&ast)
-            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
-
-        let file_path = PathBuf::from("/policy.incn");
-        let module = ParsedModule {
-            name: "policy".to_string(),
-            path_segments: vec!["policy".to_string()],
-            file_path: file_path.clone(),
-            source: source.to_string(),
-            ast,
-        };
-        let mut builder = CodegraphBuilder::new(&file_path, None, false);
-        builder.set_capabilities(BTreeMap::from([(
-            file_path,
-            checker
-                .type_info()
-                .declarations
-                .capabilities
-                .values()
-                .cloned()
-                .collect(),
-        )]));
-        builder.collect_parsed_module(&module, Vec::new());
-
-        let capability = builder
-            .records
-            .iter()
-            .find_map(|record| match record {
-                CodegraphRecord::Capability(capability) if capability.name == "load_policy" => Some(capability),
-                _ => None,
-            })
-            .ok_or_else(|| "expected a capability record".to_string())?;
-
-        assert!(capability.public, "a `pub capability` should project as public");
-        assert_eq!(
-            capability.description.as_deref(),
-            Some("Load a policy document from disk")
-        );
-        let [dimension] = capability.scope.as_slice() else {
-            return Err(format!("expected one scope dimension, got {:?}", capability.scope));
-        };
-        assert_eq!((dimension.name.as_str(), dimension.ty.as_str()), ("tenant", "str"));
-
-        let [requirement] = capability.requires.as_slice() else {
-            return Err(format!("expected one requirement, got {:?}", capability.requires));
-        };
-        assert_eq!(requirement.declaration_name, "read");
-        assert_eq!(
-            requirement.origin,
-            CodegraphSymbolOrigin::Module {
-                path: vec![
-                    "std".to_string(),
-                    "runtime".to_string(),
-                    "host".to_string(),
-                    "fs".to_string()
-                ]
-            },
-            "the requirement must carry the host capability's own declaring module"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn checked_c_codegraph_consumes_a_framework_link_from_the_source_descriptor() -> Result<(), String> {
-        let source = r#"
-from std.interop import BindingDeclaration, c
-
-@c.binding(header="fixture.h", link=c.framework("Accelerate"))
-class Accelerate extends BindingDeclaration:
-    marker: str
-"#;
-        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
-        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
-        let interop_source = include_str!("../../../../../loaves/stdlib/interop/src/interop.incn");
-        let interop_tokens =
-            lexer::lex(interop_source).map_err(|errors| format!("interop lexer failed: {errors:?}"))?;
-        let interop = parser::parse(&interop_tokens).map_err(|errors| format!("interop parser failed: {errors:?}"))?;
-        let mut checker = typechecker::TypeChecker::new();
-        checker
-            .check_with_imports(&ast, &[("std.interop", &interop)])
-            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
-
-        let file_path = PathBuf::from("/checked-c-framework.incn");
-        let module = ParsedModule {
-            name: "checked_c_framework".to_string(),
-            path_segments: vec!["checked_c_framework".to_string()],
-            file_path: file_path.clone(),
-            source: source.to_string(),
-            ast,
-        };
-        let mut builder = CodegraphBuilder::new(&file_path, None, false);
-        builder.set_c_abi_artifacts(BTreeMap::from([(file_path, checker.type_info().c_abi.clone())]));
-        builder.collect_parsed_module(&module, Vec::new());
-
-        let binding = builder
-            .records
-            .iter()
-            .find_map(|record| match record {
-                CodegraphRecord::CBinding(binding) if binding.name == "Accelerate" => Some(binding),
-                _ => None,
-            })
-            .ok_or_else(|| "expected checked framework binding record".to_string())?;
-        assert_eq!(binding.link_capability, "framework");
-        Ok(())
-    }
-
-    #[test]
-    fn checked_c_codegraph_projects_descriptor_owned_span_bounds_without_name_inference() {
-        let symbol = CBindingSymbol {
-            name: "sum".to_string(),
-            native: "accelerate_sum".to_string(),
-            parameters: Vec::new(),
-            return_type: CBindingType::Void,
-            buffers: vec![incan_frontend::typechecker::CBindingBuffer {
-                pointer_parameter: "values".to_string(),
-                length_parameter: "value_count".to_string(),
-                element: ScalarTypeId::F32,
-            }],
-            outcomes: Vec::new(),
-        };
-
-        let record = c_binding_symbol_record(&symbol);
-        assert_eq!(record.buffers.len(), 1);
-        assert_eq!(record.buffers[0].pointer_parameter, "values");
-        assert_eq!(record.buffers[0].length_parameter, "value_count");
-        assert_eq!(record.buffers[0].element, "c.f32");
-    }
-
-    /// Two overloads must reach the export as two identities, not one.
-    ///
-    /// This is the reason the exported identity carries a signature at all. Dropping the span makes two
-    /// module-level declarations sharing namespace, origin, name and kind indistinguishable, and an exported
-    /// identity that cannot tell them apart is worse than none: a consumer keying on it silently conflates two
-    /// declarations, which is the defect `StableDeclarationId` exists to remove, rebuilt one layer out.
-    #[test]
-    fn exported_stable_identity_separates_overloads() -> Result<(), Box<dyn std::error::Error>> {
-        let source = r#"
-pub def pick(value: int) -> int:
-    return value
-
-
-pub def pick(value: int, fallback: int) -> int:
-    return value + fallback
-"#;
-        let source = source.to_string();
-        let signatures = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
-            let tokens = lexer::lex(&source).map_err(|errors| format!("lex: {errors:?}"))?;
-            let program = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
-            let program =
-                incan_frontend::body_ir::apply_body_ir_input_contract(program, std::path::Path::new("overloads.incn"))
-                    .map_err(|errors| format!("contract: {errors:?}"))?;
-            let module_path = vec!["overloads".to_string()];
-            let mut checker = typechecker::TypeChecker::new();
-            checker.set_current_module_path(Some(module_path.clone()));
-            checker
-                .check_program(&program)
-                .map_err(|errors| format!("typecheck: {errors:?}"))?;
-
-            let module = ParsedModule {
-                name: "overloads".to_string(),
-                path_segments: module_path,
-                file_path: PathBuf::from("overloads.incn"),
-                source: String::new(),
-                ast: program,
-            };
-            let derived = lowered_declaration_facts(&module, checker.type_info());
-            Ok::<_, String>(
-                derived
-                    .into_iter()
-                    .filter(|(identity, _)| identity.declaration_name == "pick")
-                    .filter_map(|(identity, facts)| codegraph_stable_identity(&identity, Some(facts.signature), None))
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .map_err(|error| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(error)) })?;
-
-        assert_eq!(signatures.len(), 2, "both overloads should be lowered: {signatures:?}");
-        assert!(
-            signatures.iter().all(|identity| identity.signature.is_some()),
-            "an exported identity without a signature cannot separate overloads: {signatures:?}"
-        );
-        assert_ne!(
-            signatures[0].signature, signatures[1].signature,
-            "the two overloads must export distinct signatures: {signatures:?}"
-        );
-        assert!(
-            signatures.iter().all(|identity| {
-                identity.declaration_name == "pick"
-                    && matches!(identity.location, CodegraphStableDeclarationLocation::ModuleLevel)
-            }),
-            "both are module-level declarations named `pick`: {signatures:?}"
-        );
-        Ok(())
-    }
-
-    /// The exported digest must obey the same invariants as the internal one.
-    ///
-    /// An exported digest that moved on a comment would make every consumer rebuild on documentation edits, and one
-    /// that stayed put on a real change would make them skip work that matters. Both are tested here rather than
-    /// assumed to follow from the internal tests, because the export is a separate projection and could drift.
-    #[test]
-    fn exported_semantic_digest_ignores_documentation_and_tracks_meaning() -> Result<(), Box<dyn std::error::Error>> {
-        fn digests_for(source: &str) -> Result<Vec<(String, Option<String>)>, String> {
-            let source = source.to_string();
-            incan_frontend::compiler_stack::run_on_compiler_stack(move || {
-                let tokens = lexer::lex(&source).map_err(|errors| format!("lex: {errors:?}"))?;
-                let program = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
-                let program =
-                    incan_frontend::body_ir::apply_body_ir_input_contract(program, std::path::Path::new("digest.incn"))
-                        .map_err(|errors| format!("contract: {errors:?}"))?;
-                let module_path = vec!["digest".to_string()];
-                let mut checker = typechecker::TypeChecker::new();
-                checker.set_current_module_path(Some(module_path.clone()));
-                checker
-                    .check_program(&program)
-                    .map_err(|errors| format!("typecheck: {errors:?}"))?;
-                let module = ParsedModule {
-                    name: "digest".to_string(),
-                    path_segments: module_path,
-                    file_path: PathBuf::from("digest.incn"),
-                    source: String::new(),
-                    ast: program,
-                };
-                let mut rows: Vec<(String, Option<String>)> = lowered_declaration_facts(&module, checker.type_info())
-                    .into_iter()
-                    .map(|(identity, facts)| {
-                        (
-                            format!("{}|{}", identity.declaration_name, facts.semantic_digest),
-                            facts.doc_digest,
-                        )
-                    })
-                    .collect();
-                rows.sort();
-                Ok::<_, String>(rows)
-            })
-            .map_err(|error| error.to_string())
-        }
-
-        let base = "\npub def kept(value: int) -> int:\n    return value * 2\n";
-        let documented = "\npub def kept(value: int) -> int:\n    \"\"\"\n    Added documentation.\n    \"\"\"\n    return value * 2\n";
-        let changed = "\npub def kept(value: int) -> int:\n    return value * 4\n";
-
-        let base_rows = digests_for(base)?;
-        assert_eq!(
-            base_rows.iter().map(|(digest, _)| digest).collect::<Vec<_>>(),
-            digests_for(documented)?
-                .iter()
-                .map(|(digest, _)| digest)
-                .collect::<Vec<_>>(),
-            "documentation must not move the semantic digest"
-        );
-        assert_ne!(
-            base_rows.iter().map(|(digest, _)| digest).collect::<Vec<_>>(),
-            digests_for(changed)?
-                .iter()
-                .map(|(digest, _)| digest)
-                .collect::<Vec<_>>(),
-            "a real change must move it"
-        );
-        assert!(
-            base_rows.iter().all(|(_, doc)| doc.is_none()),
-            "an undocumented declaration has no doc digest: {base_rows:?}"
-        );
-        assert!(
-            digests_for(documented)?.iter().all(|(_, doc)| doc.is_some()),
-            "a documented one does"
-        );
-        Ok(())
-    }
-
-    /// One namespace node per namespace, with its modules beneath it.
-    ///
-    /// RFC 106 makes the namespace the graph's unit of reachable surface. The property that matters is that an
-    /// internal module does not become a namespace of its own: `pkg/_internal` is a detail of `pkg`, so both it
-    /// and `pkg/api` hang off one node, and a consumer reading the surface sees `pkg` once rather than three
-    /// module paths it has to re-derive the grouping from.
-    #[test]
-    fn internal_modules_hang_off_their_enclosing_namespace() -> Result<(), Box<dyn std::error::Error>> {
-        let build = |segments: Vec<&str>| {
-            let path_segments: Vec<String> = segments.iter().map(|s| (*s).to_string()).collect();
-            ParsedModule {
-                name: path_segments.last().cloned().unwrap_or_default(),
-                path_segments,
-                file_path: PathBuf::from("m.incn"),
-                source: String::new(),
-                ast: incan_frontend::ast::Program::default(),
-            }
-        };
-
-        let mut collector = CodegraphBuilder::new(Path::new("."), None, false);
-        for module in [
-            build(vec!["pkg", "api"]),
-            build(vec!["pkg", "_internal"]),
-            build(vec!["pkg", "_other"]),
-        ] {
-            collector.collect_module_records_with_degraded(&module, "file:m", false);
-        }
-
-        let namespaces: Vec<Vec<String>> = collector
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                CodegraphRecord::Namespace(namespace) => Some(namespace.namespace_path.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            namespaces,
-            vec![vec!["pkg".to_string(), "api".to_string()], vec!["pkg".to_string()]],
-            "a public module is its own namespace; two internal siblings share their parent's"
-        );
-
-        let edges = collector
-            .records
-            .iter()
-            .filter(|record| {
-                matches!(record, CodegraphRecord::Containment(edge) if edge.kind == "namespace_contains_module")
-            })
-            .count();
-        assert_eq!(edges, 3, "every module is contained by exactly one namespace");
-        Ok(())
-    }
-    /// An import of a Rust item is recorded as a Rust-language fact, not an Incan one.
-    ///
-    /// RFC 106 settled this deliberately: one graph spans both languages and `language` is an attribute of the
-    /// fact rather than a partition of the schema, which is why the reserved `rust_item` node kind and
-    /// `uses_rust_item` edge kind were retired. The field existed and was filled with the constant `Incan`, so
-    /// every `from rust::… import …` claimed to be Incan and the graph could not answer which Rust items a module
-    /// reaches — the question invalidation needs.
-    ///
-    /// Exercised at the record builder rather than through `collect_codegraph_records`, which is a
-    /// compiler-backed utility requiring a prepared SDK provider store. The language decision is made here, so
-    /// this is where it can be pinned without that.
-    #[test]
-    fn a_rust_import_is_recorded_as_a_rust_language_fact() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "from rust::std::option import Option as RustOption\nfrom std.collections import Deque\n";
-        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let module = ParsedModule {
-            name: "probe".to_string(),
-            path_segments: vec!["probe".to_string()],
-            file_path: PathBuf::from("probe.incn"),
-            source: source.to_string(),
-            ast: program.clone(),
-        };
-
-        let mut languages = Vec::new();
-        for declaration in &program.declarations {
-            let Declaration::Import(import) = &declaration.node else {
-                continue;
-            };
-            let record = import_record(
-                &module,
-                "m",
-                "i",
-                import,
-                declaration.span,
-                Vec::new(),
-                CodegraphProvenance::Syntax,
-                false,
-            );
-            languages.push((record.path.clone(), record.language));
-        }
-
-        let rust = languages
-            .iter()
-            .find(|(path, _)| path.starts_with("rust::"))
-            .ok_or("the rust:: import should produce a record")?;
-        assert_eq!(
-            rust.1,
-            CodegraphLanguage::Rust,
-            "an import of a Rust item is a Rust-language fact; recording it as Incan leaves the graph unable to \
-             say which Rust items a module reaches"
-        );
-
-        let incan = languages
-            .iter()
-            .find(|(path, _)| !path.starts_with("rust::"))
-            .ok_or("the std import should produce a record")?;
-        assert_eq!(
-            incan.1,
-            CodegraphLanguage::Incan,
-            "an ordinary Incan import must not be relabeled by this change"
-        );
-        Ok(())
-    }
-
-    /// #1561: the header lists every language the export's facts are written in, so an export with a Rust import
-    /// fact lists `rust` beside `incan`, and one without lists `incan` alone.
-    #[test]
-    fn header_languages_list_the_languages_of_the_facts_issue1561() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "from rust::std::option import Option as RustOption\nfrom std.collections import Deque\n";
-        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let module = ParsedModule {
-            name: "probe".to_string(),
-            path_segments: vec!["probe".to_string()],
-            file_path: PathBuf::from("probe.incn"),
-            source: source.to_string(),
-            ast: program.clone(),
-        };
-        let mut records = Vec::new();
-        for declaration in &program.declarations {
-            let Declaration::Import(import) = &declaration.node else {
-                continue;
-            };
-            records.push(CodegraphRecord::Import(import_record(
-                &module,
-                "m",
-                "i",
-                import,
-                declaration.span,
-                Vec::new(),
-                CodegraphProvenance::Syntax,
-                false,
-            )));
-        }
-        assert_eq!(
-            represented_languages(&records),
-            vec![CodegraphLanguage::Incan, CodegraphLanguage::Rust]
-        );
-        records.retain(|record| record_language(record) == Some(CodegraphLanguage::Incan));
-        assert_eq!(represented_languages(&records), vec![CodegraphLanguage::Incan]);
-        Ok(())
-    }
-
-    /// A reference the compiler resolved into a Rust crate is a Rust fact, whatever the source that wrote it.
-    ///
-    /// The import records from `a_module_records_every_rust_item_it_reaches` say which items a module *reaches*.
-    /// They do not say which declaration *uses* one, and that is the question a build-invalidation or navigation
-    /// consumer actually asks. Every use site was emitted as `language: "incan"` regardless of what it resolved
-    /// to, so the graph could not distinguish a call into a Rust crate from a call to a local function.
-    ///
-    /// The identity decides it, not the spelling. An alias makes the spelling useless — `Predicate as Pred` reads
-    /// as an ordinary local name at the call site — and inferring origin from a name is the mistake RFC 120 exists
-    /// to prevent. A reference with no checked identity therefore stays Incan: absence of proof is not proof.
-    #[test]
-    fn a_reference_resolved_into_a_rust_crate_is_a_rust_fact() -> Result<(), Box<dyn std::error::Error>> {
-        fn identity(origin: SymbolOrigin, name: &str) -> CanonicalSymbolId {
-            CanonicalSymbolId {
-                namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
-                origin,
-                declaration_name: name.to_string(),
-                kind: incan_semantics_core::SemanticSourceTargetKind::Function,
-                scope_discriminant: None,
-                declaration_span: incan_semantics_core::HirSourceSpan::new(0, 1),
-            }
-        }
-
-        let source = "def probe() -> None:\n    pass\n";
-        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let module = ParsedModule {
-            name: "probe".to_string(),
-            path_segments: vec!["probe".to_string()],
-            file_path: PathBuf::from("probe.incn"),
-            source: source.to_string(),
-            ast: program,
-        };
-
-        let cases = [
-            (
-                "rust_call",
-                Some(identity(
-                    SymbolOrigin::RustCrate(vec!["cfg_expr".to_string(), "Predicate".to_string()]),
-                    "Predicate",
-                )),
-                CodegraphLanguage::Rust,
-            ),
-            (
-                "incan_call",
-                Some(identity(SymbolOrigin::Module(vec!["probe".to_string()]), "helper")),
-                CodegraphLanguage::Incan,
-            ),
-            ("unresolved_call", None, CodegraphLanguage::Incan),
-        ];
-
-        for (name, checked, expected) in cases {
-            let mut collector = CodegraphBuilder::new(Path::new("."), None, false);
-            collector.push_reference_with_checked(
-                &module,
-                "file:probe",
-                None,
-                name,
-                "call",
-                Span::new(0, 1),
-                false,
-                checked.map(|identity| (identity, None)),
-            );
-            let language = collector
-                .records
-                .iter()
-                .find_map(|record| match record {
-                    CodegraphRecord::Reference(reference) if reference.name == name => Some(reference.language),
-                    _ => None,
-                })
-                .ok_or_else(|| format!("`{name}` should produce a reference record"))?;
-            assert_eq!(
-                language, expected,
-                "`{name}` must take its language from the identity the compiler resolved, not from the module"
-            );
-        }
-        Ok(())
-    }
-
-    /// Every Rust item an import reaches is its own fact, so the graph can be asked what a module reaches.
-    ///
-    /// The import record alone says a module imported *from* a crate. What a build-invalidation consumer has to
-    /// ask is which items it reached, and that is a per-item question. RFC 106 answers it with the vocabulary
-    /// already present — a `Reference` whose `language` is `rust` — rather than the `uses_rust_item` edge kind it
-    /// retired for encoding the same distinction twice.
-    ///
-    /// `target_id` is asserted absent on purpose. Naming a Rust item is not locating one, and the declaration
-    /// these point at arrives with `rust_inspect`, which resolves crate, module, item and defining file together.
-    /// Until then the graph says unresolved, which RFC 106 binds a consumer to read as affected.
-    #[test]
-    fn a_module_records_every_rust_item_it_reaches() -> Result<(), Box<dyn std::error::Error>> {
-        let source = concat!(
-            "import rust::cfg_expr\n",
-            "from rust::cfg_expr::expr import Expression, Predicate as Pred\n",
-            "from std.collections import Deque\n",
-        );
-        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let module = ParsedModule {
-            name: "probe".to_string(),
-            path_segments: vec!["probe".to_string()],
-            file_path: PathBuf::from("probe.incn"),
-            source: source.to_string(),
-            ast: program,
-        };
-
-        let mut collector = CodegraphBuilder::new(Path::new("."), None, false);
-        collector.collect_module_records_with_degraded(&module, "file:probe", false);
-
-        let rust_references: Vec<(String, String, bool)> = collector
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                CodegraphRecord::Reference(reference) if reference.language == CodegraphLanguage::Rust => Some((
-                    reference.name.clone(),
-                    reference.kind.clone(),
-                    reference.target_id.is_some(),
-                )),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(
-            rust_references,
-            vec![
-                ("rust::cfg_expr".to_string(), "imported_module".to_string(), false),
-                (
-                    "rust::cfg_expr::expr::Expression".to_string(),
-                    "imported_item".to_string(),
-                    false
-                ),
-                (
-                    "rust::cfg_expr::expr::Predicate".to_string(),
-                    "imported_item".to_string(),
-                    false
-                ),
-            ],
-            "each Rust item reached is one reference fact, named by its full path and not by its local alias"
-        );
-
-        let incan_references = collector
-            .records
-            .iter()
-            .filter(|record| {
-                matches!(record, CodegraphRecord::Reference(reference)
-                    if reference.language == CodegraphLanguage::Incan && reference.name.starts_with("rust::"))
-            })
-            .count();
-        assert_eq!(
-            incan_references, 0,
-            "a Rust item must never be recorded as an Incan fact"
-        );
-
-        let edges = collector
-            .records
-            .iter()
-            .filter(|record| {
-                matches!(record, CodegraphRecord::Containment(edge) if edge.kind == "import_contains_reference")
-            })
-            .count();
-        assert_eq!(
-            edges, 3,
-            "the import statement is what reaches the item, so each reference hangs off it"
-        );
-        Ok(())
-    }
-}
