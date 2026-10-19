@@ -26,7 +26,8 @@ std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorator
 
 [dependencies]
 incan_lang = { workspace = true }
-incan_driver = { workspace = true }
+# The driver's lock resolution, which the server reads, is built on its `cli` build pipeline.
+incan_driver = { workspace = true, features = ["cli"] }
 incan_frontend = { workspace = true }
 incan_provider = { workspace = true }
 incan_semantics_core = { workspace = true }
