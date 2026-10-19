@@ -39,15 +39,12 @@ use crate::symbols::{
     TraitInfo, TypeBoundInfo, TypeInfo, overloaded_function_emitted_name, source_member_identity,
 };
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::rust_keywords;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_lang::lang::types::numerics as numeric_types;
-use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
+use incan_lang::lang::types::collections as collection_types;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
 mod default_const_paths;
@@ -2178,22 +2175,10 @@ fn ast_type_to_resolved_with_rust_imports(
                 return ResolvedType::RustPath(path.clone());
             }
 
-            // Resolve through incan_lang registries (numerics, strings, unit).
-            if let Some(id) = numeric_types::from_str(name) {
-                return ResolvedType::from_numeric_id(id);
+            // Builtin names resolve through the shared mapping, as in every other resolver.
+            if let Some(builtin) = ResolvedType::builtin_simple(name) {
+                return builtin;
             }
-            if let Some(id) = string_types::from_str(name) {
-                return match id {
-                    StringLikeId::Str => ResolvedType::Str,
-                    StringLikeId::Bytes => ResolvedType::Bytes,
-                    // Frozen variants are named types in this context.
-                    _ => ResolvedType::Named(name.clone()),
-                };
-            }
-            if name == conventions::NONE_TYPE_NAME {
-                return ResolvedType::Unit;
-            }
-
             ResolvedType::Named(name.clone())
         }
         ast::Type::ConstrainedPrimitive(name, _) => {
@@ -2215,33 +2200,10 @@ fn ast_type_to_resolved_with_rust_imports(
                 return ResolvedType::RustPath(format!("{path}<{rendered_args}>"));
             }
 
-            let collection_id = collection_types::from_str(name);
-            match collection_id {
-                Some(CollectionTypeId::Option) => {
-                    let canonical = collection_types::as_str(CollectionTypeId::Option).to_string();
-                    if let Some(inner) = resolved_args.into_iter().next() {
-                        ResolvedType::Generic(canonical, vec![inner])
-                    } else {
-                        ResolvedType::Named(canonical)
-                    }
-                }
-                Some(CollectionTypeId::Result) => {
-                    let canonical = collection_types::as_str(CollectionTypeId::Result).to_string();
-                    if resolved_args.len() == 2 {
-                        ResolvedType::Generic(canonical, resolved_args)
-                    } else {
-                        ResolvedType::Named(canonical)
-                    }
-                }
-                Some(CollectionTypeId::List) => {
-                    let canonical = collection_types::as_str(CollectionTypeId::List).to_string();
-                    if let Some(inner) = resolved_args.into_iter().next() {
-                        ResolvedType::Generic(canonical, vec![inner])
-                    } else {
-                        ResolvedType::Named(canonical)
-                    }
-                }
-                _ => ResolvedType::Generic(name.clone(), resolved_args),
+            // A builtin base resolves through the shared mapping, as in every other resolver.
+            match collection_types::from_str(name) {
+                Some(id) => ResolvedType::builtin_generic(id, resolved_args),
+                None => ResolvedType::Generic(name.clone(), resolved_args),
             }
         }
         ast::Type::DottedGeneric(segments, args) => ResolvedType::Generic(

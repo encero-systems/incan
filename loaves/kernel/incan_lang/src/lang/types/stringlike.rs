@@ -33,6 +33,8 @@ pub struct StringLikeInfo {
     pub id: StringLikeId,
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
+    /// The spelling type descriptors show: `canonical` unless the entry names another (`Int` for `i64`).
+    pub descriptor: &'static str,
     pub description: &'static str,
     pub introduced_in_rfc: RfcId,
     pub since: Since,
@@ -45,11 +47,12 @@ pub const STRING_LIKE_TYPES: &[StringLikeInfo] = &[
     info(
         StringLikeId::Str,
         "str",
-        &[],
+        &["String"],
         "Builtin UTF-8 string type.",
         RFC::_000,
         Since(0, 1),
-    ),
+    )
+    .described_as("Str"),
     info(
         StringLikeId::Bytes,
         "bytes",
@@ -57,7 +60,8 @@ pub const STRING_LIKE_TYPES: &[StringLikeInfo] = &[
         "Builtin byte buffer type.",
         RFC::_000,
         Since(0, 1),
-    ),
+    )
+    .described_as("Bytes"),
     info(
         StringLikeId::FrozenStr,
         "frozenstr",
@@ -65,7 +69,8 @@ pub const STRING_LIKE_TYPES: &[StringLikeInfo] = &[
         "Immutable/const-friendly string type.",
         RFC::_009,
         Since(0, 1),
-    ),
+    )
+    .described_as("FrozenStr"),
     info(
         StringLikeId::FrozenBytes,
         "frozenbytes",
@@ -73,7 +78,8 @@ pub const STRING_LIKE_TYPES: &[StringLikeInfo] = &[
         "Immutable/const-friendly bytes type.",
         RFC::_009,
         Since(0, 1),
-    ),
+    )
+    .described_as("FrozenBytes"),
     info(
         StringLikeId::FString,
         "fstring",
@@ -81,7 +87,8 @@ pub const STRING_LIKE_TYPES: &[StringLikeInfo] = &[
         "Formatted string result type.",
         RFC::_000,
         Since(0, 1),
-    ),
+    )
+    .described_as("FString"),
 ];
 
 /// Resolve a type name to a [`StringLikeId`].
@@ -98,13 +105,13 @@ pub const STRING_LIKE_TYPES: &[StringLikeInfo] = &[
 pub fn from_str(name: &str) -> Option<StringLikeId> {
     if let Some(t) = STRING_LIKE_TYPES
         .iter()
-        .find(|t| t.canonical.eq_ignore_ascii_case(name))
+        .find(|t| super::spelling_matches(t.canonical, name))
     {
         return Some(t.id);
     }
     STRING_LIKE_TYPES
         .iter()
-        .find(|t| t.aliases.iter().any(|a| a.eq_ignore_ascii_case(name)))
+        .find(|t| t.aliases.iter().any(|a| super::spelling_matches(a, name)))
         .map(|t| t.id)
 }
 
@@ -117,6 +124,11 @@ pub fn from_str(name: &str) -> Option<StringLikeId> {
 /// - The canonical spelling (e.g. `"str"`).
 pub fn as_str(id: StringLikeId) -> &'static str {
     info_for(id).canonical
+}
+
+/// Return the spelling type descriptors show for a builtin type (`Int`, `Str`, `Tuple`).
+pub fn descriptor(id: StringLikeId) -> &'static str {
+    info_for(id).descriptor
 }
 
 /// Return the full metadata entry for a string-like builtin type.
@@ -139,6 +151,13 @@ pub fn info_for(id: StringLikeId) -> StringLikeInfo {
     }
 }
 
+impl StringLikeInfo {
+    /// Show this type as `descriptor` in type descriptors; the spelling still names the same type.
+    const fn described_as(self, descriptor: &'static str) -> Self {
+        StringLikeInfo { descriptor, ..self }
+    }
+}
+
 const fn info(
     id: StringLikeId,
     canonical: &'static str,
@@ -151,6 +170,7 @@ const fn info(
         id,
         canonical,
         aliases,
+        descriptor: canonical,
         description,
         introduced_in_rfc,
         since,

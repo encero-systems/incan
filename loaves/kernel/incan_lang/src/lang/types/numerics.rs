@@ -89,6 +89,8 @@ pub struct NumericTypeInfo {
     pub id: NumericTypeId,
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
+    /// The spelling type descriptors show: `canonical` unless the entry names another (`Int` for `i64`).
+    pub descriptor: &'static str,
     pub description: &'static str,
     pub family: NumericFamily,
     pub bit_width: Option<u16>,
@@ -151,7 +153,8 @@ pub const NUMERIC_TYPES: &[NumericTypeInfo] = &[
         "Signed 64-bit integer type.",
         NumericFamily::SignedInteger,
         Some(64),
-    ),
+    )
+    .described_as("Int"),
     info(
         NumericTypeId::I128,
         "i128",
@@ -215,7 +218,8 @@ pub const NUMERIC_TYPES: &[NumericTypeInfo] = &[
         "64-bit binary floating-point type.",
         NumericFamily::BinaryFloat,
         Some(64),
-    ),
+    )
+    .described_as("Float"),
     info(
         NumericTypeId::ISize,
         "isize",
@@ -241,7 +245,8 @@ pub const NUMERIC_TYPES: &[NumericTypeInfo] = &[
         None,
         RFC::_000,
         Since(0, 1),
-    ),
+    )
+    .described_as("Bool"),
 ];
 
 /// Registry of decimal type constructors.
@@ -312,12 +317,12 @@ pub const INTEGER_HELPERS: &[IntegerHelperInfo] = &[
 /// ## Notes
 /// - Matching is **case-insensitive ASCII**.
 pub fn from_str(name: &str) -> Option<NumericTypeId> {
-    if let Some(t) = NUMERIC_TYPES.iter().find(|t| t.canonical.eq_ignore_ascii_case(name)) {
+    if let Some(t) = NUMERIC_TYPES.iter().find(|t| super::spelling_matches(t.canonical, name)) {
         return Some(t.id);
     }
     NUMERIC_TYPES
         .iter()
-        .find(|t| t.aliases.iter().any(|a| a.eq_ignore_ascii_case(name)))
+        .find(|t| t.aliases.iter().any(|a| super::spelling_matches(a, name)))
         .map(|t| t.id)
 }
 
@@ -328,13 +333,13 @@ pub fn from_str(name: &str) -> Option<NumericTypeId> {
 pub fn decimal_constructor_from_str(name: &str) -> Option<DecimalTypeConstructorId> {
     if let Some(t) = DECIMAL_TYPE_CONSTRUCTORS
         .iter()
-        .find(|t| t.canonical.eq_ignore_ascii_case(name))
+        .find(|t| super::spelling_matches(t.canonical, name))
     {
         return Some(t.id);
     }
     DECIMAL_TYPE_CONSTRUCTORS
         .iter()
-        .find(|t| t.aliases.iter().any(|a| a.eq_ignore_ascii_case(name)))
+        .find(|t| t.aliases.iter().any(|a| super::spelling_matches(a, name)))
         .map(|t| t.id)
 }
 
@@ -347,6 +352,11 @@ pub fn decimal_constructor_from_str(name: &str) -> Option<DecimalTypeConstructor
 /// - The canonical spelling (e.g. `"int"`).
 pub fn as_str(id: NumericTypeId) -> &'static str {
     info_for(id).canonical
+}
+
+/// Return the spelling type descriptors show for a builtin type (`Int`, `Str`, `Tuple`).
+pub fn descriptor(id: NumericTypeId) -> &'static str {
+    info_for(id).descriptor
 }
 
 /// Return the Rust primitive spelling for a numeric builtin type.
@@ -416,6 +426,13 @@ pub fn decimal_constructor_info_for(id: DecimalTypeConstructorId) -> DecimalType
 }
 
 /// Build RFC 009 metadata for a canonical numeric type.
+impl NumericTypeInfo {
+    /// Show this type as `descriptor` in type descriptors; the spelling still names the same type.
+    const fn described_as(self, descriptor: &'static str) -> Self {
+        NumericTypeInfo { descriptor, ..self }
+    }
+}
+
 const fn info(
     id: NumericTypeId,
     canonical: &'static str,
@@ -428,6 +445,7 @@ const fn info(
         id,
         canonical,
         aliases,
+        descriptor: canonical,
         description,
         family,
         bit_width,
@@ -454,6 +472,7 @@ const fn legacy_info(
         id,
         canonical,
         aliases,
+        descriptor: canonical,
         description,
         family,
         bit_width,

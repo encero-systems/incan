@@ -4,7 +4,7 @@
 //! accepted aliases.
 //!
 //! ## Notes
-//! - Lookup via [`from_str`] is **case-sensitive**.
+//! - Lookup via [`from_str`] follows the shared spelling rule: **case-insensitive ASCII**.
 //! - Some types intentionally have lowercase aliases (`list`, `dict`, …) for user ergonomics.
 //! - This module is vocabulary only (spellings + metadata), not type-system semantics.
 //!
@@ -40,6 +40,8 @@ pub struct CollectionTypeInfo {
     pub id: CollectionTypeId,
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
+    /// The spelling type descriptors show: `canonical` unless the entry names another (`Int` for `i64`).
+    pub descriptor: &'static str,
     pub description: &'static str,
     pub introduced_in_rfc: RfcId,
     pub since: Since,
@@ -141,17 +143,14 @@ pub const COLLECTION_TYPES: &[CollectionTypeInfo] = &[
 /// - `None` otherwise.
 ///
 /// ## Notes
-/// - Matching is **case-sensitive**.
+/// - Matching is **case-insensitive ASCII**.
 pub fn from_str(name: &str) -> Option<CollectionTypeId> {
-    if let Some(t) = COLLECTION_TYPES.iter().find(|t| t.canonical == name) {
+    if let Some(t) = COLLECTION_TYPES.iter().find(|t| super::spelling_matches(t.canonical, name)) {
         return Some(t.id);
     }
     COLLECTION_TYPES
         .iter()
-        .find(|t| {
-            let aliases: &[&str] = t.aliases;
-            aliases.contains(&name)
-        })
+        .find(|t| t.aliases.iter().any(|a| super::spelling_matches(a, name)))
         .map(|t| t.id)
 }
 
@@ -175,6 +174,11 @@ pub fn from_rust_display_base(base: &str) -> Option<CollectionTypeId> {
 /// - The canonical spelling (e.g. `"List"`).
 pub fn as_str(id: CollectionTypeId) -> &'static str {
     info_for(id).canonical
+}
+
+/// Return the spelling type descriptors show for a builtin type (`Int`, `Str`, `Tuple`).
+pub fn descriptor(id: CollectionTypeId) -> &'static str {
+    info_for(id).descriptor
 }
 
 /// Return the full metadata entry for a collection/generic-base builtin type.
@@ -214,6 +218,7 @@ const fn info(
         id,
         canonical,
         aliases,
+        descriptor: canonical,
         description,
         introduced_in_rfc,
         since,

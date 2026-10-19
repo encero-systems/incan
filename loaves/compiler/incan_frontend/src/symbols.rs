@@ -19,6 +19,7 @@ use incan_lang::lang::types::numerics;
 use incan_lang::lang::types::numerics::NumericTypeId;
 use incan_lang::lang::types::stringlike;
 use incan_lang::lang::types::stringlike::StringLikeId;
+use incan_lang::lang::types::{BuiltinTypeName, builtin_type_name};
 use incan_semantics_core::{
     CanonicalSymbolId, HirSourceSpan, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
@@ -246,6 +247,15 @@ fn write_nominal_name(f: &mut std::fmt::Formatter<'_>, name: &str) -> std::fmt::
         }
         Some((_, declaration_name)) => write!(f, "{declaration_name}"),
         None => write!(f, "{name}"),
+    }
+}
+
+/// Write a type name as type descriptors show it: a builtin collection base in its `incan_lang` descriptor spelling
+/// (`tuple` reads `Tuple`), any other nominal with its module path.
+fn write_type_name(f: &mut std::fmt::Formatter<'_>, name: &str) -> std::fmt::Result {
+    match collections::from_str(name) {
+        Some(id) => f.write_str(collections::descriptor(id)),
+        None => write_nominal_name(f, name),
     }
 }
 
@@ -2169,6 +2179,43 @@ impl ResolvedType {
         }
     }
 
+    /// Return the semantic type of one string-like registry id; an f-string is a `str` at the type level.
+    pub fn from_string_like_id(id: StringLikeId) -> ResolvedType {
+        match id {
+            StringLikeId::Str | StringLikeId::FString => ResolvedType::Str,
+            StringLikeId::Bytes => ResolvedType::Bytes,
+            StringLikeId::FrozenStr => ResolvedType::FrozenStr,
+            StringLikeId::FrozenBytes => ResolvedType::FrozenBytes,
+        }
+    }
+
+    /// Return the builtin type a simple name spells, or `None` for any other name.
+    ///
+    /// The spellings are `incan_lang`'s (one rule for every registry, so `str`, `Str` and `String` are one type); this
+    /// is the only place that maps them to semantic types, and every resolver calls it. A bare collection base stays a
+    /// named type in its canonical spelling (`Tuple` as "any tuple").
+    pub fn builtin_simple(name: &str) -> Option<ResolvedType> {
+        if name == conventions::UNIT_TYPE_NAME || name == conventions::NONE_TYPE_NAME {
+            return Some(ResolvedType::Unit);
+        }
+        Some(match builtin_type_name(name)? {
+            BuiltinTypeName::Numeric(id) => ResolvedType::from_numeric_id(id),
+            BuiltinTypeName::StringLike(id) => ResolvedType::from_string_like_id(id),
+            BuiltinTypeName::Collection(id) => ResolvedType::Named(collections::as_str(id).to_string()),
+        })
+    }
+
+    /// Return the builtin type a collection base applied to `args` spells, with the base in its canonical spelling.
+    pub fn builtin_generic(id: CollectionTypeId, args: Vec<ResolvedType>) -> ResolvedType {
+        let argument = |index: usize| Box::new(args.get(index).cloned().unwrap_or(ResolvedType::Unknown));
+        match id {
+            CollectionTypeId::FrozenList => ResolvedType::FrozenList(argument(0)),
+            CollectionTypeId::FrozenSet => ResolvedType::FrozenSet(argument(0)),
+            CollectionTypeId::FrozenDict => ResolvedType::FrozenDict(argument(0), argument(1)),
+            _ => ResolvedType::Generic(collections::as_str(id).to_string(), args),
+        }
+    }
+
     /// Check if this is a Result type
     pub fn is_result(&self) -> bool {
         matches!(
@@ -2287,21 +2334,27 @@ impl std::fmt::Display for ResolvedType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResolvedType::Never => write!(f, "!"),
-            ResolvedType::Int => write!(f, "int"),
-            ResolvedType::Float => write!(f, "float"),
-            ResolvedType::Numeric(id) => write!(f, "{}", numerics::as_str(*id)),
-            ResolvedType::Bool => write!(f, "bool"),
-            ResolvedType::Str => write!(f, "str"),
-            ResolvedType::Bytes => write!(f, "bytes"),
-            ResolvedType::FrozenStr => write!(f, "FrozenStr"),
-            ResolvedType::FrozenBytes => write!(f, "FrozenBytes"),
-            ResolvedType::FrozenList(elem) => write!(f, "FrozenList[{}]", elem),
-            ResolvedType::FrozenDict(k, v) => write!(f, "FrozenDict[{}, {}]", k, v),
-            ResolvedType::FrozenSet(elem) => write!(f, "FrozenSet[{}]", elem),
+            ResolvedType::Int => f.write_str(numerics::descriptor(NumericTypeId::I64)),
+            ResolvedType::Float => f.write_str(numerics::descriptor(NumericTypeId::F64)),
+            ResolvedType::Numeric(id) => f.write_str(numerics::descriptor(*id)),
+            ResolvedType::Bool => f.write_str(numerics::descriptor(NumericTypeId::Bool)),
+            ResolvedType::Str => f.write_str(stringlike::descriptor(StringLikeId::Str)),
+            ResolvedType::Bytes => f.write_str(stringlike::descriptor(StringLikeId::Bytes)),
+            ResolvedType::FrozenStr => f.write_str(stringlike::descriptor(StringLikeId::FrozenStr)),
+            ResolvedType::FrozenBytes => f.write_str(stringlike::descriptor(StringLikeId::FrozenBytes)),
+            ResolvedType::FrozenList(elem) => {
+                write!(f, "{}[{}]", collections::descriptor(CollectionTypeId::FrozenList), elem)
+            }
+            ResolvedType::FrozenDict(k, v) => {
+                write!(f, "{}[{}, {}]", collections::descriptor(CollectionTypeId::FrozenDict), k, v)
+            }
+            ResolvedType::FrozenSet(elem) => {
+                write!(f, "{}[{}]", collections::descriptor(CollectionTypeId::FrozenSet), elem)
+            }
             ResolvedType::Unit => write!(f, "Unit"),
-            ResolvedType::Named(name) => write_nominal_name(f, name),
+            ResolvedType::Named(name) => write_type_name(f, name),
             ResolvedType::Generic(name, args) => {
-                write_nominal_name(f, name)?;
+                write_type_name(f, name)?;
                 write!(f, "[")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -2386,16 +2439,6 @@ pub fn union_ty(members: Vec<ResolvedType>) -> ResolvedType {
     }
 }
 
-/// Convert AST Type to ResolvedType Normalize type name to canonical form (uppercase for built-in generics)
-fn normalize_type_name(name: &str) -> String {
-    // Generic base normalization: prefer the canonical spelling from `incan_lang` for all builtin
-    // collection/generic-base types (and their aliases).
-    if let Some(id) = collections::from_str(name) {
-        return collections::as_str(id).to_string();
-    }
-    name.to_string()
-}
-
 /// Resolve `a::b::c` in type position when `a` is a `rust::` import binding (module or item).
 fn resolve_qualified_rust_type_path(segments: &[String], symbols: &SymbolTable) -> ResolvedType {
     if segments.len() < 2 {
@@ -2450,47 +2493,26 @@ where
         Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
         Type::Dotted(segments) => resolve_qualified_type(segments).unwrap_or(ResolvedType::Unknown),
         Type::Simple(name) => {
-            if let Some(id) = numerics::from_str(name.as_str()) {
-                return ResolvedType::from_numeric_id(id);
+            if let Some(builtin) = ResolvedType::builtin_simple(name) {
+                return builtin;
             }
-            if let Some(id) = stringlike::from_str(name.as_str()) {
-                return match id {
-                    StringLikeId::Str => ResolvedType::Str,
-                    StringLikeId::Bytes => ResolvedType::Bytes,
-                    StringLikeId::FrozenStr => ResolvedType::FrozenStr,
-                    StringLikeId::FrozenBytes => ResolvedType::FrozenBytes,
-                    // We currently treat f-strings as a regular string type at the type level.
-                    StringLikeId::FString => ResolvedType::Str,
+            if let Some(id) = symbols.lookup(name)
+                && let Some(sym) = symbols.get(id)
+                && let SymbolKind::RustItem(info) = &sym.kind
+            {
+                return match info.binding {
+                    RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
+                    RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
+                        ResolvedType::RustPath(info.path.clone())
+                    }
                 };
             }
-            if let Some(id) = collections::from_str(name.as_str()) {
-                // `List`/`Dict`/... can appear in type position without parameters (e.g. `Tuple` as "any tuple").
-                // Preserve it as a named type, but normalize to the canonical spelling from `incan_lang`.
-                return ResolvedType::Named(collections::as_str(id).to_string());
-            }
-
-            match name.as_str() {
-                conventions::UNIT_TYPE_NAME | conventions::NONE_TYPE_NAME => ResolvedType::Unit,
-                _ => {
-                    if let Some(id) = symbols.lookup(name)
-                        && let Some(sym) = symbols.get(id)
-                        && let SymbolKind::RustItem(info) = &sym.kind
-                    {
-                        return match info.binding {
-                            RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
-                            RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
-                                ResolvedType::RustPath(info.path.clone())
-                            }
-                        };
-                    }
-                    // Check if it's a known type
-                    if symbols.lookup(name).is_some() {
-                        ResolvedType::Named(name.clone())
-                    } else {
-                        // Could be a type variable
-                        ResolvedType::TypeVar(name.clone())
-                    }
-                }
+            // Check if it's a known type
+            if symbols.lookup(name).is_some() {
+                ResolvedType::Named(name.clone())
+            } else {
+                // Could be a type variable
+                ResolvedType::TypeVar(name.clone())
             }
         }
         Type::ConstrainedPrimitive(name, _) => {
@@ -2535,32 +2557,14 @@ where
                     resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
                 ));
             }
-            // Normalize type name for built-in generics (aliases → canonical spellings).
-            let id = collections::from_str(name.as_str());
-            let normalized_name = id
-                .map(|id| collections::as_str(id).to_string())
-                .unwrap_or_else(|| normalize_type_name(name));
-
-            if normalized_name == UNION_TYPE_NAME {
+            // A builtin base resolves through the shared mapping, in its canonical spelling.
+            if let Some(id) = collections::from_str(name.as_str()) {
+                return ResolvedType::builtin_generic(id, resolved_args);
+            }
+            if name == UNION_TYPE_NAME {
                 return union_ty(resolved_args);
             }
-
-            match id {
-                Some(CollectionTypeId::FrozenList) => {
-                    let elem = resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown);
-                    ResolvedType::FrozenList(Box::new(elem))
-                }
-                Some(CollectionTypeId::FrozenSet) => {
-                    let elem = resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown);
-                    ResolvedType::FrozenSet(Box::new(elem))
-                }
-                Some(CollectionTypeId::FrozenDict) => {
-                    let k = resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown);
-                    let v = resolved_args.get(1).cloned().unwrap_or(ResolvedType::Unknown);
-                    ResolvedType::FrozenDict(Box::new(k), Box::new(v))
-                }
-                _ => ResolvedType::Generic(normalized_name, resolved_args),
-            }
+            ResolvedType::Generic(name.clone(), resolved_args)
         }
         Type::DottedGeneric(segments, args) => {
             let resolved_args = args
