@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use incan_driver::features::FeatureSelection;
 use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
@@ -62,15 +63,16 @@ struct CheckedProgram {
 }
 
 /// Collect and analyze the original source through the CLI's compilation session, retaining canonical checked facts.
-/// Native-only declaration refusals follow analysis; provider activation, desugaring, and stdlib loading remain owned
-/// by the session. Private checked re-export calls add their exact package targets to executable requirements without
-/// changing the ordinary reference graph or requesting a declaration by its facade spelling.
-/// An explicit invocation package affects only checked registry materialization, independently of
-/// the native crate's symbol identity.
-fn checked_modules(path: &Path, package_override: Option<&str>) -> Result<CheckedProgram, String> {
+///
+/// Native-only declaration refusals follow analysis; desugaring and the Loaves the program imports from are owned by
+/// the session. The declarations the program reaches in its Loaves (DD-0007) come from their `.incnbody` records, and
+/// every module lowers against them. Private checked re-export calls add their exact package targets to the request
+/// without changing the ordinary reference graph. An explicit invocation package affects only checked registry
+/// materialization, independently of the native crate's symbol identity.
+fn checked_modules(path: &Path, package_override: Option<&str>, profile: &str) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %path.display()).entered();
     let path = path.canonicalize().map_err(|error| error.to_string())?;
-    let session = CompilationSession::discover_with_feature_selection(&path, &Default::default())
+    let session = CompilationSession::discover(&path, &FeatureSelection::default(), profile)
         .map_err(|error| error.to_string())?;
     let modules =
         collect_modules_detailed_with_session(path.clone(), &session).map_err(|failure| failure.render_human())?;
@@ -95,10 +97,11 @@ fn checked_modules(path: &Path, package_override: Option<&str>) -> Result<Checke
         .ok_or("entry module is missing")?;
     let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
         modules.iter().map(|module| &module.ast),
-        session.provider_plan(),
-        analysis.stdlib_cache(),
+        session.loaves(),
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
+
+    // ---- Declarations the program reaches in its Loaves ----
     let facts = modules
         .iter()
         .map(|module| {
@@ -112,7 +115,7 @@ fn checked_modules(path: &Path, package_override: Option<&str>) -> Result<Checke
         .iter()
         .filter_map(|module| analysis.type_info_for_path(&module.file_path))
         .flat_map(|info| info.declarations.declaration_identities.values().cloned());
-    let required = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
+    let requested = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
         .reachable_from(roots)
         .into_iter()
         .chain(
@@ -122,102 +125,43 @@ fn checked_modules(path: &Path, package_override: Option<&str>) -> Result<Checke
                 .flat_map(|info| info.calls.body_ir_reexport_calls.values())
                 .map(|call| call.canonical.clone()),
         )
-        .filter(|identity| match &identity.origin {
-            incan_semantics_core::SymbolOrigin::Package { library, .. } => !session
-                .provider_plan()
-                .active_sdk_records()
-                .any(|provider| &provider.identity.name == library),
-            _ => false,
-        })
+        .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
         .collect();
-    let resolved =
-        incan_frontend::executable_resolution::resolve_executable_requirements(session.provider_plan(), &required)
-            .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
-    let mut bodies = resolved.modules;
-
-    // ---- Stdlib declarations published by the linked SDK packages ----
-    // They are context for every module's Body IR, so stdlib enums, newtypes and layouts resolve by identity as package
-    // declarations do, and declaration-only program modules the lowering names by their crate items.
-    let mut library_identities = std::collections::BTreeSet::new();
-    let mut constant_bindings = std::collections::BTreeMap::new();
-    for module in &modules {
-        let type_info = analysis
-            .type_info_for_path(&module.file_path)
-            .ok_or("module analysis is missing")?;
-        library_identities.extend(incan_frontend::body_ir::library_type_identities(type_info));
-        constant_bindings.extend(referenced_sdk_constants(type_info, session.provider_plan()));
-    }
-    library_identities.extend(constant_bindings.values().cloned());
-    let published_declarations = published_library_modules(session.provider_plan(), &library_identities)?;
-    let mut published_implementations = published_declarations
-        .iter()
-        .flat_map(|module| module.trait_implementations.iter().cloned())
-        .collect::<Vec<_>>();
-    bodies.extend(published_declarations);
-    bodies.extend(sdk_constant_binding_modules(&bodies, &constant_bindings)?);
-    // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the
-    // entry.
+    let mut bodies = incan_frontend::executable_resolution::resolve_loaf_declarations(session.loaves(), &requested)
+        .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))?
+        .modules;
+    // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
         .iter()
         .map(|module| module.module_id.path().to_owned())
         .collect::<Vec<_>>();
     let mut sources = vec![String::new(); bodies.len()];
-    let mut entry = entry + bodies.len();
-    let mut library_layouts = Vec::new();
-    let mut library_enums = Vec::new();
-    let mut library_calls = Vec::new();
-    let mut factory_bodies = std::collections::BTreeSet::new();
+    let entry = entry + bodies.len();
+
+    // ---- The program's own modules ----
+    let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
     let package_identity = package_override.unwrap_or_else(|| registry_package_identity(&session, &path));
     for module in modules {
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
         validate_declarations(&module.ast, type_info)?;
-        let (body_ir, layouts, calls) =
-            incan_frontend::body_ir::build_body_ir_module_v0_with_sdk_linkage_and_registry_package(
-                &module.ast,
-                &module.path_segments,
-                type_info,
-                &bodies,
-                package_identity,
-            );
+        let body_ir = incan_frontend::body_ir::build_body_ir_module(
+            &module.ast,
+            &module.path_segments,
+            type_info,
+            &incan_frontend::body_ir::BodyIrContext {
+                modules: &bodies,
+                provider_operations: &provider_operations,
+                registry_package: Some(package_identity),
+            },
+        );
         validate_retained_storage(&module.ast, &body_ir)?;
-        library_layouts.extend(layouts);
-        library_calls.extend(calls);
-        library_enums.extend(incan_frontend::body_ir::library_enum_declarations(type_info));
-        factory_bodies.extend(incan_frontend::body_ir::library_factory_body_requirements(type_info));
         bodies.push(body_ir);
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
-    // ---- Stdlib trait defaults the program's adopters take, from the SDK's published representation ----
-    for module in published_standard_methods(session.provider_plan(), &bodies, &factory_bodies)? {
-        published_implementations.extend(module.trait_implementations.iter().cloned());
-        carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
-    }
-    retain_selected_published_implementations(&mut bodies, &published_implementations);
-    // A proven transparent forwarder keeps its direct Rust callee; the crate item serves every other stdlib call.
-    library_calls.retain(|call: &incan_semantics_core::body_ir::StdlibDelegation| {
-        !bodies
-            .iter()
-            .flat_map(|module| &module.stdlib_delegations)
-            .any(|forwarder| forwarder.canonical == call.canonical)
-    });
-    // A layout the SDK did not publish keeps the record built from its stdlib source.
-    let published = bodies
-        .iter()
-        .flat_map(|module| &module.nominal_declarations)
-        .map(|declaration| declaration.canonical.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    library_layouts
-        .retain(|layout: &incan_semantics_core::body_ir::NominalDeclaration| !published.contains(&layout.canonical));
-    let libraries = library_modules(library_layouts, library_enums, library_calls);
-    for module in libraries {
-        carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
-    }
-    let native_unions = incan_frontend::body_ir::library_native_union_declarations(session.provider_plan(), &bodies)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
-    entry_module.native_union_declarations = native_unions;
     entry_module.string_conversion_contract = string_conversion_contract;
     Ok(CheckedProgram {
         modules: bodies,
@@ -225,28 +169,6 @@ fn checked_modules(path: &Path, package_override: Option<&str>) -> Result<Checke
         files,
         entry,
     })
-}
-
-/// Project authenticated SDK relations only after executable demand has reached its fixed point. Declaration-only
-/// imports retain layouts and adoption facts, but cannot introduce an owned implementation whose body was never
-/// selected. Source records are unchanged; protocol defaults keep their lazy slot identity, and every selected or
-/// malformed retained body still passes the ordinary Body IR validator.
-fn retain_selected_published_implementations(
-    modules: &mut [BodyIrModule],
-    published: &[incan_semantics_core::body_ir::TraitImplementation],
-) {
-    let bodies = modules
-        .iter()
-        .flat_map(|module| &module.bodies)
-        .filter_map(|body| body.canonical.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    for module in modules {
-        module.trait_implementations.retain(|record| {
-            !published.contains(record)
-                || record.implementation == record.method
-                || bodies.contains(&record.implementation)
-        });
-    }
 }
 
 /// Select the same manifest-or-entrypoint package name as legacy project preparation, independently of the native crate
@@ -259,585 +181,6 @@ fn registry_package_identity<'a>(session: &'a CompilationSession, path: &'a Path
         .and_then(|project| project.name.as_deref())
         .or_else(|| path.file_stem().and_then(|stem| stem.to_str()))
         .unwrap_or("incan_project")
-}
-
-/// Request integer constants by their checked canonical identities from active SDK providers, preserving published
-/// values. Constants already retained by the source-validated Body IR collector keep that literal route; every
-/// unretained identity still requires the existing package publication checks.
-fn referenced_sdk_constants(
-    type_info: &incan_frontend::typechecker::TypeCheckInfo,
-    plan: &incan_frontend::provider::ProviderPlan,
-) -> std::collections::BTreeMap<incan_semantics_core::CanonicalSymbolId, incan_semantics_core::CanonicalSymbolId> {
-    let retained = incan_frontend::body_ir::library_constant_declarations(type_info)
-        .into_iter()
-        .map(|declaration| declaration.canonical)
-        .collect::<std::collections::BTreeSet<_>>();
-    type_info
-        .references
-        .resolved_identities
-        .values()
-        .filter(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Const)
-        .filter(|identity| !retained.contains(*identity))
-        .filter_map(|identity| {
-            let mut published = identity.clone();
-            match &identity.origin {
-                incan_semantics_core::SymbolOrigin::Package { library, .. }
-                    if plan
-                        .active_sdk_records()
-                        .any(|provider| &provider.identity.name == library) => {}
-                incan_semantics_core::SymbolOrigin::Module(path) => {
-                    let provider = plan.active_sdk_provider_for_module(path)?;
-                    let (root, module_path) = path.split_first()?;
-                    if root != "std" {
-                        return None;
-                    }
-                    published.origin = incan_semantics_core::SymbolOrigin::Package {
-                        library: provider.identity.name.clone(),
-                        module_path: module_path.to_vec(),
-                    };
-                }
-                _ => return None,
-            }
-            Some((identity.clone(), published))
-        })
-        .collect()
-}
-
-/// Preserve checked source-cache identities as declaration-only views of the exact selected SDK constant.
-///
-/// The SDK decoder validates coverage, spans, digests and values under the package identity first. This bridge changes
-/// only the origin to the original checked binding, whose canonical module is the SDK provider's admitted module.
-/// It never changes names, kinds, spans or values, and absent publication remains a named refusal.
-fn sdk_constant_binding_modules(
-    modules: &[BodyIrModule],
-    bindings: &std::collections::BTreeMap<
-        incan_semantics_core::CanonicalSymbolId,
-        incan_semantics_core::CanonicalSymbolId,
-    >,
-) -> Result<Vec<BodyIrModule>, String> {
-    let constants = modules
-        .iter()
-        .flat_map(|module| &module.constant_declarations)
-        .map(|declaration| (&declaration.canonical, declaration))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
-    for (binding, published) in bindings {
-        let declaration = constants.get(published).ok_or_else(|| {
-            format!(
-                "unsupported Body IR selected SDK constant `{}` has no retained value",
-                published.declaration_name,
-            )
-        })?;
-        let supported = match &declaration.value {
-            incan_semantics_core::body_ir::Constant::Int(_) => true,
-            incan_semantics_core::body_ir::Constant::NumericNewtype(value) => {
-                let layouts: Vec<_> = modules
-                    .iter()
-                    .flat_map(|module| &module.nominal_declarations)
-                    .filter(|layout| value.constructor.canonical.as_ref() == Some(&layout.canonical))
-                    .collect();
-                layouts.len() == 1 && layouts.first().is_some_and(|layout| value.matches_layout(layout))
-            }
-            _ => false,
-        };
-        if !supported {
-            return Err(format!(
-                "unsupported Body IR selected SDK constant `{}` outside authenticated integer or numeric newtype representation",
-                published.declaration_name,
-            ));
-        }
-        if binding == published {
-            continue;
-        }
-        let owner = incan_semantics_core::canonical_module_identity(binding)
-            .ok_or("unsupported Body IR SDK constant binding without a module")?;
-        let mut view = (*declaration).clone();
-        view.canonical = binding.clone();
-        owners
-            .entry(owner.clone())
-            .or_insert_with(|| declaration_module(owner))
-            .constant_declarations
-            .push(view);
-    }
-    Ok(owners.into_values().collect())
-}
-
-/// Carry checked stdlib layouts, enums, and crate calls once into declaration-only modules grouped by their declaring
-/// module. Each layout validates against its retained module identity; lowering decides whether to link it or declare
-/// it locally.
-fn library_modules(
-    layouts: Vec<incan_semantics_core::body_ir::NominalDeclaration>,
-    enums: Vec<incan_semantics_core::body_ir::EnumDeclaration>,
-    calls: Vec<incan_semantics_core::body_ir::StdlibDelegation>,
-) -> Vec<BodyIrModule> {
-    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
-    let mut carried = std::collections::BTreeSet::new();
-    for declaration in layouts {
-        if let Some(module) = library_module(&mut owners, &mut carried, &declaration.canonical) {
-            module.nominal_declarations.push(declaration);
-        }
-    }
-    for call in calls {
-        if let Some(module) = library_module(&mut owners, &mut carried, &call.canonical) {
-            module.stdlib_delegations.push(call);
-        }
-    }
-    for declaration in enums {
-        if let Some(module) = library_module(&mut owners, &mut carried, &declaration.canonical) {
-            module.enum_declarations.push(declaration);
-        }
-    }
-    owners.into_values().collect()
-}
-
-/// Resolve the stdlib types the program uses from the representations its linked SDK packages published, one
-/// declaration-only module per stdlib module.
-///
-/// Each identity resolves on its own, so a type a package does not publish, or one that is not an SDK type at all,
-/// is simply absent and keeps its source record or refusal. Only declaration records are kept: layouts, enums,
-/// constants, aliases and their checked protocol implementation relations. Published bodies stay out here because
-/// ordinary SDK calls use compiled items; [`published_standard_methods`] selects their executable protocol bodies.
-fn published_library_modules(
-    plan: &incan_frontend::provider::ProviderPlan,
-    identities: &std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-) -> Result<Vec<BodyIrModule>, String> {
-    use std::collections::BTreeSet;
-    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
-    let (mut nominals, mut enums, mut fieldless, mut values) =
-        (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
-    let (mut constants, mut aliases) = (BTreeSet::new(), BTreeSet::new());
-    for identity in identities {
-        let required = std::iter::once(identity.clone()).collect();
-        let resolved = match incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required) {
-            Ok(resolved) => resolved,
-            Err(error) if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Const => {
-                return Err(format!(
-                    "unsupported Body IR selected SDK constant publication: {error}"
-                ));
-            }
-            Err(_) => continue,
-        };
-        for module in resolved.modules {
-            let path = module.module_id.path().to_owned();
-            let owner = owners.entry(path.clone()).or_insert_with(|| declaration_module(path));
-            for declaration in module.nominal_declarations {
-                if nominals.insert(declaration.canonical.clone()) {
-                    owner.nominal_declarations.push(declaration);
-                }
-            }
-            for declaration in module.enum_declarations {
-                if enums.insert(declaration.canonical.clone()) {
-                    owner.enum_declarations.push(declaration);
-                }
-            }
-            for declaration in module.fieldless_enum_declarations {
-                if fieldless.insert(declaration.canonical.clone()) {
-                    owner.fieldless_enum_declarations.push(declaration);
-                }
-            }
-            for declaration in module.value_enum_declarations {
-                if values.insert(declaration.canonical.clone()) {
-                    owner.value_enum_declarations.push(declaration);
-                }
-            }
-            for declaration in module.constant_declarations {
-                if constants.insert(declaration.canonical.clone()) {
-                    owner.constant_declarations.push(declaration);
-                }
-            }
-            for declaration in module.type_alias_declarations {
-                if aliases.insert(declaration.canonical.clone()) {
-                    owner.type_alias_declarations.push(declaration);
-                }
-            }
-            for implementation in module.trait_implementations {
-                if !owner.trait_implementations.contains(&implementation) {
-                    owner.trait_implementations.push(implementation);
-                }
-            }
-        }
-    }
-    Ok(owners.into_values().collect())
-}
-
-/// Resolve called SDK protocol implementations and explicit factory roots through their authenticated executable
-/// closures.
-///
-/// A selected factory or default can itself call another checked protocol slot. Its concrete adopter's implementation
-/// is a distinct canonical root, so selection continues until newly retained bodies introduce no further roots. Each
-/// identity is requested once, including cycles. Called slots and native ordering defaults select additional roots;
-/// their declaration dependency closure remains owned by the SDK. Unavailable selected fragments retain their exact
-/// executable representation failure instead of guessing a body or dispatching by spelling.
-fn published_standard_methods(
-    plan: &incan_frontend::provider::ProviderPlan,
-    modules: &[BodyIrModule],
-    factories: &std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-) -> Result<Vec<BodyIrModule>, String> {
-    let mut pending = factories.clone();
-    let mut requested = std::collections::BTreeSet::new();
-    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
-
-    // ---- Called slots in the original program and newly retained SDK bodies ----
-    loop {
-        let mut called = std::collections::BTreeSet::new();
-        for body in modules.iter().chain(owners.values()).flat_map(|module| &module.bodies) {
-            collect_called_methods(&body.block.stmts, &mut called);
-        }
-        retain_native_ordering_defaults(modules, &mut called);
-        retain_native_fallible_defaults(plan, modules.iter().chain(owners.values()), &mut called);
-        pending.extend(
-            modules
-                .iter()
-                .chain(owners.values())
-                .flat_map(|module| &module.trait_implementations)
-                .filter(|record| called.contains(&record.method))
-                .filter(|record| {
-                    matches!(&record.implementation.origin, incan_semantics_core::SymbolOrigin::Package { library, .. }
-                        if plan.active_sdk_records().any(|provider| &provider.identity.name == library))
-                })
-                .map(|record| record.implementation.clone()),
-        );
-        pending.retain(|identity| !requested.contains(identity));
-        if pending.is_empty() {
-            break;
-        }
-
-        // ---- Exact provider-validated roots, with no repeated request in a cycle ----
-        for identity in std::mem::take(&mut pending) {
-            requested.insert(identity.clone());
-            let required = std::iter::once(identity).collect();
-            let resolved = incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required)
-                .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
-            for module in resolved.modules {
-                let path = module.module_id.path().to_owned();
-                let owner = owners.entry(path.clone()).or_insert_with(|| declaration_module(path));
-                join_published_module(owner, module);
-            }
-        }
-    }
-    Ok(owners.into_values().collect())
-}
-
-/// Native SDK adapter storage requires the complete standard fallible protocol for its checked source poll owner.
-/// Source-only adopters keep lazy defaults: only a carrier occurring inside an actual SDK type instantiation selects
-/// these additional roots, and provider resolution still proves each requested body's executable coverage.
-/// Every selection iteration includes already-retained SDK owners, because a factory may introduce the protocol
-/// declaration and concrete storage that authenticate its source poll owner after the original modules were checked.
-fn retain_native_fallible_defaults<'module>(
-    plan: &incan_frontend::provider::ProviderPlan,
-    modules: impl Iterator<Item = &'module BodyIrModule> + Clone,
-    required: &mut std::collections::BTreeSet<CanonicalSymbolId>,
-) {
-    for module in modules.clone() {
-        for source in &module.trait_implementations {
-            if source.implementation == source.method || !standard_fallible_slot(&source.method, "__next__") {
-                continue;
-            }
-            let Some(protocol) = modules
-                .clone()
-                .flat_map(|module| &module.trait_declarations)
-                .find(|protocol| {
-                    protocol.kind == SemanticSourceTargetKind::Trait
-                        && protocol.declaration_name == "FallibleIterator"
-                        && protocol.origin == source.method.origin
-                        && protocol.declaration_span.start <= source.method.declaration_span.start
-                        && protocol.declaration_span.end >= source.method.declaration_span.end
-                })
-            else {
-                continue;
-            };
-            if !modules.clone().flat_map(|module| &module.bodies).any(|body| {
-                body.locals
-                    .iter()
-                    .any(|local| native_type_uses_owner(plan, &local.ty, &body.named_type_identities, &source.owner))
-            }) {
-                continue;
-            }
-            for record in &module.trait_implementations {
-                if record.owner == source.owner
-                    && record.implementation == record.method
-                    && protocol.declaration_span.start <= record.method.declaration_span.start
-                    && protocol.declaration_span.end >= record.method.declaration_span.end
-                    && [
-                        "__iter__",
-                        "map",
-                        "filter",
-                        "flat_map",
-                        "take",
-                        "inspect",
-                        "map_err",
-                        "inspect_err",
-                        "collect",
-                        "fold",
-                    ]
-                    .iter()
-                    .any(|name| standard_fallible_slot(&record.method, name))
-                {
-                    required.insert(record.method.clone());
-                }
-            }
-        }
-    }
-}
-
-/// Identify a standard fallible member before requesting its published default; source spelling grants no authority.
-fn standard_fallible_slot(identity: &CanonicalSymbolId, name: &str) -> bool {
-    identity.kind == SemanticSourceTargetKind::Method
-        && identity.namespace == SymbolNamespace::Member
-        && identity.declaration_name == name
-        && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
-            if library == "incan_stdlib_core" && module_path.iter().map(String::as_str).eq(["derives", "collection"]))
-}
-
-/// Find an exact checked source owner inside an active SDK generic, before nominal specialization rewrites names.
-fn native_type_uses_owner(
-    plan: &incan_frontend::provider::ProviderPlan,
-    ty: &incan_semantics_core::IncanType,
-    identities: &std::collections::BTreeMap<String, CanonicalSymbolId>,
-    owner: &CanonicalSymbolId,
-) -> bool {
-    use incan_semantics_core::IncanType;
-    match ty {
-        IncanType::Generic { base, args } => {
-            let identity = checked_carrier_identity(base, identities);
-            let sdk = identity.is_some_and(|identity| {
-                matches!(&identity.origin, SymbolOrigin::Package { library, .. }
-                if plan.active_sdk_records().any(|provider| &provider.identity.name == library))
-            });
-            (sdk && args
-                .iter()
-                .any(|argument| type_contains_owner(argument, identities, owner)))
-                || args
-                    .iter()
-                    .any(|argument| native_type_uses_owner(plan, argument, identities, owner))
-        }
-        IncanType::Ref(inner) | IncanType::RefMut(inner) => native_type_uses_owner(plan, inner, identities, owner),
-        IncanType::Tuple(items) => items
-            .iter()
-            .any(|item| native_type_uses_owner(plan, item, identities, owner)),
-        _ => false,
-    }
-}
-
-/// Match nested checked arguments to the selected source declaration without equating same-spelled foreign owners.
-fn type_contains_owner(
-    ty: &incan_semantics_core::IncanType,
-    identities: &std::collections::BTreeMap<String, CanonicalSymbolId>,
-    owner: &CanonicalSymbolId,
-) -> bool {
-    use incan_semantics_core::IncanType;
-    match ty {
-        IncanType::Named(name) => checked_carrier_identity(name, identities) == Some(owner),
-        IncanType::Generic { base, args } => {
-            checked_carrier_identity(base, identities) == Some(owner)
-                || args
-                    .iter()
-                    .any(|argument| type_contains_owner(argument, identities, owner))
-        }
-        IncanType::Ref(inner) | IncanType::RefMut(inner) => type_contains_owner(inner, identities, owner),
-        IncanType::Tuple(items) => items.iter().any(|item| type_contains_owner(item, identities, owner)),
-        _ => false,
-    }
-}
-
-/// Resolve a checked leaf or canonical carrier key, refusing a competing direct binding.
-fn checked_carrier_identity<'facts>(
-    name: &str,
-    identities: &'facts std::collections::BTreeMap<String, CanonicalSymbolId>,
-) -> Option<&'facts CanonicalSymbolId> {
-    let direct = identities.get(name);
-    let encoded = identities
-        .values()
-        .find(|identity| incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(name));
-    match encoded {
-        Some(identity) if direct.is_none_or(|binding| binding == identity) => Some(identity),
-        Some(_) => None,
-        None => direct,
-    }
-}
-
-/// Request checked standard ordering defaults needed by native trait forwarding, including implicit operator calls.
-/// A concrete source less-than implementation identifies the adopter; matching standard slot identities supply its
-/// other methods.
-fn retain_native_ordering_defaults(
-    modules: &[BodyIrModule],
-    required: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-) {
-    for module in modules {
-        for source in &module.trait_implementations {
-            if source.implementation == source.method || !standard_ordering_slot(&source.method, "__lt__") {
-                continue;
-            }
-            for record in &module.trait_implementations {
-                if record.owner == source.owner
-                    && record.method == record.implementation
-                    && ["__le__", "__gt__", "__ge__"]
-                        .iter()
-                        .any(|name| standard_ordering_slot(&record.method, name))
-                {
-                    required.insert(record.method.clone());
-                }
-            }
-        }
-    }
-}
-
-/// Require a standard comparison member's exact source or SDK canonical identity before requesting its default body.
-fn standard_ordering_slot(identity: &CanonicalSymbolId, name: &str) -> bool {
-    if identity.kind != SemanticSourceTargetKind::Method
-        || identity.namespace != SymbolNamespace::Member
-        || identity.declaration_name != name
-    {
-        return false;
-    }
-    match &identity.origin {
-        SymbolOrigin::Module(path) => path.iter().map(String::as_str).eq(["std", "derives", "comparison"]),
-        SymbolOrigin::Package { library, module_path } => {
-            library == "incan_stdlib_core" && module_path.iter().map(String::as_str).eq(["derives", "comparison"])
-        }
-        _ => false,
-    }
-}
-
-/// Collect the checked slots and methods that statements call, through nested blocks, match arms and closures.
-///
-/// A call this walk does not reach only leaves a default unresolved, and a call to that default then refuses where it
-/// is lowered.
-fn collect_called_methods(
-    statements: &[incan_semantics_core::body_ir::Statement],
-    called: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-) {
-    use incan_semantics_core::body_ir::{Callee, Rvalue, StatementKind};
-    for statement in statements {
-        match &statement.kind {
-            StatementKind::Call {
-                callee: Callee::Method(target),
-                ..
-            } => called.extend(target.canonical.iter().cloned()),
-            StatementKind::If {
-                then_block, else_block, ..
-            } => {
-                collect_called_methods(&then_block.stmts, called);
-                if let Some(block) = else_block {
-                    collect_called_methods(&block.stmts, called);
-                }
-            }
-            StatementKind::Loop { body } => collect_called_methods(&body.stmts, called),
-            StatementKind::Assign { rvalue, .. } => match rvalue {
-                Rvalue::Match { arms, .. } => {
-                    for arm in arms {
-                        collect_called_methods(&arm.guard_stmts, called);
-                        collect_called_methods(&arm.body_stmts, called);
-                    }
-                }
-                Rvalue::Closure { body, .. } => collect_called_methods(&body.stmts, called),
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-}
-
-/// Carry one published stdlib module into the program: it joins the module already carried for the same owner, or
-/// travels as a module of its own ahead of the program's modules, as a published package's declarations do.
-fn carry_published_module(
-    module: BodyIrModule,
-    bodies: &mut Vec<BodyIrModule>,
-    files: &mut Vec<String>,
-    sources: &mut Vec<String>,
-    entry: &mut usize,
-) {
-    if let Some(carried) = bodies.iter_mut().find(|carried| carried.module_id == module.module_id) {
-        join_published_module(carried, module);
-        return;
-    }
-    files.insert(0, module.module_id.path().to_owned());
-    sources.insert(0, String::new());
-    bodies.insert(0, module);
-    *entry += 1;
-}
-
-/// Join published declarations, default bodies and crate-call records for the same stdlib owner, retaining each
-/// canonical identity once so lowering never visits an owner's bodies through several module fragments.
-fn join_published_module(owner: &mut BodyIrModule, module: BodyIrModule) {
-    for delegation in module.stdlib_delegations {
-        if !owner
-            .stdlib_delegations
-            .iter()
-            .any(|carried| carried.canonical == delegation.canonical)
-        {
-            owner.stdlib_delegations.push(delegation);
-        }
-    }
-    for body in module.bodies {
-        if !owner.bodies.iter().any(|carried| carried.canonical == body.canonical) {
-            owner.bodies.push(body);
-        }
-    }
-    for declaration in module.trait_declarations {
-        if !owner.trait_declarations.contains(&declaration) {
-            owner.trait_declarations.push(declaration);
-        }
-    }
-    for declaration in module.nominal_declarations {
-        if !owner
-            .nominal_declarations
-            .iter()
-            .any(|carried| carried.canonical == declaration.canonical)
-        {
-            owner.nominal_declarations.push(declaration);
-        }
-    }
-    for declaration in module.enum_declarations {
-        if !owner
-            .enum_declarations
-            .iter()
-            .any(|carried| carried.canonical == declaration.canonical)
-        {
-            owner.enum_declarations.push(declaration);
-        }
-    }
-    for implementation in module.trait_implementations {
-        if !owner.trait_implementations.contains(&implementation) {
-            owner.trait_implementations.push(implementation);
-        }
-    }
-}
-
-/// An empty module for one stdlib module identity, holding only the declarations the program needs from it.
-fn declaration_module(owner: String) -> BodyIrModule {
-    BodyIrModule {
-        string_conversion_contract: incan_semantics_core::body_ir::StringConversionContract::Unselected,
-        decorated_bindings: Vec::new(),
-        entrypoint_effects: Vec::new(),
-        constant_declarations: Vec::new(),
-        type_alias_declarations: Vec::new(),
-        enum_declarations: Vec::new(),
-        stdlib_delegations: Vec::new(),
-        public_exports: Vec::new(),
-        native_union_declarations: Vec::new(),
-        static_declarations: Vec::new(),
-        module_id: incan_semantics_core::CompilerNodeId::module(owner),
-        nominal_declarations: Vec::new(),
-        fieldless_enum_declarations: Vec::new(),
-        value_enum_declarations: Vec::new(),
-        trait_declarations: Vec::new(),
-        trait_implementations: Vec::new(),
-        bodies: Vec::new(),
-    }
-}
-
-/// The declaration-only module owning one stdlib identity, or nothing when that identity already travels.
-fn library_module<'modules>(
-    owners: &'modules mut std::collections::BTreeMap<String, BodyIrModule>,
-    carried: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-    identity: &incan_semantics_core::CanonicalSymbolId,
-) -> Option<&'modules mut BodyIrModule> {
-    let owner = incan_semantics_core::body_ir::native_nominal_module(identity)?;
-    if !carried.insert(identity.clone()) {
-        return None;
-    }
-    Some(owners.entry(owner.clone()).or_insert_with(|| declaration_module(owner)))
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
@@ -1161,6 +504,8 @@ struct Dependencies {
     package_identity: Option<String>,
     /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
     library: bool,
+    /// The build profile whose Loaf artifacts the program reads (`--profile`).
+    profile: String,
 }
 
 /// Parse declared native externs, search directories and a logical package override; no ambient crate discovery is
@@ -1169,6 +514,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
     let mut externs = Vec::new();
     let mut directories = Vec::new();
     let mut package_identity = None;
+    let mut profile = None;
     let mut library = false;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
@@ -1189,6 +535,12 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
                 }
                 package_identity = Some(value.clone());
             }
+            "--profile" => {
+                if value.is_empty() || profile.is_some() {
+                    return Err("--profile requires one nonempty profile name".to_owned());
+                }
+                profile = Some(value.clone());
+            }
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
@@ -1197,6 +549,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
         directories,
         package_identity,
         library,
+        profile: profile.unwrap_or_else(|| incan_driver::session::DEFAULT_PROFILE.to_owned()),
     })
 }
 
@@ -1206,7 +559,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--package-name NAME] [--library]"
+            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--package-name NAME] [--profile NAME] [--library]"
                 .into(),
         );
     }
@@ -1243,10 +596,11 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     crate::relaunch_with_native_environment(&native_link)?;
     let checked_source = source_path.clone();
     let checked_package = dependencies.package_identity.clone();
+    let checked_profile = dependencies.profile.clone();
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&checked_source, checked_package.as_deref())
+        checked_modules(&checked_source, checked_package.as_deref(), &checked_profile)
     });
     let program = match checked {
         Ok(program) => program,

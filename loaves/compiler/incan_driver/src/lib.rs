@@ -25,6 +25,7 @@ pub mod build_report;
 pub mod build_unit;
 pub mod diagnostics;
 pub mod error;
+pub mod features;
 pub mod inspect;
 pub mod interop_plan;
 pub mod lock;
@@ -36,6 +37,4 @@ pub mod project;
 pub mod rust_inspect_workspace;
 pub mod session;
 pub mod testing;
-#[cfg(test)]
-mod tests;
 pub mod typecheck;

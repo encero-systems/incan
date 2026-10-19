@@ -355,6 +355,12 @@ fn discover_source_root_from_layout(base_dir: &Path) -> PathBuf {
     }
 }
 
+/// Resolve a module path under `source_root` to its source file, the way a crate-root import of it resolves; a
+/// standard package reaches its own `std.<root>` modules this way.
+pub fn resolve_source_module_path(source_root: &Path, segments: &[String]) -> Option<SourceModuleRef> {
+    resolve_first_source_candidate(source_root, Some(source_root), &[segments.to_vec()])
+}
+
 /// Resolve the first candidate path that exists under `base`.
 fn resolve_first_source_candidate(
     base: &Path,
