@@ -609,7 +609,7 @@ fn materialize_normalized_sysroot(
     root: &Path,
     host: &str,
 ) -> Result<PathBuf, OvenRustcError> {
-    if root.join(".complete").is_file() {
+    if published_sysroot_is_intact(sysroot, manifest, root) {
         return Ok(root.to_path_buf());
     }
     let parent = root.parent().ok_or_else(|| OvenRustcError::InvalidInput {
@@ -635,14 +635,62 @@ fn materialize_normalized_sysroot(
         source,
     })?;
     match fs::rename(staging.path(), root) {
-        Ok(()) => Ok(root.to_path_buf()),
+        Ok(()) => return Ok(root.to_path_buf()),
         // Each contender populated a private tree for this exact key before publication. The winner is complete.
-        Err(_) if root.join(".complete").is_file() => Ok(root.to_path_buf()),
+        Err(_) if published_sysroot_is_intact(sysroot, manifest, root) => return Ok(root.to_path_buf()),
+        Err(_) if root.exists() => {}
+        Err(source) => {
+            return Err(OvenRustcError::Io {
+                path: root.to_path_buf(),
+                source,
+            });
+        }
+    }
+
+    // ---- A hollowed earlier publication blocks this one ----
+    //
+    // The root lives under the system temporary directory, whose cleaners delete files that were not read for a few
+    // days; macOS removes them one by one, the never-read `.complete` marker among them. Set the stale root aside
+    // under a name derived from this attempt's unique staging directory, publish again, then discard it.
+    let stale = staging.path().with_extension("stale");
+    fs::rename(root, &stale).map_err(|source| OvenRustcError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let published = match fs::rename(staging.path(), root) {
+        Ok(()) => Ok(root.to_path_buf()),
+        Err(_) if published_sysroot_is_intact(sysroot, manifest, root) => Ok(root.to_path_buf()),
         Err(source) => Err(OvenRustcError::Io {
             path: root.to_path_buf(),
             source,
         }),
+    };
+    // Discarding the stale tree is cleanup only; a leftover cannot be selected, because publication checks contents.
+    let _ = fs::remove_dir_all(&stale);
+    published
+}
+
+/// Whether a published normalized sysroot still holds what publication placed there.
+///
+/// The `.complete` marker alone is not proof, because a temporary-directory cleaner may delete any file in the tree.
+/// Every `rust-std` manifest entry and, when the source toolchain has one, the copied compiler executable must still
+/// exist. This is a few dozen metadata reads, cheap beside the copy it guards.
+fn published_sysroot_is_intact(sysroot: &Path, manifest: &[u8], root: &Path) -> bool {
+    if !root.join(".complete").is_file() {
+        return false;
     }
+    let listing = String::from_utf8_lossy(manifest);
+    if !listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("file:"))
+        .all(|relative| root.join(relative).is_file())
+    {
+        return false;
+    }
+    // Mirrors `copy_compiler_runtime`, which copies the executable only beside its library directory.
+    let executable = if cfg!(windows) { "rustc.exe" } else { "rustc" };
+    let copied = sysroot.join("bin").join(executable).is_file() && sysroot.join("lib").is_dir();
+    !copied || root.join("bin").join(executable).is_file()
 }
 
 /// Retain host LLD and its optional LLVM runtime beside the normalized compiler instead of discovering a host linker.
@@ -1246,6 +1294,49 @@ mod tests {
         assert_eq!(fs::read(root.join("lib/librustc-stable_rt.rtsan.dylib"))?, b"runtime");
         assert!(root.join(".complete").is_file());
         assert_eq!(fs::read_dir(temporary.path().join("normalized"))?.count(), 1);
+        Ok(())
+    }
+
+    /// A root a temporary-directory cleaner hollowed out is republished, with or without its `.complete` marker.
+    #[test]
+    #[cfg(unix)]
+    fn normalized_sysroot_republishes_a_hollowed_root() -> TestResult {
+        let temporary = tempfile::tempdir()?;
+        let installed = temporary.path().join("installed");
+        fs::create_dir_all(installed.join("bin"))?;
+        fs::create_dir_all(installed.join("lib/rustlib/fixture-host/lib"))?;
+        fs::write(installed.join("bin/rustc"), b"compiler")?;
+        fs::write(installed.join("lib/librustc_driver-fixture.dylib"), b"driver")?;
+        fs::write(
+            installed.join("lib/rustlib/fixture-host/lib/libstd-fixture.rlib"),
+            b"std",
+        )?;
+        let manifest = b"file:lib/rustlib/fixture-host/lib/libstd-fixture.rlib\n";
+        let root = temporary.path().join("normalized/key");
+        materialize_normalized_sysroot(&installed, manifest, &root, "fixture-host")?;
+
+        // Reaped marker and compiler: the root still exists and is not empty.
+        fs::remove_file(root.join(".complete"))?;
+        fs::remove_file(root.join("bin/rustc"))?;
+        assert_eq!(
+            materialize_normalized_sysroot(&installed, manifest, &root, "fixture-host")?,
+            root
+        );
+        assert_eq!(fs::read(root.join("bin/rustc"))?, b"compiler");
+        assert!(root.join(".complete").is_file());
+
+        // A surviving marker does not vouch for a reaped standard-library file.
+        fs::remove_file(root.join("lib/rustlib/fixture-host/lib/libstd-fixture.rlib"))?;
+        materialize_normalized_sysroot(&installed, manifest, &root, "fixture-host")?;
+        assert_eq!(
+            fs::read(root.join("lib/rustlib/fixture-host/lib/libstd-fixture.rlib"))?,
+            b"std"
+        );
+        assert_eq!(
+            fs::read_dir(temporary.path().join("normalized"))?.count(),
+            1,
+            "neither a stale tree nor staging may remain beside the root"
+        );
         Ok(())
     }
 
