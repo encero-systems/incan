@@ -1303,6 +1303,15 @@ impl TypeChecker {
         if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
             return None;
         }
+        self.demanded_rust_item_metadata(canonical_path, lookup_path)
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    /// Return one demanded Rust item from shipped ABI, the cache, or extraction, without the identity-prewarm gate.
+    ///
+    /// The gate skips wrapper names (`Result`, `Box`) whose metadata a prewarm does not need; a caller that demands
+    /// the item itself, such as an alias named `Result`, resolves it here.
+    fn demanded_rust_item_metadata(&self, canonical_path: &str, lookup_path: &str) -> Option<RustItemMetadata> {
         if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
             return Some(metadata);
         }
@@ -1327,9 +1336,6 @@ impl TypeChecker {
                     lookup_path
                 );
             }
-        }
-        if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
-            return None;
         }
         // stdlib interop paths are conventionally stable and intentionally stay cache-only.
         if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
@@ -1476,6 +1482,12 @@ impl TypeChecker {
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
     fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        self.lookup_rust_item_metadata_for_path(canonical_path)
+    }
+
+    #[cfg(not(feature = "rust_inspect"))]
+    /// Return one demanded Rust item from shipped dependency ABI when rust-inspect support is not compiled in.
+    fn demanded_rust_item_metadata(&self, canonical_path: &str, _lookup_path: &str) -> Option<RustItemMetadata> {
         self.lookup_rust_item_metadata_for_path(canonical_path)
     }
 
@@ -2278,6 +2290,50 @@ impl TypeChecker {
         out
     }
 
+    /// Expand a Rust type alias applied to `args` into its target display, or `None` when `base` names no alias.
+    ///
+    /// The alias item records its target with the alias's own parameters; substituting the written arguments gives the
+    /// aliased type exactly, including arms the alias spelling omits.
+    fn rust_alias_expansion(&self, base: &str, args: &[&str]) -> Option<String> {
+        if !base.contains("::") {
+            return None;
+        }
+        let lookup_path = Self::rust_metadata_lookup_path(base)?;
+        let metadata = self.demanded_rust_item_metadata(base, lookup_path)?;
+        self.record_rust_metadata_query(base);
+        let RustItemKind::Type(info) = metadata.kind else {
+            return None;
+        };
+        let target = info.alias_target?;
+        if info.type_params.len() != args.len() {
+            return None;
+        }
+        Some(Self::substitute_rust_display_params(&target, &info.type_params, args))
+    }
+
+    /// Replace each standalone identifier of `display` that names one of `params` with the matching argument display.
+    ///
+    /// Path segments (`a::T::b`) are not parameters; only free identifiers are.
+    fn substitute_rust_display_params(display: &str, params: &[String], args: &[&str]) -> String {
+        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        let mut out = String::with_capacity(display.len());
+        let mut rest = display;
+        while let Some(start) = rest.find(is_word) {
+            out.push_str(&rest[..start]);
+            let tail = &rest[start..];
+            let end = tail.find(|ch: char| !is_word(ch)).unwrap_or(tail.len());
+            let word = &tail[..end];
+            let in_path = out.ends_with("::") || tail[end..].starts_with("::");
+            match params.iter().position(|param| param == word) {
+                Some(index) if !in_path => out.push_str(args[index]),
+                _ => out.push_str(word),
+            }
+            rest = &tail[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// Split a Rust generic display type into base and arguments.
     fn rust_generic_base_and_args(normalized: &str) -> Option<(&str, Vec<&str>)> {
         let start = normalized.find('<')?;
@@ -2533,13 +2589,19 @@ impl TypeChecker {
                             );
                         }
                         Some(CollectionTypeId::Result) => {
+                            // A `Result` alias (`std::thread::Result<T>`, `std::io::Result<T>`) fixes the error arm its
+                            // display omits; the alias item's recorded target names it.
+                            if args.len() != 2
+                                && let Some(expanded) = self.rust_alias_expansion(base, &args)
+                            {
+                                return self.resolved_type_from_rust_display(expanded.as_str());
+                            }
                             let ok_ty = args
                                 .first()
                                 .map(|p| self.resolved_type_from_rust_display(p))
                                 .unwrap_or(ResolvedType::Unknown);
-                            // Result aliases such as `datafusion_common::error::Result<T>` often erase the concrete
-                            // error arm from the display. Keep the success path semantic and degrade only the missing
-                            // error arm.
+                            // Without alias metadata (`datafusion_common::error::Result<T>` outside the inspected graph)
+                            // keep the success path semantic and degrade only the missing error arm.
                             let err_ty = args
                                 .get(1)
                                 .map(|p| self.resolved_type_from_rust_display(p))
