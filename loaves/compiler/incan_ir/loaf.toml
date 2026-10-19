@@ -12,7 +12,7 @@ description = "The Incan compiler's IR and the lowering from the checked program
 license = "Apache-2.0"
 name = "incan_ir"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [project.features]
 default = [

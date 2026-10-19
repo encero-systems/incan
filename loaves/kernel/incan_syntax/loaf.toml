@@ -11,7 +11,7 @@ description = "Shared syntax frontend (lexer, AST, parser) for the Incan compile
 license = "Apache-2.0"
 name = "incan_syntax"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [rust]
 edition = "2024"

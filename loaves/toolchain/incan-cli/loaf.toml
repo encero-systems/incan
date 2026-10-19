@@ -1,7 +1,7 @@
 # Authored toolchain facet; Cargo declarations are retained migration inputs only.
 [project]
 name = "incan_cli"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 private = true
 license = "Apache-2.0"
 description = "The incan command: clap surface, terminal rendering, exit codes, the test runner"

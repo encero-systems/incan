@@ -12,7 +12,7 @@ description = "What Oven learns about Incan: the compiler's identity and its pro
 license = "Apache-2.0"
 name = "incan_oven_facet"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [rust]
 edition = "2024"
