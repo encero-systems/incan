@@ -262,10 +262,12 @@ fn ordinary_alias_attachments_use_original_package_profile() -> Result<(), Box<d
                 .collect::<Vec<_>>(),
             [import_alias]
         );
+        // Attachment reports canonical outputs; a temporary root such as macOS `/var` is itself a symlink.
+        let crate_root = artifact.crate_root.canonicalize()?;
         assert!(
             libraries
                 .iter()
-                .all(|library| library.output == artifact.crate_root.join(&checked[0].package.library_relative_path))
+                .all(|library| library.output == crate_root.join(&checked[0].package.library_relative_path))
         );
 
         // Repeated copies of the same checked owner do not introduce another output authority.
@@ -1086,7 +1088,8 @@ fn ordinary_transitive_outputs_retain_checked_search_only_libraries() -> Result<
     assert_eq!(libraries.len(), 1);
     assert!(!libraries[0].expose_extern);
     assert_eq!(libraries[0].crate_name, "provider");
-    assert!(libraries[0].output.starts_with(&artifact.crate_root));
+    // Attachment reports canonical outputs; a temporary root such as macOS `/var` is itself a symlink.
+    assert!(libraries[0].output.starts_with(artifact.crate_root.canonicalize()?));
     assert_eq!(
         libraries[0]
             .output
