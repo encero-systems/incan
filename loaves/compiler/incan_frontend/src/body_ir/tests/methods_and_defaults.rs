@@ -366,6 +366,29 @@ fn trait_value_inputs_bind_independent_concrete_carriers() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// A refined opaque trait return refreshes its hidden carrier by slot when named arguments are written out of order.
+#[test]
+fn refined_trait_returns_refresh_out_of_order_named_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel One with Named:\n  number: int\n\nmodel Two with Named:\n  text: str\n\ndef make() -> Named:\n  return Two(text=\"x\")\n\ndef consume(left: Named, right: Named) -> int:\n  return 7\n\ndef main() -> None:\n  println(consume(right=make(), left=One(number=3)))\n",
+        &["refined_trait_return_inputs"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "consume")
+        .ok_or("call missing")?;
+    assert!(
+        matches!(target.binding, bir::ArgumentBinding::ResolvedDeclarationOrder { .. }),
+        "{target:?}"
+    );
+    assert_eq!(
+        target.type_args,
+        [IncanType::Named("One".to_owned()), IncanType::Named("Two".to_owned())]
+    );
+    Ok(())
+}
+
 /// The record-pattern fixture closes every enum construction even alongside inferred generic model and class calls.
 #[test]
 fn generic_enum_record_fixture_has_closed_temporaries() -> Result<(), Box<dyn std::error::Error>> {
