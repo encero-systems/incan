@@ -4,7 +4,6 @@
 //! and error-wrapping helpers the command implementations reach for.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use std::fs;
@@ -22,20 +21,6 @@ pub(super) fn read_receipt(path: &Path) -> CliResult<OvenReceipt> {
         .map_err(|error| CliError::failure(format!("failed to parse Oven receipt {}: {error}", path.display())))?;
     receipt.verify_identity().map_err(oven_error)?;
     Ok(receipt)
-}
-
-/// Resolve the toolchain-manager state needed when a compiler self-test deliberately exercises Rustup fallback.
-///
-/// Stored normal commands receive a verified absolute `RUSTC`; this path exists solely because compiler tests also
-/// verify Rustup discovery after removing that explicit variable. It is intentionally separate from Cargo state.
-pub(super) fn default_rustup_home(rustup_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    rustup_home
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            home.filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".rustup"))
-        })
 }
 
 /// Parse a named source argument with a portable digest key and a filesystem input path.

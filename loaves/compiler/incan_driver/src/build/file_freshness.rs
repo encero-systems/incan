@@ -160,15 +160,7 @@ fn directory_entries_in(path: &Path, cache: Option<&Path>) -> io::Result<(Vec<Pa
 
 /// Resolve optional local cache storage through the same home precedence as the Oven store.
 fn cache_root() -> Option<PathBuf> {
-    std::env::var_os("INCAN_HOME")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            crate::oven_store::user_home()
-                .filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".incan"))
-        })
-        .map(|root| root.join("cache/file-digests-v1"))
+    oven_model::home::cache_dir("file-digests-v1")
 }
 
 /// Return a content identity with optional stat-based acceleration; unsupported platforms always read bytes.

@@ -547,15 +547,7 @@ fn sealed_reading_path(provider_plan: &ProviderPlan, key: &str) -> Option<PathBu
 
 /// Resolve the Incan home that keeps readings, matching how every other Incan-owned cache is placed.
 fn sealed_reading_root() -> Option<PathBuf> {
-    std::env::var_os("INCAN_HOME")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".incan"))
-        })
+    oven_model::home::incan_home()
 }
 
 /// Place one reading under a given home, or refuse when the reading is not one that may be kept.

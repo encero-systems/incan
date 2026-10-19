@@ -3,7 +3,6 @@
 //! `test`, the explicit bake and the inspection commands all read and publish the same entries.
 
 use std::env;
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::error::{CliError, CliResult};
@@ -58,7 +57,7 @@ pub fn open_store(options: &OvenStoreCommandOptions) -> CliResult<OvenStore> {
 pub fn open_store_with_defaults(options: &OvenStoreCommandOptions, defaults: OvenStoreLimits) -> CliResult<OvenStore> {
     let root = match &options.root {
         Some(root) => root.clone(),
-        None => default_store_root(env::var_os("INCAN_HOME"), user_home()).ok_or_else(|| {
+        None => default_store_root().ok_or_else(|| {
             CliError::failure("cannot resolve the Oven store root; set INCAN_HOME, HOME, or pass --store")
         })?,
     };
@@ -152,19 +151,7 @@ pub fn parse_limit_value(name: &str, value: Option<String>, default: u64) -> Cli
     }
 }
 
-/// Resolve the versioned Oven store location below `INCAN_HOME` before the user home directory.
-pub fn default_store_root(incan_home: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    incan_home
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            home.filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".incan"))
-        })
-        .map(|root| oven_store::store::store_root_for_home(&root))
-}
-
-/// Return the platform home environment used by installed Incan binaries.
-pub fn user_home() -> Option<OsString> {
-    env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))
+/// The versioned Oven store location under the Incan home.
+pub fn default_store_root() -> Option<PathBuf> {
+    oven_model::home::incan_home().map(|root| oven_store::store::store_root_for_home(&root))
 }

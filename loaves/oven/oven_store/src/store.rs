@@ -4199,17 +4199,7 @@ pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError>
 /// Use the existing user cache for all file observations, including nested published package Stores.
 /// Placing records beside a Store can mutate its enclosing immutable provider and change that provider's identity.
 fn observed_digest_cache_path(canonical: &Path) -> Option<PathBuf> {
-    let cache = std::env::var_os("INCAN_HOME")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .filter(|path| !path.is_empty())
-                .map(|path| PathBuf::from(path).join(".incan"))
-        })
-        .map(|root| root.join("cache/observed-file-digests-v1"));
-    cache.map(|root| {
+    oven_model::home::cache_dir("observed-file-digests-v1").map(|root| {
         root.join(format!(
             "{:x}.json",
             Sha256::digest(canonical.as_os_str().as_encoded_bytes())

@@ -69,16 +69,14 @@ fn coordinates(executable: &Path) -> io::Result<(PathBuf, String)> {
     let generation = format!("{PROTOCOL}:{:x}", digest.finalize());
     let root = match std::env::var_os("INCAN_OWNER_DIRECTORY") {
         Some(root) => PathBuf::from(root),
-        None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is unavailable"))?)
-            .join(".incan/owners"),
+        None => oven_model::home::incan_home()
+            .ok_or_else(|| io::Error::other("no Incan home: set INCAN_HOME or HOME"))?
+            .join("owners"),
     };
     fs::create_dir_all(&root)?;
+    let user_home = oven_model::home::user_home().ok_or_else(|| io::Error::other("HOME is unavailable"))?;
     let metadata = fs::symlink_metadata(&root)?;
-    if !metadata.is_dir()
-        || metadata.file_type().is_symlink()
-        || metadata.uid()
-            != fs::metadata(std::env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is unavailable"))?)?.uid()
-    {
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata.uid() != fs::metadata(user_home)?.uid() {
         return Err(io::Error::other(
             "owner directory must be a private, owned regular directory",
         ));

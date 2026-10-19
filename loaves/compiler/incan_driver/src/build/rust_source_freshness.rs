@@ -143,14 +143,12 @@ fn digest_observed(
     } else {
         "cargo-path-authority-stat/3"
     };
-    let cache = std::env::var_os("INCAN_HOME")
-        .filter(|home| !home.is_empty())
-        .map(|home| {
-            PathBuf::from(home).join("cache/rust-source-digests-v1").join(format!(
-                "{:x}.json",
-                Sha256::digest(root.as_os_str().as_encoded_bytes())
-            ))
-        });
+    let cache = oven_model::home::cache_dir("rust-source-digests-v1").map(|cache| {
+        cache.join(format!(
+            "{:x}.json",
+            Sha256::digest(root.as_os_str().as_encoded_bytes())
+        ))
+    });
     if let Some(record) = cache
         .as_ref()
         .and_then(|path| fs::read(path).ok())

@@ -38,9 +38,9 @@ pub fn incan_owned_rustup_home() -> Option<PathBuf> {
         .ok()
         .map(|executable| fs::canonicalize(&executable).unwrap_or(executable));
     incan_owned_rustup_home_in(
-        env::var_os("INCAN_HOME"),
+        env::var_os(oven_model::home::INCAN_HOME_ENV),
         executable,
-        env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")),
+        oven_model::home::user_home(),
     )
 }
 
