@@ -3,7 +3,6 @@ clap = { features = ["derive"], loaf = "crates-io/clap", optional = true, versio
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
-incan_ir = { default-features = false, loaf = "incan_ir", path = "../incan_ir" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_oven_facet = { loaf = "incan_oven_facet", path = "../incan_oven_facet" }
 incan_provider = { default-features = false, loaf = "incan_provider", path = "../incan_provider" }
