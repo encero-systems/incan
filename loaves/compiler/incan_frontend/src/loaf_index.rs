@@ -9,10 +9,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
+use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 use sha2::{Digest, Sha256};
 
-use crate::library_manifest::LibraryManifest;
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+
+use crate::library_manifest::{ExportIdentity, ExportIdentityKind, LibraryManifest};
 
 /// The artifact directory of a Loaf rooted at `root`, for one profile: `<root>/target/incan/loaf/<profile>`.
 pub fn artifact_dir(root: &Path, profile: &str) -> PathBuf {
@@ -195,6 +199,101 @@ impl LoafIndex {
         self.entries.values().find(|entry| entry.owns(module))
     }
 
+    /// The Loaf that declares `canonical` (a package identity) among its public exports.
+    ///
+    /// Every Loaf a compilation reaches is indexed, transitive ones included, so the declaring Loaf is found by the
+    /// identity's package and its identity graph rather than by walking import routes.
+    pub fn declaring_loaf(&self, canonical: &CanonicalSymbolId) -> Option<&LoafEntry> {
+        let SymbolOrigin::Package { library, .. } = &canonical.origin else {
+            return None;
+        };
+        self.entries.values().find(|entry| {
+            &entry.artifact.manifest.name == library
+                && entry
+                    .artifact
+                    .manifest
+                    .contract_metadata
+                    .identity_graph
+                    .exports
+                    .iter()
+                    .any(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+        })
+    }
+
+    /// The public nominal export of `canonical` in its declaring Loaf: its shortest public path.
+    pub fn public_nominal(&self, canonical: &CanonicalSymbolId) -> Option<(&LoafEntry, &ExportIdentity)> {
+        let entry = self.declaring_loaf(canonical)?;
+        let export = entry
+            .artifact
+            .manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .filter(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+            .filter(|export| {
+                matches!(
+                    export.kind,
+                    ExportIdentityKind::Model
+                        | ExportIdentityKind::Class
+                        | ExportIdentityKind::Enum
+                        | ExportIdentityKind::Newtype
+                )
+            })
+            .min_by(|left, right| {
+                left.public_path
+                    .len()
+                    .cmp(&right.public_path.len())
+                    .then(left.public_path.cmp(&right.public_path))
+            })?;
+        Some((entry, export))
+    }
+
+    /// The manifest of the Loaf indexed as `key`.
+    pub fn manifest(&self, key: &str) -> Option<&LibraryManifest> {
+        self.entries.get(key).map(|entry| entry.artifact.manifest.as_ref())
+    }
+
+    /// Rust item metadata a Loaf's Rust facet ships in its manifest, from the first Loaf (in key order) that has it.
+    pub fn rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        self.entries
+            .values()
+            .filter_map(|entry| entry.artifact.manifest.rust_abi.as_ref())
+            .find_map(|abi| abi.get(canonical_path).cloned())
+    }
+
+    /// Keyword registrations the indexed Loaves export, keyed by Loaf, for the consumer's parser.
+    pub fn imported_vocab(&self) -> crate::parser::ImportedLibraryVocab {
+        let mut map = std::collections::HashMap::new();
+        for (key, entry) in &self.entries {
+            let Some(vocab) = &entry.artifact.manifest.vocab else {
+                continue;
+            };
+            let registrations = vocab
+                .keyword_registrations
+                .iter()
+                .filter_map(|registration| normalize_keyword_registration(key, registration))
+                .collect::<Vec<_>>();
+            if !registrations.is_empty() {
+                map.insert(key.clone(), registrations);
+            }
+        }
+        map
+    }
+
+    /// DSL surfaces the indexed Loaves export, keyed by Loaf.
+    pub fn imported_dsl_surfaces(&self) -> crate::parser::ImportedLibraryDslSurfaces {
+        let mut map = std::collections::HashMap::new();
+        for (key, entry) in &self.entries {
+            if let Some(vocab) = &entry.artifact.manifest.vocab
+                && !vocab.dsl_surfaces.is_empty()
+            {
+                map.insert(key.clone(), vocab.dsl_surfaces.clone());
+            }
+        }
+        map
+    }
+
     /// A key that changes whenever any indexed Loaf or its manifest changes, for persisted readings.
     pub fn persistent_key(&self) -> String {
         let mut hasher = Sha256::new();
@@ -210,4 +309,36 @@ impl LoafIndex {
         }
         format!("{:x}", hasher.finalize())
     }
+}
+
+/// One Loaf's keyword registration as its consumer's parser reads it: named keywords only, sorted and deduplicated,
+/// with an import-activated registration defaulting to the Loaf's own key as its namespace.
+fn normalize_keyword_registration(key: &str, registration: &KeywordRegistration) -> Option<KeywordRegistration> {
+    let mut keywords: Vec<KeywordSpec> = registration
+        .keywords
+        .iter()
+        .filter(|keyword| !keyword.name.trim().is_empty())
+        .cloned()
+        .collect();
+    if keywords.is_empty() {
+        return None;
+    }
+    keywords.sort_by(|left, right| left.name.cmp(&right.name));
+    keywords.dedup_by(|left, right| left.name == right.name && left.surface_kind == right.surface_kind);
+    let activation = match &registration.activation {
+        KeywordActivation::Always => KeywordActivation::Always,
+        KeywordActivation::OnImport { namespace } => KeywordActivation::OnImport {
+            namespace: if namespace.trim().is_empty() {
+                key.to_owned()
+            } else {
+                namespace.trim().to_owned()
+            },
+        },
+        _ => return None,
+    };
+    Some(KeywordRegistration {
+        activation,
+        keywords,
+        valid_decorators: registration.valid_decorators.clone(),
+    })
 }
