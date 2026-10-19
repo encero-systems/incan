@@ -25,8 +25,6 @@ pub mod feature_inspect;
 pub mod representation_inspect;
 pub mod workspace;
 
-#[cfg(test)]
-mod tools_boundary_tests;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
 // The `oven`, `lock` and `tools` families live in the `oven-cli` package; `incan` mounts them under its own
