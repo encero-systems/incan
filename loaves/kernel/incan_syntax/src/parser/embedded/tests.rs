@@ -74,7 +74,10 @@ mod embedded_fragment_tests {
             return Err("expected a function declaration at index 1".to_string());
         };
         let Statement::VocabBlock(block) = &function.body[0].node else {
-            return Err(format!("expected a vocab block statement, got {:?}", function.body[0].node));
+            return Err(format!(
+                "expected a vocab block statement, got {:?}",
+                function.body[0].node
+            ));
         };
         let Statement::Expr(expr) = &block.body[0].node else {
             return Err(format!(
@@ -131,7 +134,11 @@ mod embedded_fragment_tests {
         let fragment = embedded_fragment_from_program(&program)?;
 
         let holes = fragment.holes();
-        assert_eq!(holes.len(), 1, "the declaration value hole should be reached: {holes:?}");
+        assert_eq!(
+            holes.len(),
+            1,
+            "the declaration value hole should be reached: {holes:?}"
+        );
         assert!(
             matches!(&holes[0].node, Expr::Ident(name) if name == "accent"),
             "unexpected hole: {:?}",
@@ -143,8 +150,7 @@ mod embedded_fragment_tests {
     // ---- Markup submode ----
 
     #[test]
-    fn markup_fragment_accepts_element_attrs_text_entity_comment_and_hole() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn markup_fragment_accepts_element_attrs_text_entity_comment_and_hole() -> Result<(), Box<dyn std::error::Error>> {
         let (keyword_map, surface_map) =
             embedded_fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup);
         let source = "import pub::webkit\n\ndef render(title: str) -> None:\n  html:\n    <section class=\"card\">\n      <h1>{title}</h1>\n      Copyright &amp; co.\n      <!-- trailer -->\n      <img src={title} alt=\"Preview\" />\n    </section>\n";
@@ -161,12 +167,18 @@ mod embedded_fragment_tests {
         // (preserved verbatim, per the formatter's future layout-preserving fallback), so a trailing whitespace-only
         // `Text` node after the top-level element is expected here rather than an exact node count.
         let EmbeddedNode::Element(section) = &fragment.nodes[0].node else {
-            return Err(format!("expected a top-level <section> element, got {:?}", fragment.nodes[0].node).into());
+            return Err(format!(
+                "expected a top-level <section> element, got {:?}",
+                fragment.nodes[0].node
+            )
+            .into());
         };
         assert_eq!(section.name, "section");
         assert_eq!(section.attrs.len(), 1);
         assert_eq!(section.attrs[0].name, "class");
-        assert!(matches!(&section.attrs[0].value, Some(spanned) if matches!(&spanned.node, EmbeddedNode::Text(t) if t == "card")));
+        assert!(
+            matches!(&section.attrs[0].value, Some(spanned) if matches!(&spanned.node, EmbeddedNode::Text(t) if t == "card"))
+        );
 
         let h1 = section
             .children
@@ -186,7 +198,10 @@ mod embedded_fragment_tests {
             .children
             .iter()
             .any(|child| matches!(&child.node, EmbeddedNode::EntityRef(name) if name == "amp"));
-        assert!(has_entity, "expected an `&amp;` entity reference among the section's children");
+        assert!(
+            has_entity,
+            "expected an `&amp;` entity reference among the section's children"
+        );
 
         let has_comment = section
             .children
@@ -227,7 +242,10 @@ mod embedded_fragment_tests {
         let hole = h1.children.first().ok_or("expected a hole child")?;
         let expected_start = source.find("{title}").ok_or("fixture source must contain `{title}`")?;
         let expected_end = expected_start + "{title}".len();
-        assert_eq!(hole.span.start, expected_start, "hole span should start exactly at `{{`");
+        assert_eq!(
+            hole.span.start, expected_start,
+            "hole span should start exactly at `{{`"
+        );
         assert_eq!(hole.span.end, expected_end, "hole span should end exactly after `}}`");
         Ok(())
     }
@@ -241,7 +259,9 @@ mod embedded_fragment_tests {
             .err()
             .ok_or("expected a parse error for a mismatched closing tag")?;
         assert!(
-            errors.iter().any(|error| error.message.contains("Mismatched closing tag")),
+            errors
+                .iter()
+                .any(|error| error.message.contains("Mismatched closing tag")),
             "expected a mismatched-closing-tag diagnostic, got {errors:?}"
         );
         Ok(())
@@ -351,8 +371,8 @@ mod embedded_fragment_tests {
     // ---- Style submode ----
 
     #[test]
-    fn style_fragment_accepts_selector_list_declarations_custom_property_and_color() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn style_fragment_accepts_selector_list_declarations_custom_property_and_color()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (keyword_map, surface_map) =
             embedded_fixture_maps("css", "webkit", incan_vocab::EmbeddedFragmentSubmode::Style);
         let source = "import pub::webkit\n\ndef render() -> None:\n  css:\n    .card:hover, #title {\n      --accent-color: #1166ff;\n      color: var(--accent-color);\n      padding: 16px;\n    }\n";
@@ -364,7 +384,9 @@ mod embedded_fragment_tests {
             return Err("expected a top-level style rule".into());
         };
         assert_eq!(rule.selectors.len(), 2);
-        assert!(matches!(&rule.selectors[0].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == ".card:hover"));
+        assert!(
+            matches!(&rule.selectors[0].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == ".card:hover")
+        );
         assert!(matches!(&rule.selectors[1].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == "#title"));
         assert_eq!(rule.declarations.len(), 3);
         let EmbeddedNode::Declaration(custom_prop) = &rule.declarations[0].node else {
@@ -422,7 +444,9 @@ mod embedded_fragment_tests {
             .err()
             .ok_or("expected an unterminated-comment parse error")?;
         assert!(
-            errors.iter().any(|error| error.message.contains("Unterminated comment")),
+            errors
+                .iter()
+                .any(|error| error.message.contains("Unterminated comment")),
             "expected an unterminated-comment diagnostic, got {errors:?}"
         );
         Ok(())
@@ -502,7 +526,9 @@ mod embedded_fragment_tests {
         let fragment = embedded_fragment_from_program(&program)?;
         assert!(fragment.nodes.len() >= 3);
         assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t == "TODO("));
-        assert!(matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "who")));
+        assert!(
+            matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "who"))
+        );
         assert!(fragment.source_text.contains("<<weird>>"));
         Ok(())
     }
@@ -535,7 +561,9 @@ mod embedded_fragment_tests {
         let fragment = embedded_fragment_from_program(&program)?;
         assert_eq!(fragment.nodes.len(), 3);
         assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t == "hello "));
-        assert!(matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "name")));
+        assert!(
+            matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "name"))
+        );
         assert!(matches!(&fragment.nodes[2].node, EmbeddedNode::Text(t) if t == "!"));
         Ok(())
     }
@@ -562,8 +590,8 @@ mod embedded_fragment_tests {
     // The parser-level fixtures above all call `parse_embedded_fixture`, which unconditionally lexes with
     // `lex_tolerant` and discards its collected errors. That mirrors the parser's own unit-test convenience, not
     // the real production entrypoint (`CompilationSession::parse_source_for_collection` in
-    // `loaves/compiler/incan_driver/src/session.rs`), which only falls back to `lex_tolerant` after the strict `lex()` fails, and
-    // then reconciles the tolerant lexer's errors through `parse_with_source_and_lex_errors` rather than
+    // `loaves/compiler/incan_driver/src/session.rs`), which only falls back to `lex_tolerant` after the strict `lex()`
+    // fails, and then reconciles the tolerant lexer's errors through `parse_with_source_and_lex_errors` rather than
     // dropping them outright. The test below exercises that exact reconciliation path directly.
 
     #[test]
@@ -605,7 +633,9 @@ mod embedded_fragment_tests {
         // Reconciliation must drop every error whose span falls inside the successfully-claimed `script:`
         // fragment (the template string's own backtick/`$`/`{` bytes) while keeping the one real mistake in
         // `broken()`.
-        let broken_offset = source.find("`oops").ok_or("fixture source must contain the stray backtick")?;
+        let broken_offset = source
+            .find("`oops")
+            .ok_or("fixture source must contain the stray backtick")?;
         assert!(!errors.is_empty(), "expected at least one surviving real error");
         assert!(
             errors.iter().all(|error| error.span.start >= broken_offset),
@@ -674,8 +704,12 @@ mod embedded_fragment_tests {
         let EmbeddedTypeShape::Generic(base, args) = inner.as_ref() else {
             return Err("expected the nullable member to wrap a generic type".into());
         };
-        assert!(matches!(base.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["a".to_string(), "b".to_string(), "Foo".to_string()]));
-        assert!(matches!(&args[0], EmbeddedTypeShape::Array(elem) if matches!(elem.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["Bar".to_string()])));
+        assert!(
+            matches!(base.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["a".to_string(), "b".to_string(), "Foo".to_string()])
+        );
+        assert!(
+            matches!(&args[0], EmbeddedTypeShape::Array(elem) if matches!(elem.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["Bar".to_string()]))
+        );
         assert!(matches!(&members[1], EmbeddedTypeShape::Name(segments) if segments == &["Baz".to_string()]));
         Ok(())
     }
@@ -760,7 +794,9 @@ mod embedded_fragment_tests {
             .err()
             .ok_or("expected an ambiguous same-depth descriptor error")?;
         assert!(
-            errors.iter().any(|error| error.message.contains("Ambiguous embedded-fragment descriptors")),
+            errors
+                .iter()
+                .any(|error| error.message.contains("Ambiguous embedded-fragment descriptors")),
             "expected an ambiguity diagnostic, got {errors:?}"
         );
         Ok(())

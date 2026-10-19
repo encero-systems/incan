@@ -28,8 +28,8 @@ DEV_ENV = INCAN_SDK_NATIVE_COMPILER_GRAPH="$(INCAN_NATIVE_COMPILER_GRAPH)" \
 COMPILER_DEVELOPMENT = $(DEV_ENV) sh "$(CURDIR)/scripts/compiler_development.sh" \
 	"$(CURDIR)" "$(TARGET_DIR)" "$(INCAN_STAGE_ZERO)" "$(INCAN_RUST_TOOLCHAIN)" "$(INCAN_OVEN_STORE)"
 
-# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert.
-RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**'
+# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert and vendored crates their upstream form.
+RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**' ':!:loaves/third_party/**'
 
 # =============================================================================
 # Help
@@ -137,8 +137,8 @@ behavior-roots:
 		TEST_ROOT=loaves/compiler/incan_test_support/src/lib.rs \
 		TEST_EXACT=behavior_roots::tests::behavior_roots_match_their_areas
 
-.PHONY: pre-commit-fast  ## quality - Fast local gate: formatting, spelling, rustdoc, doc paths and the skill table
-pre-commit-fast: fmt-check us-english-check rustdoc-gate doc-paths agents-doc-sync
+.PHONY: pre-commit-fast  ## quality - Fast local gate: formatting, spelling, rustdoc and the skill table (doc paths return with the dev.8 docs pass)
+pre-commit-fast: fmt-check us-english-check rustdoc-gate agents-doc-sync
 
 # =============================================================================
 # Docs

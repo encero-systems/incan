@@ -80,10 +80,7 @@ impl<'a> Parser<'a> {
         }
 
         let ty = self.type_expr()?;
-        self.expect_punct(
-            PunctuationId::RParen,
-            "Expected ')' after value enum type specifier",
-        )?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after value enum type specifier")?;
 
         let value_type = match &ty.node {
             Type::Simple(name) if name == "str" => ValueEnumType::Str,

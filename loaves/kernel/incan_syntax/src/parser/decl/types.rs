@@ -25,17 +25,30 @@ impl<'a> Parser<'a> {
         // ---- `type X = rusttype Y`                   → rusttype (RFC 041 surface form) ----
         // ---- `type X = Y`                            → type alias ----
         if is_newtype_keyword || self.match_keyword(KeywordId::Newtype) {
-            Ok(TypeOrNewtype::Newtype(Box::new(
-                self.finish_newtype(decorators, visibility, name, type_params, false)?,
-            )))
+            Ok(TypeOrNewtype::Newtype(Box::new(self.finish_newtype(
+                decorators,
+                visibility,
+                name,
+                type_params,
+                false,
+            )?)))
         } else if self.match_ident_text("rusttype") {
-            Ok(TypeOrNewtype::Newtype(Box::new(
-                self.finish_newtype(decorators, visibility, name, type_params, true)?,
-            )))
+            Ok(TypeOrNewtype::Newtype(Box::new(self.finish_newtype(
+                decorators,
+                visibility,
+                name,
+                type_params,
+                true,
+            )?)))
         } else {
             // Type alias: `type X[T] = Y[T]`  — no body block allowed.
             let target = self.type_expr()?;
-            Ok(TypeOrNewtype::Alias(TypeAliasDecl { visibility, name, type_params, target }))
+            Ok(TypeOrNewtype::Alias(TypeAliasDecl {
+                visibility,
+                name,
+                type_params,
+                target,
+            }))
         }
     }
 
@@ -78,9 +91,7 @@ impl<'a> Parser<'a> {
             }
 
             while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
-                if self.peek_ident_text("interop")
-                    && self.peek_next().kind.is_punctuation(PunctuationId::Colon)
-                {
+                if self.peek_ident_text("interop") && self.peek_next().kind.is_punctuation(PunctuationId::Colon) {
                     if seen_interop_block {
                         return Err(errors::expected_token_message(
                             "Duplicate `interop:` block; only one is allowed",
@@ -114,17 +125,12 @@ impl<'a> Parser<'a> {
                     continue;
                 }
 
-                if self.check(&TokenKind::Ident(String::new()))
-                    && self.peek_next().kind.is_operator(OperatorId::Eq)
-                {
+                if self.check(&TokenKind::Ident(String::new())) && self.peek_next().kind.is_operator(OperatorId::Eq) {
                     let alias = self.method_alias_decl()?;
                     rebindings.push(Spanned::new(
                         RebindingDecl {
                             name: alias.node.name.clone(),
-                            target: Spanned::new(
-                                Expr::Ident(alias.node.target.clone()),
-                                alias.span,
-                            ),
+                            target: Spanned::new(Expr::Ident(alias.node.target.clone()), alias.span),
                         },
                         alias.span,
                     ));
@@ -174,11 +180,7 @@ impl<'a> Parser<'a> {
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
 
         Ok(Spanned::new(
-            AssociatedTypeDecl {
-                name,
-                trait_target,
-                ty,
-            },
+            AssociatedTypeDecl { name, trait_target, ty },
             Span::new(start, end),
         ))
     }

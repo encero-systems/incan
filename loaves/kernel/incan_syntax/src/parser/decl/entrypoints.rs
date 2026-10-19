@@ -57,7 +57,10 @@ impl<'a> Parser<'a> {
             PunctuationId::Colon,
             "Expected ':' after compile-time feature condition",
         )?;
-        self.expect(&TokenKind::Newline, "Expected newline after compile-time feature condition")?;
+        self.expect(
+            &TokenKind::Newline,
+            "Expected newline after compile-time feature condition",
+        )?;
         self.expect_suite_indent("Expected indented declaration block after compile-time feature condition")?;
 
         let outer_soft_keywords = self.active_soft_keywords.clone();
@@ -121,9 +124,7 @@ impl<'a> Parser<'a> {
 
         let decl = if self.check_keyword(KeywordId::From) {
             if visibility == Visibility::Public && self.module_path.is_some() && !self.is_src_module() {
-                return Err(errors::pub_reexport_only_allowed_in_src_modules(
-                    self.current_span(),
-                ));
+                return Err(errors::pub_reexport_only_allowed_in_src_modules(self.current_span()));
             }
             Declaration::Import(self.import_decl(visibility)?)
         } else if self.check_keyword(KeywordId::Import) {

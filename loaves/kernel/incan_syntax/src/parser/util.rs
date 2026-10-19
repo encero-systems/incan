@@ -100,7 +100,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse an identifier in import/decorator paths, allowing specific keyword segments (e.g. `std.async`, `rust.extern`).
+    /// Parse an identifier in import/decorator paths, allowing specific keyword segments (e.g. `std.async`,
+    /// `rust.extern`).
     fn identifier_or_import_keyword(&mut self) -> Result<Ident, CompileError> {
         match &self.peek().kind {
             TokenKind::Ident(name) => {

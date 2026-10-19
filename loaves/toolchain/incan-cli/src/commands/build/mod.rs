@@ -34,9 +34,7 @@ use incan_driver::build::{
     BuildCommandOptions, CompletedOutputPolicy, OvenBakeProjectTarget, OvenPreparedProject, OvenProjectPlanMode,
     elapsed_ms, library_publication,
 };
-use incan_driver::build_report::{
-    BuildReportMode, BuildReportOptions, artifact_report,
-};
+use incan_driver::build_report::{BuildReportMode, BuildReportOptions, artifact_report};
 use incan_driver::cargo_policy::CargoPolicy;
 use incan_driver::cargo_policy::reject_normal_cargo_controls;
 use incan_driver::project::resolve_project_root;

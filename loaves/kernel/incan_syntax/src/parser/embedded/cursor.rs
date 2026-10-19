@@ -221,12 +221,18 @@ fn scan_quoted_body<'src>(
 ) -> Result<(usize, &'src str), CompileError> {
     let start = cursor.pos;
     let Some(quote) = cursor.advance() else {
-        return Err(CompileError::syntax(unterminated_message.to_string(), cursor.span_from(start)));
+        return Err(CompileError::syntax(
+            unterminated_message.to_string(),
+            cursor.span_from(start),
+        ));
     };
     let text_start = cursor.pos;
     let text = cursor.eat_while(|c| c != quote);
     if !cursor.eat_if(|c| c == quote) {
-        return Err(CompileError::syntax(unterminated_message.to_string(), cursor.span_from(start)));
+        return Err(CompileError::syntax(
+            unterminated_message.to_string(),
+            cursor.span_from(start),
+        ));
     }
     Ok((text_start, text))
 }
