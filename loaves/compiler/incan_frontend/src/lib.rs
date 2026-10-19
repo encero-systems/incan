@@ -29,6 +29,7 @@ pub mod hir;
 pub mod library_exports;
 pub mod library_manifest;
 pub mod library_manifest_index;
+pub mod loaf_index;
 pub mod module;
 pub mod numeric_adapters;
 pub mod parsed_module;
