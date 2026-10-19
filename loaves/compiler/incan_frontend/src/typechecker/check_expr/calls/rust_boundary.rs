@@ -1,8 +1,11 @@
 //! Rust boundary matching, Rust call validation, and coercion metadata recording.
 
+use std::collections::HashMap;
+
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::diagnostics::errors;
+use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
 use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
@@ -242,6 +245,48 @@ impl TypeChecker {
         } else {
             return_ty
         }
+    }
+
+    /// Bind each generic a callable parameter returns (`f: impl FnOnce() -> R`) to what the passed callable returns.
+    ///
+    /// Rust leaves a function generic such as `R` in `catch_unwind<F: FnOnce() -> R, R>` unbound in the signature. The
+    /// closure or function passed for the callable parameter fixes it, so the call's result names that type rather than
+    /// a placeholder no layout can carry.
+    fn rust_callable_return_bindings(
+        &self,
+        sig: &RustFunctionSig,
+        owner_path: &str,
+        bindings: &[RustCallArgBinding<'_>],
+    ) -> HashMap<String, ResolvedType> {
+        let mut bound = HashMap::new();
+        for binding in bindings {
+            let target = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                binding.param.type_display.as_str(),
+                owner_path,
+            );
+            let (ResolvedType::Function(_, target_ret), ResolvedType::Function(_, arg_ret)) = (&target, binding.arg_ty)
+            else {
+                continue;
+            };
+            let (ResolvedType::RustPath(name) | ResolvedType::TypeVar(name)) = target_ret.as_ref() else {
+                continue;
+            };
+            if sig.type_params.iter().any(|param| param == name.trim()) {
+                bound.insert(name.trim().to_string(), arg_ret.as_ref().clone());
+            }
+        }
+        bound
+    }
+
+    /// Substitute the Rust generics `bound` fixes into an inspected result type.
+    fn bind_rust_generics(ty: ResolvedType, bound: &HashMap<String, ResolvedType>) -> ResolvedType {
+        if bound.is_empty() {
+            return ty;
+        }
+        map_resolved_type_leaves(&ty, &|leaf| match leaf {
+            ResolvedType::RustPath(name) => bound.get(name.trim()).cloned(),
+            _ => None,
+        })
     }
 
     /// Substitute inspected Rust generic placeholders from a compatible expected result shape.
@@ -1021,6 +1066,7 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, owner_path, span);
         }
 
+        let callable_returns = self.rust_callable_return_bindings(sig, owner_path, &bindings);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let param = binding.param;
@@ -1046,6 +1092,7 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, owner_path, span);
+        let ret = Self::bind_rust_generics(ret, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -1089,6 +1136,7 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
+        let callable_returns = self.rust_callable_return_bindings(sig, path, &bindings);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let arg_ty = binding.arg_ty;
@@ -1097,6 +1145,7 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
+        let ret = Self::bind_rust_generics(ret, &callable_returns);
         let ret = expected_return_ty
             .map(|expected| Self::refine_unbound_rust_return_type_with_expected(&ret, expected))
             .unwrap_or(ret);

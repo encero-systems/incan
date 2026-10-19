@@ -39,39 +39,47 @@ pub fn type_param_subst_map_call_site(params: &[String], args: &[ResolvedType]) 
 
 /// Apply `map` throughout `ty`, replacing [`ResolvedType::TypeVar`] leaves when a binding exists.
 pub fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, ResolvedType>) -> ResolvedType {
+    map_resolved_type_leaves(ty, &|leaf| match leaf {
+        ResolvedType::TypeVar(name) => map.get(name).cloned(),
+        _ => None,
+    })
+}
+
+/// Rebuild `ty`, replacing every node `replace` maps and keeping the shape of every other node.
+///
+/// The one structural walk for type substitution: Incan type variables and inspected Rust generics are different
+/// leaves, never different walks.
+pub fn map_resolved_type_leaves(
+    ty: &ResolvedType,
+    replace: &dyn Fn(&ResolvedType) -> Option<ResolvedType>,
+) -> ResolvedType {
+    if let Some(replaced) = replace(ty) {
+        return replaced;
+    }
+    let walk = |inner: &ResolvedType| map_resolved_type_leaves(inner, replace);
     match ty {
-        ResolvedType::TypeVar(name) => map.get(name).cloned().unwrap_or_else(|| ty.clone()),
-        ResolvedType::Generic(name, args) => ResolvedType::Generic(
-            name.clone(),
-            args.iter().map(|a| substitute_resolved_type(a, map)).collect(),
-        ),
+        ResolvedType::Generic(name, args) => ResolvedType::Generic(name.clone(), args.iter().map(walk).collect()),
         ResolvedType::Function(params, ret) => ResolvedType::Function(
             params
                 .iter()
                 .map(|p| CallableParam {
                     name: p.name.clone(),
-                    ty: substitute_resolved_type(&p.ty, map),
+                    ty: walk(&p.ty),
                     kind: p.kind,
                     has_default: p.has_default,
                     is_partial_preset: p.is_partial_preset,
                     is_mut: p.is_mut,
                 })
                 .collect(),
-            Box::new(substitute_resolved_type(ret, map)),
+            Box::new(walk(ret)),
         ),
-        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(substitute_resolved_type(inner, map))),
-        ResolvedType::Tuple(elems) => {
-            ResolvedType::Tuple(elems.iter().map(|e| substitute_resolved_type(e, map)).collect())
-        }
-        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(substitute_resolved_type(inner, map))),
-        ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
-            Box::new(substitute_resolved_type(key, map)),
-            Box::new(substitute_resolved_type(value, map)),
-        ),
-        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(substitute_resolved_type(inner, map))),
-        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(substitute_resolved_type(inner, map))),
-        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(substitute_resolved_type(inner, map))),
-        ResolvedType::CallSiteInfer => ty.clone(),
+        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(walk(inner))),
+        ResolvedType::Tuple(elems) => ResolvedType::Tuple(elems.iter().map(walk).collect()),
+        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(walk(inner))),
+        ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(Box::new(walk(key)), Box::new(walk(value))),
+        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(walk(inner))),
+        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(walk(inner))),
+        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(walk(inner))),
         _ => ty.clone(),
     }
 }
