@@ -147,12 +147,6 @@ pub fn check_path_report(
         Ok(modules) => modules,
         Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
-    #[cfg(feature = "rust_inspect")]
-    let rust_inspect = session.prepare_check_rust_inspection(&normalized_path, &modules)?;
-    #[cfg(feature = "rust_inspect")]
-    if let Some(workspace) = rust_inspect.as_ref() {
-        workspace.verify_ordinary_native()?;
-    }
     let typecheck = typecheck_modules(
         &modules,
         session.manifest.as_ref(),
@@ -161,13 +155,7 @@ pub fn check_path_report(
         None,
         c_abi_plan.as_ref(),
         &mut |_, _| {},
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect.as_ref().map(|workspace| workspace.manifest_dir()),
     );
-    #[cfg(feature = "rust_inspect")]
-    if let Some(workspace) = rust_inspect.as_ref() {
-        workspace.verify_ordinary_native()?;
-    }
     match typecheck {
         Ok(checked) => Ok(DiagnosticReport {
             schema_version: CHECK_REPORT_SCHEMA_VERSION,

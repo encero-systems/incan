@@ -98,30 +98,16 @@ fn checked_modules(
     .map_err(|failure| failure.render_human())?;
     let package_identity = package_override.unwrap_or_else(|| registry_package_identity(&session, &path));
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
-    let inspection = session
-        .prepare_check_rust_inspection(&path, &modules)
-        .map_err(|error| error.to_string())?;
-    if let Some(workspace) = inspection.as_ref() {
-        workspace.verify_ordinary_native().map_err(|error| error.to_string())?;
-    }
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
-            .analyze_unit(
-                &modules,
-                library.then_some(package_identity),
-                &mut |module, checker| {
-                    if let Some(publication) = publication.as_mut() {
-                        publication.visit(module, checker, module.file_path == path);
-                    }
-                },
-                inspection.as_ref().map(|workspace| workspace.manifest_dir()),
-            )
+            .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
+                if let Some(publication) = publication.as_mut() {
+                    publication.visit(module, checker, module.file_path == path);
+                }
+            })
             .map_err(|failure| failure.render_human())?
     };
-    if let Some(workspace) = inspection.as_ref() {
-        workspace.verify_ordinary_native().map_err(|error| error.to_string())?;
-    }
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)

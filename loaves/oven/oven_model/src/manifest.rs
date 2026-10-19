@@ -18,6 +18,10 @@ use crate::oven_interop::{InteropCSection, InteropSection};
 /// Lowercase deliberately, as RFC 117's Design decisions record: a case-only difference between two spellings is
 /// meaningless on the case-insensitive filesystems Windows and macOS use by default and significant on Linux and in CI.
 pub const LOAF_MANIFEST_FILENAME: &str = "loaf.toml";
+/// The filename of a project's lock, beside its manifest (RFC 117).
+///
+/// It is distinct from the artifact-store coordination lock; renaming this constant must not be taken to rename it.
+pub const LOCK_FILENAME: &str = "oven.lock";
 /// The retired manifest filename, retained only so diagnostics can name what a directory actually holds.
 ///
 /// RFC 117 lists preserving `incan.toml` as a compatibility format among its non-goals, so nothing parses a file with
@@ -4549,7 +4553,7 @@ libc = [
         // RFC 117 settles both spellings. Asserted against literals rather than the constants so a capitalized
         // reintroduction fails here instead of passing quietly on a case-insensitive filesystem.
         assert_eq!(LOAF_MANIFEST_FILENAME, "loaf.toml");
-        assert_eq!(crate::lock::LOCK_FILENAME, "oven.lock");
+        assert_eq!(LOCK_FILENAME, "oven.lock");
     }
 
     #[test]

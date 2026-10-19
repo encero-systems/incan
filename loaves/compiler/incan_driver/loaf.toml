@@ -5,7 +5,6 @@ incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegra
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_oven_facet = { loaf = "incan_oven_facet", path = "../incan_oven_facet" }
-incan_provider = { default-features = false, loaf = "incan_provider", path = "../incan_provider" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
 oven_interop = { loaf = "oven_interop", path = "../../oven/oven_interop", version = "0.6.0-dev.5" }
@@ -43,23 +42,18 @@ default = [
 ]
 rust_inspect = [
     "incan_frontend/rust_inspect",
-    "incan_provider/rust_inspect",
     "rust_inspect/inspector",
 ]
 std_async = [
     "incan_frontend/std_async",
-    "incan_provider/std_async",
 ]
 std_decorators = [
     "incan_frontend/std_decorators",
-    "incan_provider/std_decorators",
 ]
 std_testing = [
     "incan_frontend/std_testing",
-    "incan_provider/std_testing",
 ]
 test_support = [
-    "incan_provider/test_support",
     "incan_frontend/test_support",
     "rust_inspect/test_fixtures",
     "oven_store/test_support",
@@ -79,7 +73,6 @@ incan_derive = { loaf = "incan_derive", path = "../../stdlib/derive/incan_derive
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
 incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
 incan_frontend = { features = ["test_support"] }
-incan_provider = { features = ["test_support"] }
 oven_rustc = { features = ["test_support"] }
 oven_store = { features = ["test_support"] }
 rust_inspect = { features = ["test_fixtures"] }

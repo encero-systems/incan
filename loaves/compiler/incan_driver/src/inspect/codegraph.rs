@@ -16,18 +16,14 @@ use incan_codegraph::{
     CodegraphCBindingEnumVariant, CodegraphCBindingFacadeRecord, CodegraphCBindingOutcome, CodegraphCBindingParameter,
     CodegraphCBindingRecord, CodegraphCBindingResource, CodegraphCBindingStruct, CodegraphCBindingStructField,
     CodegraphCBindingSymbol, CodegraphCBindingType, CodegraphCallRecord, CodegraphCanonicalSymbolId,
-    CodegraphCapabilityRecord, CodegraphCapabilityScopeDimension,
-    CodegraphContainmentRecord, CodegraphDeclarationRecord,
-    CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration, CodegraphDiagnosticRelatedSpan,
-    CodegraphExportRecord, CodegraphFileRecord,
-    CodegraphHeaderRecord, CodegraphIdentitySpan, CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage,
-    CodegraphLoafProjection,
-    CodegraphMode, CodegraphModuleRecord, CodegraphNamespaceRecord, CodegraphPackage,
-    CodegraphProvenance,
-    CodegraphRecord, CodegraphReferenceRecord,
-    CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
-    CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
-    CodegraphStableDeclarationLocation, CodegraphSymbolOrigin,
+    CodegraphCapabilityRecord, CodegraphCapabilityScopeDimension, CodegraphContainmentRecord,
+    CodegraphDeclarationRecord, CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration,
+    CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFileRecord, CodegraphHeaderRecord,
+    CodegraphIdentitySpan, CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage, CodegraphLoafProjection,
+    CodegraphMode, CodegraphModuleRecord, CodegraphNamespaceRecord, CodegraphPackage, CodegraphProvenance,
+    CodegraphRecord, CodegraphReferenceRecord, CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
+    CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId, CodegraphStableDeclarationLocation,
+    CodegraphSymbolOrigin,
 };
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
@@ -37,6 +33,7 @@ use incan_semantics_core::stable_identity::{
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
+use crate::features::FeatureSelection;
 use incan_frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, Decorator, DecoratorArg, DecoratorArgValue,
     DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchBody,
@@ -54,7 +51,6 @@ use incan_frontend::typechecker::{
     CapabilityDeclarationInfo, c_binding_descriptor_identity,
 };
 use incan_lang::version::INCAN_VERSION;
-use crate::features::FeatureSelection;
 
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::modules::{
@@ -119,13 +115,11 @@ pub fn collect_codegraph_records(
     let package = package_identity(path)?;
     let package_name = package.as_ref().and_then(|package| package.name.clone());
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
-    builder.semantic_contexts =
-        collect_codegraph_semantic_contexts(path, feature_selection, profile, allow_errors)?;
+    builder.semantic_contexts = collect_codegraph_semantic_contexts(path, feature_selection, profile, allow_errors)?;
 
     if path.is_dir() {
         let files = discover_incan_files(path)?;
-        let (modules, analysis) =
-            directory_modules_diagnostics_and_info(&files, feature_selection, profile)?;
+        let (modules, analysis) = directory_modules_diagnostics_and_info(&files, feature_selection, profile)?;
         if !analysis.diagnostics.is_empty() && !allow_errors {
             return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
         }
@@ -270,11 +264,7 @@ fn directory_modules_diagnostics_and_info(
                             .or_insert_with(|| module.clone());
                     }
                 }
-                match session.analyze_modules(
-                    &modules,
-                    #[cfg(feature = "rust_inspect")]
-                    None,
-                ) {
+                match session.analyze_modules(&modules) {
                     Ok(analysis) => {
                         for (path, snapshot) in analysis.semantic_snapshots() {
                             retain_root_analysis(&mut semantic_snapshots_by_path, file, path, snapshot.clone());
@@ -363,11 +353,7 @@ fn typecheck_diagnostics_and_info(
     modules: &[ParsedModule],
     package_name: Option<&str>,
 ) -> CodegraphResult<CheckedCodegraphAnalysis> {
-    match session.analyze_modules(
-        modules,
-        #[cfg(feature = "rust_inspect")]
-        None,
-    ) {
+    match session.analyze_modules(modules) {
         Ok(analysis) => Ok(CheckedCodegraphAnalysis {
             diagnostics: Vec::new(),
             semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
@@ -595,7 +581,10 @@ fn codegraph_semantic_context(project_root: &Path, session: &CompilationSession)
                 name: entry.artifact.identity.name.clone(),
                 version: entry.artifact.identity.version.clone(),
                 digest: entry.artifact.identity.digest.clone(),
-                standard: matches!(entry.namespace, incan_frontend::loaf_index::LoafNamespace::Standard { .. }),
+                standard: matches!(
+                    entry.namespace,
+                    incan_frontend::loaf_index::LoafNamespace::Standard { .. }
+                ),
             })
             .collect(),
     }
@@ -3553,4 +3542,3 @@ fn line_column_for_offset(source: &str, offset: usize) -> (usize, usize) {
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
-

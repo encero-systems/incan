@@ -49,8 +49,6 @@ pub fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadata
                 metadata_module_path(module, &entry_path),
             ));
         },
-        #[cfg(feature = "rust_inspect")]
-        None,
     )
     .map_err(|failure| CliError::failure(failure.render_human()))?;
 
@@ -104,11 +102,7 @@ pub fn collect_registry_metadata_with_dependencies(
     let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     let analysis = session
-        .analyze_modules(
-            &modules,
-            #[cfg(feature = "rust_inspect")]
-            None,
-        )
+        .analyze_modules(&modules)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     let project_root = resolve_project_root(&entry_path);
     // Imported source modules are canonicalized by module resolution. Keep the producer-boundary comparison in the

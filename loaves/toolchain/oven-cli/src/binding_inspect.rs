@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 
 use crate::{CliError, CliResult, ExitCode};
+use incan_driver::features::FeatureSelection;
 use incan_driver::interop_plan::locked_interop_plan_target;
 use incan_frontend::ParsedModule;
 use incan_frontend::ast::{Span, Visibility};
@@ -21,7 +22,6 @@ use incan_frontend::typechecker::{
     CBindingBuffer, CBindingDescriptor, CBindingOutcome, CBindingType, COutputMode, CResourceAccess,
     c_binding_descriptor_identity,
 };
-use incan_driver::features::FeatureSelection;
 use oven_interop::{
     default_interop_execution_receipt_path, load_interop_execution_receipt, validate_interop_execution_receipt,
 };
@@ -344,11 +344,7 @@ pub(crate) fn execute_request(
     let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     let analysis = session
-        .analyze_modules(
-            &modules,
-            #[cfg(feature = "rust_inspect")]
-            None,
-        )
+        .analyze_modules(&modules)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     if format == BindingInspectionFormat::Receipt {
         let target = target

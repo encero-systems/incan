@@ -10,7 +10,6 @@ pub mod compiler_suite_env;
 pub mod digest;
 pub mod home;
 pub mod loaf_registry;
-pub mod lock;
 pub mod manifest;
 pub mod observed_inputs;
 pub mod oven_interop;

@@ -189,55 +189,9 @@ impl CompilationSession {
         &self.profile
     }
 
-    /// Prepare the CLI check path's Rust metadata context from this session's manifest.
-    /// Both diagnostics and native Body IR consumers must use this boundary before analysis so Rust signatures and
-    /// derives are checked under the same defaults. The returned lease must remain alive through checking; programs
-    /// without metadata queries need no workspace.
-    #[cfg(feature = "rust_inspect")]
-    pub fn prepare_check_rust_inspection(
-        &self,
-        entry_path: &Path,
-        modules: &[ParsedModule],
-    ) -> CliResult<Option<crate::lock::PreparedRustInspectTypecheckWorkspace>> {
-        let project_root = resolve_project_root(entry_path);
-        let project_name = self
-            .manifest
-            .as_ref()
-            .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
-            .or_else(|| {
-                entry_path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .map(ToString::to_string)
-            })
-            .unwrap_or_else(|| "incan_check".to_string());
-        let cargo_features = oven_model::lock::CargoFeatureSelection::default().normalized();
-        crate::lock::rust_inspect::prepare_rust_inspect_typecheck_workspace(crate::lock::RustInspectTypecheckRequest {
-            project_root: &project_root,
-            project_name: project_name.as_str(),
-            manifest: self.manifest.as_ref(),
-            modules,
-            cargo_features: &cargo_features,
-            rust_edition: self
-                .manifest
-                .as_ref()
-                .and_then(|manifest| manifest.rust_edition().map(str::to_string)),
-        })
-    }
-
     /// Analyze one collected module graph exactly once: no command re-runs checking to derive its own facts.
-    pub fn analyze_modules(
-        &self,
-        modules: &[ParsedModule],
-        #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
-    ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
-        self.analyze_unit(
-            modules,
-            None,
-            &mut |_, _| {},
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_manifest_dir,
-        )
+    pub fn analyze_modules(&self, modules: &[ParsedModule]) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
+        self.analyze_unit(modules, None, &mut |_, _| {})
     }
 
     /// Analyze one unit's module graph exactly once. A library unit passes its `package`, the package identity of every
@@ -247,7 +201,6 @@ impl CompilationSession {
         modules: &[ParsedModule],
         package: Option<&str>,
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
-        #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
         let type_infos = typecheck_modules(
             modules,
@@ -257,8 +210,6 @@ impl CompilationSession {
             package,
             None,
             visit,
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_manifest_dir,
         )?
         .type_infos;
         let mut type_info_by_path = BTreeMap::new();

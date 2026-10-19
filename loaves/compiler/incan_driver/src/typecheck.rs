@@ -46,7 +46,6 @@ pub fn typecheck_modules(
     package: Option<&str>,
     c_abi_plan: Option<&CAbiVerificationPlan>,
     visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
-    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
     let declared = manifest.map(|m| m.declared_rust_crate_names());
@@ -72,10 +71,6 @@ pub fn typecheck_modules(
         checker.set_loaves(Arc::clone(loaves));
         if let Some(policy) = own_standard_package {
             checker.set_own_standard_package(policy);
-        }
-        #[cfg(feature = "rust_inspect")]
-        if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir {
-            checker.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.to_path_buf());
         }
 
         // A standard package checks its complete source before publishing its public checked facade.

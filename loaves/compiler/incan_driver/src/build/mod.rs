@@ -10,7 +10,6 @@ pub mod executable;
 mod file_freshness;
 pub mod inline_command;
 mod inspection_snapshot;
-pub mod lock_preparation;
 pub mod native_loaf_plan;
 pub mod native_runtime_inputs;
 pub mod native_source_output;
@@ -20,7 +19,6 @@ mod output_publication;
 pub mod output_selection;
 pub mod publication;
 mod retained_inputs;
-pub mod rust_extern;
 mod rust_source_freshness;
 pub mod source_authority;
 #[cfg(any(test, feature = "test_support"))]

@@ -177,25 +177,12 @@ fn analyze(
             return (diagnostics, None);
         }
     };
-    #[cfg(feature = "rust_inspect")]
-    let inspection = session
-        .prepare_check_rust_inspection(path, &modules)
-        .unwrap_or_else(|error| {
-            tracing::warn!("Rust inspection is unavailable for {}: {error}", path.display());
-            None
-        });
     let mut facts = None;
-    let analysis = session.analyze_unit(
-        &modules,
-        None,
-        &mut |module, checker| {
-            if module.file_path == path {
-                facts = Some(DocumentFacts::read(module, checker));
-            }
-        },
-        #[cfg(feature = "rust_inspect")]
-        inspection.as_ref().map(|workspace| workspace.manifest_dir()),
-    );
+    let analysis = session.analyze_unit(&modules, None, &mut |module, checker| {
+        if module.file_path == path {
+            facts = Some(DocumentFacts::read(module, checker));
+        }
+    });
     let (Some(facts), Some(document)) = (facts, modules.iter().find(|module| module.file_path == path)) else {
         return (diagnostics, None);
     };

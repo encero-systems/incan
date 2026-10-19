@@ -61,13 +61,6 @@ impl std::error::Error for CliError {}
 /// Result type for CLI operations.
 pub type CliResult<T> = Result<T, CliError>;
 
-impl From<incan_provider::error::ProviderError> for CliError {
-    /// A provider failure is a command failure with the provider's message; the provider never chooses an exit code.
-    fn from(error: incan_provider::error::ProviderError) -> Self {
-        Self::failure(error.message)
-    }
-}
-
 /// Render a plan selection or composition refusal for the CLI, keeping direct-rustc transcripts intact.
 pub fn oven_plan_error(error: OvenPlanError) -> CliError {
     match error {
