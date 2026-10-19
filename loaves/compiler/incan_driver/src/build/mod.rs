@@ -5,21 +5,16 @@
 //! (timings, report identity blocks, target identities) every one of them uses.
 
 pub mod bake;
-pub mod caller_facet;
 pub mod check;
-mod direct_executable;
 pub mod executable;
 mod file_freshness;
 pub mod inline_command;
 pub mod library_exports;
 mod inspection_snapshot;
 pub mod lock_preparation;
-mod lock_reuse;
 pub mod native_loaf_plan;
 pub mod native_runtime_inputs;
 pub mod native_source_output;
-pub(crate) mod ordinary_support;
-pub mod provider_metadata;
 pub mod output_materialization;
 pub mod output_paths;
 mod output_publication;
@@ -27,7 +22,6 @@ pub mod output_selection;
 pub mod publication;
 mod retained_inputs;
 pub mod rust_extern;
-pub(crate) mod source_dependencies;
 mod rust_source_freshness;
 pub mod source_authority;
 #[cfg(any(test, feature = "test_support"))]
@@ -45,7 +39,7 @@ use crate::build_report::{BuildReportProject, SourceFileReport};
 use crate::error::{CliError, CliResult};
 use crate::lock::policy::LockPolicy;
 use incan_frontend::ParsedModule;
-use incan_provider::FeatureSelection;
+use crate::features::FeatureSelection;
 use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::plan::OvenPackagedLibraryLoafEntry;

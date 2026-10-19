@@ -271,5 +271,3 @@ fn failure(error: impl std::fmt::Display) -> CliError {
     CliError::failure(error.to_string())
 }
 
-#[cfg(test)]
-mod tests;

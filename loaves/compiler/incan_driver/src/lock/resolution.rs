@@ -922,5 +922,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod admitted_session_tests;

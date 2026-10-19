@@ -23,6 +23,8 @@ pub mod backend;
 pub mod build;
 pub mod build_report;
 pub mod build_unit;
+#[cfg(feature = "cli")]
+pub mod compile;
 pub mod diagnostics;
 pub mod error;
 pub mod features;

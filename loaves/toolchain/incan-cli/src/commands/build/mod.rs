@@ -130,29 +130,49 @@ pub(crate) fn build_file_report(
     })
 }
 
-/// Refuse `incan build --lib` until libraries build as direct-route library units.
+/// Build a Loaf as a library unit (`incan build --lib`).
 pub fn build_library(
     file_path: Option<&str>,
     output_dir: Option<&String>,
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
-    build_library_report(file_path, output_dir, options, &report_options).map(|_| ExitCode::SUCCESS)
+    let report = build_library_report(file_path, output_dir, options, &report_options)?;
+    emit_workspace_build_report(&report, &report_options)?;
+    Ok(ExitCode::SUCCESS)
 }
 
-/// Build one library project for workspace-level aggregation; refused until direct-route library units exist.
+/// Build one library project as a library unit (DD-0007), reporting its artifact directory.
 pub(crate) fn build_library_report(
     file_path: Option<&str>,
     _output_dir: Option<&String>,
-    _options: BuildCommandOptions,
-    _report_options: &BuildReportOptions,
-) -> CliResult<incan_driver::build_report::BuildReport> {
-    Err(CliError::failure(format!(
-        "{}: `incan build --lib` does not build yet; libraries return as direct-route library units",
-        file_path.unwrap_or(".")
-    )))
+    options: BuildCommandOptions,
+    report_options: &BuildReportOptions,
+) -> CliResult<serde_json::Value> {
+    let entry = incan_driver::compile::library_entry(Path::new(file_path.unwrap_or(".")))?;
+    let profile = match options.executable_profile {
+        RunProfile::Debug => "debug",
+        RunProfile::Release => "release",
+    };
+    let unit = incan_driver::compile::compile_unit(
+        &incan_driver::compile::UnitRequest {
+            source: &entry,
+            kind: incan_driver::compile::UnitKind::Library,
+            profile,
+            features: &options.package_features,
+            output_dir: None,
+        },
+        &mut |message| print_build_progress(report_options, message),
+    )?;
+    Ok(serde_json::json!({
+        "status": "success",
+        "mode": "library",
+        "profile": profile,
+        "library_root": unit.project_root,
+        "project": { "project_root": unit.project_root, "name": unit.name },
+        "artifacts": [{ "kind": "library", "path": unit.artifact }],
+    }))
 }
-
 /// Output format for `incan inspect backend-selection`.
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendSelectionInspectFormat {

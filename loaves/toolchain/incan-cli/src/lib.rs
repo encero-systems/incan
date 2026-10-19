@@ -1161,10 +1161,7 @@ fn execute_build(
                 request.options.clone(),
                 &request.report_options,
             )
-            .and_then(|report| {
-                serde_json::to_value(report.with_workspace_context(workspace_context))
-                    .map_err(|error| CliError::failure(format!("failed to serialize library build report: {error}")))
-            })
+            .and_then(|report| build_report_with_workspace_context(report, workspace_context))
         } else {
             commands::build::build_file_report(
                 target.to_string_lossy().as_ref(),

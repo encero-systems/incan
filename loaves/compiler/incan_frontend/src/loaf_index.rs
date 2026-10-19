@@ -105,6 +105,29 @@ impl LoafArtifact {
     pub fn native_closure_path(&self) -> PathBuf {
         self.dir.join(format!("{}.native.json", self.name))
     }
+
+    /// Read the library unit's native closure.
+    pub fn native_closure(&self) -> Result<LoafNativeClosure, LoafIndexError> {
+        let path = self.native_closure_path();
+        let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
+            path: path.clone(),
+            reason: error.to_string(),
+        })?;
+        serde_json::from_slice(&bytes).map_err(|error| LoafIndexError::Unreadable {
+            path,
+            reason: error.to_string(),
+        })
+    }
+}
+
+/// A library unit's native closure (`<name>.native.json`): the crates it links by name and the directories their own
+/// dependencies are found in. A consumer links the unit with the same closure.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LoafNativeClosure {
+    /// The crates the unit links, by crate name and rlib.
+    pub externs: Vec<(String, PathBuf)>,
+    /// The directories the linked crates' own dependencies are found in.
+    pub search: Vec<PathBuf>,
 }
 
 /// The namespace one Loaf owns in a compilation.

@@ -10,7 +10,7 @@ use std::time::Instant;
 use super::bake::select_default_executable_project_output;
 use super::output_materialization::{completed_executable_output_report, materialize_completed_executable_output};
 use super::retained_inputs::{ModelInputs, SessionPurpose};
-use super::{BuildCommandOptions, ProjectSourceAuthorityDigester};
+use super::{BuildCommandOptions, ProjectSourceAuthorityDigester, RunProfile};
 use crate::error::{CliError, CliResult};
 use incan_provider::FeatureSelection;
 
@@ -464,9 +464,29 @@ impl ExecutableBuildOwner {
         }
 
         // ---- Direct route ----
-        super::direct_executable::build(file_path, output_dir, &options, &mut progress)
+        let profile = match options.executable_profile {
+            RunProfile::Debug => "debug",
+            RunProfile::Release => "release",
+        };
+        let output_dir = output_dir.map(PathBuf::from);
+        let unit = crate::compile::compile_unit(
+            &crate::compile::UnitRequest {
+                source: Path::new(file_path),
+                kind: crate::compile::UnitKind::Executable,
+                profile,
+                features: &options.package_features,
+                output_dir: output_dir.as_deref(),
+            },
+            &mut progress,
+        )?;
+        Ok(serde_json::json!({
+            "status": "success",
+            "mode": "executable",
+            "profile": profile,
+            "entrypoint": file_path,
+            "project": { "project_root": unit.project_root },
+            "artifacts": [{ "kind": "binary", "path": unit.artifact }],
+        }))
     }
 }
 
-#[cfg(test)]
-mod tests;

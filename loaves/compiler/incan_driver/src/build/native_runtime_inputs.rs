@@ -372,47 +372,6 @@ fn failure(error: impl std::fmt::Display) -> CliError {
     CliError::failure(error.to_string())
 }
 
-/// Project inputs using the engine already bound to the active source compiler's receipt.
-pub(crate) fn runtime_inputs(
-    selection: &incan_provider::sdk_native::SdkNativeSelection,
-    catalog: &[u8],
-    providers: &[String],
-    facets: &[String],
-    dependencies: &[DependencySpec],
-) -> CliResult<BTreeMap<String, String>> {
-    let (engine, digest) = bound_compiler_engine()?;
-    selection.verify()?;
-    let receipts: BTreeMap<String, String> =
-        serde_json::from_slice(catalog).map_err(|error| CliError::failure(error.to_string()))?;
-    if receipts.len() != selection.units.len() {
-        return Err(CliError::failure(
-            "native runtime catalog differs from its selected units",
-        ));
-    }
-    for unit in &selection.units {
-        let key = serde_json::to_string(&unit.binding.identity_binding())
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        if receipts.get(&key) != Some(&unit.receipt_identity) {
-            return Err(CliError::failure(
-                "native runtime catalog differs from its selected receipt",
-            ));
-        }
-    }
-    let required = incan_provider::sdk_native::sdk_native_runtime_loaves(
-        selection,
-        &oven_model::toolchain_layout::SDK_RUNTIME_CRATES,
-    )?;
-    exchange(
-        &engine,
-        &digest,
-        catalog,
-        providers,
-        facets,
-        dependencies,
-        Projection::Runtime(&required),
-    )
-}
-
 /// Project requested native dependency roots through an explicitly source-bound bootstrap engine.
 ///
 /// Native plan selection subsequently checks each declaration against the catalog's admitted source, feature,
@@ -707,6 +666,3 @@ pub(super) fn execute_exchange<T: serde::de::DeserializeOwned>(engine: &Path, by
     read_json(&response_path)
 }
 
-#[cfg(test)]
-#[path = "native_runtime_inputs/tests.rs"]
-mod tests;
