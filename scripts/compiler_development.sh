@@ -1,20 +1,19 @@
 #!/bin/sh
 # Transport explicit Make inputs to the Incan-owned compiler development loop.
-# Receipt selection, dependency preparation and compilation decisions stay in Incan and Oven.
+# Receipt selection, dependency preparation and compilation decisions stay in Incan and Oven; Cargo is never run.
 set -eu
 
-if [ "$#" -lt 8 ]; then
-    echo "usage: compiler_development.sh ROOT TARGET_DIR STAGE_ZERO TOOLCHAIN SDK_PATH_FILE STORE MODE INPUT [EXACT REPORT]" >&2
+if [ "$#" -lt 7 ]; then
+    echo "usage: compiler_development.sh ROOT TARGET_DIR STAGE_ZERO TOOLCHAIN STORE MODE INPUT [EXACT REPORT]" >&2
     exit 2
 fi
 source_root=$1
 target_dir=$2
 stage_zero=$3
 toolchain=$4
-sdk_path_file=$5
-store=$6
-mode=$7
-shift 7
+store=$5
+mode=$6
+shift 6
 case "$mode:$#" in
     build:1|quiet:1|test:3) ;;
     *) echo "invalid compiler-development mode or argument count" >&2; exit 2 ;;
@@ -28,12 +27,12 @@ absolute_path() {
     esac
 }
 target_dir=$(absolute_path "$target_dir")
-sdk_path_file=$(absolute_path "$sdk_path_file")
 store=$(absolute_path "$store")
 mkdir -p "$target_dir/compiler-development/command-evidence"
 evidence_name=$mode
 if [ "$mode" = test ]; then evidence_name=test-one; fi
 command_evidence=$(mktemp -d "$target_dir/compiler-development/command-evidence/$evidence_name.XXXXXX")
+# The guard stands in for Cargo on PATH; any invocation fails the command.
 cp "$source_root/scripts/cargo-guard/cargo" "$command_evidence/cargo"
 : > "$command_evidence/cargo-invocations.log"
 finish_command() {
@@ -63,11 +62,6 @@ esac
 RUSTC=$(rustup which --toolchain "$toolchain" rustc)
 export RUSTC RUSTUP_TOOLCHAIN="$toolchain" INCAN_NO_BANNER=1
 
-if [ -z "${INCAN_SDK_INVENTORY:-}" ]; then
-    INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$sdk_path_file" "$stage_zero" prepare-sdk
-    INCAN_SDK_INVENTORY="$(cat "$sdk_path_file")/sdk-inventory.json"
-    export INCAN_SDK_INVENTORY
-fi
 cd "$source_root/workspaces/compiler-bootstrap"
 export INCAN_COMPILER_STAGE_ZERO="$stage_zero"
 if [ "$mode" = test ]; then
