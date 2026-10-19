@@ -672,19 +672,117 @@ impl OrdinaryLibraryNativeProfiles {
         let (receipt, plan_selection) =
             super::native_loaf_plan::select_native_loaf_plan(store, &selected_receipt, &closure)?;
         self.metadata.verify_profile(&receipt.intent)?;
+        let provider_entries = ordinary_test_provider_entries(owners, &receipt.intent.profile)?;
         Ok(super::PreparedOvenTestDependencyEnvelope {
             native_roots: Some(closure.roots().clone()),
             receipt,
             dependency_surface_digest,
             dependencies,
             dependency_root_digests,
-            provider_entries: Vec::new(),
+            provider_entries,
             plan_selection,
         })
     }
 }
 
+/// Packaged entries of every attached package, source-free or standard, for the test envelope's profile.
+///
+/// A build composes these sealed provider plans into its consumer plan, which is what carries each standard package's
+/// own Rust dependency closure. Generated tests only see what the publication records as test provider constituents,
+/// so the ordinary envelope must name the same entries the SDK-route envelope already names; leaving them out gave
+/// `incan test` the standard rlibs without their dependencies (#2252). A standard package is always attached through
+/// its sealed publication, even in a checkout where its source is present, so its entries are always named. Other
+/// source-available packages are recompiled by the consumer instead, as on the other route.
+///
+/// A package lists its own plan first and then the plans it links against, so the same entry appears under several
+/// packages (`data` lists `core` and `system`). Each entry is named once, under the first package that lists it; the
+/// envelope requires unique provider keys, so a package's further entries are keyed by package and entry identity.
+fn ordinary_test_provider_entries(
+    owners: &super::library_dependencies::PreparedLibraryDependencies,
+    profile: &str,
+) -> CliResult<Vec<(String, oven_rustc::plan::OvenPackagedLibraryLoafEntry)>> {
+    let packages = owners
+        .execution_profiles(&[profile])?
+        .into_values()
+        .flatten()
+        .map(|checked| {
+            (
+                checked.dependency_key,
+                checked.source_available,
+                checked.package.entries,
+            )
+        });
+    Ok(name_test_provider_entries(packages, |entry| &entry.identity))
+}
+
+/// Select the attached packages' entries once each and give every one a unique provider key.
+///
+/// A package is attached when it is source-free or a standard package. Its own entry, listed first, keeps the package
+/// name as key; a further entry is keyed by package and entry identity. An entry another package already named is
+/// skipped, so shared dependency plans appear once.
+fn name_test_provider_entries<E>(
+    packages: impl IntoIterator<Item = (String, bool, Vec<E>)>,
+    identity: impl Fn(&E) -> &str,
+) -> Vec<(String, E)> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut named = Vec::new();
+    for (package, source_available, entries) in packages {
+        let standard = incan_lang::lang::standard_packages::standard_package_namespace_policy(&package).is_some();
+        if source_available && !standard {
+            continue;
+        }
+        for (position, entry) in entries.into_iter().enumerate() {
+            let entry_identity = identity(&entry).to_string();
+            if !seen.insert(entry_identity.clone()) {
+                continue;
+            }
+            let key = if position == 0 {
+                package.clone()
+            } else {
+                format!("{package}:{entry_identity}")
+            };
+            named.push((key, entry));
+        }
+    }
+    named
+}
+
 /// Preserve producer and original-owner refusal diagnostics in the library command domain.
 fn failure(error: impl std::fmt::Display) -> CliError {
     CliError::failure(error.to_string())
+}
+
+#[cfg(test)]
+mod test_provider_entry_tests {
+    use super::name_test_provider_entries;
+
+    /// Standard packages are named even with source present, shared plans once, and every key is unique (#2252).
+    #[test]
+    fn standard_package_entries_are_named_once_with_unique_keys() {
+        let packages = vec![
+            ("incan_stdlib_core".to_string(), true, vec!["core"]),
+            ("incan_stdlib_system".to_string(), true, vec!["system", "core"]),
+            ("incan_stdlib_data".to_string(), true, vec!["data", "core", "system"]),
+            ("local_source_package".to_string(), true, vec!["local"]),
+            ("sealed_package".to_string(), false, vec!["sealed", "sealed-dependency"]),
+        ];
+        let named = name_test_provider_entries(packages, |entry| entry);
+        let keys = named.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        let entries = named.iter().map(|(_, entry)| *entry).collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            ["core", "system", "data", "sealed", "sealed-dependency"],
+            "shared plans are named once and source-available non-standard packages are recompiled instead"
+        );
+        assert_eq!(
+            keys,
+            [
+                "incan_stdlib_core",
+                "incan_stdlib_system",
+                "incan_stdlib_data",
+                "sealed_package",
+                "sealed_package:sealed-dependency",
+            ]
+        );
+    }
 }
