@@ -27,7 +27,6 @@ incan_oven_facet = { loaf = "incan_oven_facet", path = "../../compiler/incan_ove
 incan_provider = { default-features = false, loaf = "incan_provider", path = "../../compiler/incan_provider" }
 oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
 oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
-oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../oven/oven_cargo_compat", version = "0.6.0-dev.5" }
 oven_interop = { loaf = "oven_interop", path = "../../oven/oven_interop", version = "0.6.0-dev.5" }
 oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
 rust_inspect = { default-features = false, loaf = "rust_inspect", optional = true, path = "../../compiler/rust_inspect" }

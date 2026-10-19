@@ -20,3 +20,6 @@ version = "0.6.0-dev.5"
 edition = "2024"
 name = "oven_model"
 type = "lib"
+
+[envs.test.dependencies]
+tempfile = { loaf = "crates-io/tempfile", version = "3" }

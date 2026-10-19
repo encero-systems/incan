@@ -16,17 +16,6 @@
     },
     {
       "domain": "target",
-      "features": [
-        "rust_inspect",
-        "std_async",
-        "std_decorators",
-        "std_testing"
-      ],
-      "project": "../../loaves/compiler/incan_emit",
-      "target": "x86_64-unknown-linux-gnu"
-    },
-    {
-      "domain": "target",
       "features": [],
       "project": "../../loaves/compiler/incan_format",
       "target": "x86_64-unknown-linux-gnu"
@@ -40,17 +29,6 @@
         "std_testing"
       ],
       "project": "../../loaves/compiler/incan_frontend",
-      "target": "x86_64-unknown-linux-gnu"
-    },
-    {
-      "domain": "target",
-      "features": [
-        "rust_inspect",
-        "std_async",
-        "std_decorators",
-        "std_testing"
-      ],
-      "project": "../../loaves/compiler/incan_ir",
       "target": "x86_64-unknown-linux-gnu"
     },
     {
@@ -126,12 +104,6 @@
         "serde"
       ],
       "project": "../../loaves/kernel/incan_vocab",
-      "target": "x86_64-unknown-linux-gnu"
-    },
-    {
-      "domain": "target",
-      "features": [],
-      "project": "../../loaves/oven/oven_cargo_compat",
       "target": "x86_64-unknown-linux-gnu"
     },
     {

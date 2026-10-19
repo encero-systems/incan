@@ -26,3 +26,6 @@ test_support = ["oven_store/test_support"]
 edition = "2024"
 name = "oven_rustc"
 type = "lib"
+
+[envs.test.dependencies]
+oven_store = { features = ["test_support"] }

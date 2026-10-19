@@ -21,3 +21,6 @@ version = "0.6.0-dev.5"
 edition = "2024"
 name = "oven_interop"
 type = "lib"
+
+[envs.test.dependencies]
+oven_store = { features = ["test_support"] }

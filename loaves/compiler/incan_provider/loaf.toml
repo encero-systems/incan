@@ -4,7 +4,6 @@ incan_frontend = { default-features = false, loaf = "incan_frontend", path = "..
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
-oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../oven/oven_cargo_compat", version = "0.6.0-dev.5" }
 oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
 oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
 oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
@@ -48,5 +47,6 @@ type = "lib"
 
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
+incan_frontend = { features = ["test_support"] }
 incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
 tempfile = { loaf = "crates-io/tempfile", version = "3" }
