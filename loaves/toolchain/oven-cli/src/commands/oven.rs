@@ -7,13 +7,7 @@
 
 mod case_partition;
 pub mod compile_closure;
-pub mod convert_cargo;
-mod equivalence;
 mod gate;
-mod harvest;
-mod inventory;
-mod loaf_bake;
-mod loaf_bake_evidence;
 pub(crate) mod native_compiler_tests;
 mod options;
 mod partition_reconciliation;
@@ -23,14 +17,7 @@ mod suite_execution;
 mod suite_retention;
 mod support;
 
-pub use equivalence::oven_equivalence;
-pub use gate::{oven_gate_consumer_graph, oven_gate_registry_pin};
-pub use harvest::oven_harvest;
-pub use inventory::oven_inventory;
-pub use loaf_bake::oven_legacy_cargo_bake_loafs;
-#[cfg(test)]
-use loaf_bake::{finish_loaf_bake_after_publication, loaf_envelope_default_limits};
-pub(crate) use loaf_bake_evidence::*;
+pub use gate::oven_gate_registry_pin;
 pub use partition_reconciliation::oven_reconcile_partitions;
 pub use standard_packages::oven_prepare_standard_packages;
 pub(crate) use suite_environment::*;

@@ -23,7 +23,6 @@ pub mod backend;
 pub mod build;
 pub mod build_report;
 pub mod build_unit;
-pub mod cargo_policy;
 pub mod diagnostics;
 pub mod error;
 pub mod inspect;
