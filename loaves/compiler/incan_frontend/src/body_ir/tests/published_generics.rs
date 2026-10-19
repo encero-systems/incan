@@ -92,7 +92,20 @@ fn checked_callable_context() -> Result<(BodyIrModule, BTreeSet<CanonicalSymbolI
     checker
         .check_program(&program)
         .map_err(|errors| format!("{errors:?}"))?;
-    let api = crate::api_metadata::collect_checked_api_metadata(&program, &checker, path.to_vec());
+    let public = public_trait_methods(&program, &checker, &path)?;
+    Ok((build_body_ir_module_v0(&program, &path, checker.type_info()), public))
+}
+
+/// Admit every method of each checked public trait, required ones included, as the library publisher does.
+///
+/// A required method has no body, so a module's bodies alone would leave it private and strand every default that
+/// calls it.
+fn public_trait_methods(
+    program: &ast::Program,
+    checker: &TypeChecker,
+    path: &[String],
+) -> Result<BTreeSet<CanonicalSymbolId>, Box<dyn std::error::Error>> {
+    let api = crate::api_metadata::collect_checked_api_metadata(program, checker, path.to_vec());
     let mut public = BTreeSet::new();
     for declaration in api.declarations {
         if let crate::api_metadata::ApiDeclaration::Trait(owner) = declaration {
@@ -102,12 +115,12 @@ fn checked_callable_context() -> Result<(BodyIrModule, BTreeSet<CanonicalSymbolI
                         .canonical
                         .as_ref()
                         .and_then(|identity| identity.hydrate())
-                        .ok_or("checked public callable method identity absent")?,
+                        .ok_or("checked public trait method identity absent")?,
                 );
             }
         }
     }
-    Ok((build_body_ir_module_v0(&program, &path, checker.type_info()), public))
+    Ok(public)
 }
 
 /// A generic SDK-like carrier retains its declared fields and actual owner-scoped default frame through the codec.
@@ -242,7 +255,9 @@ fn checked_collection_consumers_keep_publication() -> Result<(), Box<dyn std::er
         .check_with_imports_allow_private(&program, &[("traits_callable", &callable)])
         .map_err(|errors| format!("{errors:?}"))?;
     let module = build_body_ir_module_v0(&program, &path, checker.type_info());
-    let (callable, public_members) = checked_callable_context()?;
+    let (callable, mut public_members) = checked_callable_context()?;
+    // `collect` and `fold` call the trait's required `__next__`, which the publisher admits with the public trait.
+    public_members.extend(public_trait_methods(&program, &checker, &path)?);
     let bytes = publish_modules(&[module.clone(), callable], &public_members)?;
     let reader = SurfaceReader::open(&bytes)?;
     let mut uncovered = Vec::new();
