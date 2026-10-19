@@ -2056,11 +2056,7 @@ mod tests {
             workspace.path().join("loaf.toml"),
             "[project]\nname = \"io_repro_inspection\"\nversion = \"0.1.0\"\n[rust]\nname = \"io_repro_inspection\"\ntype = \"lib\"\nedition = \"2024\"\n",
         )?;
-        crate::lock::registry_sources::acquire_explicit_project_inspection_sources(
-            workspace.path(),
-            workspace.path(),
-            &[],
-        )?;
+        rust_inspect::write_sealed_oven_inspection_source_authority(workspace.path(), Vec::new())?;
         for marker in [
             rust_inspect::OVEN_DIRECT_INSPECTION_MARKER,
             rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER,

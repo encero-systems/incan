@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use incan_lang::lang::stdlib;
 
-use crate::cargo_policy::enforce_project_toolchain_constraint;
+use crate::project::enforce_project_toolchain_constraint;
 use crate::error::{CliError, CliResult};
 use crate::lock::test_inputs::collect_test_lock_inputs;
 use crate::lock::{ProjectLockContext, TestLockInputs, WorkspaceLockCollection, WorkspaceLockMemberFailure};

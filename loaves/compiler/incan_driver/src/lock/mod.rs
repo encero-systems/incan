@@ -2,11 +2,11 @@
 //! collection metrics the tests read.
 //!
 //! A lock is resolved once per command and consumed by build, run, test and the LSP alike; the submodules own the work
-//! (`resolution`, `workspace`, `registry_sources`, `rust_inspect`, `test_inputs`) and this module owns the shapes they
+//! (`policy`, `resolution`, `workspace`, `rust_inspect`, `test_inputs`) and this module owns the shapes they
 //! exchange, so a request built by one command is the same request another resolves.
 
-#[cfg(feature = "rust_inspect")]
-pub mod registry_sources;
+
+pub mod policy;
 pub mod resolution;
 pub(crate) mod reuse;
 #[cfg(feature = "rust_inspect")]
@@ -16,8 +16,6 @@ pub mod workspace;
 
 #[cfg(any(test, feature = "test_support"))]
 use std::cell::Cell;
-#[cfg(feature = "rust_inspect")]
-use std::collections::BTreeMap;
 #[cfg(test)]
 use std::fs;
 use std::path::Path;
@@ -25,16 +23,12 @@ use std::path::PathBuf;
 #[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
-use crate::cargo_policy::CargoPolicy;
+
 use crate::error::{CliError, CliResult};
-#[cfg(feature = "rust_inspect")]
-use crate::generated_cache::GeneratedCacheLease;
+use policy::LockPolicy;
+
 use incan_frontend::ParsedModule;
-#[cfg(feature = "rust_inspect")]
-use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_provider::FeatureSelection;
-#[cfg(feature = "rust_inspect")]
-use incan_provider::ProviderPlan;
 use incan_provider::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use incan_provider::requirements::ProjectRequirements;
 use oven_model::lock::{CargoFeatureSelection, SemanticLockState};
@@ -42,10 +36,6 @@ use oven_model::lock::{CargoFeatureSelection, SemanticLockState};
 use oven_model::manifest::DependencySpec;
 use oven_model::manifest::ProjectManifest;
 use oven_model::workspace::WorkspaceGraph;
-#[cfg(feature = "rust_inspect")]
-use oven_rustc::loaf::OvenToolchainLoaf;
-#[cfg(feature = "rust_inspect")]
-use oven_rustc::rustc::OvenLoadedProjectInspectionAuthority;
 
 #[cfg(any(test, feature = "test_support"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -142,7 +132,7 @@ pub struct LockResolutionRequest<'a> {
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
     pub cargo_features: &'a CargoFeatureSelection,
-    pub cargo_policy: &'a CargoPolicy,
+    pub lock_policy: &'a LockPolicy,
     pub semantic: Option<&'a SemanticLockState>,
     /// Incan package-feature selection used when rebuilding the canonical project-wide lock context.
     pub package_features: Option<&'a FeatureSelection>,
@@ -150,73 +140,28 @@ pub struct LockResolutionRequest<'a> {
     pub sdk_profile_override: Option<&'a str>,
 }
 
-/// Cargo inputs that must be consumed together by generated projects.
+/// The canonical dependency context one lock resolution selected for a project.
 pub struct LockResolution {
-    pub cargo_lock_authority: CargoLockAuthority,
-    pub cargo_package_name: String,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
 }
 
-/// Closed authority state for generated Cargo locks.
-pub enum CargoLockAuthority {
-    /// No trusted Cargo lock payload is available and no stale projection cleanup is required.
-    None,
-    /// A tolerated stale canonical lock must not authorize or leave behind any older generated projection.
-    Stale,
-    /// An internal artifact build consumes an exact payload directly without caller projection.
-    Exact { payload: String },
-}
-
-/// Final generator-facing inputs derived from one closed lock authority state.
-pub struct CargoLockGeneratorInputs {
-    pub payload: Option<String>,
-    pub projection_root: Option<String>,
-    pub clear_existing: bool,
-}
-
-impl CargoLockAuthority {
-    /// Split the closed authority state into generator inputs at the final rendering boundary.
-    pub fn into_generator_inputs(self) -> CargoLockGeneratorInputs {
-        match self {
-            Self::None => CargoLockGeneratorInputs {
-                payload: None,
-                projection_root: None,
-                clear_existing: false,
-            },
-            Self::Stale => CargoLockGeneratorInputs {
-                payload: None,
-                projection_root: None,
-                clear_existing: true,
-            },
-            Self::Exact { payload } => CargoLockGeneratorInputs {
-                payload: Some(payload),
-                projection_root: None,
-                clear_existing: false,
-            },
-        }
-    }
-}
-
+/// Inputs for the inspection root a metadata-backed typecheck needs.
 #[cfg(feature = "rust_inspect")]
 pub struct RustInspectTypecheckRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
     pub manifest: Option<&'a ProjectManifest>,
     pub modules: &'a [ParsedModule],
-    pub library_manifest_index: &'a LibraryManifestIndex,
     pub cargo_features: &'a CargoFeatureSelection,
-    pub cargo_policy: &'a CargoPolicy,
     pub rust_edition: Option<String>,
-    pub provider_plan: &'a ProviderPlan,
 }
 
-/// Typecheck projection retaining its generated-cache lease and complete original source, toolchain and native
-/// owners until the caller finishes semantic analysis. A path alone cannot preserve those capabilities.
+/// Typecheck projection retaining its complete original source, toolchain and native owners until the caller
+/// finishes semantic analysis. A path alone cannot preserve those capabilities.
 #[cfg(feature = "rust_inspect")]
 pub struct PreparedRustInspectTypecheckWorkspace {
     workspace: PreparedRustInspectWorkspace,
-    _cache_lease: Option<GeneratedCacheLease>,
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -232,110 +177,60 @@ impl PreparedRustInspectTypecheckWorkspace {
     }
 }
 
+/// One direct inspection root request: the query surface and the native selection that answers it.
 #[cfg(feature = "rust_inspect")]
 pub struct RustInspectWorkspaceRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
-    pub cargo_package_name: &'a str,
     pub rust_edition: Option<String>,
-    pub resolved: &'a ResolvedDependencies,
-    pub project_requirements: &'a ProjectRequirements,
-    pub lock_payload: Option<String>,
-    pub cargo_lock_projection_root: Option<&'a str>,
-    pub clear_cargo_lock: bool,
-    pub cargo_policy_flags: Vec<String>,
-    pub cargo_target_dir: &'a Path,
+    /// The inspector's cache directory for this projection.
+    pub cache_dir: &'a Path,
     pub rust_inspect_query_paths: &'a [String],
     /// Exact external Rust derive macros used by concrete Incan declarations.
     pub rust_derive_probe_paths: &'a [String],
     pub prepare_when_empty: bool,
-    /// Select rust-analyzer's direct source graph before any inspection action can run Cargo.
-    pub direct_oven_inspection: bool,
-    /// The named Loaf publisher must materialize provider-source metadata even when ordinary lazy prewarm is
-    /// off.
+    /// A publisher must materialize provider-source metadata even when ordinary lazy prewarm is off.
     pub force_direct_prewarm: bool,
-    /// Receipt inputs used to select the exact immutable Loaf that owns registry inspection sources.
-    pub oven_source_authority: Option<OvenRustInspectSourceAuthorityRequest<'a>>,
-    /// Command-local source authority selected once from source-current completed project outputs.
-    pub prepared_project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
-    /// Permit one locked source-authority acquisition only at `incan oven bake`'s explicit publisher boundary.
-    pub explicit_oven_bake: bool,
+    /// The compiler intent and declared Rust roots that select the inspected native closure.
+    pub authority: OvenRustInspectSourceAuthorityRequest<'a>,
 }
 
-/// Receipt-compatible Loaf inputs required before a normal direct Oven metadata prewarm.
+/// The compiler intent and declared Rust roots one inspection selects from the original native producer.
 #[cfg(feature = "rust_inspect")]
 pub struct OvenRustInspectSourceAuthorityRequest<'a> {
-    pub project_version: &'a str,
     pub target: &'a str,
     pub toolchain: &'a str,
     pub profile: &'a str,
     pub features: &'a [String],
-    pub build_unit_inputs: &'a BTreeMap<String, String>,
     pub registry_dependencies: &'a [DependencySpec],
 }
 
-/// Prepared projection and any generation lock retaining its source-owning Loaf through semantic analysis.
+/// Prepared projection retaining its original ordinary producer request and compiler-bound toolchain through
+/// semantic analysis.
 #[cfg(feature = "rust_inspect")]
 pub struct PreparedRustInspectWorkspace {
     manifest_dir: PathBuf,
-    _source_loaf: Option<OvenToolchainLoaf>,
-    _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
-    /// Native SDK leases protect the frozen graph's immutable source roots throughout inspection.
-    _sdk_native: Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>,
     /// Complete original ordinary request retained across checked metadata preparation and final ABI extraction.
-    _ordinary_native: Option<oven_rustc::native_loaf::NativeLoafRequestObservation>,
+    _ordinary_native: oven_rustc::native_loaf::NativeLoafRequestObservation,
     /// Original compiler-bound Rust source owner retained through final semantic metadata extraction.
-    _ordinary_toolchain: Option<Arc<oven_rustc::rustc::OvenRustInspectionToolchain>>,
-}
-
-/// Command-local source authority shared by every parallel native-test unit.
-///
-/// The completed-output, authority, constituent, and compiler-release leases stay live for this value's lifetime. A
-/// batch performs only an in-memory exact-root check and projects the one already validated source catalog and lock.
-#[cfg(feature = "rust_inspect")]
-pub struct PreparedOvenProjectRegistrySourceAuthorities {
-    /// Native admission shared with the test command that prepared this exact source authority.
-    native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
-    authority: OvenLoadedProjectInspectionAuthority,
-    sources: Vec<::rust_inspect::OvenInspectionRegistrySource>,
-    registry_lock_source: Option<PathBuf>,
-    /// Build-script output directories the explicit bake sealed below the authority root, with their package
-    /// versions where the bake recorded them.
-    generated_out_dirs: Vec<::rust_inspect::SealedGeneratedOutDir>,
-    test_dependency_plan: Option<oven_rustc::plan::OvenDirectRustcPlanSelection>,
-    _release_loafs: Vec<OvenToolchainLoaf>,
+    _ordinary_toolchain: Arc<oven_rustc::rustc::OvenRustInspectionToolchain>,
 }
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectWorkspace {
-    /// Borrow a transaction-owned frozen graph; its enclosing publisher retains all native leases.
-    pub(crate) fn from_retained_sdk_graph(manifest_dir: PathBuf) -> Self {
-        Self {
-            manifest_dir,
-            _source_loaf: None,
-            _project_source_authorities: None,
-            _sdk_native: Vec::new(),
-            _ordinary_native: None,
-            _ordinary_toolchain: None,
-        }
-    }
-
-    /// Return the compiler-authored manifest directory while this workspace retains its source Loaf.
+    /// Return the compiler-authored manifest directory while this workspace retains its owners.
     pub fn manifest_dir(&self) -> &Path {
         &self.manifest_dir
     }
 
     /// Revalidate complete original ordinary inputs at semantic handoffs without selecting new source owners.
     pub fn verify_ordinary_native(&self) -> CliResult<()> {
-        if let Some(native) = &self._ordinary_native {
-            native.verify().map_err(|error| CliError::failure(error.to_string()))?;
-        }
-        if let Some(toolchain) = &self._ordinary_toolchain {
-            toolchain
-                .verify()
-                .map_err(|error| CliError::failure(error.to_string()))?;
-        }
-        Ok(())
+        self._ordinary_native
+            .verify()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        self._ordinary_toolchain
+            .verify()
+            .map_err(|error| CliError::failure(error.to_string()))
     }
 }
 
@@ -349,7 +244,7 @@ pub struct OvenLockValidationRequest<'a> {
     pub manifest: Option<&'a ProjectManifest>,
     pub entry_file: &'a Path,
     pub cargo_features: &'a CargoFeatureSelection,
-    pub cargo_policy: &'a CargoPolicy,
+    pub lock_policy: &'a LockPolicy,
     pub package_features: &'a FeatureSelection,
     pub sdk_profile_override: Option<&'a str>,
 }
@@ -366,7 +261,7 @@ pub struct WorkspaceLockResolutionRequest<'a> {
     caller_project_requirements: &'a ProjectRequirements,
     caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
-    cargo_policy: &'a CargoPolicy,
+    lock_policy: &'a LockPolicy,
     sdk_profile_override: Option<&'a str>,
 }
 
@@ -487,27 +382,6 @@ mod tests {
 
     use crate::lock::resolution::publish_oven_project_lock;
     use oven_model::lock::IncanLock;
-
-    #[test]
-    fn cargo_lock_authority_exposes_only_closed_generator_input_pairs() {
-        let none = CargoLockAuthority::None.into_generator_inputs();
-        assert_eq!(none.payload, None);
-        assert_eq!(none.projection_root, None);
-        assert!(!none.clear_existing);
-
-        let stale = CargoLockAuthority::Stale.into_generator_inputs();
-        assert_eq!(stale.payload, None);
-        assert_eq!(stale.projection_root, None);
-        assert!(stale.clear_existing);
-
-        let exact = CargoLockAuthority::Exact {
-            payload: "exact".to_string(),
-        }
-        .into_generator_inputs();
-        assert_eq!(exact.payload, Some("exact".to_string()));
-        assert_eq!(exact.projection_root, None);
-        assert!(!exact.clear_existing);
-    }
 
     /// One lock collection retains imports from every script and test in the ordinary dependency surface.
     #[test]

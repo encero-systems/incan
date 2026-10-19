@@ -30,11 +30,8 @@ fn prepare(root: &Path) -> TestResult<crate::lock::PreparedRustInspectTypecheckW
                 project_name: "consumer",
                 manifest: Some(&manifest),
                 modules: &modules,
-                library_manifest_index: &Default::default(),
                 cargo_features: &Default::default(),
-                cargo_policy: &Default::default(),
                 rust_edition: Some("2024".into()),
-                provider_plan: &Default::default(),
             },
         )?
         .ok_or("actual external query did not retain an inspection workspace")?,
@@ -122,11 +119,7 @@ fn typecheck_inspection_uses_configured_original_native_graph() -> TestResult {
         "{error}"
     );
     prepared.verify_ordinary_native()?;
-    let observation = prepared
-        .workspace
-        ._ordinary_native
-        .as_ref()
-        .ok_or("typecheck dropped original native owner")?;
+    let observation = &prepared.workspace._ordinary_native;
     let unit = observation
         .graph()
         .units()
@@ -134,13 +127,7 @@ fn typecheck_inspection_uses_configured_original_native_graph() -> TestResult {
         .next()
         .ok_or("original graph is empty")?;
     let retained = std::sync::Arc::downgrade(unit);
-    let toolchain = std::sync::Arc::downgrade(
-        prepared
-            .workspace
-            ._ordinary_toolchain
-            .as_ref()
-            .ok_or("typecheck dropped compiler owner")?,
-    );
+    let toolchain = std::sync::Arc::downgrade(&prepared.workspace._ordinary_toolchain);
     let manifest_dir = prepared.manifest_dir().to_path_buf();
     cache.invalidate_manifest_dir(&manifest_dir)?;
     assert!(retained.upgrade().is_some());
@@ -176,45 +163,26 @@ fn command_workspace(
         index: root.to_path_buf(),
         blobs: root.to_path_buf(),
     };
-    let resolved = incan_provider::dependency_resolver::ResolvedDependencies {
-        dependencies: dependencies.to_vec(),
-        dev_dependencies: Vec::new(),
-    };
     let project = root.join("command-consumer");
-    let requirements = Default::default();
-    let inputs = Default::default();
     Ok(crate::lock::rust_inspect::prepare_rust_inspect_workspace_for_command(
         crate::lock::RustInspectWorkspaceRequest {
             project_root: &project,
             project_name: "command_consumer",
-            cargo_package_name: "command_consumer",
             rust_edition: Some("2024".into()),
-            resolved: &resolved,
-            project_requirements: &requirements,
-            lock_payload: None,
-            cargo_lock_projection_root: None,
-            clear_cargo_lock: false,
-            cargo_policy_flags: Vec::new(),
-            cargo_target_dir: &root.join("command-inspection"),
+            cache_dir: &root.join("command-inspection"),
             rust_inspect_query_paths: queries,
             rust_derive_probe_paths: derives,
             prepare_when_empty: false,
-            direct_oven_inspection: true,
             force_direct_prewarm: false,
-            oven_source_authority: Some(crate::lock::OvenRustInspectSourceAuthorityRequest {
-                project_version: "1.0.0",
+            authority: crate::lock::OvenRustInspectSourceAuthorityRequest {
                 target: &target,
                 toolchain: &toolchain,
                 profile,
                 features: &[],
-                build_unit_inputs: &inputs,
                 registry_dependencies: dependencies,
-            }),
-            prepared_project_source_authorities: None,
-            explicit_oven_bake: false,
+            },
         },
-        Some(&configured),
-        None,
+        &configured,
         &rustc,
     )?)
 }

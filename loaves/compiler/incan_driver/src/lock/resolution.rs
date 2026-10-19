@@ -7,15 +7,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "cli")]
-use crate::build::native_sdk::prepare_or_discover_sdk_inventory;
-use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
+
+use crate::lock::policy::LockPolicy;
+use crate::project::enforce_project_toolchain_constraint;
 use crate::error::{CliError, CliResult};
 use crate::lock::workspace::{
     collect_project_lock_context, collect_workspace_lock_context, collect_workspace_lock_context_tolerating,
 };
 use crate::lock::{
-    CargoLockAuthority, INERT_CARGO_LOCK_PAYLOAD, LockResolution, LockResolutionRequest, OvenLockValidationRequest,
+    INERT_CARGO_LOCK_PAYLOAD, LockResolution, LockResolutionRequest, OvenLockValidationRequest,
     ProjectLockContext, ProviderBakeLockPublication, PublishedLockFile, PublishedOvenProjectLock,
     WorkspaceLockResolutionRequest,
 };
@@ -24,8 +24,7 @@ use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::requirements::{
     ProjectRequirements, merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
 };
-use incan_provider::sdk_store::INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV;
-use incan_provider::{FeatureSelection, SDK_PROVIDER_BUILD_ENV};
+use incan_provider::FeatureSelection;
 use oven_model::lock::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState,
     compute_resolved_fingerprint_with_sdk_paths,
@@ -149,48 +148,11 @@ pub(crate) fn collect_and_publish_workspace_lock_with_sessions(
     Ok((context, publication))
 }
 
-/// Prepare a component SDK inventory when this toolchain has a source catalog, then publish the canonical lock.
-///
-/// `incan lock` owns this explicit preparation path. Oven publishers use [`collect_and_publish_project_lock`]
-/// directly so a bake can discover prepared state but can never launch the legacy SDK provider builder itself.
-#[cfg(feature = "cli")]
-pub fn prepare_sdk_and_publish_project_lock(
-    manifest: &ProjectManifest,
-    entry_file: Option<&Path>,
-    cargo_features: &CargoFeatureSelection,
-    package_features: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-) -> CliResult<ProjectLockContext> {
-    let _inventory = prepare_or_discover_sdk_inventory().map_err(|error| CliError::failure(error.to_string()))?;
-    collect_and_publish_project_lock(
-        manifest,
-        entry_file,
-        cargo_features,
-        package_features,
-        sdk_profile_override,
-    )
-}
-
-/// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
-fn cargo_lock_payload_override(path: Option<PathBuf>) -> CliResult<Option<String>> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let payload = fs::read_to_string(&path).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read internal Cargo.lock payload override {}: {error}",
-            path.display()
-        ))
-    })?;
-    Ok(Some(oven_model::lock::normalize_cargo_lock_payload(&payload)))
-}
-
-/// Resolve the canonical Oven lock context that normal generated-project callers consume as one unit.
+/// Resolve the canonical Oven lock context a command consumes as one unit.
 ///
 /// Manifest-less single-file builds retain their caller context and have no lock payload. Manifest-backed builds use
-/// the semantic Incan lock as their authority: a missing non-strict lock is published without constructing a Cargo
-/// project, while a stale lock is never reused as an authority. The explicit `legacy_cargo` publisher owns the
-/// separate historical Cargo-resolution boundary.
+/// the semantic Incan lock as their authority: a missing non-strict lock is published, while a stale lock is never
+/// reused as an authority.
 pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let LockResolutionRequest {
         project_root,
@@ -200,7 +162,7 @@ pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<Loc
         resolved,
         project_requirements,
         cargo_features,
-        cargo_policy,
+        lock_policy,
         semantic,
         package_features,
         sdk_profile_override,
@@ -211,23 +173,6 @@ pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<Loc
 
     if manifest.is_none() {
         return Ok(LockResolution {
-            cargo_lock_authority: CargoLockAuthority::None,
-            cargo_package_name: project_name.to_string(),
-            resolved: caller_resolved,
-            project_requirements: project_requirements.clone(),
-        });
-    }
-
-    if std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
-        && let Some(payload) = cargo_lock_payload_override(
-            std::env::var_os(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from),
-        )?
-    {
-        return Ok(LockResolution {
-            cargo_lock_authority: CargoLockAuthority::Exact { payload },
-            cargo_package_name: project_name.to_string(),
             resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
@@ -246,7 +191,7 @@ pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<Loc
             caller_project_requirements: project_requirements,
             caller_entry_file: entry_file,
             cargo_features,
-            cargo_policy,
+            lock_policy,
             sdk_profile_override,
         });
     }
@@ -292,7 +237,7 @@ pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<Loc
         &semantic_sdk_paths,
     );
 
-    let strict = cargo_policy.locked || cargo_policy.frozen;
+    let strict = lock_policy.strict();
     if strict && let Some(message) = strict_git_source_error(&canonical_resolved_with_requirements) {
         return Err(CliError::failure(message));
     }
@@ -322,18 +267,11 @@ pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<Loc
                  rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_authority: CargoLockAuthority::Stale,
-                cargo_package_name: project_name.to_string(),
                 resolved: caller_resolved,
                 project_requirements: project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
-            // Normal Oven execution must not materialize a generated Cargo.lock from the compatibility payload
-            // retained in oven.lock. The payload is inert for this route; the semantic fingerprint above is the
-            // authority that was just verified.
-            cargo_lock_authority: CargoLockAuthority::None,
-            cargo_package_name: project_name.to_string(),
             resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
@@ -352,8 +290,6 @@ pub fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<Loc
         None,
     )?;
     Ok(LockResolution {
-        cargo_lock_authority: CargoLockAuthority::None,
-        cargo_package_name: project_name.to_string(),
         resolved: caller_resolved,
         project_requirements: project_requirements.clone(),
     })
@@ -365,7 +301,7 @@ pub fn validate_oven_lock_policy(
     manifest: Option<&ProjectManifest>,
     entry_file: &Path,
     cargo_features: &CargoFeatureSelection,
-    cargo_policy: &CargoPolicy,
+    lock_policy: &LockPolicy,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> CliResult<()> {
@@ -375,7 +311,7 @@ pub fn validate_oven_lock_policy(
             manifest,
             entry_file,
             cargo_features,
-            cargo_policy,
+            lock_policy,
             package_features,
             sdk_profile_override,
         },
@@ -401,11 +337,11 @@ fn validate_oven_lock_policy_impl(
         manifest,
         entry_file,
         cargo_features,
-        cargo_policy,
+        lock_policy,
         package_features,
         sdk_profile_override,
     } = request;
-    if !cargo_policy.locked && !cargo_policy.frozen {
+    if !lock_policy.locked && !lock_policy.frozen {
         return Ok(());
     }
     let Some(manifest) = manifest else {
@@ -508,7 +444,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         caller_project_requirements,
         caller_entry_file,
         cargo_features,
-        cargo_policy,
+        lock_policy,
         sdk_profile_override,
     } = request;
     let context = collect_workspace_lock_context(
@@ -531,7 +467,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         &context.semantic,
         &semantic_sdk_paths,
     );
-    let strict = cargo_policy.locked || cargo_policy.frozen;
+    let strict = lock_policy.strict();
     if strict && let Some(message) = strict_git_source_error(&resolved) {
         return Err(CliError::failure(message));
     }
@@ -556,15 +492,11 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                  or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_authority: CargoLockAuthority::Stale,
-                cargo_package_name: caller_project_name.to_string(),
                 resolved: caller_resolved,
                 project_requirements: caller_project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
-            cargo_lock_authority: CargoLockAuthority::None,
-            cargo_package_name: caller_project_name.to_string(),
             resolved: caller_resolved,
             project_requirements: caller_project_requirements.clone(),
         });
@@ -587,8 +519,6 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         Some(&publication_lock),
     )?;
     Ok(LockResolution {
-        cargo_lock_authority: CargoLockAuthority::None,
-        cargo_package_name: caller_project_name.to_string(),
         resolved: caller_resolved,
         project_requirements: caller_project_requirements.clone(),
     })
@@ -1054,9 +984,9 @@ mod tests {
         fs::write(&entry_path, "def main() -> None:\n  pass\n")?;
         let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
         let cargo_features = CargoFeatureSelection::default();
-        let cargo_policy = CargoPolicy::default();
+        let lock_policy = LockPolicy::default();
 
-        let resolution = resolve_lock_context(LockResolutionRequest {
+        resolve_lock_context(LockResolutionRequest {
             project_root,
             project_name: "semantic_lock_demo",
             entry_file: Some(&entry_path),
@@ -1064,13 +994,12 @@ mod tests {
             resolved: &empty_resolved(),
             project_requirements: &empty_project_requirements(),
             cargo_features: &cargo_features,
-            cargo_policy: &cargo_policy,
+            lock_policy: &lock_policy,
             semantic: Some(&SemanticLockState::default()),
             package_features: None,
             sdk_profile_override: None,
         })?;
 
-        assert!(matches!(resolution.cargo_lock_authority, CargoLockAuthority::None));
         assert_eq!(
             IncanLock::load(&project_root.join("oven.lock"))?.cargo_lock_payload,
             INERT_CARGO_LOCK_PAYLOAD

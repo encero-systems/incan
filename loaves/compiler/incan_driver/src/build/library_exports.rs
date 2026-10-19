@@ -571,7 +571,7 @@ mod tests {
     /// Prepare the supported dependency-free Loaf inspection route with explicit sysroot-only source authority.
     #[cfg(feature = "rust_inspect")]
     fn dev7_mutable_demand_prepare_local_abi_workspace(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        crate::lock::registry_sources::acquire_explicit_project_inspection_sources(root, root, &[])?;
+        rust_inspect::write_sealed_oven_inspection_source_authority(root, Vec::new())?;
         fs::write(root.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
         fs::write(root.join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")?;
         Ok(())

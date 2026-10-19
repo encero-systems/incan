@@ -1,11 +1,9 @@
 //! Genuine native publication and Rust metadata controls for ordinary retained inspection.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::requirements::ProjectRequirements;
 use oven_model::manifest::{DependencySource, DependencySpec};
 use oven_rustc::native_loaf::{NativeLoafFacet, NativeLoafPreparationRequest, prepare_native_loafs};
@@ -133,42 +131,24 @@ fn prepare(
 ) -> TestResult<crate::lock::PreparedRustInspectWorkspace> {
     fs::create_dir_all(project)?;
     let dependencies = fixture.dependencies();
-    let resolved = ResolvedDependencies {
-        dependencies: dependencies.clone(),
-        dev_dependencies: Vec::new(),
-    };
-    let requirements = ProjectRequirements::default();
-    let inputs = BTreeMap::new();
     let queries = [query.to_string()];
     Ok(super::super::prepare_rust_inspect_workspace_with_ordinary_native(
         RustInspectWorkspaceRequest {
             project_root: project,
             project_name: "ordinary_inspection_consumer",
-            cargo_package_name: "ordinary_inspection_consumer",
             rust_edition: Some("2024".to_string()),
-            resolved: &resolved,
-            project_requirements: &requirements,
-            lock_payload: None,
-            cargo_lock_projection_root: None,
-            clear_cargo_lock: false,
-            cargo_policy_flags: Vec::new(),
-            cargo_target_dir: &project.join("inspection-target"),
+            cache_dir: &project.join("inspection-target"),
             rust_inspect_query_paths: &queries,
             rust_derive_probe_paths: derives,
             prepare_when_empty: true,
-            direct_oven_inspection: true,
             force_direct_prewarm: false,
-            oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
-                project_version: "1.0.0",
+            authority: OvenRustInspectSourceAuthorityRequest {
                 target: &fixture.target,
                 toolchain: &fixture.toolchain,
                 profile,
                 features: &[],
-                build_unit_inputs: &inputs,
                 registry_dependencies: &dependencies,
-            }),
-            prepared_project_source_authorities: None,
-            explicit_oven_bake: false,
+            },
         },
         observation,
         &fixture.rustc,

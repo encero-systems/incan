@@ -231,6 +231,22 @@ pub fn warn_once_about_ignored_cargo_manifest(project_root: &Path) {
     }
 }
 
+/// Enforce the project-level `requires-incan` constraint for a project-aware command.
+pub fn enforce_project_toolchain_constraint(manifest: &ProjectManifest) -> CliResult<()> {
+    enforce_toolchain_constraints(&oven_model::project_lifecycle::toolchain::ToolchainConstraintSet::from_project_manifest(
+        manifest,
+    ))
+}
+
+/// Enforce an already resolved effective `requires-incan` constraint set against this compiler's version.
+pub fn enforce_toolchain_constraints(
+    constraints: &oven_model::project_lifecycle::toolchain::ToolchainConstraintSet,
+) -> CliResult<()> {
+    constraints
+        .enforce(incan_lang::version::INCAN_VERSION)
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
 /// Resolve the project root from a source file path.
 ///
 /// If the file is inside a `src/` directory (e.g. `src/main.incn` or `projects/foo/src/main.incn`), the project root
