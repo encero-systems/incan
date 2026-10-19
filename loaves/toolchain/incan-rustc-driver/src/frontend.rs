@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
-use incan_mir_lowering::caller::incan::{program_plan, program_refusals};
+use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
@@ -814,6 +814,7 @@ fn declaration_module(owner: String) -> BodyIrModule {
         type_alias_declarations: Vec::new(),
         enum_declarations: Vec::new(),
         stdlib_delegations: Vec::new(),
+        public_exports: Vec::new(),
         native_union_declarations: Vec::new(),
         static_declarations: Vec::new(),
         module_id: incan_semantics_core::CompilerNodeId::module(owner),
@@ -1157,6 +1158,8 @@ struct Dependencies {
     directories: Vec<PathBuf>,
     /// Explicit logical package selected by the source caller, independent of the native crate's name.
     package_identity: Option<String>,
+    /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
+    library: bool,
 }
 
 /// Parse declared native externs, search directories and a logical package override; no ambient crate discovery is
@@ -1165,8 +1168,13 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
     let mut externs = Vec::new();
     let mut directories = Vec::new();
     let mut package_identity = None;
+    let mut library = false;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
+        if option == "--library" {
+            library = true;
+            continue;
+        }
         let value = remaining.next().ok_or_else(|| format!("missing value for {option}"))?;
         match option.as_str() {
             "--extern" => {
@@ -1187,6 +1195,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
         externs,
         directories,
         package_identity,
+        library,
     })
 }
 
@@ -1196,7 +1205,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--package-name NAME]"
+            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--package-name NAME] [--library]"
                 .into(),
         );
     }
@@ -1257,12 +1266,12 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let plan = {
         tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
-        program_plan(
-            &program.modules,
-            program.sources,
-            program.files,
-            program.entry.try_into()?,
-        )?
+        let entry = program.entry.try_into()?;
+        if dependencies.library {
+            Some(library_plan(&program.modules, program.sources, program.files, entry)?)
+        } else {
+            program_plan(&program.modules, program.sources, program.files, entry)?
+        }
     };
     let Some(plan) = plan else {
         report_missing_entrypoint(&source_path)?;
@@ -1310,6 +1319,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         &dependencies.externs,
         &dependencies.directories,
         &native_link,
+        dependencies.library,
     )
     .map_err(|error| error.to_string())?;
     if let Some(reuse) = reuse {

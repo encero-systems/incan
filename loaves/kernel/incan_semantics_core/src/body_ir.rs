@@ -85,6 +85,10 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
+    /// Names this module re-exports with `pub from ... import`, each bound to the declaration it names. A library unit
+    /// publishes its entry module's re-exports under these names; its own declarations keep their source names.
+    #[serde(default)]
+    pub public_exports: Vec<PublicExport>,
     /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
     ///
     /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
@@ -278,6 +282,18 @@ pub struct NativeUnionDeclaration {
     pub members: Vec<IncanType>,
 }
 
+/// One name a module re-exports, bound to the declaration it names.
+///
+/// The target is the exported declaration's own identity: a source declaration in another module, or a Rust item
+/// imported through `rust::`. A library unit publishes the target under `name`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicExport {
+    /// The exported spelling: the import alias when one is written, otherwise the declaration's own name.
+    pub name: String,
+    /// The exported declaration's checked identity.
+    pub target: CanonicalSymbolId,
+}
+
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
 ///
 /// Every field is encoded, including empty vectors, because the executable representation uses positional records.
@@ -309,6 +325,16 @@ pub struct StdlibDelegation {
     /// omitted argument.
     #[serde(default)]
     pub parameter_defaults: Vec<CallableParamDefault>,
+}
+
+impl PublicExport {
+    /// The Rust path of an exported `rust::` item; a source declaration has none and resolves to its planned item.
+    pub fn rust_path(&self) -> Option<String> {
+        match &self.target.origin {
+            crate::SymbolOrigin::RustCrate(path) => Some(path.join("::")),
+            _ => None,
+        }
+    }
 }
 
 impl StdlibDelegation {
@@ -5491,6 +5517,7 @@ mod tests {
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            public_exports: Vec::new(),
             native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),

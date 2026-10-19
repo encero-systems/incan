@@ -37,6 +37,7 @@ from pub::incan_mir_plan import (
     Parameter,
     Place,
     Plan,
+    PlanExport,
     StaticCell,
     PlanType,
     SizedNumeric,
@@ -94,6 +95,7 @@ from rust::incan_semantics_core import (
     CanonicalSymbolId as RustCanonicalSymbolId,
 )
 from rust::incan_semantics_core::body_ir import (
+    PublicExport,
     NominalDeclaration as RustNominalDeclaration,
     GlobalPlace as RustGlobalPlace,
     GlobalWritePolicy as RustGlobalWritePolicy,
@@ -6694,6 +6696,29 @@ pub def program_plan(
     entry: int,
 ) -> Result[Option[Plan], str]:
     """Lower every checked body before returning a plan; None proves absent entry, while unsupported entry representations fail."""
+    return lowered_plan(modules, sources, files, entry, false)
+
+
+pub def library_plan(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+) -> Result[Plan, str]:
+    """Lower every checked body of a library Loaf; a library has no `main`, so the plan is always present."""
+    match lowered_plan(modules, sources, files, entry, true)?:
+        Some(plan) => return Ok(plan)
+        None => return Err("library lowering produced no plan")
+
+
+def lowered_plan(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    library: bool,
+) -> Result[Option[Plan], str]:
+    """Lower every checked body; an executable without `main` yields None, a library never needs one."""
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
@@ -6781,7 +6806,10 @@ pub def program_plan(
         enums.append(declaration)
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
-    if not has_main:
+    mut exports: list[PlanExport] = []
+    if library:
+        exports = library_exports(context, checked[entry])?
+    if not library and not has_main:
         if declares_main:
             return Err("unsupported Body IR selected main representation")
         return Ok(None)
@@ -6794,9 +6822,49 @@ pub def program_plan(
                 externals=externals,
                 span=SourceSpan(file=files[entry], line=1, column=1),
                 statics=statics,
+                exports=exports,
             ),
         ),
     )
+
+
+def library_exports(context: &BodyIrModule, entry: &BodyIrModule) -> Result[list[PlanExport], str]:
+    """
+    Bind each public name of a library's entry module to the item its plan emits.
+
+    A `rust::` re-export keeps its Rust path. A source function, model or enum resolves by canonical identity to the
+    item the plan emits for it. Generic functions, constants, aliases and traits emit no item; dependents take them from
+    source, so they need no alias.
+    """
+    mut exports: list[PlanExport] = []
+    for export in entry.public_exports:
+        match export.rust_path():
+            Some(path) =>
+                exports.append(PlanExport(name=str(export.name), path=f"::{path}"))
+                continue
+            None => pass
+        match planned_export_item(context, export)?:
+            Some(item) => exports.append(PlanExport(name=str(export.name), path=f"crate::{item}"))
+            None => pass
+    return Ok(exports)
+
+
+def planned_export_item(context: &BodyIrModule, export: &PublicExport) -> Result[Option[str], str]:
+    """The planned item a source export names, None for a declaration that emits no item, or a refusal."""
+    for body in context.bodies:
+        if body.canonical == Some(export.target.clone()):
+            if len(body.type_parameters) != 0:
+                return Ok(None)
+            return Ok(Some(function_name(context, body)))
+    for declaration in context.nominal_declarations:
+        if declaration.canonical == export.target:
+            return Ok(Some(str(declaration.name)))
+    for declaration in context.enum_declarations:
+        if declaration.canonical == export.target:
+            return Ok(Some(str(declaration.name)))
+    match export.target.kind:
+        SemanticSourceTargetKind.Const | SemanticSourceTargetKind.TypeAlias | SemanticSourceTargetKind.Trait => return Ok(None)
+        _ => return Err(f"unsupported Body IR library export {export.name}")
 
 
 def retains_emitted_frame(frames: list[RustBody], candidate: &RustBody) -> bool:

@@ -248,6 +248,10 @@ impl rustc_driver::Callbacks for Callbacks {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
+        // A library unit re-exports its public names at the crate root (see `library_exports`).
+        krate
+            .items
+            .extend(crate::library_exports::items(&self.plan, krate.spans.inner_span));
         // Computed statics keep rustc's own MIR for their storage and accessors (see `statics`).
         for cell in &self.plan.statics {
             let span = match sources.span(&cell.span) {
@@ -562,9 +566,10 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     native_link: &std::process::Command,
+    library: bool,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
-    validation::validate(&plan)?;
+    validation::validate(&plan, library)?;
     let identity = identity::verify(sysroot)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
@@ -591,8 +596,14 @@ pub fn compile(
         "debuginfo=2".into(),
         "-o".into(),
         output.to_string_lossy().into_owned(),
-        "-".into(),
+        // rustc reads stdin to the end for `-`; a named input is never read, since `config` installs the source-free root.
+        plan.span.file.clone(),
     ];
+    // A library unit is an rlib its dependents link; an executable keeps rustc's default binary crate type.
+    if library {
+        args.push("--crate-type".into());
+        args.push("lib".into());
+    }
     for (name, path) in externs {
         args.push("--extern".into());
         args.push(format!("{name}={}", path.display()));

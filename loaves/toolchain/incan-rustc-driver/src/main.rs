@@ -35,6 +35,7 @@ mod frontend;
 mod frozen_values;
 mod futures;
 mod identity;
+mod library_exports;
 mod marker_traits;
 mod plan;
 mod shared_callables;
@@ -133,6 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &[("native_output".into(), PathBuf::from(&args[4]))],
         &args.iter().skip(6).map(PathBuf::from).collect::<Vec<_>>(),
         &native_link,
+        false,
     )?;
     Ok(())
 }

@@ -403,6 +403,7 @@ fn empty_module(owner: String) -> BodyIrModule {
         trait_implementations: Vec::new(),
         module_id: CompilerNodeId::module(owner),
         stdlib_delegations: Vec::new(),
+        public_exports: Vec::new(),
         native_union_declarations: Vec::new(),
         enum_declarations: Vec::new(),
         static_declarations: Vec::new(),

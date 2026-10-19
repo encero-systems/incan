@@ -660,6 +660,7 @@ fn build_body_ir_module_v0_from_checked_facts(
         ),
         enum_declarations,
         stdlib_delegations: stdlib_delegations::collect(type_info),
+        public_exports: public_exports::collect(program, type_info),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
@@ -2310,6 +2311,7 @@ mod runtime_storage;
 mod sdk_imports;
 mod sdk_tuple_context;
 mod source_comparison;
+mod public_exports;
 mod stdlib_delegations;
 mod type_metadata;
 

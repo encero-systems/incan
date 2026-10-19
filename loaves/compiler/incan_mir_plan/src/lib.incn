@@ -579,6 +579,20 @@ pub model Plan:
     pub span: SourceSpan
     # Computed static storage the adapter declares, each initialized by its planned initializer function.
     pub statics: list[StaticCell] = []
+    # A library plan's public names, each re-exported at the crate root; an executable plan has none.
+    pub exports: list[PlanExport] = []
+
+
+@derive(Clone, PartialEq)
+pub model PlanExport:
+    """
+    One public name a library plan publishes, emitted as `pub use <path> as <name>;` at the crate root.
+
+    `path` is either a planned item of this crate (`crate::<item>`) or a Rust item the library re-exports (`::<path>`).
+    """
+
+    pub name: str
+    pub path: str
 
 
 @derive(Clone, PartialEq)
