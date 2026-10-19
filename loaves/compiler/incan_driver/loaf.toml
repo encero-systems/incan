@@ -33,7 +33,7 @@ description = "The Incan compiler driver: sessions, builds, the generated projec
 license = "Apache-2.0"
 name = "incan_driver"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [project.features]
 cli = ["dep:clap", "rust_inspect"]

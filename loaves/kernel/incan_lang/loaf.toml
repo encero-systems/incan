@@ -6,7 +6,7 @@ description = "Shared language vocabulary and semantic helpers for the Incan com
 license = "Apache-2.0"
 name = "incan_lang"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [rust]
 edition = "2024"

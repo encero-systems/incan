@@ -28,7 +28,7 @@ description = "Rust inspect metadata extraction substrate for Incan"
 license = "Apache-2.0"
 name = "rust_inspect"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [project.features]
 default = ["inspector"]

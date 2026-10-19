@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "incan-ci-tools"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "clap",
  "serde",
@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "incan-cli"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "blake2",
  "blake3",
@@ -1497,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "incan-lsp"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_driver",
  "incan_format",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "incan_codegraph"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "incan_driver"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "byteorder",
  "clap",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "incan_emit"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "hex",
  "incan_frontend",
@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "incan_format"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -1615,7 +1615,7 @@ dependencies = [
 
 [[package]]
 name = "incan_frontend"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "hex",
  "incan_format",
@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "incan_ir"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_frontend",
  "incan_lang",
@@ -1658,14 +1658,14 @@ dependencies = [
 
 [[package]]
 name = "incan_lang"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_oven_facet"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_frontend",
  "incan_lang",
@@ -1679,7 +1679,7 @@ dependencies = [
 
 [[package]]
 name = "incan_provider"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "hex",
  "incan_frontend",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "hex",
  "incan_lang",
@@ -1718,7 +1718,7 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -1768,7 +1768,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "incan_test_support"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -2321,7 +2321,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "oven-cli"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "clap",
  "hex",
@@ -3486,7 +3486,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 dependencies = [
  "hex",
  "incan_lang",

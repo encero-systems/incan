@@ -17,7 +17,7 @@ description = "The integration-test harness the compiler's roots share: checkout
 license = "Apache-2.0"
 name = "incan_test_support"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [rust]
 edition = "2024"

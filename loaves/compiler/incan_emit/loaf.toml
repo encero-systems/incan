@@ -24,7 +24,7 @@ description = "Rust emission from the Incan IR and backend selection"
 license = "Apache-2.0"
 name = "incan_emit"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [project.features]
 default = [

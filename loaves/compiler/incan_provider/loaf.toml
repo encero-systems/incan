@@ -23,7 +23,7 @@ description = "Incan's SDK providers as the compiler loads them: inventory, requ
 license = "Apache-2.0"
 name = "incan_provider"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.7"
 
 [project.features]
 default = [
