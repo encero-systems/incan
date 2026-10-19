@@ -11,7 +11,7 @@ use std::{env, fs};
 
 use crate::commands::build_report::{emit_build_report, emit_workspace_build_report};
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
+use incan_driver::backend::selection::{default_backend_receipt_path, write_backend_receipt};
 use incan_driver::build::bake::{
     bake_oven_library, bake_oven_project, publish_configured_ordinary_library, publish_ordinary_project_output,
 };

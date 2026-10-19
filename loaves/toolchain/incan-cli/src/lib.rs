@@ -1015,99 +1015,24 @@ fn builds_toolchain_binaries(manifest: &ProjectManifest) -> bool {
     !manifest.rust_binary_roles().is_empty() && !has_main_script
 }
 
-/// Bake the `[[rust.bin]]` roles a toolchain Loaf declares when `incan build` names no entrypoint (#1698).
+/// Refuse a plain `incan build` of a toolchain Loaf until its `[[rust.bin]]` roles build through the direct route.
 ///
 /// `None` keeps the ordinary entrypoint resolution: the Loaf declares no Rust binary role, or it names an Incan
 /// `main` script, in which case it is an Incan project with a Rust facet and its Incan entrypoint is what a plain
-/// `incan build` means. `workspace_root` is the compiler root the stored direct-rustc plans are relative to — the
-/// active workspace's root for a member, the Loaf itself otherwise. The compiler-suite store is named by
-/// `INCAN_OVEN_COMPILER_SUITE_STORE`, as the suite runner is told it; an explicit output directory is honored and
-/// the report surface is refused rather than silently narrowed, since a toolchain binary has no generated project to
-/// report on.
+/// `incan build` means. The stored compiler-suite plans these roles were baked from are gone with the Cargo-keyed
+/// suite, so a toolchain Loaf is refused by name rather than built some other way.
 fn build_toolchain_binaries_if_declared(
     manifest: &ProjectManifest,
-    workspace_root: &Path,
-    request: &BuildCommandRequest,
+    _workspace_root: &Path,
+    _request: &BuildCommandRequest,
 ) -> CliResult<Option<ExitCode>> {
     if !builds_toolchain_binaries(manifest) {
         return Ok(None);
     }
-    reject_unsupported_toolchain_build_options(request)?;
-    let roles = manifest.rust_binary_roles();
-    if request.report_options.enabled() {
-        return Err(CliError::failure(
-            "incan build --report is not available for a toolchain binary build; the build produces executables from stored direct-rustc plans, not a generated project (#1698)",
-        ));
-    }
-    let store_root = env::var_os(oven_cli::commands::OVEN_COMPILER_SUITE_STORE_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let reports =
-        oven_cli::commands::oven_build_toolchain_binaries(oven_cli::commands::OvenToolchainBuildCommandOptions {
-            compiler_root: workspace_root.to_path_buf(),
-            project_root: manifest.project_root().to_path_buf(),
-            binaries: roles.to_vec(),
-            rustc: None,
-            store: oven_cli::commands::OvenStoreCommandOptions {
-                root: store_root,
-                max_physical_bytes: None,
-                max_domain_physical_bytes: None,
-                max_domain_logical_bytes: None,
-            },
-            output: request.output_dir.as_ref().map(PathBuf::from),
-        })?;
-    for report in reports {
-        println!(
-            "Built {} -> {} ({}, Cargo not started)",
-            report.name,
-            report.output.display(),
-            if report.reused {
-                "reused by receipt"
-            } else {
-                "compiled by direct rustc"
-            }
-        );
-    }
-    Ok(Some(ExitCode::SUCCESS))
-}
-
-/// Refuse build controls that the stored direct-rustc toolchain-binary path cannot honor.
-fn reject_unsupported_toolchain_build_options(request: &BuildCommandRequest) -> CliResult<()> {
-    incan_driver::cargo_policy::reject_normal_cargo_controls(
-        &request.options.cargo_policy,
-        request.options.generated_cargo_target_dir.as_ref(),
-    )?;
-    if !request.options.cargo_features.is_empty()
-        || request.options.cargo_no_default_features
-        || request.options.cargo_all_features
-    {
-        return Err(CliError::failure(
-            "toolchain-Loaf builds do not accept retired Cargo feature controls",
-        ));
-    }
-    if request.release {
-        return Err(CliError::failure(
-            "toolchain-Loaf builds do not accept --release; stored [[rust.bin]] plans select their recorded profile",
-        ));
-    }
-    if request.options.package_features != FeatureSelection::default() {
-        return Err(CliError::failure(
-            "toolchain-Loaf builds do not accept package-feature controls",
-        ));
-    }
-    if request.options.sdk_profile.is_some() {
-        return Err(CliError::failure("toolchain-Loaf builds do not accept --sdk-profile"));
-    }
-    if request.lock_controls_explicit
-        || request.options.cargo_policy.offline
-        || request.options.cargo_policy.locked
-        || request.options.cargo_policy.frozen
-    {
-        return Err(CliError::failure(
-            "toolchain-Loaf builds do not accept lock-policy controls (--offline, --locked, or --frozen)",
-        ));
-    }
-    Ok(())
+    Err(CliError::failure(format!(
+        "{}: [[rust.bin]] roles do not build yet; toolchain binaries return as direct-route Rust units",
+        manifest.project_root().display()
+    )))
 }
 
 /// Return whether this build should resolve and fan out an RFC 077 workspace scope.

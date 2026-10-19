@@ -14,19 +14,10 @@ pub fn lock_project(
     entry_file: Option<&PathBuf>,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
 ) -> CliResult<ExitCode> {
     let start_dir = entry_file
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
-    let cargo_features = CargoFeatureSelection {
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-    }
-    .normalized();
     crate::project_owner::prepare_lock(incan_driver::build::lock_preparation::LockPreparationRequest {
         directory: std::path::absolute(&start_dir).map_err(|error| CliError::failure(error.to_string()))?,
         entry: entry_file
@@ -35,7 +26,7 @@ pub fn lock_project(
             .map_err(|error| CliError::failure(error.to_string()))?,
         features: package_features.clone(),
         sdk_profile: sdk_profile_override.map(str::to_owned),
-        cargo_features,
+        cargo_features: CargoFeatureSelection::default(),
     })?;
 
     Ok(ExitCode::SUCCESS)

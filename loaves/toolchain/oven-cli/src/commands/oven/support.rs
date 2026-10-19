@@ -3,6 +3,7 @@
 //! Opening a store with the right defaults, resolving byte limits from the environment, and the small formatting
 //! and error-wrapping helpers the command implementations reach for.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -118,3 +119,54 @@ pub(super) fn human_bytes(bytes: u64) -> String {
 pub(super) fn oven_error(error: impl std::fmt::Display) -> CliError {
     CliError::failure(error.to_string())
 }
+
+/// Convert a scheduler-selected path into an absolute environment value before a test changes directory.
+///
+/// Stored suite entries may be selected from a relative `--store` path, while compiler tests deliberately create
+/// nested fixture directories. Forwarding those paths verbatim would make a receipt-authorized inventory or native
+/// Loaf disappear from a nested `incan` process despite still being held by the parent suite lease.
+fn compiler_suite_environment_path(path: &Path) -> CliResult<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|directory| directory.join(path))
+        .map_err(|error| {
+            CliError::failure(format!(
+                "cannot resolve compiler-suite environment path {} from the current directory: {error}",
+                path.display()
+            ))
+        })
+}
+
+/// Export one checked direct-Rustc closure under its existing consumer capability names.
+///
+/// The generated-code warning checker and the compiler CLI can legitimately use different dependency closures. Keep
+/// them separate instead of merging same-named Rust crates from independent receipt-bound foundations into an
+/// ambiguous `--extern` list.
+pub(crate) fn append_compiler_suite_direct_rustc_environment(
+    environment: &mut BTreeMap<String, String>,
+    variables: &[&str],
+    rustc: &Path,
+    artifacts: &oven_rustc::rustc::OvenRustcArtifactPlan,
+) -> CliResult<()> {
+    let capability = oven_store::compiler_suite_env::OvenCompilerSuiteCapability::new(
+        compiler_suite_environment_path(rustc)?,
+        artifacts
+            .dependency_search_paths
+            .iter()
+            .map(|path| compiler_suite_environment_path(path))
+            .collect::<CliResult<Vec<_>>>()?,
+        artifacts
+            .externs
+            .iter()
+            .map(|(crate_name, path)| Ok((crate_name.clone(), compiler_suite_environment_path(path)?)))
+            .collect::<CliResult<BTreeMap<_, _>>>()?,
+    );
+    let encoded = capability.encode().map_err(CliError::failure)?;
+    for variable in variables {
+        environment.insert((*variable).to_string(), encoded.clone());
+    }
+    Ok(())
+}
+

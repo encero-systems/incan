@@ -161,22 +161,6 @@ pub enum OvenCommand {
         #[arg(value_name = "ARG")]
         arguments: Vec<String>,
     },
-    /// Reconcile compiler-suite partition reports into complete-suite evidence
-    ReconcilePartitions {
-        /// JSON report file or directory containing partition reports; may be repeated
-        #[arg(value_name = "REPORT_OR_DIRECTORY", required = true)]
-        reports: Vec<PathBuf>,
-        /// Optional path receiving the reconciliation summary
-        #[arg(long, value_name = "PATH")]
-        summary: Option<PathBuf>,
-    },
-    /// Prepare compiler-owned ordinary standard packages for a delivered toolchain
-    #[command(hide = true)]
-    PrepareStandardPackages {
-        /// Persisted normal native graph subsequently selected by ordinary commands
-        #[arg(long)]
-        native_graph_output: PathBuf,
-    },
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
@@ -188,33 +172,6 @@ pub enum OvenCommand {
         /// Select Incan package features for the baked project Loaf
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: OvenOutputFormat,
-    },
-    /// Import frozen Cargo declarations as receipt evidence without launching Cargo
-    Import {
-        /// Root of the frozen Cargo package to import
-        #[arg(long, value_name = "PATH", default_value = ".")]
-        project: PathBuf,
-        /// Explicit target triple recorded in the receipt
-        #[arg(long, value_name = "TRIPLE")]
-        target: String,
-        /// Exact selected Rust toolchain identity recorded in the receipt
-        #[arg(long, value_name = "IDENTITY")]
-        toolchain: String,
-        /// Build profile recorded in the receipt
-        #[arg(long, default_value = "release")]
-        profile: String,
-        /// Explicit feature selected for the build unit; may be repeated
-        #[arg(long = "feature", value_name = "NAME")]
-        features: Vec<String>,
-        /// Generated source evidence expressed as `NAME=PATH`; paths are digested, never persisted
-        #[arg(long = "source", value_name = "NAME=PATH")]
-        source_inputs: Vec<String>,
-        /// Receipt output path; defaults to `.incan/oven/receipt.json` below --project
-        #[arg(long, value_name = "PATH")]
-        output: Option<PathBuf>,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
@@ -267,59 +224,6 @@ pub enum OvenCommand {
         /// Compiler executable matching the selected native Loafs
         #[arg(long)]
         rustc: PathBuf,
-    },
-    /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
-    CompilerLibtests {
-        /// Repository root containing the compiler Cargo package and src/lib.rs
-        #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
-        compiler_root: PathBuf,
-        /// Explicit rustc executable; the active toolchain is used when omitted
-        #[arg(long, value_name = "PATH")]
-        rustc: Option<PathBuf>,
-        /// Root-package feature to include; default Cargo features are always included
-        #[arg(long = "feature", value_name = "NAME")]
-        features: Vec<String>,
-        /// Receipt-bound test source path to execute; may be repeated. Omitting this runs the complete stored suite.
-        #[arg(long = "target", value_name = "SOURCE")]
-        targets: Vec<String>,
-        /// Exact test in one receipt-bound target; may be repeated to reuse one compiled libtest binary
-        #[arg(long = "exact", value_name = "TEST")]
-        exact_names: Vec<String>,
-        /// Zero-based receipt-index partition used by the bounded CI replay; requires `--partition-count`
-        #[arg(
-            long = "partition-index",
-            value_name = "INDEX",
-            requires = "partition_count",
-            hide = true
-        )]
-        partition_index: Option<usize>,
-        /// Total receipt-index partitions used by the bounded CI replay; requires `--partition-index`
-        #[arg(
-            long = "partition-count",
-            value_name = "COUNT",
-            requires = "partition_index",
-            hide = true
-        )]
-        partition_count: Option<usize>,
-        /// Explicit Cargo for compiler-suite roots that deliberately exercise the Loaf baker
-        #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
-        fixture_cargo: Option<PathBuf>,
-        /// Checkout-owned directory, kept across runs, where explicit-bake roots reuse their baked fixtures
-        #[arg(
-            long = "explicit-bake-workspace",
-            value_name = "PATH",
-            requires = "fixture_cargo",
-            hide = true
-        )]
-        explicit_bake_workspace: Option<PathBuf>,
-        /// Caller-owned direct-rustc libtest output path
-        #[arg(long, value_name = "PATH")]
-        output: Option<PathBuf>,
-        #[command(flatten)]
-        store: OvenStoreCliFlags,
-        /// Output format
-        #[arg(long = "format", value_enum, default_value = "text")]
-        format: OvenOutputFormat,
     },
     /// Validate and store a receipt-bound direct-rustc artifact plan
     Plan {
@@ -589,15 +493,6 @@ pub struct LockArgs {
     /// Select a non-persistent SDK profile for the locked graph
     #[command(flatten)]
     pub sdk_profile: SdkProfileCliFlags,
-    /// Cargo features to enable (comma-separated)
-    #[arg(long = "cargo-features", value_delimiter = ',')]
-    pub cargo_features: Vec<String>,
-    /// Disable Cargo default features
-    #[arg(long = "cargo-no-default-features")]
-    pub cargo_no_default_features: bool,
-    /// Enable all Cargo features
-    #[arg(long = "cargo-all-features")]
-    pub cargo_all_features: bool,
 }
 
 /// Shared project test options used by both entry points.
@@ -687,25 +582,10 @@ pub struct TestArgs {
     /// Disable INCAN_FROZEN for this invocation
     #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
     pub no_frozen: bool,
-    /// Retired Cargo argument surface; normal Oven commands reject it
-    #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
-    pub cargo_args: Vec<String>,
-    /// Retired Cargo feature surface; normal Oven commands reject it
-    #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
-    pub cargo_features: Vec<String>,
-    /// Retired Cargo feature surface; normal Oven commands reject it
-    #[arg(long = "cargo-no-default-features", hide = true)]
-    pub cargo_no_default_features: bool,
-    /// Retired Cargo feature surface; normal Oven commands reject it
-    #[arg(long = "cargo-all-features", hide = true)]
-    pub cargo_all_features: bool,
     /// Select every member in the active workspace
     #[arg(long, conflicts_with = "members")]
     pub workspace: bool,
     /// Select one workspace member by name or root-relative path; may be repeated
     #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
     pub members: Vec<String>,
-    /// Retired Cargo passthrough surface; normal Oven commands reject it
-    #[arg(last = true, hide = true)]
-    pub cargo_passthrough: Vec<String>,
 }

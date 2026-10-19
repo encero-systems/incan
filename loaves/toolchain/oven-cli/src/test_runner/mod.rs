@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::cargo_policy::CargoPolicy;
+use incan_driver::lock::policy::LockPolicy;
 use incan_driver::session::CompilationSession;
 
 mod execution;
@@ -918,10 +918,7 @@ type CompletedExecutionUnit = (usize, Vec<(TestInfo, TestResult)>);
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
     unit: &ExecutionUnit,
-    cargo_policy: &CargoPolicy,
-    cargo_features: &[String],
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
+    lock_policy: &LockPolicy,
     command_context: &Arc<OvenTestCommandContext>,
     no_capture: bool,
     verbose: bool,
@@ -944,10 +941,6 @@ fn run_execution_unit(
     run_file_tests_batch(
         &unit.tests,
         &unit.conftest_files_by_file,
-        cargo_policy,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
         command_context,
         TestExecutionOptions {
             no_capture,
@@ -1216,24 +1209,17 @@ fn batch_has_failure(results: &[(TestInfo, TestResult)]) -> bool {
 fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
     jobs: usize,
-    cargo_policy: CargoPolicy,
-    cargo_features: &[String],
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
+    lock_policy: LockPolicy,
     command_context: Arc<OvenTestCommandContext>,
     stop_on_fail: bool,
     no_capture: bool,
     verbose: bool,
     output: TestOutputSink,
 ) -> CliResult<Vec<CompletedExecutionUnit>> {
-    let cargo_features = cargo_features.to_vec();
     schedule_execution_units(units, jobs, stop_on_fail, move |unit| {
         run_execution_unit(
             unit,
-            &cargo_policy,
-            &cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
+            &lock_policy,
             &command_context,
             no_capture,
             verbose,
@@ -1386,7 +1372,7 @@ pub(crate) struct TestCollectionOptions {
     package_features: incan_provider::FeatureSelection,
     sdk_profile: Option<String>,
     timeout: Option<String>,
-    cargo_policy: CargoPolicy,
+    lock_policy: LockPolicy,
 }
 
 impl TestCollectionOptions {
@@ -1404,7 +1390,7 @@ impl TestCollectionOptions {
             package_features: config.package_features.clone(),
             sdk_profile: config.sdk_profile.clone(),
             timeout: config.timeout.map(str::to_string),
-            cargo_policy: config.cargo_policy.clone(),
+            lock_policy: config.lock_policy.clone(),
         }
     }
 }
@@ -1428,9 +1414,6 @@ pub(crate) struct TestExecutionRequest {
     jobs: usize,
     isolate: bool,
     no_capture: bool,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
     workspace_context: Option<WorkspaceTestContext>,
 }
 
@@ -1451,9 +1434,6 @@ impl TestExecutionRequest {
             jobs: config.jobs,
             isolate: config.isolate,
             no_capture: config.no_capture,
-            cargo_features: config.cargo_features.clone(),
-            cargo_no_default_features: config.cargo_no_default_features,
-            cargo_all_features: config.cargo_all_features,
             workspace_context: config.workspace_context.clone(),
         }
     }
@@ -1473,7 +1453,7 @@ impl TestExecutionRequest {
             package_features: self.collection.package_features.clone(),
             sdk_profile: self.collection.sdk_profile.clone(),
             timeout: self.collection.timeout.as_deref(),
-            cargo_policy: self.collection.cargo_policy.clone(),
+            lock_policy: self.collection.lock_policy.clone(),
             stop_on_fail: self.stop_on_fail,
             use_color: self.use_color,
             fail_on_empty: self.fail_on_empty,
@@ -1486,9 +1466,6 @@ impl TestExecutionRequest {
             jobs: self.jobs,
             isolate: self.isolate,
             no_capture: self.no_capture,
-            cargo_features: self.cargo_features.clone(),
-            cargo_no_default_features: self.cargo_no_default_features,
-            cargo_all_features: self.cargo_all_features,
             workspace_context: self.workspace_context.clone(),
         }
     }
@@ -1534,7 +1511,7 @@ fn collect_selected_tests(
         package_features,
         sdk_profile,
         timeout,
-        cargo_policy,
+        lock_policy,
     } = options;
     let stage = trace_test_stage("discovery");
     let path = Path::new(path);
@@ -1584,7 +1561,7 @@ fn collect_selected_tests(
         )?
     };
     if let Some(manifest) = session.manifest.as_ref() {
-        incan_driver::cargo_policy::enforce_project_toolchain_constraint(manifest)?;
+        incan_driver::project::enforce_project_toolchain_constraint(manifest)?;
         let session_root =
             std::fs::canonicalize(manifest.project_root()).unwrap_or_else(|_| manifest.project_root().to_path_buf());
         if session_root != authority_root {
@@ -1613,9 +1590,8 @@ fn collect_selected_tests(
     validate_oven_test_lock_policy(
         session.as_ref(),
         &representative_test,
-        cargo_policy,
+        lock_policy,
         package_features,
-        sdk_profile.as_deref(),
     )?;
 
     drop(stage);
@@ -1627,14 +1603,12 @@ fn collect_selected_tests(
     let mut all_tests = inventory.tests;
     let command_context = if !list_only || !rust_roots.is_empty() {
         let _admission = trace_test_stage("dependency_admission");
-        let native_context = owner.native_dependency_context(&session)?;
         let mut planned = test_files.clone();
         planned.extend(rust_roots.iter().cloned());
         let mut context =
-            prepare_oven_test_command_context(Arc::clone(&session), &representative_test, &planned, native_context)?;
+            prepare_oven_test_command_context(Arc::clone(&session), &representative_test, &planned)?;
         let context_mut = Arc::get_mut(&mut context)
             .ok_or_else(|| CliError::failure("test command context escaped before collection"))?;
-        context_mut.test_generation = owner.test_generation(&session)?;
         for (root, prepared) in rust::prepare_roots(&rust_roots, context_mut, package_features, owner)? {
             all_tests.extend(prepared.tests.iter().cloned());
             context_mut.rust_roots.insert(root, prepared);
@@ -1765,10 +1739,7 @@ pub(crate) fn execute_tests_with_owner(
         sdk_profile: _,
         timeout: _,
         no_capture,
-        cargo_policy,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
+        lock_policy,
         workspace_context: _,
     } = config;
 
@@ -1856,10 +1827,7 @@ pub(crate) fn execute_tests_with_owner(
     let mut raw_batch_results = run_scheduled_execution_units(
         units,
         jobs,
-        cargo_policy,
-        &cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
+        lock_policy,
         command_context,
         stop_on_fail,
         no_capture,
@@ -2292,10 +2260,7 @@ mod tests {
             sdk_profile: None,
             timeout: None,
             no_capture: false,
-            cargo_policy: CargoPolicy::default(),
-            cargo_features: Vec::new(),
-            cargo_no_default_features: false,
-            cargo_all_features: false,
+            lock_policy: LockPolicy::default(),
             workspace_context: None,
         }
     }
@@ -2350,7 +2315,7 @@ mod tests {
         let Err(lock_error) = validate_oven_test_lock_policy(
             session.as_ref(),
             representative,
-            &CargoPolicy::explicit(false, false, true, Vec::new()),
+            &LockPolicy::explicit(false, false, true, Vec::new()),
             &package_features,
             None,
         ) else {

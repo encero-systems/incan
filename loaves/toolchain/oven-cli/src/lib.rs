@@ -43,38 +43,13 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             test_command::run(arguments, std::io::stdout().is_terminal(), languages)
         }
         OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
-        OvenCommand::PrepareStandardPackages { native_graph_output } => {
-            commands::oven::oven_prepare_standard_packages(&native_graph_output)
-        }
         OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
-        OvenCommand::ReconcilePartitions { reports, summary } => {
-            commands::oven_reconcile_partitions(&reports, summary.as_deref())
-        }
         OvenCommand::Bake {
             project,
             target,
             package_features,
             format,
         } => commands::oven_bake_project(project, target, package_features.into(), format),
-        OvenCommand::Import {
-            project,
-            target,
-            toolchain,
-            profile,
-            features,
-            source_inputs,
-            output,
-            format,
-        } => commands::oven_import(commands::OvenImportCommandOptions {
-            project,
-            target,
-            toolchain,
-            profile,
-            features,
-            source_inputs,
-            output,
-            format,
-        }),
         OvenCommand::Gate { command } => match command {
             OvenGateCommand::RegistryPin { pin, checkout } => commands::oven_gate_registry_pin(&pin, &checkout),
         },
@@ -124,33 +99,6 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 format,
             }),
         },
-        OvenCommand::CompilerLibtests {
-            compiler_root,
-            rustc,
-            features,
-            targets,
-            exact_names,
-            partition_index,
-            partition_count,
-            fixture_cargo,
-            explicit_bake_workspace,
-            output,
-            store,
-            format,
-        } => commands::oven_run_compiler_libtests(commands::OvenCompilerLibtestsRunCommandOptions {
-            compiler_root,
-            rustc,
-            features,
-            targets,
-            exact_names,
-            partition_index,
-            partition_count,
-            fixture_cargo,
-            explicit_bake_workspace,
-            output,
-            store: store.into(),
-            format,
-        }),
         OvenCommand::CompilerNativeTests {
             compiler_root,
             target,
@@ -273,16 +221,6 @@ pub fn run_lock_command(args: LockArgs) -> CliResult<ExitCode> {
         file,
         package_features,
         sdk_profile,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
     } = args;
-    commands::lock_project(
-        file.as_ref(),
-        &package_features.into(),
-        sdk_profile.profile(),
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-    )
+    commands::lock_project(file.as_ref(), &package_features.into(), sdk_profile.profile())
 }

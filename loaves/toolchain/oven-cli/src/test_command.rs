@@ -1,7 +1,7 @@
 //! Common test command option conversion and workspace dispatch.
 use crate::workspace_scope::{resolve_workspace_command_scope, workspace_member_relative_path};
 use crate::{CliError, CliResult, ExitCode, test_runner};
-use incan_driver::cargo_policy::{CargoPolicy, CargoPolicyCliFlags};
+use incan_driver::lock::policy::{LockPolicy, LockPolicyCliFlags};
 use incan_provider::FeatureSelection;
 use std::path::{Path, PathBuf};
 
@@ -40,13 +40,8 @@ pub fn run(
         frozen,
         no_frozen,
         no_locked,
-        cargo_args,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
         workspace,
         members,
-        cargo_passthrough,
     } = arguments;
     execute_tests(
         TestCommandOptions {
@@ -74,21 +69,14 @@ pub fn run(
             run_xfail,
             package_features: package_features.into(),
             sdk_profile: sdk_profile.sdk_profile,
-            cargo_policy: CargoPolicy::from_cli_and_env(
-                CargoPolicyCliFlags {
-                    offline,
-                    no_offline,
-                    locked,
-                    no_locked,
-                    frozen,
-                    no_frozen,
-                },
-                cargo_args,
-                cargo_passthrough,
-            ),
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
+            lock_policy: LockPolicy::from_cli_and_env(LockPolicyCliFlags {
+                offline,
+                no_offline,
+                locked,
+                no_locked,
+                frozen,
+                no_frozen,
+            }),
         },
         workspace,
         members,
@@ -121,10 +109,7 @@ struct TestCommandOptions {
     run_xfail: bool,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
-    cargo_policy: CargoPolicy,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
+    lock_policy: LockPolicy,
 }
 
 impl TestCommandOptions {
@@ -160,10 +145,7 @@ impl TestCommandOptions {
             shuffle: self.shuffle,
             seed: self.seed,
             run_xfail: self.run_xfail,
-            cargo_policy: self.cargo_policy.clone(),
-            cargo_features: self.cargo_features.clone(),
-            cargo_no_default_features: self.cargo_no_default_features,
-            cargo_all_features: self.cargo_all_features,
+            lock_policy: self.lock_policy.clone(),
             workspace_context,
         })
     }

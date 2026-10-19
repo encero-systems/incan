@@ -175,7 +175,7 @@ fn execute(
 
     // ---- Inventory-verified native execution ----
     let mut environment = execution_environment(&compiler_root, owner, &explicit_bake_workspace, &rustc)?;
-    super::suite_environment::append_compiler_suite_direct_rustc_environment(
+    super::append_compiler_suite_direct_rustc_environment(
         &mut environment,
         &[oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV],
         &rustc,
