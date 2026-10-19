@@ -1,17 +1,15 @@
-//! Stdlib-aware import collection and namespace validation.
-//!
-//! This keeps stdlib import enforcement (RFC 022) separate from general declaration collection while preserving the
-//! existing behavior.
+//! Imports from compiled Loaves (DD-0007): `pub::<key>` dependencies and the `std.*` namespaces of the standard
+//! packages, both read from the Loaf's checked manifest and bound under the Loaf's binding root.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
-    checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
-    checked_api_public_module_paths, checked_api_public_namespace, class_export_from_api, enum_export_from_api,
-    function_export_from_api, function_export_from_api_projected, manifest_partial_with_target_defaults,
-    model_export_from_api, newtype_export_from_api, partial_export_from_api, partial_export_with_target_defaults,
-    trait_export_from_api,
+    checked_api_declaration_is_public_namespace_member,
+    checked_api_modules_for_public_namespace, checked_api_public_module_paths, checked_api_public_namespace,
+    class_export_from_api, enum_export_from_api, function_export_from_api, function_export_from_api_projected,
+    manifest_partial_with_target_defaults, model_export_from_api, newtype_export_from_api, partial_export_from_api,
+    partial_export_with_target_defaults, trait_export_from_api,
 };
 use crate::ast::*;
 use crate::diagnostics::errors;
@@ -25,14 +23,9 @@ use crate::library_manifest::{
     PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ProviderFactKind, ReceiverExport,
     StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
-use crate::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
-use crate::module::{ExportedSymbol, canonicalize_source_module_segments};
-use crate::provider::{ProviderModuleResolution, ProviderProvenance, PublicProviderMetadata};
+use crate::loaf_index::LoafEntry;
 use crate::symbols::*;
-use crate::testing_markers::{
-    TestingMarkerLoadError, TestingMarkerSemantics, load_testing_marker_semantics,
-    testing_marker_semantics_from_manifest,
-};
+use crate::testing_markers::testing_marker_semantics_from_manifest;
 use crate::typechecker::type_info::RustTraitImportInfo;
 use crate::typechecker::{
     ImportedRegistryDefinitionInfo, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
@@ -40,10 +33,18 @@ use crate::typechecker::{
 };
 use incan_lang::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
-use incan_lang::lang::stdlib::{self, is_typechecker_only_stdlib};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions as surface_functions;
 use incan_lang::lang::surface::types as surface_types;
 use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey};
+
+/// One import that reaches a compiled Loaf: the Loaf's index key and the public module path inside its manifest.
+pub(in crate::typechecker) struct LoafImport {
+    /// The Loaf's index key: the dependency key, or the standard package's name.
+    pub key: String,
+    /// The public module path inside the Loaf's manifest; empty for the Loaf's root.
+    pub module: Vec<Ident>,
+}
 
 enum ManifestExportRef<'a> {
     Alias(&'a AliasExport),
@@ -90,757 +91,397 @@ pub(in crate::typechecker) struct ResolvedPublicModuleSymbol {
     pub source_name: String,
 }
 
-/// Return the project dependency or SDK component name that owns a provider diagnostic remedy.
-fn sdk_provider_component_id(provenance: &ProviderProvenance) -> &str {
-    match provenance {
-        ProviderProvenance::Sdk { component_id, .. } => component_id,
-        ProviderProvenance::ProjectDependency { dependency_key, .. } => dependency_key,
-        ProviderProvenance::StandardPublication { package_name, .. } => package_name,
-        ProviderProvenance::Compiler => "compiler",
-    }
-}
-
-/// Return the package or SDK identity used to explain provider authority in diagnostics.
-fn sdk_provider_identity(provenance: &ProviderProvenance) -> &str {
-    match provenance {
-        ProviderProvenance::Sdk { sdk_identity, .. } => sdk_identity,
-        ProviderProvenance::ProjectDependency { dependency_key, .. } => dependency_key,
-        ProviderProvenance::StandardPublication { package_name, .. } => package_name,
-        ProviderProvenance::Compiler => "compiler",
-    }
-}
-
-/// Classified context for a `from ... import ...` declaration during first-pass collection.
-///
-/// This keeps stdlib namespace decisions close to the parsed module path while leaving concrete item materialization to
-/// helpers that can return "not handled" and preserve the ordinary imported-module fallback.
-struct FromImportContext<'a> {
-    module: &'a ImportPath,
-    stdlib: Option<StdlibFromImportContext>,
-}
-
-impl<'a> FromImportContext<'a> {
-    /// Classify one parsed from-import module path for namespace validation and stdlib import materialization.
-    fn new(module: &'a ImportPath, is_known_stdlib_module: bool, provider_owned: bool) -> Self {
-        Self {
-            module,
-            stdlib: StdlibFromImportContext::new(module, is_known_stdlib_module, provider_owned),
-        }
-    }
-
-    /// Return `true` when this from-import references an unknown stdlib module that should emit the RFC 022 diagnostic.
-    fn is_unknown_stdlib_module(&self) -> bool {
-        self.stdlib.as_ref().is_some_and(|stdlib| stdlib.is_unknown_module)
-    }
-
-    /// Return `true` when an unmaterialized import item from this context must be rejected instead of falling back.
-    fn rejects_unmaterialized_stdlib_items(&self) -> bool {
-        self.stdlib.as_ref().is_some_and(|stdlib| !stdlib.is_unknown_module)
-    }
-
-    /// Join the source module segments as the user-facing dotted stdlib path.
-    fn dotted_module_path(&self) -> String {
-        self.module.segments.join(".")
-    }
-}
-
-/// Stdlib-specific classification for unqualified `from std... import ...` paths.
-///
-/// The shared provider plan owns module availability for component-aware SDKs. This struct only snapshots the
-/// stdlib-specific surface predicates needed while collecting individual import items; the legacy registry is used by
-/// explicit source-bootstrap and inventoryless compatibility paths before this context is constructed.
-struct StdlibFromImportContext {
-    module_path_str: String,
-    is_unknown_module: bool,
-    is_web_namespace: bool,
-    is_async_namespace: bool,
-    is_reflection_module: bool,
-    is_testing_module: bool,
-    has_stub: bool,
-}
-
-impl StdlibFromImportContext {
-    /// Build stdlib classification for an unqualified `std...` module path.
-    fn new(module: &ImportPath, is_known_module: bool, provider_owned: bool) -> Option<Self> {
-        if module.parent_levels != 0 || module.is_absolute || !stdlib::is_any_stdlib_path(&module.segments) {
-            return None;
-        }
-
-        let module_path_str = module.segments.join(".");
-        let is_web_namespace = module.segments.len() >= 2
-            && module.segments[0] == stdlib::STDLIB_ROOT
-            && module.segments[1] == stdlib::STDLIB_WEB;
-        let is_async_namespace =
-            module.segments.len() >= 2 && module.segments[0] == stdlib::STDLIB_ROOT && module.segments[1] == "async";
-        let is_reflection_module = module.segments.len() == 2
-            && module.segments[0] == stdlib::STDLIB_ROOT
-            && module.segments[1] == "reflection";
-        let is_testing_module =
-            module.segments.len() == 2 && module.segments[0] == stdlib::STDLIB_ROOT && module.segments[1] == "testing";
-        let has_stub = is_known_module && !provider_owned && stdlib::stdlib_stub_path(&module.segments).is_some();
-
-        Some(Self {
-            module_path_str,
-            is_unknown_module: !is_known_module,
-            is_web_namespace,
-            is_async_namespace,
-            is_reflection_module,
-            is_testing_module,
-            has_stub,
-        })
-    }
-
-    /// Return the imported surface type when it is legal from this stdlib module.
-    fn allowed_surface_type_import(&self, item_name: &str) -> Option<surface_types::SurfaceTypeId> {
-        let id = surface_types::from_str(item_name)?;
-        let expected_module_path = surface_types::stdlib_module_path(id)?;
-
-        let allowed = match expected_module_path {
-            "std.web" => self.is_web_namespace,
-            "std.reflection" => self.is_reflection_module,
-            // A `std.async.prelude` import arrives here as `std.async`, the module it names.
-            _ if expected_module_path.starts_with("std.async.") => {
-                self.is_async_namespace
-                    && (self.module_path_str == "std.async" || self.module_path_str == expected_module_path)
-            }
-            _ => false,
-        };
-        allowed.then_some(id)
-    }
-}
-
 impl TypeChecker {
-    /// Reject source names that shadow reserved root namespaces or protected builtin bindings.
-    pub(super) fn validate_root_namespace(&mut self, name: &str, span: Span) {
-        self.validate_protected_builtin_binding(name, span);
-        if name == stdlib::STDLIB_ROOT || name == "rust" {
-            self.errors.push(errors::reserved_root_namespace(name, span));
+    /// The trait a Loaf publishes as `<module_path>.<name>`, read from its manifest.
+    pub(in crate::typechecker) fn loaf_trait(&mut self, module_path: &[String], name: &str) -> Option<TraitInfo> {
+        let (library, rest) = self.loaf_module(module_path)?;
+        match self.lookup_pub_library_module_symbol_member(&library, &rest, name)?.0 {
+            SymbolKind::Trait(info) => Some(info),
+            _ => None,
         }
     }
 
-    /// Register an import declaration in the symbol table.
-    pub(super) fn collect_import(&mut self, import: &ImportDecl, span: Span) {
-        self.validate_import_visibility(import, span);
-        match &import.kind {
-            ImportKind::Module(path) => {
-                self.collect_module_import(path, import.alias.as_ref(), span);
-            }
-            ImportKind::From { module, items } => {
-                self.collect_from_imports(module, items, span);
-            }
-            ImportKind::PubLibrary { library, path } => {
-                self.collect_pub_library_import(library, path, import.alias.as_ref(), span);
-            }
-            ImportKind::PubFrom { library, path, items } => {
-                self.collect_pub_imports(library, path, items, span);
-            }
-            ImportKind::Python(pkg) => {
-                // The grammar reserves the form, but nothing provides a Python module (#1561). The name is still bound
-                // so its uses do not add unknown-symbol errors to the refusal.
-                self.errors.push(errors::python_import_unsupported(pkg, span));
-                let name = import.alias.clone().unwrap_or_else(|| pkg.clone());
-                self.validate_root_namespace(&name, span);
-                self.define_import_symbol(name, vec![pkg.clone()], true, None, span);
-            }
-            ImportKind::RustCrate { crate_name, path, .. } => {
-                self.collect_rust_crate_import(crate_name, path, import.alias.as_ref(), span);
-            }
-            ImportKind::RustFrom {
-                crate_name,
-                path,
-                items,
-                ..  // version, features: not used here
-            } => {
-                self.collect_rust_from_imports(crate_name, path, items, span);
-            }
-        }
-    }
-
-    /// Return the import path of the namespace a `std.<namespace>.prelude` import path names, or `None` for any other
-    /// path.
-    ///
-    /// A namespace's `prelude` is the namespace's own module (see [`stdlib::stdlib_prelude_module_namespace`]), so the
-    /// import resolves through the namespace, the path its provider claims and lowering emits (#1561).
-    fn stdlib_prelude_import_namespace(path: &ImportPath) -> Option<ImportPath> {
-        if path.parent_levels != 0 || path.is_absolute {
+    /// The Rust derive paths a Loaf trait declares (`@rust.derive(...)`), in declaration order.
+    pub(in crate::typechecker) fn loaf_trait_rust_derive_paths(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> Option<Vec<String>> {
+        let (library, _) = self.loaf_module(module_path)?;
+        let manifest = self.loaves.manifest(&library)?;
+        let canonical = self.loaf_member_identity(module_path, name)?;
+        let source_path = manifest
+            .contract_metadata
+            .identity_graph
+            .declaration_source_path(&canonical)?;
+        let ApiDeclaration::Trait(declaration) = Self::api_declaration_for_target_path(manifest, source_path)? else {
             return None;
+        };
+        let mut paths = Vec::new();
+        for decorator in &declaration.decorators {
+            if core_decorators::from_str(&decorator.path.join(".")) != Some(DecoratorId::RustDerive) {
+                continue;
+            }
+            for argument in &decorator.args {
+                if let DecoratorArgMetadata::Positional {
+                    value:
+                        DecoratorValue::Literal {
+                            value: SafeMetadataValue::String(path),
+                        },
+                } = argument
+                    && !paths.contains(path)
+                {
+                    paths.push(path.clone());
+                }
+            }
         }
-        stdlib::stdlib_prelude_module_namespace(&path.segments).map(|segments| ImportPath {
-            segments: segments.to_vec(),
-            is_absolute: false,
-            parent_levels: 0,
+        Some(paths)
+    }
+
+    /// The RFC 024 `__derives__` trait list a Loaf module publishes in its checked API metadata.
+    pub(in crate::typechecker) fn loaf_module_derivable_traits(&self, module_path: &[String]) -> Option<Vec<String>> {
+        let (library, rest) = self.loaf_module(module_path)?;
+        let api = self.loaves.manifest(&library)?.contract_metadata.api.as_ref()?;
+        api.modules
+            .iter()
+            .find(|module| module.module_path == rest)
+            .map(|module| module.derivable_traits.clone())
+    }
+
+    /// The standard declaration of the builtin trait `name` (`Eq`, `Ord`, …), read once from the standard package
+    /// owning its module.
+    pub(in crate::typechecker) fn standard_trait(&mut self, name: &str) -> Option<TraitInfo> {
+        if let Some(info) = self.standard_traits.get(name) {
+            return Some(info.clone());
+        }
+        let segments = stdlib::trait_method_module_segments(name)?;
+        let info = self.loaf_trait(&segments, name)?;
+        self.standard_traits.insert(name.to_string(), info.clone());
+        Some(info)
+    }
+
+    /// The path `library`'s public modules are bound under (see [`LoafEntry::binding_root`]).
+    pub(in crate::typechecker) fn loaf_binding_root(&self, library: &str) -> Vec<String> {
+        self.loaves
+            .entry(library)
+            .map(LoafEntry::binding_root)
+            .unwrap_or_else(|| vec!["pub".to_string(), library.to_string()])
+    }
+
+    /// The Loaf import a `std.*` module path reaches: the standard package owning its namespace root, and the module
+    /// path inside that package's manifest.
+    pub(in crate::typechecker) fn standard_loaf_import(&self, segments: &[String]) -> Option<LoafImport> {
+        let entry = self.loaves.owner_of(segments)?;
+        Some(LoafImport {
+            key: entry.key.clone(),
+            module: segments[1..].to_vec(),
         })
     }
 
-    /// Collect a plain module import, including stdlib namespace validation.
-    ///
-    /// The import binds the last segment it spells (or its alias); a `std.<namespace>.prelude` path resolves as the
-    /// namespace's module.
-    fn collect_module_import(&mut self, written_path: &ImportPath, alias: Option<&Ident>, span: Span) {
-        let prelude_namespace = Self::stdlib_prelude_import_namespace(written_path);
-        let path = prelude_namespace.as_ref().unwrap_or(written_path);
-        if let Some(error) = self.sdk_provider_module_error(&path.segments, span) {
-            self.errors.push(error);
+    /// Bind `import <module>` where `import` names a module of a compiled Loaf.
+    pub(in crate::typechecker) fn collect_loaf_module_import(
+        &mut self,
+        import: &LoafImport,
+        alias: Option<&Ident>,
+        span: Span,
+    ) {
+        let library = import.key.as_str();
+        let name = alias
+            .cloned()
+            .or_else(|| import.module.last().cloned())
+            .unwrap_or_else(|| library.to_string());
+        self.validate_root_namespace(&name, span);
+        let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
+            return;
+        };
+        if !import.module.is_empty() && !Self::manifest_public_module_exists(&manifest, &import.module) {
+            self.push_loaf_module_not_found(library, &manifest, &import.module, span);
             return;
         }
-        // Reject `import std.f64.consts` - unknown stdlib module; suggest `import rust::std::f64::consts`.
-        if stdlib::is_any_stdlib_path(&path.segments) && !self.is_known_stdlib_module(&path.segments) {
-            self.errors
-                .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
-        }
-
-        let name = alias.cloned().unwrap_or_else(|| {
-            written_path
-                .segments
-                .last()
-                .cloned()
-                .unwrap_or_else(|| "module".to_string())
-        });
-        // Allow `import std.web as std` (alias matches source root), but reject `import std.web as rust` (alias is a
-        // different reserved root).
-        let same_root = path.segments.first().map(|segment| segment.as_str()) == Some(&name);
-        if !same_root {
-            self.validate_root_namespace(&name, span);
-        } else {
-            self.validate_protected_builtin_binding(&name, span);
-        }
-        // `import a::b::C` is ambiguous: it can name a module, or an item inside its parent module. Module
-        // resolution already tries the full path and then the parent (see `module::source_import_candidates`), and
-        // symbol collection has to follow the same order or the two disagree about what was imported.
-        if !self.full_path_names_a_module(path) && self.collect_module_import_as_item(path, alias, span) {
-            return;
-        }
-
-        let normalized_path = canonicalize_source_module_segments(&path.segments);
-        let resolved_path = self.resolved_source_module_path(path);
-        let target_identity = resolved_path.as_deref().and_then(SymbolTable::module_path_identity);
-        let canonical_path = resolved_path.unwrap_or(normalized_path);
-        self.cache_stdlib_module_import_semantics(path);
+        self.cache_transitive_pub_export_semantics(library, &manifest);
+        let mut canonical_path = self.loaf_binding_root(library);
+        canonical_path.extend(import.module.iter().cloned());
+        let target_identity = SymbolTable::module_path_identity(&canonical_path);
         self.define_import_symbol(name, canonical_path, false, target_identity, span);
     }
 
-    /// Whether the whole written path names a module, rather than an item inside its parent.
-    ///
-    /// Checked against the full path only, deliberately: the shared candidate helper also offers the parent, which
-    /// is the reading this is trying to distinguish from.
-    fn full_path_names_a_module(&self, path: &ImportPath) -> bool {
-        let normalized = canonicalize_source_module_segments(&path.segments);
-        if stdlib::is_any_stdlib_path(&normalized) && self.is_known_stdlib_module(&normalized) {
-            return true;
+    /// The manifest of the Loaf indexed as `library`, or `None` after refusing the unknown key.
+    pub(super) fn loaf_manifest_or_refuse(&mut self, library: &str, span: Span) -> Option<std::sync::Arc<LibraryManifest>> {
+        if let Some(entry) = self.loaves.entry(library) {
+            return Some(std::sync::Arc::clone(&entry.artifact.manifest));
         }
-        let key = normalized.join("_");
-        self.dependency_exports.contains_key(&key)
-            || self.dependency_member_symbols.contains_key(&key)
-            || self.dependency_module_path_segments.contains_key(&key)
-    }
-
-    /// Bind `import module::item` as the item it names, with the declaration's own symbol kind.
-    ///
-    /// Without this the last segment was bound as if it were a module: the name resolved, so nothing reported an
-    /// error, but the binding carried no signature and every call through it inferred `Unknown`. A local assigned
-    /// from such a call then had no type, and arithmetic on it failed with `expected 'numeric', found '? + ?'` —
-    /// pointing at the arithmetic rather than at the import that caused it (#1407).
-    ///
-    /// Routes through the same symbol definition `from module import item` uses, so the two import spellings cannot
-    /// disagree about what a given item is.
-    fn collect_module_import_as_item(&mut self, path: &ImportPath, alias: Option<&Ident>, span: Span) -> bool {
-        if path.segments.len() < 2 {
-            return false;
-        }
-        let Some((item_name, parent_segments)) = path.segments.split_last() else {
-            return false;
-        };
-        let parent = ImportPath {
-            segments: parent_segments.to_vec(),
-            is_absolute: path.is_absolute,
-            parent_levels: path.parent_levels,
-        };
-        let item = ImportItem {
-            name: item_name.clone(),
-            alias: alias.cloned(),
-        };
-        let Some(kind) = self.imported_source_dependency_symbol_kind(&parent, &item) else {
-            return false;
-        };
-        let projection = self.imported_source_dependency_partial_projection(&parent, &item);
-        self.define_resolved_source_import_symbol(&parent, &parent, &item, kind, projection, span);
-        true
-    }
-
-    /// Resolve a source import to the exact module graph node that accepted it.
-    ///
-    /// This mirrors member-resolution candidate order and refuses ambiguous suffix recovery. The path written by the
-    /// user is not necessarily the declaration owner for a sibling-relative import, so it cannot itself be identity
-    /// evidence.
-    fn resolved_source_module_path(&self, path: &ImportPath) -> Option<Vec<String>> {
-        let normalized = canonicalize_source_module_segments(&path.segments);
-        let base = self.current_module_path.as_deref().unwrap_or_default();
-        if self.provider_plan.bootstrap_owns_sdk_module(&normalized)
-            && let Some(candidate) = self.dependency_source_import_candidates(base, path).into_iter().next()
-            && candidate.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
-        {
-            let key = candidate.join("_");
-            if self.dependency_exports.contains_key(&key)
-                || self.dependency_member_symbols.contains_key(&key)
-                || self.dependency_module_path_segments.contains_key(&key)
-            {
-                return Some(
-                    self.dependency_module_path_segments
-                        .get(&key)
-                        .cloned()
-                        .unwrap_or(candidate),
-                );
-            }
-        }
-        if stdlib::is_any_stdlib_path(&normalized) && self.is_known_stdlib_module(&normalized) {
-            return Some(normalized);
-        }
-        for candidate in self.dependency_source_import_candidates(base, path) {
-            let key = candidate.join("_");
-            if self.dependency_exports.contains_key(&key)
-                || self.dependency_member_symbols.contains_key(&key)
-                || self.dependency_module_path_segments.contains_key(&key)
-            {
-                return Some(
-                    self.dependency_module_path_segments
-                        .get(&key)
-                        .cloned()
-                        .unwrap_or(candidate),
-                );
-            }
-        }
+        let known = self.loaves.entries().map(|entry| entry.key.clone()).collect::<Vec<_>>();
+        self.errors.push(errors::unknown_pub_library(library, &known, span));
         None
     }
 
-    /// Collect a `from module import item, ...` declaration as concrete stdlib/dependency symbols when possible,
-    /// otherwise as module-path placeholders.
-    ///
-    /// A `std.<namespace>.prelude` path resolves as the namespace's module.
-    fn collect_from_imports(&mut self, written_module: &ImportPath, items: &[ImportItem], span: Span) {
-        let prelude_namespace = Self::stdlib_prelude_import_namespace(written_module);
-        let module = prelude_namespace.as_ref().unwrap_or(written_module);
-        if let Some(error) = self.sdk_provider_module_error(&module.segments, span) {
-            self.errors.push(error);
+    /// Refuse a module path the Loaf's manifest does not publish, listing the modules it does.
+    pub(super) fn push_loaf_module_not_found(&mut self, library: &str, manifest: &LibraryManifest, module: &[Ident], span: Span) {
+        let available = Self::manifest_public_module_paths(manifest)
+            .into_iter()
+            .map(|module_path| module_path.join("."))
+            .collect::<Vec<_>>();
+        self.errors
+            .push(errors::pub_library_module_not_found(library, module, &available, span));
+    }
+
+    /// The names `from <module> import …` may bind from one Loaf module, for refusals.
+    pub(super) fn loaf_module_member_names(manifest: &LibraryManifest, module: &[Ident]) -> Vec<String> {
+        if !module.is_empty() {
+            return Self::public_module_member_names(manifest, module);
+        }
+        let mut names = Self::manifest_export_names(manifest);
+        names.extend(
+            Self::manifest_public_module_paths(manifest)
+                .into_iter()
+                .filter_map(|module_path| module_path.first().cloned()),
+        );
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Bind `from <module> import item, …` where the module belongs to a compiled Loaf.
+    pub(in crate::typechecker) fn collect_loaf_from_imports(
+        &mut self,
+        import: &LoafImport,
+        items: &[ImportItem],
+        span: Span,
+    ) {
+        let library = import.key.as_str();
+        let path = import.module.as_slice();
+        let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
+            return;
+        };
+        if !path.is_empty() && !Self::manifest_public_module_exists(&manifest, path) {
+            self.push_loaf_module_not_found(library, &manifest, path, span);
             return;
         }
-        // Manifestless in-memory plans are the explicit source-backed compiler-test adapter exposed by
-        // `set_sdk_provider_module_paths`; installed and package consumers always resolve checked manifests here.
-        let provider_owned = matches!(
-            self.provider_plan.resolve_module(&module.segments),
-            ProviderModuleResolution::Active(provider) if provider.manifest.is_some()
-        );
-        let context = FromImportContext::new(module, self.is_known_stdlib_module(&module.segments), provider_owned);
-        if context.is_unknown_stdlib_module() {
-            self.errors
-                .push(errors::unknown_stdlib_module(&context.dotted_module_path(), span));
-        }
-
-        let testing_semantics = self.load_testing_semantics_for_import(&context, span);
-        self.cache_stdlib_stub_semantics(&context);
-
+        self.cache_transitive_pub_export_semantics(library, &manifest);
+        let available_exports = Self::loaf_module_member_names(&manifest, path);
+        let root = self.loaf_binding_root(library);
         for item in items {
-            if self.materialize_bootstrap_source_dependency_import(module, item, span) {
+            let local_name = Self::import_item_local_name(item);
+            if self.validate_protected_builtin_binding(&local_name, span) {
                 continue;
             }
-            if self.materialize_stdlib_submodule_import(module, item, span) {
-                continue;
-            }
-            if !context.is_unknown_stdlib_module() && self.refuse_std_root_member_import(module, item, span) {
-                continue;
-            }
-            if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
-                continue;
-            }
-            if context.rejects_unmaterialized_stdlib_items() {
-                self.errors.push(errors::stdlib_import_not_exported(
-                    &item.name,
-                    &context.dotted_module_path(),
+            self.validate_root_namespace(&local_name, span);
+            if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
+                self.errors.push(errors::pub_library_import_name_collision(
+                    &local_name,
+                    existing_kind,
                     span,
                 ));
                 continue;
             }
-            if self.materialize_source_dependency_import(module, item, span) {
+            let imported_type_aliases = self.public_library_type_import_remapping(library, &manifest);
+            let mut child_module_path = path.to_vec();
+            child_module_path.push(item.name.clone());
+            let imports_namespace = Self::manifest_public_module_exists(&manifest, &child_module_path);
+            let mut namespace_path = root.clone();
+            namespace_path.extend(child_module_path.iter().cloned());
+
+            if !path.is_empty() {
+                let resolved = match self.public_module_member(library, &manifest, path, &item.name) {
+                    Ok(resolved) => resolved,
+                    Err(source_modules) => {
+                        self.errors.push(errors::pub_library_module_member_ambiguous(
+                            library,
+                            path,
+                            &item.name,
+                            &source_modules,
+                            span,
+                        ));
+                        continue;
+                    }
+                };
+                if let Some(member) = resolved {
+                    self.define_pub_module_import_symbol(library, local_name.clone(), namespace_path, member, span);
+                    self.record_standard_surface_import(&root, path, item, &local_name, span);
+                    continue;
+                }
+                if imports_namespace {
+                    let target_identity = SymbolTable::module_path_identity(&namespace_path);
+                    self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
+                    continue;
+                }
+                self.errors.push(errors::pub_library_symbol_not_exported(
+                    &item.name,
+                    &format!("{}.{}", root.join("."), path.join(".")),
+                    &available_exports,
+                    span,
+                ));
                 continue;
             }
-            if self.preserve_existing_from_import_symbol(module, item, span) {
+
+            let flat_function = self.pub_library_function_symbol(&manifest, &item.name);
+            let flat_export = Self::find_manifest_export(&manifest, &item.name);
+            if imports_namespace && (flat_function.is_some() || flat_export.is_some()) {
+                self.errors.push(errors::pub_library_module_member_ambiguous(
+                    library,
+                    &[],
+                    &item.name,
+                    &[
+                        format!("package-root export `{}`", item.name),
+                        format!("module `{}`", child_module_path.join(".")),
+                    ],
+                    span,
+                ));
                 continue;
             }
-            self.define_from_import_placeholder(module, item, span);
+            if imports_namespace {
+                let target_identity = SymbolTable::module_path_identity(&namespace_path);
+                self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
+                continue;
+            }
+
+            if let Some(mut kind) = flat_function {
+                self.remap_symbol_kind_with_import_aliases(&mut kind, &imported_type_aliases);
+                let canonical = manifest
+                    .contract_metadata
+                    .identity_graph
+                    .canonical_for_public_name(&item.name);
+                let mut binding_path = root.clone();
+                binding_path.push(item.name.clone());
+                let symbol_id = self.symbols.define_import_binding_at_path(
+                    Symbol {
+                        name: local_name.clone(),
+                        kind: kind.clone(),
+                        span,
+                        scope: 0,
+                    },
+                    canonical.clone(),
+                    binding_path,
+                );
+                if self.symbols.is_active_lookup_binding(symbol_id) {
+                    if let Some(identity) = canonical {
+                        self.type_info
+                            .declarations
+                            .resolved_import_identities
+                            .insert(local_name.clone(), identity);
+                    }
+                    self.record_imported_function_binding(&local_name, &kind);
+                }
+                continue;
+            }
+
+            let Some(export) = flat_export else {
+                if let Some(feature_sets) = Self::inactive_pub_export_features(&manifest, &item.name) {
+                    self.errors.push(errors::pub_library_symbol_requires_features(
+                        &item.name,
+                        library,
+                        &feature_sets,
+                        span,
+                    ));
+                } else {
+                    self.errors.push(errors::pub_library_symbol_not_exported(
+                        &item.name,
+                        library,
+                        &available_exports,
+                        span,
+                    ));
+                }
+                continue;
+            };
+
+            self.define_pub_import_symbol(
+                library,
+                &manifest,
+                &item.name,
+                local_name,
+                export,
+                &imported_type_aliases,
+                span,
+            );
         }
     }
 
-    /// Materialize one imported source dependency, preserving package-private implementation facts during provider
-    /// construction before the published checked facade becomes the consumer authority.
-    fn materialize_source_dependency_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
-        let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) else {
-            return false;
+    /// Record the compiler-known surface a `std.*` import binds: surface types (`Html`), surface functions and the
+    /// `std.testing` markers. Their declarations come from the manifest like any other; this only records which local
+    /// name now spells the surface.
+    pub(super) fn record_standard_surface_import(&mut self, root: &[String], module: &[Ident], item: &ImportItem, local_name: &str, span: Span) {
+        if root != [stdlib::STDLIB_ROOT] {
+            return;
+        }
+        let Some(symbol_id) = self.symbols.lookup(local_name) else {
+            return;
         };
-        let projection = self.imported_source_dependency_partial_projection(module, item);
-        self.define_resolved_source_import_symbol(module, module, item, kind, projection, span);
-        true
+        let dotted = std::iter::once(stdlib::STDLIB_ROOT)
+            .chain(module.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(".");
+        if let Some(surface_type) = surface_types::from_str(&item.name)
+            && surface_types::stdlib_module_path(surface_type)
+                .is_some_and(|owner| owner == dotted || (dotted == "std.async" && owner.starts_with("std.async.")))
+        {
+            self.surface_type_import_bindings
+                .insert(local_name.to_string(), (surface_type, symbol_id));
+        }
+        if let Some(surface_function) = surface_functions::from_str(&item.name) {
+            self.surface_function_import_bindings
+                .insert(local_name.to_string(), (surface_function, symbol_id));
+        }
+        if dotted == "std.testing" {
+            self.record_testing_marker_import(module, item, local_name, span);
+        }
     }
 
-    /// Prefer the exact local source declaration while compiling an SDK component's granted namespace.
+    /// Record an imported `std.testing` marker alias so decorator validation can reject runtime calls consistently.
     ///
-    /// Provider source keeps physical paths such as `registry`, while its public language surface is spelled
-    /// `std.registry`. The bootstrap grant is the compiler-owned evidence that the current component may bridge those
-    /// two paths. Resolve the physical path from the provider source root and require that the checked dependency
-    /// graph actually contains the requested member; ordinary SDK consumers never take this path.
-    fn materialize_bootstrap_source_dependency_import(
+    /// The markers are read from the checked metadata of the standard package that owns `std.testing`.
+    pub(super) fn record_testing_marker_import(&mut self, module: &[Ident], item: &ImportItem, local_name: &str, span: Span) {
+        let mut module_path = vec![stdlib::STDLIB_ROOT.to_string()];
+        module_path.extend(module.iter().cloned());
+        let Some(manifest) = self.loaves.owner_of(&module_path).map(|entry| &entry.artifact.manifest) else {
+            return;
+        };
+        let semantics = match testing_marker_semantics_from_manifest(manifest) {
+            Ok(Some(semantics)) => semantics,
+            Ok(None) => return,
+            Err(error) => {
+                self.errors
+                    .push(errors::invalid_std_testing_marker_metadata(&error.to_string(), span));
+                return;
+            }
+        };
+        let mut marker_path = module_path;
+        marker_path.push(item.name.clone());
+        let module_feature = self.surface_context.decorator_feature_for_path(&marker_path);
+        let is_marker = semantics.marker_kind(&item.name).is_some();
+        if module_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction)) && is_marker {
+            self.testing_marker_import_bindings.insert(local_name.to_string());
+        }
+        self.testing_marker_semantics = Some(semantics);
+    }
+
+    /// Bind `from std.rust import <bound>`: the typechecker-only capability bounds, which no Loaf declares.
+    pub(in crate::typechecker) fn collect_capability_bound_import(
         &mut self,
         module: &ImportPath,
         item: &ImportItem,
         span: Span,
-    ) -> bool {
-        if module.parent_levels != 0 || !self.provider_plan.bootstrap_owns_sdk_module(&module.segments) {
-            return false;
-        }
-        let Some(source_segments) = module
-            .segments
-            .first()
-            .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
-            .then_some(&module.segments[1..])
-        else {
-            return false;
-        };
-        if source_segments.is_empty() {
-            return false;
-        }
-        let source_module = ImportPath::absolute(source_segments.to_vec());
-        let Some(kind) = self.imported_source_dependency_symbol_kind(&source_module, item) else {
-            return false;
-        };
-        let projection = self.imported_source_dependency_partial_projection(&source_module, item);
-        self.define_resolved_source_import_symbol(module, &source_module, item, kind, projection, span);
-        true
-    }
-
-    /// Resolve module ownership from the active SDK catalog, retaining only explicit compiler-owned legacy surfaces.
-    ///
-    /// A namespace whose modules the catalog claims is known although it has no module of its own (`std.derives`), as
-    /// the stdlib registry knows it when no catalog is active: `from std.derives import comparison` imports a
-    /// submodule, and any other item imported from it is refused as not exported.
-    fn is_known_stdlib_module(&self, module: &[String]) -> bool {
-        match self.provider_plan.resolve_module(module) {
-            ProviderModuleResolution::Active(_)
-            | ProviderModuleResolution::Disabled(_)
-            | ProviderModuleResolution::Unavailable(_) => true,
-            ProviderModuleResolution::Unknown if self.provider_plan.has_sdk_catalog() => {
-                is_typechecker_only_stdlib(module)
-                    || (self.provider_plan.bootstrap_owns_sdk_module(module) && stdlib::is_known_stdlib_module(module))
-                    || (module.len() > 1 && self.provider_plan.catalogs_modules_below(module))
-            }
-            ProviderModuleResolution::Unknown => stdlib::is_known_stdlib_module(module),
-        }
-    }
-
-    /// Preserve distinct remedies for known-but-disabled and enabled-but-unavailable SDK provider modules.
-    fn sdk_provider_module_error(&self, module: &[String], span: Span) -> Option<crate::diagnostics::CompileError> {
-        if module.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
-            return None;
-        }
-        let dotted = module.join(".");
-        match self.provider_plan.resolve_module(module) {
-            ProviderModuleResolution::Disabled(provider) => Some(errors::sdk_component_disabled(
-                &dotted,
-                sdk_provider_component_id(&provider.provenance),
+    ) {
+        if !is_rust_capability_bound(item.name.as_str()) {
+            self.errors.push(errors::stdlib_import_not_exported(
+                &item.name,
+                &module.segments.join("."),
                 span,
-            )),
-            ProviderModuleResolution::Unavailable(provider) => Some(errors::sdk_component_unavailable(
-                &dotted,
-                sdk_provider_component_id(&provider.provenance),
-                sdk_provider_identity(&provider.provenance),
-                span,
-            )),
-            ProviderModuleResolution::Active(_) | ProviderModuleResolution::Unknown => None,
-        }
-    }
-
-    /// Retain a module import's hidden type and trait facts for its qualified signatures and derives.
-    ///
-    /// Checked providers keep authority over their own metadata. Only the existing inventoryless or source-bootstrap
-    /// adapters may seed source stub facts; this does not import those declarations into the consumer's namespace.
-    pub(in crate::typechecker) fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
-        let provider_owned = matches!(
-            self.provider_plan.resolve_module(&module.segments),
-            ProviderModuleResolution::Active(provider) if provider.manifest.is_some()
-        );
-        let context = FromImportContext::new(module, self.is_known_stdlib_module(&module.segments), provider_owned);
-        self.cache_stdlib_stub_semantics(&context);
-    }
-
-    /// Cache all known top-level types and traits for a stub-backed stdlib module without making them source-visible.
-    fn cache_stdlib_stub_semantics(&mut self, context: &FromImportContext<'_>) {
-        if !context.stdlib.as_ref().is_some_and(|stdlib| stdlib.has_stub) {
+            ));
             return;
         }
-        if context.module.parent_levels == 0
-            && self.provider_plan.bootstrap_owns_sdk_module(&context.module.segments)
-            && context.module.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
-        {
-            let physical_path = canonicalize_source_module_segments(&context.module.segments[1..]);
-            let has_exact_source_module = self.dependency_module_path_segments.iter().any(|(cache_key, path)| {
-                path == &physical_path && self.dependency_member_symbols.contains_key(cache_key)
-            });
-            if has_exact_source_module {
-                return;
-            }
-        }
-
-        for (type_name, type_info) in self.stdlib_cache.list_types(&context.module.segments) {
-            self.transitive_stdlib_stub_types.entry(type_name).or_insert(type_info);
-        }
-        for (trait_name, trait_info) in self.stdlib_cache.list_traits(&context.module.segments) {
-            self.transitive_stdlib_stub_traits
-                .entry(trait_name)
-                .or_insert(trait_info);
-        }
-    }
-
-    /// Seed exact module-member and transitive semantic caches from active SDK providers.
-    ///
-    /// The artifact stores checked API metadata with paths relative to its own crate root (`environ`, `serde.json`,
-    /// and so on). Consumers continue to spell those modules as `std.environ` and `std.serde.json`, so this method
-    /// restores the public `std` prefix only in the consumer-side lookup keys. No provider source AST is loaded here.
-    pub fn seed_sdk_provider_symbols(&mut self) {
-        let providers = self
-            .provider_plan
-            .active_sdk_records()
-            .filter_map(|provider| {
-                let manifest = provider.manifest.clone()?;
-                manifest.contract_metadata.api.as_ref()?;
-                Some((provider.namespace_claims.clone(), manifest))
-            })
-            .collect::<Vec<_>>();
-        let mut seeded_modules = HashSet::new();
-        let mut aliases = Vec::new();
-        for (namespace_claims, manifest) in providers {
-            let Some(api) = manifest.contract_metadata.api.clone() else {
-                continue;
-            };
-            for module in api.modules {
-                let mut consumer_path = vec![stdlib::STDLIB_ROOT.to_string()];
-                consumer_path.extend(module.module_path.clone());
-                if !namespace_claims.contains(&consumer_path) {
-                    continue;
-                }
-
-                let module_key = consumer_path.join(".");
-                if !seeded_modules.insert(module_key.clone()) {
-                    // Collision validation has already guaranteed one provider owner. Repeated API snapshots within one
-                    // artifact are still one public module rather than a second overload set.
-                    continue;
-                }
-                self.dependency_derivable_modules
-                    .insert(module_key.clone(), module.derivable_traits.clone());
-                let function_counts = module
-                    .declarations
-                    .iter()
-                    .filter_map(|declaration| match declaration {
-                        ApiDeclaration::Function(function) => Some(function.name.clone()),
-                        _ => None,
-                    })
-                    .fold(HashMap::<String, usize>::new(), |mut counts, name| {
-                        *counts.entry(name).or_default() += 1;
-                        counts
-                    });
-                let mut function_identity_offsets = HashMap::<String, usize>::new();
-                let mut provider_members = Vec::new();
-                for declaration in module.declarations {
-                    let name = Self::api_declaration_name(&declaration).to_string();
-                    let public_path = std::iter::once(manifest.name.clone())
-                        .chain(module.module_path.iter().cloned())
-                        .chain(std::iter::once(name.clone()))
-                        .collect::<Vec<_>>();
-                    let canonical = if matches!(&declaration, ApiDeclaration::Function(_)) {
-                        let offset = function_identity_offsets.entry(name.clone()).or_default();
-                        let identity = manifest
-                            .contract_metadata
-                            .identity_graph
-                            .function_identities_for_public_path(&public_path)
-                            .get(*offset)
-                            .cloned()
-                            .flatten();
-                        *offset += 1;
-                        identity
-                    } else {
-                        manifest
-                            .contract_metadata
-                            .identity_graph
-                            .canonical_for_public_path(&public_path)
-                    };
-                    if let ApiDeclaration::Alias(alias) = &declaration {
-                        aliases.push((
-                            module_key.clone(),
-                            alias.name.clone(),
-                            alias.target_path.clone(),
-                            canonical,
-                        ));
-                        continue;
-                    }
-                    if let ApiDeclaration::Trait(trait_metadata) = &declaration {
-                        let mut paths = Vec::new();
-                        for decorator in &trait_metadata.decorators {
-                            if core_decorators::from_str(&decorator.path.join(".")) != Some(DecoratorId::RustDerive) {
-                                continue;
-                            }
-                            for argument in &decorator.args {
-                                if let DecoratorArgMetadata::Positional {
-                                    value:
-                                        DecoratorValue::Literal {
-                                            value: SafeMetadataValue::String(path),
-                                        },
-                                } = argument
-                                    && !paths.contains(path)
-                                {
-                                    paths.push(path.clone());
-                                }
-                            }
-                        }
-                        self.dependency_trait_rust_derive_paths
-                            .insert(format!("{module_key}.{}", trait_metadata.name), paths);
-                    }
-                    self.record_provider_type_param_bounds(&declaration, canonical.as_ref());
-                    let Some(mut kind) =
-                        self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), &declaration)
-                    else {
-                        continue;
-                    };
-                    Self::qualify_provider_symbol_bounds(&mut kind, &[stdlib::STDLIB_ROOT.to_string()]);
-                    if function_counts.get(name.as_str()).copied().unwrap_or_default() > 1 {
-                        kind = match kind {
-                            SymbolKind::Function(mut info) => {
-                                info.emitted_name = Some(overloaded_function_emitted_name(&name, &info));
-                                SymbolKind::FunctionOverloads(vec![FunctionOverloadInfo {
-                                    info,
-                                    span: Span::default(),
-                                    identity: canonical.clone(),
-                                }])
-                            }
-                            other => other,
-                        };
-                    }
-                    provider_members.push((name.clone(), kind.clone(), canonical));
-                    match &kind {
-                        SymbolKind::Type(type_info) => {
-                            self.transitive_stdlib_stub_types
-                                .entry(name)
-                                .or_insert_with(|| type_info.clone());
-                        }
-                        SymbolKind::Trait(trait_info) => {
-                            self.transitive_stdlib_stub_traits
-                                .entry(name.clone())
-                                .or_insert(trait_info.clone());
-                            self.dependency_module_traits
-                                .insert(format!("{module_key}.{name}"), trait_info.clone());
-                        }
-                        _ => {}
-                    }
-                }
-                for (name, kind, canonical) in provider_members {
-                    Self::insert_provider_module_symbol(
-                        self.dependency_member_symbols.entry(module_key.clone()).or_default(),
-                        name.clone(),
-                        kind.clone(),
-                    );
-                    Self::insert_provider_module_symbol(
-                        self.dependency_direct_member_symbols
-                            .entry(module_key.clone())
-                            .or_default(),
-                        name.clone(),
-                        kind,
-                    );
-                    if let Some(identity) = canonical
-                        && function_counts.get(name.as_str()).copied().unwrap_or_default() <= 1
-                    {
-                        self.dependency_direct_member_identities
-                            .entry(module_key.clone())
-                            .or_default()
-                            .insert(name, identity);
-                    }
-                }
-            }
-        }
-
-        // Facade modules are represented by checked aliases in the artifact. Resolve them only against the artifact
-        // maps we just seeded; consumers never need the source prelude to reconstruct a public `std.*` surface.
-        let mut unresolved = aliases;
-        while !unresolved.is_empty() {
-            let mut progressed = false;
-            unresolved.retain(|(module_key, name, target_path, canonical)| {
-                let Some((target_module, target_name)) = Self::sdk_provider_alias_target(target_path) else {
-                    return false;
-                };
-                let Some(kind) = self
-                    .dependency_member_symbols
-                    .get(&target_module)
-                    .and_then(|members| members.get(&target_name))
-                    .cloned()
-                else {
-                    return true;
-                };
-
-                match &kind {
-                    SymbolKind::Type(type_info) => {
-                        self.transitive_stdlib_stub_types
-                            .entry(name.clone())
-                            .or_insert_with(|| type_info.clone());
-                    }
-                    SymbolKind::Trait(trait_info) => {
-                        self.transitive_stdlib_stub_traits
-                            .entry(name.clone())
-                            .or_insert_with(|| trait_info.clone());
-                        self.dependency_module_traits
-                            .insert(format!("{module_key}.{name}"), trait_info.clone());
-                        if let Some(paths) = self
-                            .dependency_trait_rust_derive_paths
-                            .get(&format!("{target_module}.{target_name}"))
-                            .cloned()
-                        {
-                            self.dependency_trait_rust_derive_paths
-                                .insert(format!("{module_key}.{name}"), paths);
-                        }
-                    }
-                    _ => {}
-                }
-                let members = self.dependency_member_symbols.entry(module_key.clone()).or_default();
-                Self::insert_provider_module_symbol(members, name.clone(), kind.clone());
-                Self::insert_provider_module_symbol(
-                    self.dependency_direct_member_symbols
-                        .entry(module_key.clone())
-                        .or_default(),
-                    name.clone(),
-                    kind,
-                );
-                if let Some(identity) = canonical.clone() {
-                    self.dependency_direct_member_identities
-                        .entry(module_key.clone())
-                        .or_default()
-                        .insert(name.clone(), identity);
-                }
-                progressed = true;
-                false
-            });
-            if !progressed {
-                break;
-            }
-        }
-    }
-
-    /// Return an SDK-provider module/member target for one checked facade alias.
-    fn sdk_provider_alias_target(target_path: &[String]) -> Option<(String, String)> {
-        if target_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
-            return None;
-        }
-        let source_path = &target_path[1..];
-        let (name, module_path) = source_path.split_last()?;
-        Some((
-            std::iter::once(stdlib::STDLIB_ROOT)
-                .chain(module_path.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join("."),
-            name.clone(),
-        ))
+        self.define_from_import_symbol(
+            module,
+            item,
+            SymbolKind::Trait(TraitInfo {
+                type_params: vec![],
+                methods: HashMap::new(),
+                method_aliases: HashMap::new(),
+                properties: HashMap::new(),
+                requires: vec![],
+                supertraits: vec![],
+            }),
+            span,
+        );
     }
 
     /// Return the public source spelling for one checked API declaration.
@@ -860,714 +501,8 @@ impl TypeChecker {
         }
     }
 
-    /// Preserve same-name checked overloads while indexing one provider module.
-    fn insert_provider_module_symbol(members: &mut HashMap<String, SymbolKind>, name: String, incoming: SymbolKind) {
-        let Some(existing) = members.remove(&name) else {
-            members.insert(name, incoming);
-            return;
-        };
-        let merged = match (existing, incoming) {
-            (SymbolKind::Function(existing), SymbolKind::Function(incoming)) => SymbolKind::FunctionOverloads(vec![
-                FunctionOverloadInfo {
-                    info: existing,
-                    span: Span::default(),
-                    identity: None,
-                },
-                FunctionOverloadInfo {
-                    info: incoming,
-                    span: Span::default(),
-                    identity: None,
-                },
-            ]),
-            (SymbolKind::FunctionOverloads(mut overloads), SymbolKind::Function(incoming)) => {
-                overloads.push(FunctionOverloadInfo {
-                    info: incoming,
-                    span: Span::default(),
-                    identity: None,
-                });
-                SymbolKind::FunctionOverloads(overloads)
-            }
-            (SymbolKind::Function(existing), SymbolKind::FunctionOverloads(mut overloads)) => {
-                overloads.insert(
-                    0,
-                    FunctionOverloadInfo {
-                        info: existing,
-                        span: Span::default(),
-                        identity: None,
-                    },
-                );
-                SymbolKind::FunctionOverloads(overloads)
-            }
-            (SymbolKind::FunctionOverloads(mut existing), SymbolKind::FunctionOverloads(incoming)) => {
-                existing.extend(incoming);
-                SymbolKind::FunctionOverloads(existing)
-            }
-            (_, incoming) => incoming,
-        };
-        members.insert(name, merged);
-    }
-
-    /// Define `import pub::library` as a module placeholder after validating the manifest entry.
-    fn collect_pub_library_import(&mut self, library: &str, path: &[Ident], alias: Option<&Ident>, span: Span) {
-        let name = alias
-            .cloned()
-            .or_else(|| path.last().cloned())
-            .unwrap_or_else(|| library.to_string());
-        self.validate_root_namespace(&name, span);
-        let library_manifests = self.provider_plan.library_manifest_index();
-        let known_libraries = library_manifests.known_libraries();
-        let Some(entry) = library_manifests.get(library).cloned() else {
-            self.errors
-                .push(errors::unknown_pub_library(library, &known_libraries, span));
-            return;
-        };
-        let manifest = match entry {
-            LibraryManifestIndexEntry::Loaded { manifest, .. } => manifest,
-            LibraryManifestIndexEntry::Failed(failure) => {
-                self.push_pub_library_failure(library, &failure, span);
-                return;
-            }
-        };
-        if !path.is_empty() && !Self::manifest_public_module_exists(&manifest, path) {
-            let available = Self::manifest_public_module_paths(&manifest)
-                .into_iter()
-                .map(|module_path| module_path.join("."))
-                .collect::<Vec<_>>();
-            self.errors
-                .push(errors::pub_library_module_not_found(library, path, &available, span));
-            return;
-        }
-        self.cache_transitive_pub_export_semantics(library, &manifest);
-        let mut canonical_path = vec!["pub".to_string(), library.to_string()];
-        canonical_path.extend(path.iter().cloned());
-        let target_identity = SymbolTable::module_path_identity(&canonical_path);
-        self.define_import_symbol(name, canonical_path, false, target_identity, span);
-    }
-
-    /// Collect a Rust crate or crate-path import and attach metadata when available.
-    fn collect_rust_crate_import(&mut self, crate_name: &str, path: &[Ident], alias: Option<&Ident>, span: Span) {
-        if self.reject_unsupported_rust_core_alloc(crate_name, span) {
-            return;
-        }
-
-        // Rust crate import: `import rust::serde_json` or `import rust::serde_json::Value`.
-        let name = alias
-            .cloned()
-            .unwrap_or_else(|| path.last().cloned().unwrap_or_else(|| crate_name.to_string()));
-        let full_path = self.rust_import_full_path(crate_name, path, None);
-        let binding = if path.is_empty() {
-            RustImportBindingKind::CrateRoot
-        } else {
-            RustImportBindingKind::RootedPath
-        };
-        let canonical_path = full_path.join("::");
-        let info = RustItemInfo {
-            crate_name: crate_name.to_string(),
-            path: canonical_path.clone(),
-            binding,
-            metadata: self.rust_item_metadata_for_path(&canonical_path),
-        };
-        self.define_rust_import_binding(name, info, span);
-    }
-
-    /// Collect `from rust::... import ...` items and attach any already-prepared metadata.
-    fn collect_rust_from_imports(&mut self, crate_name: &str, path: &[Ident], items: &[ImportItem], span: Span) {
-        if self.reject_unsupported_rust_core_alloc(crate_name, span) {
-            return;
-        }
-
-        for item in items {
-            let name = Self::import_item_local_name(item);
-            let full_path = self.rust_import_full_path(crate_name, path, Some(&item.name));
-            let canonical_path = full_path.join("::");
-            let info = RustItemInfo {
-                crate_name: crate_name.to_string(),
-                path: canonical_path.clone(),
-                binding: RustImportBindingKind::FromImport,
-                metadata: self.rust_item_metadata_for_path(&canonical_path),
-            };
-            self.define_rust_import_binding(name, info, span);
-        }
-    }
-
-    /// Return an import item's local binding name after applying `as alias`.
-    fn import_item_local_name(item: &ImportItem) -> Ident {
-        item.alias.clone().unwrap_or_else(|| item.name.clone())
-    }
-
-    /// Load stdlib testing marker metadata only for `from std.testing import ...`.
-    fn load_testing_semantics_for_import(
-        &mut self,
-        context: &FromImportContext<'_>,
-        span: Span,
-    ) -> Option<TestingMarkerSemantics> {
-        let stdlib_context = context.stdlib.as_ref()?;
-        if !stdlib_context.is_testing_module {
-            return None;
-        }
-
-        let checked_provider_manifest = self
-            .provider_plan
-            .active_sdk_provider_for_module(&context.module.segments)
-            .and_then(|provider| provider.manifest.as_deref());
-        let loaded = match checked_provider_manifest {
-            Some(manifest) => testing_marker_semantics_from_manifest(manifest).and_then(|semantics| {
-                semantics.ok_or_else(|| {
-                    TestingMarkerLoadError::new(
-                        "compiled std.testing provider does not contain checked marker metadata",
-                    )
-                })
-            }),
-            None => load_testing_marker_semantics(),
-        };
-        match loaded {
-            Ok(semantics) => {
-                self.testing_marker_semantics = Some(semantics.clone());
-                Some(semantics)
-            }
-            Err(err) => {
-                self.errors
-                    .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
-                None
-            }
-        }
-    }
-
-    /// Materialize one stdlib from-import item as a concrete symbol when stdlib metadata owns it.
-    ///
-    /// Returns `true` when the item was handled; callers should otherwise preserve the ordinary module-placeholder
-    /// fallback.
-    fn materialize_stdlib_from_import(
-        &mut self,
-        context: &FromImportContext<'_>,
-        item: &ImportItem,
-        testing_semantics: Option<&TestingMarkerSemantics>,
-        span: Span,
-    ) -> bool {
-        let Some(stdlib_context) = context.stdlib.as_ref() else {
-            return false;
-        };
-
-        if self.materialize_typechecker_only_stdlib_import(context.module, item, span) {
-            return true;
-        }
-        if let Some(surface_type) = stdlib_context.allowed_surface_type_import(&item.name) {
-            let local_name = Self::import_item_local_name(item);
-            let target_identity = self
-                .dependency_member_identity(context.module, &item.name)
-                .or_else(|| self.stdlib_cache.lookup_identity(&context.module.segments, &item.name));
-            let symbol_id = self.define_named_import_symbol(
-                context.module,
-                item,
-                local_name.clone(),
-                SymbolKind::Type(TypeInfo::Builtin),
-                target_identity,
-                span,
-            );
-            if self.symbols.is_active_lookup_binding(symbol_id) {
-                self.surface_type_import_bindings
-                    .insert(local_name, (surface_type, symbol_id));
-            }
-            return true;
-        }
-        if self.materialize_sdk_provider_import(context, item, testing_semantics, span) {
-            return true;
-        }
-        if self
-            .provider_plan
-            .active_sdk_provider_for_module(&context.module.segments)
-            .is_some_and(|provider| provider.manifest.is_some())
-        {
-            // An active provider owns this module. Falling back to its source cache would hide an incomplete artifact
-            // and give the source tree semantic authority again.
-            return false;
-        }
-        if stdlib_context.has_stub {
-            return self.materialize_stdlib_stub_import(context, item, testing_semantics, span);
-        }
-        false
-    }
-
-    /// Materialize one SDK-provider item from checked API metadata.
-    fn materialize_sdk_provider_import(
-        &mut self,
-        context: &FromImportContext<'_>,
-        item: &ImportItem,
-        testing_semantics: Option<&TestingMarkerSemantics>,
-        span: Span,
-    ) -> bool {
-        let Some(kind) = self
-            .dependency_member_symbols
-            .get(&context.module.segments.join("."))
-            .and_then(|members| members.get(&item.name))
-            .cloned()
-        else {
-            return false;
-        };
-
-        let local_name = Self::import_item_local_name(item);
-        let target_identity = self.dependency_member_identity(context.module, &item.name);
-        let symbol_id = self.define_named_import_symbol(
-            context.module,
-            item,
-            local_name.clone(),
-            kind.clone(),
-            target_identity,
-            span,
-        );
-        if !self.symbols.is_active_lookup_binding(symbol_id) {
-            return true;
-        }
-        self.record_resolved_import_owner(context.module, item, &local_name);
-        self.record_testing_marker_import(context, item, &local_name, testing_semantics);
-        self.record_imported_function_binding(&local_name, &kind);
-        if matches!(kind, SymbolKind::Static(_)) {
-            self.type_info.declarations.static_bindings.insert(
-                local_name.clone(),
-                crate::typechecker::StaticBindingInfo { is_imported: true },
-            );
-        }
-        true
-    }
-
-    /// Bind a registered submodule imported from `std` or `std.namespace`, retaining its hidden signature facts.
-    fn materialize_stdlib_submodule_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
-        if module.parent_levels != 0
-            || module.is_absolute
-            || module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
-            || !(1..=2).contains(&module.segments.len())
-        {
-            return false;
-        }
-        let mut submodule_path = module.segments.clone();
-        submodule_path.push(item.name.clone());
-        let is_known_submodule = match self.provider_plan.resolve_module(&submodule_path) {
-            ProviderModuleResolution::Active(_)
-            | ProviderModuleResolution::Disabled(_)
-            | ProviderModuleResolution::Unavailable(_) => true,
-            ProviderModuleResolution::Unknown if self.provider_plan.has_sdk_catalog() => {
-                // A source-publisher bootstrap grant authorizes a namespace root; it does not claim that every item
-                // imported from that root is itself a module. The legacy source registry remains the narrow publisher
-                // adapter until source component entrypoints publish exact checked claims for ordinary consumers.
-                self.provider_plan.bootstrap_owns_sdk_module(&submodule_path)
-                    && stdlib::is_known_stdlib_module(&submodule_path)
-            }
-            ProviderModuleResolution::Unknown => stdlib::is_known_stdlib_module(&submodule_path),
-        };
-        if !is_known_submodule {
-            return false;
-        }
-        if let Some(error) = self.sdk_provider_module_error(&submodule_path, span) {
-            self.errors.push(error);
-            return true;
-        }
-
-        let local_name = Self::import_item_local_name(item);
-        self.validate_root_namespace(&local_name, span);
-        let path = canonicalize_source_module_segments(&submodule_path);
-        let target_identity = SymbolTable::module_path_identity(&path);
-        self.cache_stdlib_module_import_semantics(&ImportPath::simple(submodule_path));
-        self.define_import_symbol(local_name, path, false, target_identity, span);
-        true
-    }
-
-    /// Materialize typechecker-only stdlib capability bounds as empty trait symbols.
-    fn materialize_typechecker_only_stdlib_import(
-        &mut self,
-        module: &ImportPath,
-        item: &ImportItem,
-        span: Span,
-    ) -> bool {
-        if !is_typechecker_only_stdlib(&module.segments) || !is_rust_capability_bound(item.name.as_str()) {
-            return false;
-        }
-
-        self.define_from_import_symbol(
-            module,
-            item,
-            SymbolKind::Trait(TraitInfo {
-                type_params: vec![],
-                methods: HashMap::new(),
-                method_aliases: HashMap::new(),
-                properties: HashMap::new(),
-                requires: vec![],
-                supertraits: vec![],
-            }),
-            span,
-        );
-        true
-    }
-
-    /// Materialize one known stdlib stub item from AST-derived function, trait, type, or constant metadata.
-    fn materialize_stdlib_stub_import(
-        &mut self,
-        context: &FromImportContext<'_>,
-        item: &ImportItem,
-        testing_semantics: Option<&TestingMarkerSemantics>,
-        span: Span,
-    ) -> bool {
-        if let Some(kind) = self
-            .stdlib_cache
-            .lookup_function_symbol(&context.module.segments, &item.name)
-        {
-            let local_name = Self::import_item_local_name(item);
-            let surface_function = surface_functions::from_str(&item.name);
-            let target_identity = self
-                .dependency_member_identity(context.module, &item.name)
-                .or_else(|| self.stdlib_cache.lookup_identity(&context.module.segments, &item.name));
-            let symbol_id = self.define_named_import_symbol(
-                context.module,
-                item,
-                local_name.clone(),
-                kind.clone(),
-                target_identity,
-                span,
-            );
-            if self.symbols.is_active_lookup_binding(symbol_id) {
-                self.record_testing_marker_import(context, item, &local_name, testing_semantics);
-                self.record_imported_function_binding(&local_name, &kind);
-            }
-            if self.symbols.is_active_lookup_binding(symbol_id)
-                && let Some(surface_function) = surface_function
-            {
-                self.surface_function_import_bindings
-                    .insert(local_name, (surface_function, symbol_id));
-            }
-            return true;
-        }
-
-        if let Some(info) = self.stdlib_cache.lookup_trait(&context.module.segments, &item.name) {
-            self.define_from_import_symbol(context.module, item, SymbolKind::Trait(info), span);
-            return true;
-        }
-
-        if let Some(info) = self.stdlib_cache.lookup_type(&context.module.segments, &item.name) {
-            self.define_from_import_symbol(context.module, item, SymbolKind::Type(info), span);
-            self.record_imported_stdlib_type_param_bounds(
-                &context.module.segments,
-                &item.name,
-                &Self::import_item_local_name(item),
-            );
-            return true;
-        }
-
-        if let Some(info) = self.stdlib_cache.lookup_constant(&context.module.segments, &item.name) {
-            self.define_from_import_symbol(context.module, item, SymbolKind::Variable(info), span);
-            return true;
-        }
-
-        if let Some(info) = self.stdlib_cache.lookup_static(&context.module.segments, &item.name) {
-            let local_name = Self::import_item_local_name(item);
-            let target_identity = self.dependency_member_identity(context.module, &item.name);
-            let symbol_id = self.define_named_import_symbol(
-                context.module,
-                item,
-                local_name.clone(),
-                SymbolKind::Static(info),
-                target_identity,
-                span,
-            );
-            if self.symbols.is_active_lookup_binding(symbol_id) {
-                self.type_info
-                    .declarations
-                    .static_bindings
-                    .insert(local_name, crate::typechecker::StaticBindingInfo { is_imported: true });
-            }
-            return true;
-        }
-
-        false
-    }
-
-    /// Record imported `std.testing` marker aliases so decorator validation can reject runtime calls consistently.
-    fn record_testing_marker_import(
-        &mut self,
-        context: &FromImportContext<'_>,
-        item: &ImportItem,
-        local_name: &str,
-        testing_semantics: Option<&TestingMarkerSemantics>,
-    ) {
-        let Some(stdlib_context) = context.stdlib.as_ref() else {
-            return;
-        };
-        if !stdlib_context.is_testing_module {
-            return;
-        }
-
-        let mut resolved_marker_path = context.module.segments.clone();
-        resolved_marker_path.push(item.name.clone());
-        let module_feature = self.surface_context.decorator_feature_for_path(&resolved_marker_path);
-        let marker_feature = testing_semantics
-            .and_then(|semantics| semantics.marker_kind(&item.name))
-            .map(|_| SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker));
-        if module_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
-            && marker_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker))
-        {
-            self.testing_marker_import_bindings.insert(local_name.to_string());
-        }
-    }
-
-    /// Preserve an imported item that has already been materialized as a concrete symbol in this collection pass.
-    ///
-    /// This keeps dependency metadata imports, especially statics, from being rewritten as module path proxies.
-    /// Returns `true` when the caller should skip fallback placeholder materialization.
-    fn preserve_existing_from_import_symbol(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
-        let Some(mut imported_kind) = self.existing_from_import_symbol_kind(&item.name) else {
-            return false;
-        };
-
-        if let SymbolKind::Static(info) = &mut imported_kind {
-            info.is_imported = true;
-        }
-        if let Some(alias) = &item.alias {
-            if self.symbols.lookup(alias).is_none() {
-                self.validate_root_namespace(alias, span);
-                self.record_source_import_target(module, item, alias, &imported_kind);
-                if matches!(imported_kind, SymbolKind::Static(_)) {
-                    self.type_info.declarations.static_bindings.insert(
-                        alias.clone(),
-                        crate::typechecker::StaticBindingInfo { is_imported: true },
-                    );
-                }
-                // RFC 120: the alias is a second binding to the already-materialized symbol, so it carries that
-                // symbol's identity rather than minting one of its own.
-                let target_identity = self
-                    .symbols
-                    .lookup(&item.name)
-                    .and_then(|id| self.symbols.identity_of(id).cloned());
-                let mut binding_path = canonicalize_source_module_segments(&module.segments);
-                binding_path.push(item.name.clone());
-                self.symbols.define_import_binding_at_path(
-                    Symbol {
-                        name: alias.clone(),
-                        kind: imported_kind,
-                        span,
-                        scope: 0,
-                    },
-                    target_identity,
-                    binding_path,
-                );
-                self.mark_static_binding_imported(&item.name);
-                return true;
-            }
-        } else {
-            self.record_source_import_target(module, item, &item.name, &imported_kind);
-            self.mark_static_binding_imported(&item.name);
-            return true;
-        }
-        false
-    }
-
-    /// Retain the canonical identity proven for an imported binding, keyed by the local name the import introduced.
-    ///
-    /// Recorded only when import resolution proves the declaration, so a consumer gets a correct identity or none at
-    /// all. It is deliberately separate from [`crate::typechecker::SourceTargetInfo::module_path`], which keeps its
-    /// existing meaning of the path as written at the import.
-    fn record_resolved_import_owner(&mut self, module: &ImportPath, item: &ImportItem, local_name: &str) {
-        let identity = self
-            .dependency_member_identity(module, &item.name)
-            .or_else(|| self.stdlib_cache.lookup_identity(&module.segments, &item.name));
-        if let Some(identity) = identity {
-            // A binding materialized before this proof starts identity-less; attach the proof to that binding —
-            // and only to an import binding — so reference-side recording never has to reach past the symbol
-            // table to a name-keyed map that a shadowing definition may have made stale.
-            self.symbols.backfill_import_identity(local_name, &identity);
-            self.type_info
-                .declarations
-                .resolved_import_identities
-                .insert(local_name.to_string(), identity);
-        }
-    }
-
-    /// Record the codegraph source target an import makes visible under `local_name`.
-    ///
-    /// The recorded `module_path` is the import path as *written*, which is the codegraph's existing contract. The
-    /// module that resolution actually selected is recorded separately by [`Self::record_resolved_import_owner`],
-    /// because the two are not always the same and only the latter may back a declaration identity.
-    fn record_source_import_target(
-        &mut self,
-        module: &ImportPath,
-        item: &ImportItem,
-        local_name: &str,
-        kind: &SymbolKind,
-    ) {
-        if let Some(target_kind) = Self::source_target_kind(kind) {
-            self.source_import_targets.insert(
-                local_name.to_string(),
-                crate::typechecker::SourceTargetInfo {
-                    module_path: canonicalize_source_module_segments(&module.segments),
-                    name: item.name.clone(),
-                    kind: target_kind.to_string(),
-                },
-            );
-        }
-        self.record_resolved_import_owner(module, item, local_name);
-    }
-
-    /// Define a fallback module placeholder for one `from module import item` binding.
-    fn define_from_import_placeholder(&mut self, module: &ImportPath, item: &ImportItem, span: Span) {
-        let name = Self::import_item_local_name(item);
-        self.validate_root_namespace(&name, span);
-        let mut path = canonicalize_source_module_segments(&module.segments);
-        path.push(item.name.clone());
-        self.define_import_symbol(name, path, false, None, span);
-    }
-
-    /// Define one imported item under its local alias after root namespace validation.
-    ///
-    /// The proven declaring identity is attached to the binding and recorded as a checked fact: lowering keys a
-    /// stdlib trait's protocol on that identity, and a spelling alone cannot tell `std.serde.json.Serialize` from an
-    /// unrelated trait of the same name (#1431).
-    fn define_from_import_symbol(&mut self, module: &ImportPath, item: &ImportItem, kind: SymbolKind, span: Span) {
-        let local_name = Self::import_item_local_name(item);
-        let target_identity = self
-            .dependency_member_identity(module, &item.name)
-            .or_else(|| self.stdlib_cache.lookup_identity(&module.segments, &item.name));
-        let symbol_id =
-            self.define_named_import_symbol(module, item, local_name.clone(), kind, target_identity.clone(), span);
-        if let Some(identity) = target_identity
-            && self.symbols.is_active_lookup_binding(symbol_id)
-        {
-            self.type_info
-                .declarations
-                .resolved_import_identities
-                .insert(local_name, identity);
-        }
-    }
-
-    /// Return the exact source dependency member targeted by a `from module import item` declaration.
-    fn imported_source_dependency_symbol_kind(&self, module: &ImportPath, item: &ImportItem) -> Option<SymbolKind> {
-        self.dependency_member_symbol_for_path(module, &item.name)
-    }
-
-    /// Return the exact partial projection metadata targeted by a source import.
-    fn imported_source_dependency_partial_projection(
-        &self,
-        module: &ImportPath,
-        item: &ImportItem,
-    ) -> Option<PartialProjectionInfo> {
-        self.dependency_member_partial_projection_for_path(module, &item.name)
-    }
-
-    /// Return the codegraph declaration kind for source targets this importer can preserve.
-    fn source_target_kind(kind: &SymbolKind) -> Option<&'static str> {
-        Self::source_target_kind_for_symbol(kind)
-    }
-
-    /// Define a source-imported dependency symbol under its local import name.
-    fn define_resolved_source_import_symbol(
-        &mut self,
-        written_module: &ImportPath,
-        resolved_module: &ImportPath,
-        item: &ImportItem,
-        mut kind: SymbolKind,
-        projection: Option<PartialProjectionInfo>,
-        span: Span,
-    ) {
-        let local_name = Self::import_item_local_name(item);
-        if let SymbolKind::Static(info) = &mut kind {
-            info.is_imported = true;
-        }
-        self.validate_root_namespace(&local_name, span);
-        let target = self.dependency_member_resolution(resolved_module, &item.name);
-        let mut binding_path = canonicalize_source_module_segments(&written_module.segments);
-        binding_path.push(item.name.clone());
-        let symbol_id = self.symbols.define_import_binding_at_path(
-            Symbol {
-                name: local_name.clone(),
-                kind: kind.clone(),
-                span,
-                scope: 0,
-            },
-            target.as_ref().map(|member| member.identity.clone()),
-            binding_path,
-        );
-        if !self.symbols.is_active_lookup_binding(symbol_id) {
-            return;
-        }
-
-        if let Some(member) = target {
-            self.type_info
-                .declarations
-                .resolved_import_identities
-                .insert(local_name.clone(), member.identity);
-            self.type_info
-                .declarations
-                .resolved_import_declared_names
-                .insert(local_name.clone(), member.declared_name);
-        }
-
-        if matches!(kind, SymbolKind::Type(TypeInfo::TypeAlias))
-            && let Some(target) = self.dependency_member_type_alias_for_path(resolved_module, &item.name)
-        {
-            self.record_dependency_import_type_alias_before_change(&local_name);
-            self.type_aliases.insert(local_name.clone(), target);
-        }
-        if let Some(target_kind) = Self::source_target_kind(&kind) {
-            self.source_import_targets.insert(
-                local_name.clone(),
-                crate::typechecker::SourceTargetInfo {
-                    module_path: canonicalize_source_module_segments(&written_module.segments),
-                    name: item.name.clone(),
-                    kind: target_kind.to_string(),
-                },
-            );
-        }
-        self.record_imported_function_binding(&local_name, &kind);
-        if matches!(kind, SymbolKind::Static(_)) {
-            self.type_info.declarations.static_bindings.insert(
-                local_name.clone(),
-                crate::typechecker::StaticBindingInfo { is_imported: true },
-            );
-            if let Some((definition, owner_module_path)) =
-                self.dependency_registry_definition_for_path(resolved_module, &item.name)
-            {
-                self.type_info.registry.imported_definitions.insert(
-                    local_name.clone(),
-                    ImportedRegistryDefinitionInfo {
-                        definition,
-                        owner_module_path,
-                        owner_binding: item.name.clone(),
-                    },
-                );
-            }
-        }
-        if let Some(mut projection) = projection {
-            projection.name.clone_from(&local_name);
-            self.type_info.record_partial_projection(projection);
-        }
-    }
-
-    /// Define one already named imported symbol after root namespace validation.
-    ///
-    /// `target_identity` belongs only to this import target. It must never be recovered from a name-keyed map that may
-    /// describe an earlier colliding binding; an unavailable provider identity remains explicitly unproven.
-    fn define_named_import_symbol(
-        &mut self,
-        module: &ImportPath,
-        item: &ImportItem,
-        name: Ident,
-        kind: SymbolKind,
-        target_identity: Option<CanonicalSymbolId>,
-        span: Span,
-    ) -> SymbolId {
-        self.validate_root_namespace(&name, span);
-        let mut binding_path = canonicalize_source_module_segments(&module.segments);
-        binding_path.push(item.name.clone());
-        self.symbols.define_import_binding_at_path(
-            Symbol {
-                name,
-                kind,
-                span,
-                scope: 0,
-            },
-            target_identity,
-            binding_path,
-        )
-    }
-
     /// Return all derived public module namespace paths carried by the checked API artifact.
-    fn manifest_public_module_paths(manifest: &LibraryManifest) -> Vec<Vec<String>> {
+    pub(super) fn manifest_public_module_paths(manifest: &LibraryManifest) -> Vec<Vec<String>> {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return Vec::new();
         };
@@ -1575,7 +510,7 @@ impl TypeChecker {
     }
 
     /// Return whether the checked API artifact contains this public module namespace.
-    fn manifest_public_module_exists(manifest: &LibraryManifest, module_path: &[String]) -> bool {
+    pub(super) fn manifest_public_module_exists(manifest: &LibraryManifest, module_path: &[String]) -> bool {
         !module_path.is_empty()
             && Self::manifest_public_module_paths(manifest)
                 .iter()
@@ -1586,7 +521,7 @@ impl TypeChecker {
     ///
     /// A directory namespace exposes declarations from its own entrypoint and its immediate source-file children.
     /// Deeper directories remain nested namespaces rather than leaking all descendants into every ancestor.
-    fn api_modules_for_public_namespace<'a>(
+    pub(super) fn api_modules_for_public_namespace<'a>(
         manifest: &'a LibraryManifest,
         module_path: &[String],
     ) -> Vec<&'a crate::api_metadata::CheckedApiMetadata> {
@@ -1597,7 +532,7 @@ impl TypeChecker {
     }
 
     /// Return the public names available directly from one derived module namespace.
-    fn public_module_member_names(manifest: &LibraryManifest, module_path: &[String]) -> Vec<String> {
+    pub(super) fn public_module_member_names(manifest: &LibraryManifest, module_path: &[String]) -> Vec<String> {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return Vec::new();
         };
@@ -1616,7 +551,7 @@ impl TypeChecker {
     }
 
     /// Resolve one declaration from a derived public module, preserving its authored source-module identity.
-    fn public_module_member(
+    pub(super) fn public_module_member(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -1754,7 +689,7 @@ impl TypeChecker {
     /// records the canonical declarations there; when every module's set is the same, the spellings name one
     /// declaration and nothing is ambiguous. The declaring module's match is preferred, so the member keeps its
     /// declaration rather than a forwarding alias. Different or unproven identities stay ambiguous.
-    fn one_declaration_behind_namespace_matches<'m, 'a>(
+    pub(super) fn one_declaration_behind_namespace_matches<'m, 'a>(
         manifest: &LibraryManifest,
         member: &str,
         matches: &'m [(Vec<String>, Vec<&'a ApiDeclaration>)],
@@ -1789,7 +724,7 @@ impl TypeChecker {
     }
 
     /// Build canonical and local type spellings for API declarations consumed through public module namespaces.
-    fn public_module_type_remapping(
+    pub(super) fn public_module_type_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -1881,189 +816,8 @@ impl TypeChecker {
         remapping
     }
 
-    /// Collect selected public imports from one loaded library manifest.
-    fn collect_pub_imports(&mut self, library: &str, path: &[Ident], items: &[ImportItem], span: Span) {
-        let library_manifests = self.provider_plan.library_manifest_index();
-        let known_libraries = library_manifests.known_libraries();
-        let Some(entry) = library_manifests.get(library).cloned() else {
-            self.errors
-                .push(errors::unknown_pub_library(library, &known_libraries, span));
-            return;
-        };
-
-        let manifest = match entry {
-            LibraryManifestIndexEntry::Loaded { manifest, .. } => manifest,
-            LibraryManifestIndexEntry::Failed(failure) => {
-                self.push_pub_library_failure(library, &failure, span);
-                return;
-            }
-        };
-
-        if !path.is_empty() && !Self::manifest_public_module_exists(&manifest, path) {
-            let available = Self::manifest_public_module_paths(&manifest)
-                .into_iter()
-                .map(|module_path| module_path.join("."))
-                .collect::<Vec<_>>();
-            self.errors
-                .push(errors::pub_library_module_not_found(library, path, &available, span));
-            return;
-        }
-
-        self.cache_transitive_pub_export_semantics(library, &manifest);
-        let available_exports = if path.is_empty() {
-            let mut names = Self::manifest_export_names(&manifest);
-            names.extend(
-                Self::manifest_public_module_paths(&manifest)
-                    .into_iter()
-                    .filter_map(|module_path| module_path.first().cloned()),
-            );
-            names.sort();
-            names.dedup();
-            names
-        } else {
-            Self::public_module_member_names(&manifest, path)
-        };
-        for item in items {
-            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-            if self.validate_protected_builtin_binding(&local_name, span) {
-                continue;
-            }
-            self.validate_root_namespace(&local_name, span);
-            if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
-                self.errors.push(errors::pub_library_import_name_collision(
-                    &local_name,
-                    existing_kind,
-                    span,
-                ));
-                continue;
-            }
-            let imported_type_aliases = self.public_library_type_import_remapping(library, &manifest);
-
-            let mut child_module_path = path.to_vec();
-            child_module_path.push(item.name.clone());
-            let imports_namespace = Self::manifest_public_module_exists(&manifest, &child_module_path);
-
-            if !path.is_empty() {
-                let resolved = match self.public_module_member(library, &manifest, path, &item.name) {
-                    Ok(resolved) => resolved,
-                    Err(source_modules) => {
-                        self.errors.push(errors::pub_library_module_member_ambiguous(
-                            library,
-                            path,
-                            &item.name,
-                            &source_modules,
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-                if let Some(member) = resolved {
-                    let mut binding_path = vec!["pub".to_string(), library.to_string()];
-                    binding_path.extend(child_module_path.clone());
-                    self.define_pub_module_import_symbol(library, local_name, binding_path, member, span);
-                    continue;
-                }
-                if imports_namespace {
-                    let mut canonical_path = vec!["pub".to_string(), library.to_string()];
-                    canonical_path.extend(child_module_path);
-                    let target_identity = SymbolTable::module_path_identity(&canonical_path);
-                    self.define_import_symbol(local_name, canonical_path, false, target_identity, span);
-                    continue;
-                }
-                self.errors.push(errors::pub_library_symbol_not_exported(
-                    &item.name,
-                    &format!("{library}.{}", path.join(".")),
-                    &available_exports,
-                    span,
-                ));
-                continue;
-            }
-
-            let flat_function = self.pub_library_function_symbol(&manifest, &item.name);
-            let flat_export = Self::find_manifest_export(&manifest, &item.name);
-            if imports_namespace && (flat_function.is_some() || flat_export.is_some()) {
-                self.errors.push(errors::pub_library_module_member_ambiguous(
-                    library,
-                    &[],
-                    &item.name,
-                    &[
-                        format!("package-root export `{}`", item.name),
-                        format!("module `{}`", child_module_path.join(".")),
-                    ],
-                    span,
-                ));
-                continue;
-            }
-            if imports_namespace {
-                let mut canonical_path = vec!["pub".to_string(), library.to_string()];
-                canonical_path.extend(child_module_path);
-                let target_identity = SymbolTable::module_path_identity(&canonical_path);
-                self.define_import_symbol(local_name, canonical_path, false, target_identity, span);
-                continue;
-            }
-
-            if let Some(mut kind) = flat_function {
-                self.remap_symbol_kind_with_import_aliases(&mut kind, &imported_type_aliases);
-                let canonical = manifest
-                    .contract_metadata
-                    .identity_graph
-                    .canonical_for_public_name(&item.name);
-                let binding_path = vec!["pub".to_string(), library.to_string(), item.name.clone()];
-                let symbol_id = self.symbols.define_import_binding_at_path(
-                    Symbol {
-                        name: local_name.clone(),
-                        kind: kind.clone(),
-                        span,
-                        scope: 0,
-                    },
-                    canonical.clone(),
-                    binding_path,
-                );
-                if self.symbols.is_active_lookup_binding(symbol_id) {
-                    if let Some(identity) = canonical {
-                        self.type_info
-                            .declarations
-                            .resolved_import_identities
-                            .insert(local_name.clone(), identity);
-                    }
-                    self.record_imported_function_binding(&local_name, &kind);
-                }
-                continue;
-            }
-
-            let Some(export) = flat_export else {
-                if let Some(feature_sets) = Self::inactive_pub_export_features(&manifest, &item.name) {
-                    self.errors.push(errors::pub_library_symbol_requires_features(
-                        &item.name,
-                        library,
-                        &feature_sets,
-                        span,
-                    ));
-                } else {
-                    self.errors.push(errors::pub_library_symbol_not_exported(
-                        &item.name,
-                        library,
-                        &available_exports,
-                        span,
-                    ));
-                }
-                continue;
-            };
-
-            self.define_pub_import_symbol(
-                library,
-                &manifest,
-                &item.name,
-                local_name,
-                export,
-                &imported_type_aliases,
-                span,
-            );
-        }
-    }
-
     /// Define one declaration imported through a derived public module namespace.
-    fn define_pub_module_import_symbol(
+    pub(super) fn define_pub_module_import_symbol(
         &mut self,
         library: &str,
         local_name: String,
@@ -2115,7 +869,7 @@ impl TypeChecker {
             self.type_info.record_partial_projection(projection);
         }
         if let Some(target_kind) = Self::source_target_kind(&kind) {
-            let mut target_path = vec!["pub".to_string(), library.to_string()];
+            let mut target_path = self.loaf_binding_root(library);
             target_path.extend(source_module_path.clone());
             self.source_import_targets.insert(
                 local_name.clone(),
@@ -2157,17 +911,18 @@ impl TypeChecker {
     /// signature types without an active local binding receive an internal qualified spelling, and a later type import
     /// records the same provider identity for its local spelling. Both declaration orders therefore compare as the
     /// same nominal type without consulting a raw whole-program import scan.
-    fn public_library_type_import_remapping(
+    pub(super) fn public_library_type_import_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
     ) -> HashMap<String, String> {
         let mut local_names_by_public_export: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let root = self.loaf_binding_root(library);
         for (local_name, path) in self.symbols.active_import_binding_paths() {
-            let [root, dependency_key, public_name] = path else {
+            let Some([public_name]) = path.strip_prefix(root.as_slice()) else {
                 continue;
             };
-            if root != "pub" || dependency_key != library || !self.manifest_public_name_is_type(manifest, public_name) {
+            if !self.manifest_public_name_is_type(manifest, public_name) {
                 continue;
             }
             local_names_by_public_export
@@ -2199,7 +954,7 @@ impl TypeChecker {
     ///
     /// Qualified module access has no local `from` import whose alias can carry identity, so every nominal manifest
     /// spelling is mapped to its checker-owned canonical key before the member's signature enters expression checking.
-    fn public_library_canonical_type_remapping(
+    pub(super) fn public_library_canonical_type_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -2225,16 +980,17 @@ impl TypeChecker {
         remapping
     }
 
-    /// Hydrate foreign signature types from exact admitted artifacts and the existing native dependency bridge.
+    /// Hydrate foreign signature types from the Loaves that declare them.
     ///
-    /// Leaf binding keys carry identity; this map only chooses their physical consumer route. Required nominal
-    /// layouts come from that same artifact's public identity graph, including types never imported by source name.
+    /// Leaf binding keys carry identity; this map only chooses the consumer spelling, `pub::<loaf key>::<public
+    /// path>`. Required nominal layouts come from the declaring Loaf's public identity graph, including types never
+    /// imported by source name.
     ///
     /// The work is three phases and their order is the correctness argument. Seeding finds the origins this
-    /// manifest can reach directly; the closure walks from those to every artifact transitively required; only then
+    /// manifest can reach directly; the closure walks from those to every Loaf transitively required; only then
     /// can layouts be reconstructed, because a layout may reference a type discovered late, and remapping it
     /// against a partial map would bake in a name that never resolves.
-    fn public_library_foreign_type_remapping(
+    pub(super) fn public_library_foreign_type_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -2242,70 +998,28 @@ impl TypeChecker {
         if let Some(remapping) = self.foreign_pub_type_remappings.get(library) {
             return remapping.clone();
         }
-        let seeds = self.foreign_remapping_seed_origins(library, manifest);
-        let (remapping, artifacts) = self.resolve_public_type_origins(library, seeds);
-        self.reconstruct_artifact_layouts(library, &remapping, &artifacts);
+        let seeds = collect_nominal_type_origins(manifest);
+        let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
+        self.reconstruct_artifact_layouts(library, &remapping, &loaves);
         self.foreign_pub_type_remappings
             .insert(library.to_string(), remapping.clone());
         remapping
     }
 
-    /// Collect the nominal origins this manifest reaches directly, before any transitive resolution.
+    /// Walk from the seed origins to every Loaf transitively required, registering each type's spelling.
     ///
-    /// Two sources contribute. A native union's members are only visible once the union is projected through the
-    /// dependency bridge, so those are projected here rather than read from the manifest. The manifest's own type
-    /// references supply the rest. A union that cannot be projected is reported and skipped: its members are not
-    /// reachable, and inventing an origin for them would name a type no artifact exports.
-    fn foreign_remapping_seed_origins(
-        &mut self,
-        library: &str,
-        manifest: &LibraryManifest,
-    ) -> BTreeMap<String, NominalTypeOriginExport> {
-        use crate::library_manifest::{TypeRef, VisitTypeRefs};
-
-        let mut carriers = Vec::new();
-        manifest.clone().visit_type_refs(&mut |ty| {
-            if let TypeRef::NativeUnion(native) = ty {
-                carriers.push(native.clone());
-            }
-        });
-
-        let mut origins = BTreeMap::new();
-        for carrier in carriers {
-            match self.provider_plan.public_native_union_projection(library, &carrier) {
-                Ok((mut bound, _)) => bound.members.visit_type_refs(&mut |ty| {
-                    if let Some(origin) = Self::nominal_type_origin(ty) {
-                        origins.insert(origin.binding_key(), origin.clone());
-                    }
-                }),
-                Err(message) => self.push_public_library_error(
-                    library,
-                    format!("has an invalid native union representation: {message}"),
-                ),
-            }
-        }
-        origins.extend(collect_nominal_type_origins(manifest));
-        origins
-    }
-
-    /// Walk from the seed origins to every artifact transitively required, registering each type's route.
-    ///
-    /// Resolving one origin can reveal an artifact whose own manifest names further origins, so this is a worklist
-    /// rather than a pass: each newly opened artifact contributes its origins back to the queue. `seen` is keyed by
-    /// binding key so a type reached by two routes is resolved once, which is what keeps mutual references from
-    /// looping. An origin that cannot be projected is reported and skipped rather than failing the whole map, so a
-    /// single bad type does not cost every other import in the library.
-    fn resolve_public_type_origins(
+    /// Resolving one origin can reveal a Loaf whose own manifest names further origins, so this is a worklist rather
+    /// than a pass. `seen` is keyed by binding key so a type reached by two routes is resolved once, which is what
+    /// keeps mutual references from looping. An origin no indexed Loaf declares is reported and skipped rather than
+    /// failing the whole map, so a single bad type does not cost every other import in the library.
+    pub(super) fn resolve_public_type_origins(
         &mut self,
         library: &str,
         seeds: BTreeMap<String, NominalTypeOriginExport>,
-    ) -> (
-        HashMap<String, String>,
-        BTreeMap<String, (PublicProviderMetadata, String)>,
-    ) {
+    ) -> (HashMap<String, String>, BTreeMap<String, LoafEntry>) {
         let mut pending = std::collections::VecDeque::from_iter(seeds.into_values());
         let mut seen = HashSet::new();
-        let mut artifacts = BTreeMap::new();
+        let mut loaves = BTreeMap::new();
         let mut remapping = HashMap::new();
 
         while let Some(origin) = pending.pop_front() {
@@ -2313,61 +1027,55 @@ impl TypeChecker {
             if !seen.insert(key.clone()) {
                 continue;
             }
-            let (artifact, export, dependency_route) = match self
-                .provider_plan
-                .public_nominal_metadata_projection(library, &origin)
-            {
-                Ok(projection) => projection,
-                Err(message) => {
-                    self.push_public_library_error(library, format!("has an invalid public type origin: {message}"));
-                    continue;
-                }
-            };
-
-            // The consumer route is the importing library, then one bridge hop per dependency crossed. The owner
-            // route stops there; the qualified name continues into the export's own public path.
-            let mut route = crate::rust_type_display::provider_bridge_route(library, dependency_route);
-            let owner_route = route.join("::");
-            route.extend(export.public_path.iter().skip(1).cloned());
-            let qualified = format!("pub::{}", route.join("::"));
-
             let Some(canonical) = origin.canonical.hydrate() else {
                 continue;
             };
+            let Some((entry, export)) = self
+                .loaves
+                .public_nominal(&canonical)
+                .map(|(entry, export)| (entry.clone(), export.clone()))
+            else {
+                self.push_public_library_error(
+                    library,
+                    format!("names a public type no indexed Loaf declares: {canonical:?}"),
+                );
+                continue;
+            };
+            let qualified = canonical_public_library_type_name(&entry.key, &export.public_path[1..].join("::"));
             let identity = PublicLibraryTypeIdentity {
                 dependency_key: library.to_string(),
                 source_path: export.source_path.clone(),
                 canonical: Some(canonical),
-                selected_provider: Some(artifact.identity.clone()),
+                selected_provider: Some(entry.artifact.identity.clone()),
             };
             self.public_library_type_identities
                 .insert(key.clone(), identity.clone());
             self.public_library_type_identities.insert(qualified.clone(), identity);
             remapping.insert(key, qualified);
 
-            if let std::collections::btree_map::Entry::Vacant(entry) = artifacts.entry(artifact.identity.stable_key()) {
-                pending.extend(collect_nominal_type_origins(&artifact.manifest).into_values());
-                entry.insert((artifact, owner_route));
+            if let std::collections::btree_map::Entry::Vacant(vacant) = loaves.entry(entry.key.clone()) {
+                pending.extend(collect_nominal_type_origins(&entry.artifact.manifest).into_values());
+                vacant.insert(entry);
             }
         }
-        (remapping, artifacts)
+        (remapping, loaves)
     }
 
-    /// Rebuild each discovered artifact's nominal layouts against the completed remapping.
+    /// Rebuild each discovered Loaf's nominal layouts against the completed remapping.
     ///
     /// This runs only after every type mapping exists, which is what preserves mutually referenced layouts and
-    /// foreign field, property and default signatures without reopening artifacts or looking up source. The same
-    /// ordering holds inside each artifact: every export's public name is registered first, so the second pass can
+    /// foreign field, property and default signatures without reopening Loaves or looking up source. The same
+    /// ordering holds inside each Loaf: every export's public name is registered first, so the second pass can
     /// remap a layout that refers to a sibling declared after it.
-    fn reconstruct_artifact_layouts(
+    pub(super) fn reconstruct_artifact_layouts(
         &mut self,
         library: &str,
         remapping: &HashMap<String, String>,
-        artifacts: &BTreeMap<String, (PublicProviderMetadata, String)>,
+        loaves: &BTreeMap<String, LoafEntry>,
     ) {
-        for (artifact, owner_route) in artifacts.values() {
-            let local_remapping = self.register_artifact_type_names(library, artifact, owner_route, remapping);
-            self.rebuild_artifact_symbol_layouts(artifact, owner_route, &local_remapping);
+        for entry in loaves.values() {
+            let local_remapping = self.register_artifact_type_names(library, entry, remapping);
+            self.rebuild_artifact_symbol_layouts(entry, &local_remapping);
         }
     }
 
@@ -2378,14 +1086,15 @@ impl TypeChecker {
     /// package root or a root re-export of a submodule's declaration (`pub from search import Nomination`): both are
     /// the name a published signature uses for the type, and a re-export left out would leave a field typed by it
     /// with no members.
-    fn register_artifact_type_names(
+    pub(super) fn register_artifact_type_names(
         &mut self,
         library: &str,
-        artifact: &PublicProviderMetadata,
-        owner_route: &str,
+        entry: &LoafEntry,
         remapping: &HashMap<String, String>,
     ) -> HashMap<String, String> {
         let mut local_remapping = remapping.clone();
+        let artifact = &entry.artifact;
+        let owner_route = entry.key.as_str();
         let graph = &artifact.manifest.contract_metadata.identity_graph;
         for export in &graph.exports {
             let declared = matches!(
@@ -2442,12 +1151,13 @@ impl TypeChecker {
     ///
     /// Member types are read in the declaring module's scope before the artifact's top-level spellings, so a layout
     /// names the declaration its own module names whether the root republishes it or not.
-    fn rebuild_artifact_symbol_layouts(
+    pub(super) fn rebuild_artifact_symbol_layouts(
         &mut self,
-        artifact: &PublicProviderMetadata,
-        owner_route: &str,
+        entry: &LoafEntry,
         local_remapping: &HashMap<String, String>,
     ) {
+        let artifact = &entry.artifact;
+        let owner_route = entry.key.as_str();
         for export in &artifact.manifest.contract_metadata.identity_graph.exports {
             // A top-level export is described by the manifest's own nominal info; a nested one has to be read back
             // from its declaration, because only the declaration records the members.
@@ -2481,9 +1191,7 @@ impl TypeChecker {
                 &mut kind,
             );
             self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping);
-            if artifact.materialized {
-                Self::mark_compiled_class_field_provider(&mut kind, owner_route);
-            }
+            Self::mark_compiled_class_field_provider(&mut kind, owner_route);
             if let SymbolKind::Type(info) = kind {
                 self.transitive_pub_types.entry(qualified).or_default().push(info);
             }
@@ -2491,7 +1199,7 @@ impl TypeChecker {
     }
 
     /// Report a malformed compiled-library input without repeating the diagnostic's shape at each call.
-    fn push_public_library_error(&mut self, library: &str, detail: String) {
+    pub(super) fn push_public_library_error(&mut self, library: &str, detail: String) {
         self.errors.push(crate::diagnostics::CompileError::type_error(
             format!("compiled library `{library}` {detail}"),
             Span::default(),
@@ -2499,7 +1207,7 @@ impl TypeChecker {
     }
 
     /// Return the nominal origin carried by a type reference, when it has one.
-    fn nominal_type_origin(ty: &crate::library_manifest::TypeRef) -> Option<&NominalTypeOriginExport> {
+    pub(super) fn nominal_type_origin(ty: &crate::library_manifest::TypeRef) -> Option<&NominalTypeOriginExport> {
         use crate::library_manifest::TypeRef;
         match ty {
             TypeRef::Named {
@@ -2513,7 +1221,7 @@ impl TypeChecker {
     }
 
     /// Return whether one public manifest spelling resolves to a type-like import binding.
-    fn manifest_public_name_is_type(&self, manifest: &LibraryManifest, public_name: &str) -> bool {
+    pub(super) fn manifest_public_name_is_type(&self, manifest: &LibraryManifest, public_name: &str) -> bool {
         let Some(export) = Self::find_manifest_export(manifest, public_name) else {
             return false;
         };
@@ -2526,7 +1234,7 @@ impl TypeChecker {
     }
 
     /// Resolve one public spelling to nominal model/class/enum/newtype metadata.
-    fn manifest_nominal_type_info(&self, manifest: &LibraryManifest, public_name: &str) -> Option<TypeInfo> {
+    pub(super) fn manifest_nominal_type_info(&self, manifest: &LibraryManifest, public_name: &str) -> Option<TypeInfo> {
         let export = Self::find_manifest_export(manifest, public_name)?;
         let kind = match export {
             ManifestExportRef::Alias(alias) => {
@@ -2553,7 +1261,7 @@ impl TypeChecker {
     }
 
     /// Resolve one public nominal type spelling to its dependency-qualified provider source identity.
-    fn public_library_nominal_type_identity(
+    pub(super) fn public_library_nominal_type_identity(
         &self,
         library: &str,
         manifest: &LibraryManifest,
@@ -2573,7 +1281,7 @@ impl TypeChecker {
     }
 
     /// Return the missing public features for one known provider export that is inactive in this artifact projection.
-    fn inactive_pub_export_features(manifest: &LibraryManifest, symbol: &str) -> Option<Vec<Vec<String>>> {
+    pub(super) fn inactive_pub_export_features(manifest: &LibraryManifest, symbol: &str) -> Option<Vec<Vec<String>>> {
         let active = &manifest.contract_metadata.provider.active_features;
         let mut alternatives = manifest
             .contract_metadata
@@ -2643,10 +1351,7 @@ impl TypeChecker {
         library: &str,
         member: &str,
     ) -> Option<SymbolKind> {
-        let entry = self.provider_plan.library_manifest_index().get(library)?.clone();
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
-            return None;
-        };
+        let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
         self.cache_transitive_pub_export_semantics(library, &manifest);
         let remapping = self.public_library_canonical_type_remapping(library, &manifest);
         let mut kind = if let Some(kind) = self.pub_library_function_symbol(&manifest, member) {
@@ -2732,33 +1437,23 @@ impl TypeChecker {
                 return Ok(None);
             };
             let canonical = self
-                .provider_plan
-                .library_manifest_index()
-                .get(library)
-                .and_then(|entry| match entry {
-                    LibraryManifestIndexEntry::Loaded { manifest, .. } => manifest
-                        .contract_metadata
-                        .identity_graph
-                        .canonical_for_public_name(member),
-                    LibraryManifestIndexEntry::Failed(_) => None,
-                });
+                .loaves
+                .manifest(library)
+                .and_then(|manifest| manifest.contract_metadata.identity_graph.canonical_for_public_name(member));
             return Ok(Some(ResolvedPublicModuleSymbol {
                 kind,
                 canonical,
-                source_module_path: vec!["pub".to_string(), library.to_string()],
+                source_module_path: self.loaf_binding_root(library),
                 source_name: member.to_string(),
             }));
         }
-        let Some(entry) = self.provider_plan.library_manifest_index().get(library).cloned() else {
-            return Ok(None);
-        };
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+        let Some(manifest) = self.loaves.entry(library).map(|entry| std::sync::Arc::clone(&entry.artifact.manifest)) else {
             return Ok(None);
         };
         let Some(resolved) = self.public_module_member(library, &manifest, module_path, member)? else {
             return Ok(None);
         };
-        let mut source_module_path = vec!["pub".to_string(), library.to_string()];
+        let mut source_module_path = self.loaf_binding_root(library);
         source_module_path.extend(resolved.source_module_path);
         Ok(Some(ResolvedPublicModuleSymbol {
             kind: resolved.kind,
@@ -2776,10 +1471,7 @@ impl TypeChecker {
         member: &str,
         binding_name: &str,
     ) -> Option<PartialProjectionInfo> {
-        let entry = self.provider_plan.library_manifest_index().get(library)?.clone();
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
-            return None;
-        };
+        let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
         let mut projection = self
             .public_module_member(library, &manifest, module_path, member)
             .ok()
@@ -2794,7 +1486,7 @@ impl TypeChecker {
     /// These caches are used only by the consumer-side typechecker when imported signatures mention provider types
     /// that the consumer did not explicitly import by name (for example `Session.read_csv(...) -> LazyFrame[T]`).
     /// They do not change source-visible name resolution.
-    fn cache_transitive_pub_export_semantics(&mut self, library: &str, manifest: &LibraryManifest) {
+    pub(super) fn cache_transitive_pub_export_semantics(&mut self, library: &str, manifest: &LibraryManifest) {
         if !self.cached_pub_libraries.insert(library.to_string()) {
             return;
         }
@@ -2840,6 +1532,21 @@ impl TypeChecker {
         }
 
         self.register_pub_library_declarations(library, manifest, &canonical_remapping);
+        if let Some(api) = manifest.contract_metadata.api.as_ref() {
+            for module in &api.modules {
+                for declaration in &module.declarations {
+                    let public_path = std::iter::once(manifest.name.clone())
+                        .chain(module.module_path.iter().cloned())
+                        .chain(std::iter::once(Self::api_declaration_name(declaration).to_string()))
+                        .collect::<Vec<_>>();
+                    let canonical = manifest
+                        .contract_metadata
+                        .identity_graph
+                        .canonical_for_public_path(&public_path);
+                    self.record_provider_type_param_bounds(declaration, canonical.as_ref());
+                }
+            }
+        }
         let identity_graph = &manifest.contract_metadata.identity_graph;
         let canonical_types = identity_graph
             .exports
@@ -2864,64 +1571,8 @@ impl TypeChecker {
         }
     }
 
-    /// Render one manifest-load failure as the detail line its diagnostic carries, named by what failed to load.
-    fn format_manifest_failure_detail(
-        &self,
-        failure: &crate::library_manifest_index::LibraryManifestLoadFailure,
-    ) -> String {
-        match failure.kind {
-            LibraryManifestFailureKind::ManifestRead => {
-                format!("Manifest file is unreadable: {}", failure.message)
-            }
-            LibraryManifestFailureKind::ManifestParse => {
-                format!("Manifest JSON is malformed: {}", failure.message)
-            }
-            LibraryManifestFailureKind::ManifestInvalid => {
-                format!("Manifest is incompatible or invalid: {}", failure.message)
-            }
-            LibraryManifestFailureKind::ArtifactMissing => {
-                format!("Generated library artifacts are missing: {}", failure.message)
-            }
-            LibraryManifestFailureKind::ArtifactInvalid => {
-                format!("Generated library artifacts are invalid: {}", failure.message)
-            }
-            LibraryManifestFailureKind::ArtifactMismatch => {
-                format!("Generated library artifact names do not match: {}", failure.message)
-            }
-        }
-    }
-
-    /// Record the diagnostic for a `pub` library whose manifest or artifacts could not be loaded, choosing the error
-    /// by the failure kind.
-    fn push_pub_library_failure(
-        &mut self,
-        library: &str,
-        failure: &crate::library_manifest_index::LibraryManifestLoadFailure,
-        span: Span,
-    ) {
-        let details = self.format_manifest_failure_detail(failure);
-        let path = failure.path.to_string_lossy();
-        let error = match failure.kind {
-            LibraryManifestFailureKind::ManifestRead
-            | LibraryManifestFailureKind::ManifestParse
-            | LibraryManifestFailureKind::ManifestInvalid => {
-                errors::pub_library_manifest_load_failed(library, path.as_ref(), &details, span)
-            }
-            LibraryManifestFailureKind::ArtifactMissing => {
-                errors::pub_library_artifact_missing(library, path.as_ref(), &details, span)
-            }
-            LibraryManifestFailureKind::ArtifactInvalid => {
-                errors::pub_library_artifact_invalid(library, path.as_ref(), &details, span)
-            }
-            LibraryManifestFailureKind::ArtifactMismatch => {
-                errors::pub_library_artifact_mismatch(library, path.as_ref(), &details, span)
-            }
-        };
-        self.errors.push(error);
-    }
-
     /// Return all exported names in a manifest for diagnostics.
-    fn manifest_export_names(manifest: &LibraryManifest) -> Vec<String> {
+    pub(super) fn manifest_export_names(manifest: &LibraryManifest) -> Vec<String> {
         let mut names = Vec::new();
         names.extend(manifest.exports.models.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.aliases.iter().map(|item| item.name.clone()));
@@ -2947,7 +1598,7 @@ impl TypeChecker {
     }
 
     /// Find one manifest export by name, including alias entries.
-    fn find_manifest_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
+    pub(super) fn find_manifest_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
         if let Some(item) = manifest.exports.aliases.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Alias(item));
         }
@@ -3003,7 +1654,7 @@ impl TypeChecker {
     }
 
     /// Find one manifest export by name without following alias entries.
-    fn find_manifest_non_alias_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
+    pub(super) fn find_manifest_non_alias_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
         if let Some(item) = manifest.exports.models.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Model(item));
         }
@@ -3061,7 +1712,7 @@ impl TypeChecker {
     /// `exprs.Frame`). Resolving only by the final segment re-enters the alias export and can recurse forever. Prefer
     /// the explicit target path in checked API metadata, then fall back to non-alias manifest exports, and only follow
     /// another alias with a visited guard.
-    fn symbol_kind_from_manifest_alias(
+    pub(super) fn symbol_kind_from_manifest_alias(
         &self,
         manifest: &LibraryManifest,
         export: &AliasExport,
@@ -3104,7 +1755,7 @@ impl TypeChecker {
     }
 
     /// Hydrate a forwarded nominal only from its exact admitted declaring artifact and public membership.
-    fn symbol_kind_from_nominal_projection(
+    pub(super) fn symbol_kind_from_nominal_projection(
         &self,
         projected: Option<&crate::library_manifest::TypeRef>,
     ) -> Option<SymbolKind> {
@@ -3117,7 +1768,9 @@ impl TypeChecker {
         else {
             return None;
         };
-        let (artifact, identity) = self.provider_plan.public_nominal_metadata(origin).ok()?;
+        let canonical = origin.canonical.hydrate()?;
+        let (entry, identity) = self.loaves.public_nominal(&canonical)?;
+        let artifact = &entry.artifact;
         if identity.public_path.len() == 2 {
             self.manifest_nominal_type_info(&artifact.manifest, &identity.public_name)
                 .map(SymbolKind::Type)
@@ -3129,7 +1782,7 @@ impl TypeChecker {
     }
 
     /// Reconstruct a checked `rust::` reexport from the ABI metadata shipped beside the public manifest.
-    fn symbol_kind_from_manifest_rust_target(manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
+    pub(super) fn symbol_kind_from_manifest_rust_target(manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
         let [namespace, crate_name, rest @ ..] = target_path else {
             return None;
         };
@@ -3147,7 +1800,7 @@ impl TypeChecker {
     }
 
     /// Return the canonical target path published by the manifest identity graph for one public name.
-    fn manifest_identity_target_path<'a>(manifest: &'a LibraryManifest, public_name: &str) -> Option<&'a [String]> {
+    pub(super) fn manifest_identity_target_path<'a>(manifest: &'a LibraryManifest, public_name: &str) -> Option<&'a [String]> {
         manifest
             .contract_metadata
             .identity_graph
@@ -3156,7 +1809,7 @@ impl TypeChecker {
     }
 
     /// Resolve an exact manifest identity path into a semantic symbol kind before falling back to final-segment lookup.
-    fn symbol_kind_from_manifest_path(&self, manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
+    pub(super) fn symbol_kind_from_manifest_path(&self, manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
         if let Some(kind) = self.symbol_kind_from_api_target_path(manifest, target_path) {
             return Some(kind);
         }
@@ -3166,7 +1819,7 @@ impl TypeChecker {
     }
 
     /// Convert one non-alias manifest export into checker symbol metadata.
-    fn find_manifest_non_alias_symbol_kind(&self, manifest: &LibraryManifest, name: &str) -> Option<SymbolKind> {
+    pub(super) fn find_manifest_non_alias_symbol_kind(&self, manifest: &LibraryManifest, name: &str) -> Option<SymbolKind> {
         match Self::find_manifest_non_alias_export(manifest, name)? {
             ManifestExportRef::Model(export) => {
                 Some(SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export))))
@@ -3211,7 +1864,7 @@ impl TypeChecker {
     }
 
     /// Resolve an alias target path against the checked API metadata embedded in the manifest.
-    fn api_declaration_for_target_path<'a>(
+    pub(super) fn api_declaration_for_target_path<'a>(
         manifest: &'a LibraryManifest,
         target_path: &[String],
     ) -> Option<&'a ApiDeclaration> {
@@ -3240,7 +1893,7 @@ impl TypeChecker {
     }
 
     /// Normalize one API declaration target into its authored module path and declaration name.
-    fn normalized_api_declaration_target(target_path: &[String]) -> Option<(Vec<String>, String)> {
+    pub(super) fn normalized_api_declaration_target(target_path: &[String]) -> Option<(Vec<String>, String)> {
         let path = if target_path.first().is_some_and(|segment| segment == "crate") {
             &target_path[1..]
         } else {
@@ -3251,7 +1904,7 @@ impl TypeChecker {
     }
 
     /// Resolve an alias target path against the checked API metadata embedded in the manifest.
-    fn symbol_kind_from_api_target_path(
+    pub(super) fn symbol_kind_from_api_target_path(
         &self,
         manifest: &LibraryManifest,
         target_path: &[String],
@@ -3260,7 +1913,7 @@ impl TypeChecker {
     }
 
     /// Follow checked API alias targets while refusing cycles.
-    fn symbol_kind_from_api_target_path_inner(
+    pub(super) fn symbol_kind_from_api_target_path_inner(
         &self,
         manifest: &LibraryManifest,
         target_path: &[String],
@@ -3343,7 +1996,7 @@ impl TypeChecker {
     }
 
     /// Return whether a manifest export introduces a type-like name into the importing module.
-    fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
+    pub(super) fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
         matches!(export, ManifestExportRef::Alias(alias) if alias.projected_type.is_some())
             || matches!(
                 export,
@@ -3356,29 +2009,9 @@ impl TypeChecker {
             )
     }
 
-    /// Return a stable diagnostic label for a symbol that already exists in the current local scope.
-    fn existing_local_symbol_kind(&self, name: &str) -> Option<&'static str> {
-        let symbol_id = self.symbols.lookup_local(name)?;
-        let symbol = self.symbols.get(symbol_id)?;
-        let kind = match &symbol.kind {
-            SymbolKind::Variable(_) => "const/variable",
-            SymbolKind::Static(_) => "static",
-            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) => "function",
-            SymbolKind::Type(_) => "type",
-            SymbolKind::Trait(_) => "trait",
-            SymbolKind::Module(_) => "imported module",
-            SymbolKind::Variant(_) => "enum variant",
-            SymbolKind::Field(_) => "field",
-            SymbolKind::Property(_) => "property",
-            SymbolKind::RustItem(_) => "rust import",
-            SymbolKind::Capability(_) => "capability",
-        };
-        Some(kind)
-    }
-
     /// Define one symbol imported from a public library manifest.
     #[allow(clippy::too_many_arguments)] // Keeps provider, projection, alias, and source evidence explicit.
-    fn define_pub_import_symbol(
+    pub(super) fn define_pub_import_symbol(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -3470,7 +2103,8 @@ impl TypeChecker {
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
         Self::mark_compiled_class_field_provider(&mut kind, library);
 
-        let binding_path = vec!["pub".to_string(), library.to_string(), source_name.to_string()];
+        let mut binding_path = self.loaf_binding_root(library);
+        binding_path.push(source_name.to_string());
         if let SymbolKind::RustItem(info) = kind {
             self.symbols.define_import_binding_with_inferred_target_at_path(
                 Symbol {
@@ -3667,7 +2301,7 @@ impl TypeChecker {
     }
 
     /// Rewrite all resolved carrier types in one imported function signature and its generic bounds.
-    fn remap_function_info_with_import_aliases(
+    pub(super) fn remap_function_info_with_import_aliases(
         info: &mut FunctionInfo,
         imported_type_aliases: &HashMap<String, String>,
     ) {
@@ -3681,7 +2315,7 @@ impl TypeChecker {
     }
 
     /// Rewrite all resolved carrier types in one imported method signature and its generic or trait-target bounds.
-    fn remap_method_info_with_import_aliases(info: &mut MethodInfo, imported_type_aliases: &HashMap<String, String>) {
+    pub(super) fn remap_method_info_with_import_aliases(info: &mut MethodInfo, imported_type_aliases: &HashMap<String, String>) {
         for param in &mut info.params {
             Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
         }
@@ -3695,7 +2329,7 @@ impl TypeChecker {
     }
 
     /// Rewrite resolved generic arguments carried by imported trait-bound metadata.
-    fn remap_type_bounds_with_import_aliases(
+    pub(super) fn remap_type_bounds_with_import_aliases(
         bounds: &mut [TypeBoundInfo],
         imported_type_aliases: &HashMap<String, String>,
     ) {
@@ -3705,7 +2339,7 @@ impl TypeChecker {
     }
 
     /// Rewrite resolved generic arguments carried by one imported trait-bound entry.
-    fn remap_type_bound_with_import_aliases(
+    pub(super) fn remap_type_bound_with_import_aliases(
         bound: &mut TypeBoundInfo,
         imported_type_aliases: &HashMap<String, String>,
     ) {
@@ -3715,7 +2349,7 @@ impl TypeChecker {
     }
 
     /// Rewrite resolved type names through import aliases after stdlib materialization.
-    fn remap_resolved_type_with_import_aliases(ty: &mut ResolvedType, imported_type_aliases: &HashMap<String, String>) {
+    pub(super) fn remap_resolved_type_with_import_aliases(ty: &mut ResolvedType, imported_type_aliases: &HashMap<String, String>) {
         match ty {
             ResolvedType::Named(name) => {
                 if let Some(alias) = imported_type_aliases.get(name) {
@@ -3771,7 +2405,7 @@ impl TypeChecker {
     }
 
     /// Convert one manifest function export into semantic function metadata.
-    fn function_info_from_manifest(&self, export: &FunctionExport) -> FunctionInfo {
+    pub(super) fn function_info_from_manifest(&self, export: &FunctionExport) -> FunctionInfo {
         FunctionInfo {
             params: self.params_from_manifest(&export.params),
             return_type: resolved_type_from_manifest_type_ref(&export.return_type),
@@ -3787,7 +2421,7 @@ impl TypeChecker {
     ///
     /// The partial's leftover defaulted parameters are completed from its target in the manifest's checked API, so a
     /// call may omit one exactly when its default can be filled in (#1760).
-    fn partial_info_from_manifest(&self, manifest: &LibraryManifest, export: &PartialExport) -> FunctionInfo {
+    pub(super) fn partial_info_from_manifest(&self, manifest: &LibraryManifest, export: &PartialExport) -> FunctionInfo {
         self.partial_info_from_export(&manifest_partial_with_target_defaults(
             manifest.contract_metadata.api.as_ref(),
             export,
@@ -3795,7 +2429,7 @@ impl TypeChecker {
     }
 
     /// Convert one completed partial export into callable metadata for consumers.
-    fn partial_info_from_export(&self, export: &PartialExport) -> FunctionInfo {
+    pub(super) fn partial_info_from_export(&self, export: &PartialExport) -> FunctionInfo {
         FunctionInfo {
             params: self.params_from_manifest(&export.params),
             return_type: resolved_type_from_manifest_type_ref(&export.return_type),
@@ -3808,7 +2442,7 @@ impl TypeChecker {
     }
 
     /// Convert one public-manifest export into partial projection metadata when it denotes a partial callable.
-    fn partial_projection_from_manifest_export(
+    pub(super) fn partial_projection_from_manifest_export(
         &self,
         library: &str,
         manifest: &LibraryManifest,
@@ -3836,7 +2470,7 @@ impl TypeChecker {
     }
 
     /// Follow manifest aliases so a public alias to a partial keeps the same projection under the alias name.
-    fn partial_projection_from_manifest_alias(
+    pub(super) fn partial_projection_from_manifest_alias(
         &self,
         context: &PartialProjectionAliasContext<'_>,
         alias: &AliasExport,
@@ -3876,7 +2510,7 @@ impl TypeChecker {
     }
 
     /// Reconstruct import-visible projection metadata from serialized partial preset metadata.
-    fn partial_projection_from_manifest_partial(
+    pub(super) fn partial_projection_from_manifest_partial(
         export: &PartialExport,
         local_name: &str,
         imported_type_aliases: &HashMap<String, String>,
@@ -3909,7 +2543,7 @@ impl TypeChecker {
     }
 
     /// Rebuild one provider-owned preset value without losing canonical external reference identity.
-    fn checked_preset_value_from_manifest(
+    pub(super) fn checked_preset_value_from_manifest(
         value: &PresetValueExport,
         imported_type_aliases: &HashMap<String, String>,
     ) -> Option<CheckedPresetValue> {
@@ -3967,7 +2601,7 @@ impl TypeChecker {
     }
 
     /// Convert manifest partial target kind metadata into frontend projection vocabulary.
-    fn partial_projection_target_kind_from_manifest(kind: PartialTargetKindExport) -> PartialProjectionTargetKind {
+    pub(super) fn partial_projection_target_kind_from_manifest(kind: PartialTargetKindExport) -> PartialProjectionTargetKind {
         match kind {
             PartialTargetKindExport::Function => PartialProjectionTargetKind::Function,
             PartialTargetKindExport::ModelConstructor => PartialProjectionTargetKind::ModelConstructor,
@@ -3978,7 +2612,7 @@ impl TypeChecker {
     }
 
     /// Rebuild a metadata-safe preset value as a synthetic AST expression.
-    fn manifest_preset_value_expr(
+    pub(super) fn manifest_preset_value_expr(
         value: &PresetValueExport,
         imported_type_aliases: &HashMap<String, String>,
         span: Span,
@@ -4048,7 +2682,7 @@ impl TypeChecker {
     }
 
     /// Build an identifier/field expression for a serialized const reference path.
-    fn manifest_const_ref_expr(path: &[String], span: Span) -> Option<Spanned<Expr>> {
+    pub(super) fn manifest_const_ref_expr(path: &[String], span: Span) -> Option<Spanned<Expr>> {
         let (first, rest) = path.split_first()?;
         let mut expr = Spanned::new(Expr::Ident(first.clone()), span);
         for segment in rest {
@@ -4058,7 +2692,7 @@ impl TypeChecker {
     }
 
     /// Convert one manifest model export into semantic model metadata.
-    fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
+    pub(super) fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
         let methods = self.methods_from_manifest(&export.methods);
         let method_overloads = self.method_overloads_from_manifest(&export.methods);
         ModelInfo {
@@ -4076,7 +2710,7 @@ impl TypeChecker {
     }
 
     /// Convert one manifest class export into semantic class metadata.
-    fn class_info_from_manifest(&self, export: &ClassExport) -> ClassInfo {
+    pub(super) fn class_info_from_manifest(&self, export: &ClassExport) -> ClassInfo {
         let methods = self.methods_from_manifest(&export.methods);
         let method_overloads = self.method_overloads_from_manifest(&export.methods);
         ClassInfo {
@@ -4133,7 +2767,7 @@ impl TypeChecker {
     }
 
     /// Preserve a compiled-library field default in the checked export vocabulary without reparsing or rebasing it.
-    fn checked_param_default_from_manifest(&self, default: &ParamDefaultExport) -> CheckedParamDefault {
+    pub(super) fn checked_param_default_from_manifest(&self, default: &ParamDefaultExport) -> CheckedParamDefault {
         match default {
             ParamDefaultExport::Int(value) => CheckedParamDefault::Int(*value),
             ParamDefaultExport::Float(value) => value
@@ -4181,7 +2815,7 @@ impl TypeChecker {
     }
 
     /// Rebuild a manifest-safe field default as synthetic source metadata for inherited constructor exports.
-    fn manifest_param_default_expr(default: &ParamDefaultExport, span: Span) -> Option<Spanned<Expr>> {
+    pub(super) fn manifest_param_default_expr(default: &ParamDefaultExport, span: Span) -> Option<Spanned<Expr>> {
         let expr = match default {
             ParamDefaultExport::Int(value) => Expr::Literal(Literal::Int(IntLiteral::synthetic(*value))),
             ParamDefaultExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
@@ -4230,7 +2864,7 @@ impl TypeChecker {
     }
 
     /// Convert one manifest trait export into semantic trait metadata.
-    fn trait_info_from_manifest(&self, export: &TraitExport) -> TraitInfo {
+    pub(super) fn trait_info_from_manifest(&self, export: &TraitExport) -> TraitInfo {
         TraitInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             supertraits: export
@@ -4264,7 +2898,7 @@ impl TypeChecker {
     }
 
     /// Convert manifest trait adoption metadata, falling back to legacy trait-name-only manifests.
-    fn trait_adoptions_from_manifest(
+    pub(super) fn trait_adoptions_from_manifest(
         trait_names: &[String],
         trait_adoptions: &[TypeBoundExport],
     ) -> Vec<TypeBoundInfo> {
@@ -4302,7 +2936,7 @@ impl TypeChecker {
     }
 
     /// Decode one manifest implementation header into frontend semantic types.
-    fn implementation_type_params_from_manifest(
+    pub(super) fn implementation_type_params_from_manifest(
         type_params: &[ImplementationTypeParamExport],
     ) -> Vec<ImplementationTypeParamInfo> {
         type_params
@@ -4346,126 +2980,8 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Apply a consumer namespace grant to provider-local trait provenance carried by checked artifact facts.
-    fn qualify_provider_symbol_bounds(kind: &mut SymbolKind, namespace_prefix: &[String]) {
-        match kind {
-            // A capability declares an authority rather than a callable or a nominal type, so it carries no trait
-            // bounds for a consumer namespace grant to qualify.
-            SymbolKind::Capability(_) => {}
-            SymbolKind::Function(info) => Self::qualify_provider_function_bounds(info, namespace_prefix),
-            SymbolKind::FunctionOverloads(overloads) => {
-                for overload in overloads {
-                    Self::qualify_provider_function_bounds(&mut overload.info, namespace_prefix);
-                }
-            }
-            SymbolKind::Type(TypeInfo::Model(info)) => {
-                Self::qualify_provider_type_bounds(
-                    &mut info.trait_adoptions,
-                    &mut info.methods,
-                    &mut info.method_overloads,
-                    namespace_prefix,
-                );
-            }
-            SymbolKind::Type(TypeInfo::Class(info)) => {
-                Self::qualify_provider_type_bounds(
-                    &mut info.trait_adoptions,
-                    &mut info.methods,
-                    &mut info.method_overloads,
-                    namespace_prefix,
-                );
-            }
-            SymbolKind::Type(TypeInfo::Newtype(info)) => {
-                Self::qualify_provider_type_bounds(
-                    &mut info.trait_adoptions,
-                    &mut info.methods,
-                    &mut info.method_overloads,
-                    namespace_prefix,
-                );
-            }
-            SymbolKind::Type(TypeInfo::Enum(info)) => {
-                Self::qualify_provider_type_bounds(
-                    &mut info.trait_adoptions,
-                    &mut info.methods,
-                    &mut info.method_overloads,
-                    namespace_prefix,
-                );
-            }
-            SymbolKind::Trait(info) => {
-                for method in info.methods.values_mut() {
-                    Self::qualify_provider_method_bounds(method, namespace_prefix);
-                }
-            }
-            SymbolKind::Type(TypeInfo::Builtin | TypeInfo::TypeAlias)
-            | SymbolKind::Variable(_)
-            | SymbolKind::Static(_)
-            | SymbolKind::Module(_)
-            | SymbolKind::Variant(_)
-            | SymbolKind::Field(_)
-            | SymbolKind::Property(_)
-            | SymbolKind::RustItem(_) => {}
-        }
-    }
-
-    /// Qualify one provider-owned nominal type's trait adoptions and callable bounds.
-    fn qualify_provider_type_bounds(
-        adoptions: &mut [TypeBoundInfo],
-        methods: &mut HashMap<String, MethodInfo>,
-        overloads: &mut HashMap<String, Vec<MethodInfo>>,
-        namespace_prefix: &[String],
-    ) {
-        for adoption in adoptions {
-            Self::qualify_provider_bound(adoption, namespace_prefix);
-        }
-        for method in methods.values_mut() {
-            Self::qualify_provider_method_bounds(method, namespace_prefix);
-        }
-        for candidates in overloads.values_mut() {
-            for method in candidates {
-                Self::qualify_provider_method_bounds(method, namespace_prefix);
-            }
-        }
-    }
-
-    /// Qualify generic bounds on one provider function.
-    fn qualify_provider_function_bounds(info: &mut FunctionInfo, namespace_prefix: &[String]) {
-        for bounds in info.type_param_bound_details.values_mut() {
-            for bound in bounds {
-                Self::qualify_provider_bound(bound, namespace_prefix);
-            }
-        }
-    }
-
-    /// Qualify generic and explicit trait-target bounds on one provider method.
-    fn qualify_provider_method_bounds(info: &mut MethodInfo, namespace_prefix: &[String]) {
-        if let Some(target) = info.trait_target.as_mut() {
-            Self::qualify_provider_bound(target, namespace_prefix);
-        }
-        for bounds in info.type_param_bound_details.values_mut() {
-            for bound in bounds {
-                Self::qualify_provider_bound(bound, namespace_prefix);
-            }
-        }
-    }
-
-    /// Prefix a provider-local module path while preserving already canonical external provenance.
-    fn qualify_provider_bound(bound: &mut TypeBoundInfo, namespace_prefix: &[String]) {
-        let Some(module_path) = bound.module_path.as_mut() else {
-            return;
-        };
-        if module_path.starts_with(namespace_prefix)
-            || module_path
-                .first()
-                .is_some_and(|root| matches!(root.as_str(), "std" | "pub" | "rust" | "crate"))
-        {
-            return;
-        }
-        let mut canonical = namespace_prefix.to_vec();
-        canonical.append(module_path);
-        *module_path = canonical;
-    }
-
     /// Convert a manifest enum export into local enum symbol metadata.
-    fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
+    pub(super) fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
         let value_enum = export.value_type.map(|value_type| ValueEnumInfo {
             value_type: match value_type {
                 EnumValueTypeExport::Str => ValueEnumBacking::Str,
@@ -4531,7 +3047,7 @@ impl TypeChecker {
     }
 
     /// Convert a manifest newtype export into local typechecker metadata.
-    fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
+    pub(super) fn newtype_info_from_manifest(&self, export: &NewtypeExport) -> NewtypeInfo {
         NewtypeInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             is_rusttype: export.is_rusttype,
@@ -4553,7 +3069,7 @@ impl TypeChecker {
         }
     }
 
-    fn type_param_bounds_from_manifest(
+    pub(super) fn type_param_bounds_from_manifest(
         &self,
         type_params: &[TypeParamExport],
     ) -> std::collections::HashMap<String, Vec<String>> {
@@ -4569,7 +3085,7 @@ impl TypeChecker {
     }
 
     /// Convert manifest type-parameter bounds while preserving generic trait arguments.
-    fn type_param_bound_details_from_manifest(
+    pub(super) fn type_param_bound_details_from_manifest(
         &self,
         type_params: &[TypeParamExport],
     ) -> std::collections::HashMap<String, Vec<TypeBoundInfo>> {
@@ -4602,7 +3118,7 @@ impl TypeChecker {
     }
 
     /// Convert exported manifest fields into semantic field metadata for imported-library typechecking.
-    fn fields_from_manifest(
+    pub(super) fn fields_from_manifest(
         &self,
         owner: &str,
         fields: &[FieldExport],
@@ -4643,7 +3159,7 @@ impl TypeChecker {
     }
 
     /// Convert manifest computed properties into public semantic member metadata.
-    fn properties_from_manifest(
+    pub(super) fn properties_from_manifest(
         &self,
         owner: &str,
         properties: &[PropertyExport],
@@ -4666,7 +3182,7 @@ impl TypeChecker {
     }
 
     /// Convert manifest methods into the legacy single-method-per-name lookup map.
-    fn methods_from_manifest(&self, methods: &[MethodExport]) -> std::collections::HashMap<String, MethodInfo> {
+    pub(super) fn methods_from_manifest(&self, methods: &[MethodExport]) -> std::collections::HashMap<String, MethodInfo> {
         methods
             .iter()
             .map(|method| (method.name.clone(), self.method_info_from_manifest(method)))
@@ -4674,7 +3190,7 @@ impl TypeChecker {
     }
 
     /// Preserve same-type aliases so lowering can emit the canonical Rust method from a compiled dependency.
-    fn method_aliases_from_manifest(methods: &[MethodExport]) -> HashMap<String, String> {
+    pub(super) fn method_aliases_from_manifest(methods: &[MethodExport]) -> HashMap<String, String> {
         methods
             .iter()
             .filter_map(|method| {
@@ -4687,7 +3203,7 @@ impl TypeChecker {
     }
 
     /// Group manifest methods by name without dropping same-name trait-backed overloads.
-    fn method_overloads_from_manifest(
+    pub(super) fn method_overloads_from_manifest(
         &self,
         methods: &[MethodExport],
     ) -> std::collections::HashMap<String, Vec<MethodInfo>> {
@@ -4702,7 +3218,7 @@ impl TypeChecker {
     }
 
     /// Convert one manifest method export into semantic method metadata.
-    fn method_info_from_manifest(&self, method: &MethodExport) -> MethodInfo {
+    pub(super) fn method_info_from_manifest(&self, method: &MethodExport) -> MethodInfo {
         MethodInfo {
             identity: method.canonical.as_ref().and_then(|identity| identity.hydrate()),
             type_params: method.type_params.iter().map(|tp| tp.name.clone()).collect(),
@@ -4753,7 +3269,7 @@ impl TypeChecker {
     }
 
     /// Convert manifest parameters into checked callable parameters.
-    fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<CallableParam> {
+    pub(super) fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<CallableParam> {
         params
             .iter()
             .map(|param| {
@@ -4771,7 +3287,7 @@ impl TypeChecker {
             .collect()
     }
 
-    fn receiver_from_manifest(&self, receiver: Option<&ReceiverExport>) -> Option<Receiver> {
+    pub(super) fn receiver_from_manifest(&self, receiver: Option<&ReceiverExport>) -> Option<Receiver> {
         match receiver {
             Some(ReceiverExport::Immutable) => Some(Receiver::Immutable),
             Some(ReceiverExport::Mutable) => Some(Receiver::Mutable),
@@ -4779,220 +3295,6 @@ impl TypeChecker {
         }
     }
 
-    /// Ensure imported items are public in the dependency module.
-    ///
-    /// `from M import X` and `import M::X` of a declaration `X` (a path that names no module) bind the same item, so
-    /// both require `M` to export it (#1561).
-    fn validate_import_visibility(&mut self, import: &ImportDecl, span: Span) {
-        let (module, item_names) = match &import.kind {
-            ImportKind::From { module, items } => (
-                module.clone(),
-                items.iter().map(|item| item.name.clone()).collect::<Vec<_>>(),
-            ),
-            ImportKind::Module(path) if !self.full_path_names_a_module(path) => {
-                let Some((item_name, parent_segments)) = path.segments.split_last() else {
-                    return;
-                };
-                if parent_segments.is_empty() {
-                    return;
-                }
-                let parent = ImportPath {
-                    segments: parent_segments.to_vec(),
-                    is_absolute: path.is_absolute,
-                    parent_levels: path.parent_levels,
-                };
-                (parent, vec![item_name.clone()])
-            }
-            _ => return,
-        };
-        let module = &module;
-
-        // Only check modules that were pre-imported; skip std and unresolved ones.
-        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
-        let Some(exports) = self.dependency_exports.get(&module_name) else {
-            return;
-        };
-
-        let mut exported_names: HashSet<String> = HashSet::new();
-        for sym in exports {
-            match sym {
-                ExportedSymbol::Const(name)
-                | ExportedSymbol::Static(name)
-                | ExportedSymbol::Type(name)
-                | ExportedSymbol::Trait(name)
-                | ExportedSymbol::Function(name)
-                | ExportedSymbol::Capability(name)
-                | ExportedSymbol::Reexported(name) => {
-                    exported_names.insert(name.clone());
-                }
-                ExportedSymbol::Variant { variant_name, .. } => {
-                    exported_names.insert(variant_name.clone());
-                }
-            }
-        }
-
-        let exported_list: Vec<String> = exported_names.iter().cloned().collect();
-
-        for item_name in &item_names {
-            if !exported_names.contains(item_name)
-                && self.dependency_member_symbol_for_path(module, item_name).is_none()
-            {
-                self.errors.push(errors::import_not_exported(
-                    item_name,
-                    &module.to_rust_path(),
-                    &exported_list,
-                    span,
-                ));
-            }
-        }
-    }
-
-    /// Emit the RFC 005 diagnostic for unsupported `rust::core` / `rust::alloc` imports.
-    ///
-    /// Returns `true` when the crate is unsupported and an error was emitted.
-    fn reject_unsupported_rust_core_alloc(&mut self, crate_name: &str, span: Span) -> bool {
-        if crate_name == "core" || crate_name == "alloc" {
-            self.errors.push(errors::unsupported_rust_core_alloc(crate_name, span));
-            return true;
-        }
-        false
-    }
-
-    /// Build a full Rust import path vector from crate, optional module path, and optional item name.
-    fn rust_import_full_path(&self, crate_name: &str, path: &[Ident], item: Option<&str>) -> Vec<Ident> {
-        let mut full_path = vec![crate_name.to_string()];
-        full_path.extend(path.to_vec());
-        if let Some(item_name) = item {
-            full_path.push(item_name.to_string());
-        }
-        full_path
-    }
-
-    /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
-    fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
-        self.validate_root_namespace(&name, span);
-        let mut trait_methods = HashSet::new();
-        let mut trait_method_signatures = std::collections::HashMap::new();
-        if let Some(metadata) = &info.metadata
-            && let RustItemKind::Trait(trait_info) = &metadata.kind
-        {
-            for item in &trait_info.items {
-                match item {
-                    RustTraitAssoc::Function { name, signature } => {
-                        trait_methods.insert(name.clone());
-                        trait_method_signatures.insert(name.clone(), signature.clone());
-                    }
-                    RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => {}
-                }
-            }
-        }
-        if trait_methods.is_empty() {
-            trait_methods.extend(
-                fallback_rust_trait_methods(info.path.as_str())
-                    .iter()
-                    .map(|method| (*method).to_string()),
-            );
-        }
-        let symbol_id = self.define_rust_import_symbol(name.clone(), info.clone(), span);
-        if !self.symbols.is_active_lookup_binding(symbol_id) {
-            return;
-        }
-        // An import with a declared method surface is a trait Rust method lookup can use. An import with no
-        // metadata at all may still be one: nothing says which methods it provides, so it stays a candidate for
-        // every method call that no inspected surface resolves rather than being pruned as unused (#1450). Metadata
-        // that names a non-trait item settles the question, and the binding is left out.
-        let methods_known = !trait_methods.is_empty();
-        if !methods_known && info.metadata.is_some() {
-            return;
-        }
-        self.type_info.rust.trait_imports.insert(
-            name.clone(),
-            RustTraitImportInfo {
-                trait_path: info.path.clone(),
-                definition_path: info
-                    .metadata
-                    .as_ref()
-                    .and_then(|metadata| metadata.definition_path.clone()),
-                methods: trait_methods,
-                methods_known,
-                method_signatures: trait_method_signatures,
-            },
-        );
-    }
-
-    /// Define a symbol for a Rust crate import.
-    ///
-    /// Explicit Rust imports must be allowed to shadow dependency-exported Incan types with the same simple name. This
-    /// matters for Rust metadata display types such as `Duration`, where the current module's `from rust::... import
-    /// Duration` is the only reliable hint that an unqualified metadata return type means `std::time::Duration`.
-    fn define_rust_import_symbol(&mut self, name: Ident, info: RustItemInfo, span: Span) -> SymbolId {
-        self.symbols.define_import_binding_with_inferred_target(Symbol {
-            name,
-            kind: SymbolKind::RustItem(info),
-            span,
-            scope: 0, // Will be set by define()
-        })
-    }
-
-    /// Define a symbol for a module import through the shared binding registry.
-    fn define_import_symbol(
-        &mut self,
-        name: Ident,
-        path: Vec<Ident>,
-        is_python: bool,
-        target_identity: Option<CanonicalSymbolId>,
-        span: Span,
-    ) {
-        let symbol = Symbol {
-            name,
-            kind: SymbolKind::Module(ModuleInfo {
-                path: path.clone(),
-                is_python,
-            }),
-            span,
-            scope: 0,
-        };
-        if is_python {
-            self.symbols.define_import_binding(symbol, None);
-        } else {
-            self.symbols
-                .define_import_binding_at_path(symbol, target_identity, path);
-        }
-    }
-
-    /// Returns the existing symbol kind for a `from ... import ...` item when it resolves to a concrete, non-implicit
-    /// symbol in the current compilation context.
-    fn existing_from_import_symbol_kind(&self, name: &str) -> Option<SymbolKind> {
-        let id = self.symbols.lookup(name)?;
-        let sym = self.symbols.get(id)?;
-        if Self::is_implicit_builtin_symbol(sym) {
-            return None;
-        }
-        Some(sym.kind.clone())
-    }
-
-    /// Mark a symbol as an imported static binding when it resolves to `SymbolKind::Static`.
-    ///
-    /// This keeps assignment diagnostics aligned with RFC 052 (`from ... import STATIC` may read/mutate contents but
-    /// must reject rebinding the imported name).
-    fn mark_static_binding_imported(&mut self, name: &str) {
-        let Some(id) = self.symbols.lookup(name) else {
-            return;
-        };
-        let mut touched_static = false;
-        if let Some(sym) = self.symbols.get_mut(id)
-            && let SymbolKind::Static(info) = &mut sym.kind
-        {
-            info.is_imported = true;
-            touched_static = true;
-        }
-        if touched_static {
-            self.type_info.declarations.static_bindings.insert(
-                name.to_string(),
-                crate::typechecker::StaticBindingInfo { is_imported: true },
-            );
-        }
-    }
 }
 
 /// Convert a manifest parameter kind into a checked parameter kind.
@@ -5033,35 +3335,3 @@ fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> Strin
         .join("::")
 }
 
-#[cfg(test)]
-mod provider_feature_tests {
-    use std::collections::BTreeSet;
-
-    use super::*;
-    use crate::library_manifest::{ProviderFactKind, ProviderFactRequirement};
-
-    #[test]
-    fn inactive_export_features_preserve_alternative_additive_paths() {
-        let mut manifest = LibraryManifest::new("widgets".to_string(), "0.1.0".to_string());
-        manifest.contract_metadata.provider.fact_requirements = vec![
-            ProviderFactRequirement {
-                kind: ProviderFactKind::Export,
-                identity: "leaf::Leaf".to_string(),
-                required_features: BTreeSet::from(["alternate".to_string()]),
-            },
-            ProviderFactRequirement {
-                kind: ProviderFactKind::Export,
-                identity: "leaf::Leaf".to_string(),
-                required_features: BTreeSet::from(["inner".to_string(), "outer".to_string()]),
-            },
-        ];
-
-        assert_eq!(
-            TypeChecker::inactive_pub_export_features(&manifest, "Leaf"),
-            Some(vec![
-                vec!["alternate".to_string()],
-                vec!["inner".to_string(), "outer".to_string()],
-            ])
-        );
-    }
-}

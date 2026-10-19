@@ -5,9 +5,11 @@
 //! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots the compiler-pinned
 //! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
@@ -23,9 +25,32 @@ pub fn artifact_dir(root: &Path, profile: &str) -> PathBuf {
     root.join("target/incan/loaf").join(profile)
 }
 
-/// One compiled Loaf: its artifact directory and the library manifest read from it.
+/// The identity of one compiled Loaf: its package, version, manifest digest and public feature projection.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct LoafIdentity {
+    /// The Loaf's package name.
+    pub name: String,
+    /// The Loaf's exact version.
+    pub version: String,
+    /// The digest of the Loaf's library manifest.
+    pub digest: String,
+    /// The public features the artifact was compiled with.
+    pub feature_projection: BTreeSet<String>,
+}
+
+impl LoafIdentity {
+    /// A deterministic key for maps, reports and lock records: `name@version#digest[features]`.
+    pub fn stable_key(&self) -> String {
+        let features = self.feature_projection.iter().cloned().collect::<Vec<_>>().join(",");
+        format!("{}@{}#{}[{}]", self.name, self.version, self.digest, features)
+    }
+}
+
+/// One compiled Loaf: its identity, artifact directory and the library manifest read from it.
 #[derive(Debug, Clone)]
 pub struct LoafArtifact {
+    /// The Loaf's identity.
+    pub identity: LoafIdentity,
     /// The Loaf's package name, which names every file in its directory.
     pub name: String,
     /// The artifact directory for the compilation's profile.
@@ -38,17 +63,23 @@ impl LoafArtifact {
     /// Read the Loaf `name` from its artifact directory.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
         let path = dir.join(format!("{name}.incnlib"));
-        let manifest = LibraryManifest::read_from_path(&path).map_err(|error| LoafIndexError::Unreadable {
+        let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
-            reason: error.to_string(),
-        })?;
+            reason,
+        };
+        let bytes = std::fs::read(&path).map_err(|error| unreadable(error.to_string()))?;
+        let manifest = LibraryManifest::read_from_path(&path).map_err(|error| unreadable(error.to_string()))?;
         if manifest.name != name {
-            return Err(LoafIndexError::Unreadable {
-                path,
-                reason: format!("the manifest names the Loaf `{}`", manifest.name),
-            });
+            return Err(unreadable(format!("the manifest names the Loaf `{}`", manifest.name)));
         }
+        let identity = LoafIdentity {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            digest: format!("sha256:{:x}", Sha256::digest(&bytes)),
+            feature_projection: BTreeSet::new(),
+        };
         Ok(Self {
+            identity,
             name: name.to_owned(),
             dir: dir.to_path_buf(),
             manifest: Arc::new(manifest),
@@ -111,6 +142,15 @@ impl LoafEntry {
                 root == "std" && policy.namespace_roots.contains(&name.as_str())
             }
             _ => false,
+        }
+    }
+
+    /// The path this Loaf's public modules are bound under: `["pub", key]` for a dependency, `["std"]` for a standard
+    /// package, whose manifest spells its modules without the `std` root.
+    pub fn binding_root(&self) -> Vec<String> {
+        match &self.namespace {
+            LoafNamespace::Dependency { key } => vec!["pub".to_owned(), key.clone()],
+            LoafNamespace::Standard { .. } => vec!["std".to_owned()],
         }
     }
 }

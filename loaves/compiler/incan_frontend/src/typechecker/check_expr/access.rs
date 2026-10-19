@@ -1961,7 +1961,7 @@ impl TypeChecker {
     ) -> crate::typechecker::ResolvedMethodDispatch {
         let module_path = origin_module_path
             .map(<[String]>::to_vec)
-            .or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name));
+            .or_else(|| incan_lang::lang::stdlib::trait_method_module_segments(trait_name));
         crate::typechecker::ResolvedMethodDispatch::Trait {
             trait_name: trait_name.to_string(),
             module_path,
@@ -4405,14 +4405,7 @@ impl TypeChecker {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
         };
-        let type_info = self.lookup_semantic_type_info(type_name).cloned().or_else(|| {
-            if type_name == "Logger" {
-                self.stdlib_cache
-                    .lookup_type(&["std".to_string(), "logging".to_string()], "Logger")
-            } else {
-                None
-            }
-        });
+        let type_info = self.lookup_semantic_type_info(type_name).cloned();
         let Some(type_info) = type_info else {
             self.lookup_semantic_trait_info(type_name)?;
             let trait_args = match call.receiver_ty {
@@ -4875,7 +4868,8 @@ impl TypeChecker {
             }) if receiver_trait == trait_name => Some(module_path.clone()),
             _ => None,
         };
-        let module_path = receiver_module.or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))?;
+        let module_path =
+            receiver_module.or_else(|| incan_lang::lang::stdlib::trait_method_module_segments(trait_name))?;
         let adoption = TypeBoundInfo {
             name: trait_name.to_string(),
             source_name: Some(trait_name.to_string()),

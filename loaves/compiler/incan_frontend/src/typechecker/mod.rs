@@ -64,7 +64,6 @@ mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
-pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
 mod union_member_identity;
@@ -105,12 +104,11 @@ use std::sync::Arc;
 use crate::ast::*;
 use crate::diagnostics::{CompileError, ErrorKind, errors};
 use crate::library_manifest::LibraryManifest;
-use crate::library_manifest_index::LibraryManifestIndex;
+use crate::loaf_index::{LoafIdentity, LoafIndex, LoafNamespace};
 use crate::module::{
     ExportedSymbol, canonicalize_library_declaration_module_path, canonicalize_source_module_segments,
     exported_symbols, logical_source_import_candidates,
 };
-use crate::provider::ProviderPlan;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::surface_semantics::SurfaceContext;
 use crate::symbols::*;
@@ -127,6 +125,7 @@ use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::derives::{self as builtin_derives, DeriveId};
 use incan_lang::lang::errors as runtime_errors;
+use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::SurfaceFnId;
 use incan_lang::lang::surface::types as surface_types;
@@ -292,7 +291,7 @@ pub struct PublicLibraryTypeIdentity {
     /// Declaration identity retained from the admitted manifest, including provider-only signature types.
     canonical: Option<CanonicalSymbolId>,
     /// Exact admitted artifact instance; aliases and bridge routes do not participate in this identity.
-    selected_provider: Option<crate::provider::ProviderIdentity>,
+    selected_provider: Option<LoafIdentity>,
 }
 
 impl PartialEq for PublicLibraryTypeIdentity {
@@ -526,8 +525,8 @@ pub struct TypeChecker {
     for_item_taking: for_item_taking::ForItemTaking,
     /// Closures that capture local values, and the parameters and returns of this module that hold them (#1561).
     capturing_callables: capturing_callables::CapturingCallables,
-    /// Whether the program being checked is a module of the standard library, whatever its module path.
-    standard_library_source: bool,
+    /// The standard package the program being checked is, when it is one; its `std.*` roots are its own modules.
+    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
     pub unbound_c_abi_span_constructors: HashMap<(usize, usize), CAbiSpanKind>,
     /// Opaque checked typed span carriers keyed by their direct source local.
@@ -754,8 +753,10 @@ pub struct TypeChecker {
     /// The bounds that writing `local_hash_key_requirements` added to each module-level function, by function and type
     /// parameter; a function's export reads its declared bounds from source, so these are exported beside them.
     pub(in crate::typechecker) inferred_function_bounds: HashMap<String, HashMap<String, Vec<TypeBoundInfo>>>,
-    /// Shared provider and feature projection for ordinary dependencies and SDK-supplied libraries.
-    pub provider_plan: Arc<ProviderPlan>,
+    /// The compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
+    pub loaves: Arc<LoafIndex>,
+    /// Builtin traits' standard declarations by trait name, read once from the standard package owning each.
+    pub(in crate::typechecker) standard_traits: HashMap<String, TraitInfo>,
     /// Internal semantic type cache for dependency exports referenced transitively by imported signatures.
     ///
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
@@ -772,17 +773,6 @@ pub struct TypeChecker {
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
     /// names ambient in user source.
     pub transitive_pub_traits: HashMap<String, Vec<TraitInfo>>,
-    /// Internal semantic type cache for stdlib stub helper types referenced by imported stdlib signatures.
-    ///
-    /// Stub-backed stdlib modules often define carrier classes that imported functions return or accept. These types
-    /// must be available for internal method lookup, but importing one stdlib item must not make every sibling stub
-    /// type source-visible in user modules.
-    pub transitive_stdlib_stub_types: HashMap<String, TypeInfo>,
-    /// Internal semantic trait cache for stdlib stub helper traits referenced by imported stdlib signatures.
-    ///
-    /// Like [`Self::transitive_stdlib_stub_types`], these traits are used for trait-bound compatibility and
-    /// trait-method dispatch without widening source-visible name lookup.
-    pub transitive_stdlib_stub_traits: HashMap<String, TraitInfo>,
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
     pub cached_pub_libraries: HashSet<String>,
@@ -808,12 +798,6 @@ pub struct TypeChecker {
     /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
     /// (e.g. single-file mode without a manifest).
     pub declared_crate_names: Option<HashSet<String>>,
-    /// RFC 023 source-bootstrap and inventoryless-compatibility metadata loaded from stdlib `.incn` files.
-    ///
-    /// Component-aware SDK consumers use checked provider manifests instead. This cache remains for provider
-    /// publication, focused source-backed compiler tests, and legacy toolchains that do not expose an SDK inventory.
-    /// See [`stdlib_loader::StdlibAstCache`] for details.
-    pub stdlib_cache: stdlib_loader::StdlibAstCache,
     /// Local names bound to `std.testing` marker decorators via imports.
     ///
     /// These names are disallowed in runtime call expressions; markers are decorator-only semantics consumed by the
@@ -930,7 +914,7 @@ impl TypeChecker {
             transferred_c_resource_bindings: HashMap::new(),
             for_item_taking: for_item_taking::ForItemTaking::default(),
             capturing_callables: capturing_callables::CapturingCallables::default(),
-            standard_library_source: false,
+            own_standard_package: None,
             unbound_c_abi_span_constructors: HashMap::new(),
             c_abi_span_bindings: HashMap::new(),
             consumed_c_abi_span_bindings: HashMap::new(),
@@ -1006,12 +990,11 @@ impl TypeChecker {
             hash_key_type_params: HashMap::new(),
             local_hash_key_requirements: Vec::new(),
             inferred_function_bounds: HashMap::new(),
-            provider_plan: Arc::new(ProviderPlan::default()),
+            loaves: Arc::new(LoafIndex::default()),
+            standard_traits: HashMap::new(),
             transitive_pub_types: HashMap::new(),
             public_library_type_identities: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
-            transitive_stdlib_stub_types: HashMap::new(),
-            transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
             foreign_pub_type_remappings: HashMap::new(),
             pub_library_declaration_scopes: HashMap::new(),
@@ -1019,7 +1002,6 @@ impl TypeChecker {
             current_module_path: None,
             source_import_targets: HashMap::new(),
             declared_crate_names: None,
-            stdlib_cache: stdlib_loader::StdlibAstCache::new(),
             testing_marker_import_bindings: HashSet::new(),
             surface_function_import_bindings: HashMap::new(),
             surface_type_import_bindings: HashMap::new(),
@@ -1246,7 +1228,7 @@ impl TypeChecker {
     fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
+        if let Some(metadata) = self.loaves.rust_abi_item(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -1312,7 +1294,7 @@ impl TypeChecker {
     /// The gate skips wrapper names (`Result`, `Box`) whose metadata a prewarm does not need; a caller that demands
     /// the item itself, such as an alias named `Result`, resolves it here.
     fn demanded_rust_item_metadata(&self, canonical_path: &str, lookup_path: &str) -> Option<RustItemMetadata> {
-        if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
+        if let Some(metadata) = self.loaves.rust_abi_item(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -1461,7 +1443,7 @@ impl TypeChecker {
     fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        self.provider_plan.library_manifest_index().rust_abi_item(lookup_path)
+        self.loaves.rust_abi_item(lookup_path)
     }
 
     #[cfg(not(feature = "rust_inspect"))]
@@ -1843,12 +1825,8 @@ impl TypeChecker {
         source_path: &[String],
         canonical: Option<CanonicalSymbolId>,
     ) -> PublicLibraryTypeIdentity {
-        let manifest_entry = self.provider_plan.library_manifest_index().get(library);
-        let declaration_path = match (&canonical, manifest_entry) {
-            (
-                Some(canonical),
-                Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. }),
-            ) => manifest
+        let declaration_path = match (&canonical, self.loaves.manifest(library)) {
+            (Some(canonical), Some(manifest)) => manifest
                 .contract_metadata
                 .identity_graph
                 .declaration_source_path(canonical),
@@ -1856,17 +1834,12 @@ impl TypeChecker {
         };
         let mut identity =
             PublicLibraryTypeIdentity::new(library, declaration_path.unwrap_or(source_path)).with_canonical(canonical);
-        if let Some(canonical) = &identity.canonical {
-            identity.selected_provider = self.provider_plan.declaring_public_provider(library, canonical).ok();
-        } else if let Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { metadata, .. }) =
-            self.provider_plan.library_manifest_index().get(library)
-        {
-            identity.selected_provider = self
-                .provider_plan
-                .public_artifacts()
-                .find(|artifact| artifact.artifact.crate_root == metadata.crate_root)
-                .map(|artifact| artifact.identity.clone());
+        // The declaring Loaf of a re-exported type may be another Loaf than the one it was imported through.
+        identity.selected_provider = match &identity.canonical {
+            Some(canonical) => self.loaves.declaring_loaf(canonical),
+            None => self.loaves.entry(library),
         }
+        .map(|entry| entry.artifact.identity.clone());
         identity
     }
 
@@ -2766,39 +2739,14 @@ impl TypeChecker {
         self.declared_crate_names = Some(names);
     }
 
-    /// Set the loaded dependency library manifests used for `pub::` import resolution.
-    pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        let plan = Arc::new(ProviderPlan::for_library_index(index));
-        self.stdlib_cache.bind_provider_plan(&plan);
-        self.provider_plan = plan;
+    /// Set the compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
+    pub fn set_loaves(&mut self, loaves: Arc<LoafIndex>) {
+        self.loaves = loaves;
     }
 
-    /// Set shared dependency library manifests used for `pub::` import resolution.
-    pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
-        let plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
-        self.stdlib_cache.bind_provider_plan(&plan);
-        self.provider_plan = plan;
-    }
-
-    /// Set the immutable provider plan consumed by import resolution and semantic checking.
-    pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
-        self.stdlib_cache.bind_provider_plan(&plan);
-        self.provider_plan = plan;
-        self.seed_sdk_provider_symbols();
-    }
-
-    /// Install one in-memory SDK provider for focused compiler tests.
-    #[doc(hidden)]
-    pub fn set_in_memory_sdk_manifest(&mut self, manifest: LibraryManifest) {
-        let plan =
-            ProviderPlan::for_in_memory_sdk_manifest(self.provider_plan.library_manifest_index().clone(), manifest);
-        self.set_provider_plan(Arc::new(plan));
-    }
-
-    /// Mark the program being checked as a module of the standard library, which a module path under `std` and an SDK
-    /// bootstrap grant in the provider plan also mark.
-    pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
-        self.standard_library_source = standard_library_source;
+    /// Mark the program being checked as the standard package `policy` names.
+    pub fn set_own_standard_package(&mut self, policy: &'static StandardPackageNamespacePolicy) {
+        self.own_standard_package = Some(policy);
     }
 
     /// Record the module path owning this checker's declarations.
@@ -3383,11 +3331,7 @@ impl TypeChecker {
         if root != PUBLIC_LIBRARY_NAMESPACE {
             return None;
         }
-        let crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } =
-            self.provider_plan.library_manifest_index().get(library)?
-        else {
-            return None;
-        };
+        let manifest = self.loaves.manifest(library)?;
         let public_path = std::iter::once(manifest.name.clone())
             .chain(rest.iter().cloned())
             .chain(std::iter::once(name.to_string()))
@@ -3570,7 +3514,7 @@ impl TypeChecker {
         {
             return Some(first);
         }
-        self.transitive_stdlib_stub_types.get(name)
+        None
     }
 
     /// Look up semantic trait metadata, including transitive `pub::` exports referenced only through imported
@@ -3588,9 +3532,6 @@ impl TypeChecker {
                 SymbolKind::Type(_) => return None,
                 _ => {}
             }
-        }
-        if let Some(info) = self.transitive_stdlib_stub_traits.get(name) {
-            return Some(info);
         }
         let infos = self.transitive_pub_traits.get(name)?;
         (infos.len() == 1).then(|| &infos[0])
@@ -3855,23 +3796,6 @@ impl TypeChecker {
                 _ => {}
             }
         }
-        for declaration in &program.declarations {
-            let Declaration::Import(import) = &declaration.node else {
-                continue;
-            };
-            let ImportKind::From { module, items } = &import.kind else {
-                continue;
-            };
-            for item in items {
-                let Some(info) = self.stdlib_cache.lookup_trait(&module.segments, &item.name) else {
-                    continue;
-                };
-                let local_name = item.alias.as_ref().unwrap_or(&item.name);
-                for (method_name, method) in &info.methods {
-                    self.type_info.traits.record_method(local_name, method_name, method);
-                }
-            }
-        }
         for (qualified_trait_name, info) in &self.dependency_module_traits {
             for (method_name, method) in &info.methods {
                 self.type_info
@@ -3971,21 +3895,22 @@ impl TypeChecker {
         self.type_info.traits.provider_slot_identities = provider_slots;
     }
 
-    /// Record which visible trait slots the active compiled SDK providers declare, after every slot is recorded.
+    /// Record which visible trait slots the standard packages declare, after every slot is recorded.
     ///
     /// Aliases and facade imports keep a slot's provider identity, so the identity's origin decides; a slot of an
     /// ordinary package dependency stays eligible for project trait implementations.
     fn record_sdk_trait_methods(&mut self) {
-        let provider_plan = &self.provider_plan;
+        let loaves = &self.loaves;
         self.type_info.traits.sdk_method_identities = self
             .type_info
             .traits
             .method_identities
             .values()
             .filter(|identity| match &identity.origin {
-                SymbolOrigin::Package { library, .. } => provider_plan
-                    .active_sdk_records()
-                    .any(|provider| &provider.identity.name == library),
+                SymbolOrigin::Package { library, .. } => loaves.entries().any(|entry| {
+                    matches!(entry.namespace, LoafNamespace::Standard { .. })
+                        && &entry.artifact.manifest.name == library
+                }),
                 _ => false,
             })
             .cloned()
@@ -5516,15 +5441,15 @@ impl TypeChecker {
         }
     }
 
+
     /// Resolve the declaration a module-qualified type spelling names, if the checker can prove one.
     ///
     /// The root must be an Incan module binding; the remaining segments walk nested modules and end at a member that
-    /// declares a type or trait. Three registries can own that member, and each is consulted the way the matching
-    /// direct import would be: a public library through its checked manifest, a source dependency through the module
-    /// member registry, and a stdlib module through its cache. The resolved type is the one that direct import would
-    /// have bound -- the declaration's own name, the target of a non-generic source type alias, or the
-    /// provider-qualified spelling for a public library -- so values checked against either spelling of the same
-    /// declaration are compatible. `None` means no type was proven; it never means "assume the written path".
+    /// declares a type or trait. A Loaf module answers through its checked manifest and a source module through the
+    /// module member registry, each the way the matching direct import would. The resolved type is the one that direct
+    /// import would have bound -- the declaration's own name, the target of a non-generic source type alias, or the
+    /// Loaf-qualified spelling -- so values checked against either spelling of the same declaration are compatible.
+    /// `None` means no type was proven; it never means "assume the written path".
     fn qualified_type_declaration(&mut self, segments: &[String]) -> Option<QualifiedTypeReferenceInfo> {
         let (root, remainder) = segments.split_first()?;
         let (name, nested_module) = remainder.split_last()?;
@@ -5533,12 +5458,6 @@ impl TypeChecker {
             _ => None,
         })?;
         module_path.extend(nested_module.iter().cloned());
-        if !nested_module.is_empty() {
-            // A spelling through a submodule (`serde.json.Serialize` after `from std import serde`) proves the member
-            // the way `from std.serde import json` then `json.Serialize` does, so it retains that submodule's facts
-            // the same way an import of the submodule would (#1887).
-            self.cache_stdlib_module_import_semantics(&ImportPath::simple(module_path.clone()));
-        }
 
         // Compiler-known surface types have no source declaration for the stdlib cache to return. Their registry
         // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
@@ -5561,19 +5480,20 @@ impl TypeChecker {
             });
         }
 
-        // ---- Public library module: the checked manifest owns both the identity and the qualified type name ----
-        if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
+        // ---- Loaf module: the checked manifest owns both the identity and the qualified type name ----
+        if let Some((library, rest)) = self.loaf_module(&module_path) {
             let resolved = self
-                .resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
+                .resolve_pub_library_module_symbol_member(&library, &rest, name)
                 .ok()
                 .flatten()?;
             if !matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)) {
                 return None;
             }
             let identity = resolved.canonical?;
-            let mut source_type_path = resolved.source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
+            let root_len = self.loaf_binding_root(&library).len();
+            let mut source_type_path = resolved.source_module_path.iter().skip(root_len).cloned().collect::<Vec<_>>();
             source_type_path.push(resolved.source_name);
-            let canonical_name = canonical_public_library_type_name(&module_path[1], &source_type_path.join("::"));
+            let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
             return Some(QualifiedTypeReferenceInfo {
                 identity,
                 module_path,
@@ -5581,31 +5501,16 @@ impl TypeChecker {
             });
         }
 
-        // ---- Source dependency or stdlib module: the member registry proves the kind, the caches the identity ----
+        // ---- Source module: the member registry proves the kind and the identity ----
         let import = ImportPath::simple(module_path.clone());
         let member_kind = self.dependency_member_symbol_for_path(&import, name);
         let type_like = member_kind
             .as_ref()
             .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
-        let identity = if type_like {
-            self.dependency_member_identity(&import, name)
-                .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
-        } else {
-            self.stdlib_cache
-                .lookup_identity(&module_path, name)
-                .filter(|identity| {
-                    matches!(
-                        identity.kind,
-                        SemanticSourceTargetKind::Model
-                            | SemanticSourceTargetKind::Class
-                            | SemanticSourceTargetKind::Newtype
-                            | SemanticSourceTargetKind::Rusttype
-                            | SemanticSourceTargetKind::Enum
-                            | SemanticSourceTargetKind::TypeAlias
-                            | SemanticSourceTargetKind::Trait
-                    )
-                })
-        }?;
+        if !type_like {
+            return None;
+        }
+        let identity = self.dependency_member_identity(&import, name)?;
         // A direct import of a type alias registers its target and lets alias expansion replace the name; the
         // qualified spelling registers nothing local, so the target is the resolved type here. A generic alias
         // needs its arguments substituted, which only the local alias registry does, so it keeps the nominal name.
@@ -7260,12 +7165,6 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
-        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
-            return Err(vec![CompileError::new(
-                format!("retained standard source metadata refused: {error}"),
-                Span::default(),
-            )]);
-        }
         self.pending_uncopyable_dict_lookups.clear();
         self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
@@ -7376,7 +7275,7 @@ impl TypeChecker {
         self.export_type_alias_targets();
         self.record_binding_collision_diagnostics();
 
-        if self.provider_plan.public_artifacts().next().is_some() {
+        if self.loaves.entries().next().is_some() {
             for (name, identity) in &self.public_library_type_identities {
                 if identity.selected_provider.is_none()
                     && matches!(
@@ -7390,12 +7289,6 @@ impl TypeChecker {
                     ));
                 }
             }
-        }
-        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
-            self.errors.push(CompileError::new(
-                format!("retained standard source metadata refused: {error}"),
-                Span::default(),
-            ));
         }
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
@@ -7449,10 +7342,7 @@ impl TypeChecker {
             };
             if root == "pub"
                 && export.identity.canonical.is_some()
-                && matches!(
-                    self.provider_plan.library_manifest_index().get(library),
-                    Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { .. })
-                )
+                && self.loaves.entry(library).is_some()
             {
                 roots.insert(library.clone());
             }
@@ -7487,6 +7377,31 @@ impl TypeChecker {
         paths
     }
 
+    /// The `std.*` path of the module declaring `identity`, when a standard package declares it: another Loaf's
+    /// declaration (its origin names the package) or one of the program's own standard modules.
+    pub(in crate::typechecker) fn standard_declaring_module(&self, identity: &CanonicalSymbolId) -> Option<Vec<String>> {
+        let std_path = |path: &[String]| std::iter::once(stdlib::STDLIB_ROOT.to_string()).chain(path.iter().cloned()).collect();
+        match &identity.origin {
+            SymbolOrigin::Package { library, module_path }
+                if incan_lang::lang::standard_packages::standard_package_namespace_policy(library).is_some() =>
+            {
+                Some(std_path(module_path))
+            }
+            SymbolOrigin::Module(path) if path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) => Some(path.clone()),
+            SymbolOrigin::Module(path) if self.own_standard_package.is_some() => Some(std_path(path)),
+            _ => None,
+        }
+    }
+
+    /// The identity of the import binding that spells the surface type `surface` (`Html`) in this module: the
+    /// declaration the owning standard package publishes.
+    pub(in crate::typechecker) fn surface_type_identity(&self, surface: SurfaceTypeId) -> Option<CanonicalSymbolId> {
+        self.surface_type_import_bindings
+            .values()
+            .find(|(bound, symbol)| *bound == surface && self.symbols.is_active_lookup_binding(*symbol))
+            .and_then(|(_, symbol)| self.symbols.identity_of(*symbol).cloned())
+    }
+
     /// Retain active native builtin owners once for opaque nominal storage and checked runtime operations, without
     /// changing legacy lookup. Active rusttype aliases retain their checked source owner for native enum contracts.
     /// Web placeholders use their checked surface binding and original Rust re-export;
@@ -7512,11 +7427,11 @@ impl TypeChecker {
                 Some((symbol.name.clone(), identity.clone()))
             })
             .collect::<std::collections::BTreeMap<_, _>>();
-        for (name, (surface, symbol)) in &self.surface_type_import_bindings {
+        for (name, (_, symbol)) in &self.surface_type_import_bindings {
             if self.symbols.lookup(name) == Some(*symbol)
-                && let Some(identity) = self.stdlib_cache.native_web_identity(*surface)
+                && let Some(identity) = self.symbols.identity_of(*symbol)
             {
-                identities.insert(name.clone(), identity);
+                identities.insert(name.clone(), identity.clone());
             }
         }
         identities
@@ -7901,14 +7816,11 @@ impl TypeChecker {
             .insert(module_name.to_string(), member_projections);
     }
 
-    /// Resolve a re-exported member from another source dependency, an active SDK provider, or the compiler-owned
-    /// stdlib source metadata, in that order.
+    /// Resolve a re-exported member from another source module or from the Loaf that owns the re-exported module.
     ///
-    /// A facade that republishes `std.*` must bind the same declaration a direct `from std.x import f` binds. When an
-    /// active provider owns the module, that is the provider's checked declaration: its identity is what lets lowering
-    /// recover the compiled signature, defaults included. Falling back to the source cache there would hand the
-    /// source tree semantic authority again and leave the re-export identity-less, so it stays reserved for sessions
-    /// no provider serves.
+    /// A facade that republishes `std.*` must bind the same declaration a direct `from std.x import f` binds: the
+    /// owning Loaf's checked declaration, whose identity is what lets lowering recover the compiled signature,
+    /// defaults included.
     ///
     /// A facade that writes `from std.serde.json import Serialize` re-exports that trait exactly as it re-exports a
     /// function, so a consumer importing the spelling from the facade must bind the stdlib trait rather than a module
@@ -7923,77 +7835,39 @@ impl TypeChecker {
         if let Some(kind) = self.dependency_member_symbol_for_path_from(base_module_path, module, item_name) {
             return Some(kind);
         }
+        if module.parent_levels != 0 {
+            return None;
+        }
         let module_path = canonicalize_source_module_segments(&module.segments);
-        if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
-            return None;
-        }
-        if let Some(kind) = self.sdk_provider_member_symbol(module, item_name).filter(|kind| {
-            matches!(
-                kind,
-                SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) | SymbolKind::Trait(_)
-            )
-        }) {
-            return Some(kind);
-        }
-        if self.checked_sdk_provider_owns_module(&module_path) {
-            return None;
-        }
-        self.stdlib_cache
-            .lookup_function_symbol(&module_path, item_name)
-            .or_else(|| {
-                self.stdlib_cache
-                    .lookup_trait(&module_path, item_name)
-                    .map(SymbolKind::Trait)
-            })
+        let (library, rest) = self.loaf_module(&module_path)?;
+        let (kind, _) = self.lookup_pub_library_module_symbol_member(&library, &rest, item_name)?;
+        matches!(
+            kind,
+            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) | SymbolKind::Trait(_)
+        )
+        .then_some(kind)
     }
 
-    /// Return the checked symbol an active SDK provider publishes under one spelled `std.*` member path.
-    ///
-    /// Provider modules are seeded under their public dotted spelling rather than the underscore-joined keys source
-    /// dependencies use, so ordinary candidate resolution never reaches them. This is the one lookup both direct
-    /// imports and facade re-exports share for that registry.
-    fn sdk_provider_member_symbol(&self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
-        if module.parent_levels != 0 {
+    /// The Loaf owning a bound module path and the public module path inside its manifest: `pub.<key>.<path>` for a
+    /// dependency, `std.<root>.<path>` for a standard package other than the program's own.
+    pub(in crate::typechecker) fn loaf_module(&self, module_path: &[String]) -> Option<(String, Vec<String>)> {
+        if self.owns_standard_module(module_path) {
             return None;
         }
-        let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
-        self.dependency_direct_member_symbols
-            .get(&provider_key)?
-            .get(item_name)
-            .cloned()
+        let entry = self.loaves.owner_of(module_path)?;
+        let root = entry.binding_root();
+        Some((entry.key.clone(), module_path[root.len()..].to_vec()))
     }
 
-    /// Return the canonical identity an active SDK provider publishes under one spelled `std.*` member path.
-    ///
-    /// The identity is absent for a provider overload set, whose spelling selects no single declaration, and stays
-    /// absent rather than being reconstructed from the member symbol.
-    fn sdk_provider_member_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
-        if module.parent_levels != 0 {
-            return None;
+    /// Return whether `module` is one of the program's own standard modules: the program is a standard package and
+    /// the `std.*` root belongs to it, so the module is its own source rather than another Loaf.
+    pub(crate) fn owns_standard_module(&self, module: &[String]) -> bool {
+        match (self.own_standard_package, module) {
+            (Some(policy), [root, name, ..]) => {
+                root == incan_lang::lang::stdlib::STDLIB_ROOT && policy.namespace_roots.contains(&name.as_str())
+            }
+            _ => false,
         }
-        let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
-        if !self
-            .dependency_direct_member_symbols
-            .get(&provider_key)
-            .is_some_and(|members| members.contains_key(item_name))
-        {
-            return None;
-        }
-        self.dependency_direct_member_identities
-            .get(&provider_key)
-            .and_then(|identities| identities.get(item_name))
-            .cloned()
-    }
-
-    /// Return whether a checked, manifest-backed SDK provider owns one canonical `std.*` module path.
-    ///
-    /// Where it does, the stdlib source cache is never consulted for that module. This is the refusal the direct
-    /// import route applies, and the facade hops apply it identically so a re-export cannot hand the source tree the
-    /// semantic authority a direct import denies it, nor bind a symbol whose identity the provider never published.
-    fn checked_sdk_provider_owns_module(&self, module_path: &[String]) -> bool {
-        self.provider_plan
-            .active_sdk_provider_for_module(module_path)
-            .is_some_and(|provider| provider.manifest.is_some())
     }
 
     /// Cache direct declarations owned by one dependency module.
@@ -8087,7 +7961,10 @@ impl TypeChecker {
             if self.dependency_module_traits.contains_key(&key) {
                 continue;
             }
-            if let Some(info) = self.stdlib_cache.lookup_trait(&module_path, &source_name) {
+            if let Some((library, rest)) = self.loaf_module(&module_path)
+                && let Some((SymbolKind::Trait(info), _)) =
+                    self.lookup_pub_library_module_symbol_member(&library, &rest, &source_name)
+            {
                 self.dependency_module_traits.insert(key, info);
             }
         }
@@ -8262,11 +8139,7 @@ impl TypeChecker {
         module: &ImportPath,
     ) -> Vec<Vec<String>> {
         let mut candidates = Vec::new();
-        if module.parent_levels == 0
-            && self.provider_plan.bootstrap_owns_sdk_module(&module.segments)
-            && module.segments.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT)
-            && module.segments.len() > 1
-        {
+        if module.parent_levels == 0 && self.owns_standard_module(&module.segments) {
             candidates.push(canonicalize_source_module_segments(&module.segments[1..]));
         }
         for candidate in logical_source_import_candidates(base_module_path, module) {
@@ -8453,7 +8326,7 @@ impl TypeChecker {
         // It must stay a fallback. Running it first let the spelling pre-empt resolution: `from helpers import
         // render` inside `pkg.app` selects the sibling `pkg.helpers`, but a root `helpers` declaring the same member
         // answered instead -- a module the import did not select.
-        self.sdk_provider_member_identity(module, item_name)
+        self.loaf_import_identity(module, item_name)
             .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name))
     }
 
@@ -8506,49 +8379,39 @@ impl TypeChecker {
             return self
                 .dependency_member_resolution_from(&owner, target_module, target_name, depth + 1)
                 .or_else(|| {
-                    self.stdlib_reexport_identity(target_module, target_name)
+                    self.loaf_import_identity(target_module, target_name)
                         .map(|identity| ResolvedDependencyMember::declared_as(identity, target_name))
                 });
-        }
-        // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
-        // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
-        // stdlib import proves its identity through the loading lookup instead.
-        if depth > 0 && module.parent_levels == 0 && !module.is_absolute {
-            let module_path = canonicalize_source_module_segments(&module.segments);
-            if module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
-                return self
-                    .stdlib_cache
-                    .cached_identity(&module_path, item_name)
-                    .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name));
-            }
         }
         None
     }
 
-    /// Return the identity behind a facade re-export of a `std.*` member: the active SDK provider's, or the source
-    /// metadata's where no checked provider serves the module.
-    ///
-    /// This is the identity half of [`Self::dependency_reexported_member_symbol`] and follows it hop for hop, so the
-    /// identity a facade records is the identity of the symbol it bound: a chain that ends in a compiler-owned stdlib
-    /// module has no dependency candidate to stop at, and the provider registry or the stdlib cache holds that
-    /// module's declaration identities. The source identity is read from the already-populated cache because the
-    /// facade's binding loaded the module while it resolved the member symbol; a module that was never loaded never
-    /// bound the re-export in the first place. A direct stdlib import proves its identity through the loading lookup
-    /// instead.
-    fn stdlib_reexport_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
-        if let Some(identity) = self.sdk_provider_member_identity(module, item_name) {
-            return Some(identity);
-        }
+    /// Return the identity the Loaf owning `module` publishes for `item_name`: the identity half of
+    /// [`Self::dependency_reexported_member_symbol`], followed hop for hop, so the identity a facade records is the
+    /// identity of the symbol it bound.
+    fn loaf_import_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
         if module.parent_levels != 0 || module.is_absolute {
             return None;
         }
-        let module_path = canonicalize_source_module_segments(&module.segments);
-        if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT)
-            || self.checked_sdk_provider_owns_module(&module_path)
-        {
-            return None;
-        }
-        self.stdlib_cache.cached_identity(&module_path, item_name)
+        self.loaf_member_identity(&canonicalize_source_module_segments(&module.segments), item_name)
+    }
+
+    /// Return the canonical identity the Loaf owning `module_path` publishes for `item_name`.
+    pub(in crate::typechecker) fn loaf_member_identity(
+        &self,
+        module_path: &[String],
+        item_name: &str,
+    ) -> Option<CanonicalSymbolId> {
+        let (library, rest) = self.loaf_module(module_path)?;
+        let manifest = self.loaves.manifest(&library)?;
+        let public_path = std::iter::once(manifest.name.clone())
+            .chain(rest)
+            .chain(std::iter::once(item_name.to_string()))
+            .collect::<Vec<_>>();
+        manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_path(&public_path)
     }
 
     /// Return one imported registry's checked defining contract and canonical owner path.
@@ -8911,7 +8774,6 @@ impl TypeChecker {
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
-        self.seed_sdk_provider_symbols();
         self.record_nominal_declaring_modules(program, dependencies);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
@@ -8966,7 +8828,6 @@ impl TypeChecker {
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
-        self.seed_sdk_provider_symbols();
         self.record_nominal_declaring_modules(program, dependencies);
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {

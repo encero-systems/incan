@@ -278,31 +278,15 @@ impl TypeChecker {
 
     /// Return whether the module being checked is a module of the standard library, whose function-typed slots,
     /// closures and trait defaults are spelled by the standard library's own lowering rules and are left as they are.
-    ///
-    /// A module is one when a harness says so ([`TypeChecker::set_standard_library_source`]), when its path is under
-    /// `std`, when its path is under the generated `__incan_std` namespace, and when the checker's provider plan
-    /// carries an SDK bootstrap grant or retained ordinary source authority for this module's own root. The ordinary
-    /// grant is selected and verified at source/session handoffs; this hot check only reads its pinned root policy.
-    /// A consumer with no SDK inventory, such as one on a fresh home, checks each
-    /// standard-library module it imports from source under `__incan_std` (`__incan_std.derives.collection`); an SDK
-    /// component compiled from its own source checks its modules under their physical paths (`derives.collection`).
+    /// A module is one when the program is a standard package ([`TypeChecker::set_own_standard_package`]) or when its
+    /// path is under `std`.
     pub(super) fn checks_standard_library_source(&self) -> bool {
-        self.standard_library_source
-            || self.provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
-            || self.provider_plan.standard_source_publication().is_some_and(|source| {
-                self.current_module_path
-                    .as_ref()
-                    .and_then(|path| path.first())
-                    .is_some_and(|root| source.namespace_roots().contains(&root.as_str()))
-            })
+        self.own_standard_package.is_some()
             || self
                 .current_module_path
                 .as_ref()
                 .and_then(|path| path.first())
-                .is_some_and(|root| {
-                    root == incan_lang::lang::stdlib::STDLIB_ROOT
-                        || root == incan_lang::lang::stdlib::INCAN_STD_NAMESPACE
-                })
+                .is_some_and(|root| root == incan_lang::lang::stdlib::STDLIB_ROOT)
     }
 
     /// Describe `expr`, already checked, when it is a capturing callable: a closure that captures, a local partial, a

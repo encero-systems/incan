@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Declaration, Expr, ImportKind, ImportPath, ParamKind, Program, Spanned, Visibility};
-use crate::library_manifest_index::LibraryManifestIndexEntry;
 use crate::symbols::{FunctionInfo, ResolvedType, SymbolKind};
 use crate::typechecker::type_info::BodyIrReexportCallInfo;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
@@ -139,11 +138,7 @@ impl TypeChecker {
             && let [root, library] = module.segments.as_slice()
             && root == crate::typechecker::PUBLIC_LIBRARY_NAMESPACE
         {
-            let LibraryManifestIndexEntry::Loaded { manifest, .. } =
-                self.provider_plan.library_manifest_index().get(library)?
-            else {
-                return None;
-            };
+            let manifest = self.loaves.manifest(library)?;
             let SymbolKind::Function(signature) = self.pub_library_function_symbol(manifest, member)? else {
                 return None;
             };

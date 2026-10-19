@@ -8,7 +8,6 @@ use crate::ast::{CallArg, Span};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::nominal_type_param_bounds::NominalTypeParamBounds;
-use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_semantics_core::SymbolOrigin;
 
 #[cfg(test)]
@@ -146,53 +145,9 @@ impl TypeChecker {
             .cloned()
     }
 
-    /// Recover missing SDK bound provenance only from the exact authenticated owner declaration.
-    /// An independent source query keeps the shared checker cache and legacy bound tables unchanged. Bounds absent
-    /// from that declaration or carrying different arguments retain their original metadata and grant no new fact.
+    /// The declared bounds of a factory owner, with the provenance its declaration records.
     fn body_ir_factory_owner_bounds(&self, owner: &str) -> NominalTypeParamBounds {
-        let mut bounds = self.declared_nominal_bounds(owner).cloned().unwrap_or_default();
-        let Some(identity) = self
-            .symbols
-            .module_type_identity(owner)
-            .or_else(|| self.type_info.declarations.named_type_identities.get(owner))
-        else {
-            return bounds;
-        };
-
-        // ---- Authenticated declaring source ----
-        let mut cache = StdlibAstCache::new();
-        cache.bind_provider_plan(&self.provider_plan);
-        let Some(source) = cache.callable_source_identity(identity) else {
-            return bounds;
-        };
-        let SymbolOrigin::Module(path) = source.origin else {
-            return bounds;
-        };
-        let source_bounds = cache.lookup_type_param_bounds(&path, &source.declaration_name);
-        if cache.verify_retained_sources().is_err() {
-            return bounds;
-        }
-
-        // ---- Missing bound provenance ----
-        for (parameter, requirements) in &mut bounds {
-            let Some((_, declared)) = source_bounds.iter().find(|(name, _)| name == parameter) else {
-                continue;
-            };
-            for bound in requirements {
-                if bound.module_path.is_some() || bound.source_name.is_some() {
-                    continue;
-                }
-                if let Some(proven) = declared.iter().find(|proven| {
-                    proven.name == bound.name
-                        && proven.type_args == bound.type_args
-                        && proven.implementation_type_params == bound.implementation_type_params
-                        && proven.inferred == bound.inferred
-                }) {
-                    *bound = proven.clone();
-                }
-            }
-        }
-        bounds
+        self.declared_nominal_bounds(owner).cloned().unwrap_or_default()
     }
 
     /// Restore only a source model or class's declared owner binders; concrete receiver arguments remain fixed.
