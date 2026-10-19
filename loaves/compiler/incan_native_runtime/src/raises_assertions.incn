@@ -1,9 +1,7 @@
 """Inspect panic-hosted error categories inside a deferred function's unwind boundary."""
 
-from rust::std::panic import catch_unwind
-from rust::std::primitive import str as RustStr
 from rust::incan_std_core::strings import str_starts_with
-from rust::incan_std_testing import fail_t
+from rust::incan_std_testing import fail_t, panic_text
 from rust::std::cmp import PartialEq
 
 
@@ -28,21 +26,13 @@ def comparison_failure(message: str, condition: str) -> None:
 
 pub def assert_raises_deferred(block: () -> None, expected: str, message: str) -> None:
     """Match legacy's String/static-str payload categories and exact default or custom assertion failures."""
-    match catch_unwind(block):
-        Ok(_) =>
+    # The testing facet reads the type-erased panic payload: its text, empty for a payload that carries none.
+    match panic_text(block):
+        None =>
             if message != "":
                 return fail_t(f"AssertionError: {message}")
             return fail_t(f"AssertionError: expected {expected} to be raised")
-        Err(payload) =>
-            mut actual = ""
-            match payload.downcast_ref[str]():
-                Some(value) =>
-                    actual = str(value)
-                None =>
-                    match payload.downcast_ref[&RustStr]():
-                        Some(value) =>
-                            actual = str(value)
-                        None => pass
+        Some(actual) =>
             prefix = f"{expected}:"
             if actual == expected or str_starts_with(actual, prefix):
                 return
