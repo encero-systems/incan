@@ -1,5 +1,4 @@
 # behavior: list spreads observe their sources once in written order around a mutation (#2115)
-# pending: #2115 the leading spread observes the later source mutation
 # expect-stdout:
 #   4
 #   1 7 1 9
