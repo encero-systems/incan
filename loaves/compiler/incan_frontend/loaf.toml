@@ -7,7 +7,6 @@ incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", optional = true, pat
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
-rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../rust_inspect" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
@@ -29,12 +28,10 @@ version = "0.6.0-dev.6"
 
 [project.features]
 default = [
-    "rust_inspect",
     "std_testing",
     "std_async",
     "std_decorators",
 ]
-rust_inspect = ["rust_inspect/inspector"]
 std_async = [
     "dep:incan_semantics_stdlib",
     "incan_semantics_stdlib/std_async",
@@ -49,7 +46,6 @@ std_testing = [
 ]
 test_support = [
     "dep:tempfile",
-    "rust_inspect/test_fixtures",
 ]
 
 [rust]
@@ -60,5 +56,4 @@ type = "lib"
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
-rust_inspect = { features = ["test_fixtures"] }
 tempfile = { optional = false }

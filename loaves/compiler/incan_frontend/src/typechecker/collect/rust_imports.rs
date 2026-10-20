@@ -5,6 +5,9 @@ use crate::ast::*;
 use crate::diagnostics::errors;
 use crate::symbols::*;
 use crate::typechecker::TypeChecker;
+use crate::typechecker::type_info::RustTraitImportInfo;
+use incan_lang::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods};
+use std::collections::HashSet;
 
 impl TypeChecker {
     /// Collect a Rust crate or crate-path import and attach metadata when available.

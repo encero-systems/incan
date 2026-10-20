@@ -26,12 +26,11 @@ use crate::library_manifest::{
 use crate::loaf_index::LoafEntry;
 use crate::symbols::*;
 use crate::testing_markers::testing_marker_semantics_from_manifest;
-use crate::typechecker::type_info::RustTraitImportInfo;
 use crate::typechecker::{
-    ImportedRegistryDefinitionInfo, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
-    PublicLibraryTypeIdentity, TypeChecker, canonical_public_library_type_name,
+    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, PublicLibraryTypeIdentity,
+    TypeChecker, canonical_public_library_type_name,
 };
-use incan_lang::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
+use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions as surface_functions;

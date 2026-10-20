@@ -137,17 +137,9 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         _ => return None,
     };
     path.push(name.into());
-    let target = CanonicalSymbolId {
-        namespace: SymbolNamespace::Member,
-        origin: SymbolOrigin::RustCrate(path),
-        declaration_name: name.into(),
-        kind: SemanticSourceTargetKind::RustItem,
-        scope_discriminant: None,
-        declaration_span: HirSourceSpan::new(0, 0),
-    };
     Some(bir::LoafCallable {
         canonical,
-        target,
+        item: path.join("::"),
         parameters: vec![IncanType::Ref(Box::new(template))],
         return_type: result,
         type_parameters: parameters,

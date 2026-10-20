@@ -166,7 +166,7 @@ fn insert_artifact(
         }
         Entry::Occupied(entry) if entry.get().provider_key != artifact.provider_key => {
             return Err(ExecutableResolutionError::AmbiguousPackage {
-                library: artifact.manifest.name,
+                library: artifact.manifest.name.clone(),
                 versions: format!("{}, {}", entry.get().provider_key, artifact.provider_key),
             });
         }

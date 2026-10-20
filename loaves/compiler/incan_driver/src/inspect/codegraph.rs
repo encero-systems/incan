@@ -9,7 +9,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use incan_codegraph::{
     CODEGRAPH_SCHEMA_VERSION, CodegraphCBindingBuffer, CodegraphCBindingCallRecord, CodegraphCBindingEnum,
@@ -240,9 +239,7 @@ fn directory_modules_diagnostics_and_info(
                         for (path, snapshot) in analysis.semantic_snapshots() {
                             retain_root_analysis(&mut semantic_snapshots_by_path, file, path, snapshot.clone());
                         }
-                        let package_name = package_identity(&project_root)?
-                            .and_then(|package| package.name)
-                            .unwrap_or_else(|| "<unpackaged>".to_string());
+                        let package_name = session.unit().package.clone();
                         for (path, metadata) in checked_registry_metadata_by_path(&analysis, &modules, &package_name) {
                             retain_root_analysis(&mut registry_metadata_by_path, file, &path, metadata);
                         }
@@ -259,7 +256,7 @@ fn directory_modules_diagnostics_and_info(
                             let Some(type_info) = analysis.type_info_for_path(&module.file_path) else {
                                 continue;
                             };
-                            for (identity, signature) in lowered_declaration_facts(module, type_info) {
+                            for (identity, signature) in lowered_declaration_facts(module, type_info, session) {
                                 signatures_by_identity.entry(identity).or_insert(signature);
                             }
                         }
@@ -332,7 +329,7 @@ fn typecheck_diagnostics_and_info(
                 .iter()
                 .filter_map(|module| {
                     let type_info = analysis.type_info_for_path(&module.file_path)?;
-                    Some(lowered_declaration_facts(module, type_info))
+                    Some(lowered_declaration_facts(module, type_info, session))
                 })
                 .flatten()
                 .collect(),
@@ -2439,10 +2436,21 @@ struct LoweredDeclarationFacts {
 fn lowered_declaration_facts(
     module: &ParsedModule,
     type_info: &incan_frontend::typechecker::TypeCheckInfo,
+    session: &CompilationSession,
 ) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
     use incan_semantics_core::semantic_digest::{body_docstring, body_without_docstring, semantic_digest};
 
-    let body_ir = incan_frontend::body_ir::build_body_ir_module_v0(&module.ast, &module.path_segments, type_info);
+    let Ok(provider_operations) = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())
+    else {
+        return BTreeMap::new();
+    };
+    let context = incan_frontend::body_ir::BodyIrContext {
+        modules: &[],
+        provider_operations: &provider_operations,
+        registry_package: Some(session.unit().package.as_str()),
+    };
+    let body_ir =
+        incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
     body_ir
         .bodies
         .iter()

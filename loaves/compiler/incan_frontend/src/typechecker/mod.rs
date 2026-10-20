@@ -93,13 +93,10 @@ pub use type_info::{
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
-#[cfg(feature = "rust_inspect")]
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::*;
 use crate::diagnostics::{CompileError, ErrorKind, errors};
-use crate::library_manifest::LibraryManifest;
 use crate::loaf_index::{LoafIdentity, LoafIndex, LoafNamespace};
 use crate::module::{
     ExportedSymbol, canonicalize_library_declaration_module_path, canonicalize_source_module_segments,
@@ -133,10 +130,6 @@ use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
-#[cfg(feature = "rust_inspect")]
-use rust_inspect::{
-    Inspector, OVEN_DIRECT_INSPECTION_AUTHORITY_FILE, RustMetadataCache, oven_inspection_registry_source_roots,
-};
 
 /// Type checker state.
 ///
@@ -852,28 +845,6 @@ pub struct TypeChecker {
     /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
     #[cfg(test)]
     rust_complete_type_lookup_requests: Cell<usize>,
-    /// Feature-gated cache for rust-inspect semantic metadata extraction (RFC 041).
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_cache: RustMetadataCache,
-    /// Manifest/workspace root used for rust-analyzer metadata extraction.
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_manifest_dir: Option<PathBuf>,
-    /// Receipt-bound Oven registry source authority available to fast identity preparation.
-    #[cfg(feature = "rust_inspect")]
-    pub rust_inspect_registry_source_authority: RustInspectRegistrySourceAuthority,
-}
-
-/// Fast Rust metadata lookup authority selected for the current compiler-owned inspection workspace.
-///
-/// A malformed authority must remain distinct from an ordinary Cargo-backed workspace: silently treating it as
-/// ambient would let host cache contents influence an Oven consumer's nominal Rust identity.
-#[cfg(feature = "rust_inspect")]
-#[derive(Debug, Clone, Default)]
-pub enum RustInspectRegistrySourceAuthority {
-    #[default]
-    Ambient,
-    Sealed(Vec<PathBuf>),
-    Invalid,
 }
 
 /// Dependency-owned registry contracts and their canonical source-module identity.
@@ -1012,12 +983,6 @@ impl TypeChecker {
             rust_metadata_queries: RefCell::new(BTreeSet::new()),
             #[cfg(test)]
             rust_complete_type_lookup_requests: Cell::new(0),
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_cache: RustMetadataCache::new(),
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_manifest_dir: None,
-            #[cfg(feature = "rust_inspect")]
-            rust_inspect_registry_source_authority: RustInspectRegistrySourceAuthority::default(),
         }
     }
 
@@ -1160,32 +1125,6 @@ impl TypeChecker {
         }
         Some(result_ty)
     }
-
-    /// Opt into semantic rust-inspect extraction for this checker.
-    ///
-    /// The checker stays metadata-free by default so plain semantic/unit-test paths do not accidentally load an
-    /// external Rust workspace. Callers that own project context, such as the CLI, test runner, and LSP, must set the
-    /// generated metadata workspace explicitly.
-    #[cfg(feature = "rust_inspect")]
-    pub fn set_rust_inspect_manifest_dir(&mut self, dir: PathBuf) {
-        let authority_path = dir.join(OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
-        self.rust_inspect_registry_source_authority = if !authority_path.is_file() {
-            RustInspectRegistrySourceAuthority::Ambient
-        } else {
-            match oven_inspection_registry_source_roots(&dir) {
-                Ok(roots) => RustInspectRegistrySourceAuthority::Sealed(roots),
-                Err(error) => {
-                    tracing::debug!(
-                        manifest_dir = %dir.display(),
-                        "sealed Oven registry source authority is invalid; fast Rust identity metadata will fail closed: {error}"
-                    );
-                    RustInspectRegistrySourceAuthority::Invalid
-                }
-            }
-        };
-        self.rust_inspect_manifest_dir = Some(dir);
-    }
-
     /// Return canonical Rust metadata queries successfully resolved by this checker.
     ///
     /// Library publication uses these paths in addition to explicit imports so inferred return receivers and other
@@ -1212,261 +1151,24 @@ impl TypeChecker {
         Some(metadata)
     }
 
-    /// Resolve a demanded Rust item, allowing the selected inspection authority to extract missing metadata.
-    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        let metadata = self.lookup_rust_item_metadata_for_path_blocking(canonical_path)?;
-        self.record_rust_metadata_query(canonical_path);
-        Some(metadata)
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    /// Return Rust item metadata, preferring shipped dependency ABI over rust-inspect cache reads.
-    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if let Some(metadata) = self.loaves.rust_abi_item(lookup_path) {
-            return Some(metadata);
-        }
-        let dir = self.rust_inspect_manifest_dir.as_ref()?;
-        match &self.rust_inspect_registry_source_authority {
-            RustInspectRegistrySourceAuthority::Invalid => {
-                tracing::debug!(
-                    manifest_dir = %dir.display(),
-                    "refusing fast Rust identity lookup because sealed Oven source authority is invalid"
-                );
-                return None;
-            }
-            RustInspectRegistrySourceAuthority::Ambient | RustInspectRegistrySourceAuthority::Sealed(_) => {
-                // Cached metadata is already associated with this manifest directory. Consult it before
-                // deciding whether this namespace is eligible for a new source extraction: standard-library
-                // paths, for example, intentionally remain cache-only.
-                if let Ok(Some(hit)) = self.rust_inspect_cache.get_cached(dir, lookup_path) {
-                    return Some((*hit.metadata).clone());
-                }
-            }
-        }
-        if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
-            return None;
-        }
-        let metadata = match &self.rust_inspect_registry_source_authority {
-            RustInspectRegistrySourceAuthority::Ambient => {
-                self.rust_inspect_cache.get_cached_or_extract_fast(dir, lookup_path)
-            }
-            RustInspectRegistrySourceAuthority::Sealed(roots) => self
-                .rust_inspect_cache
-                .get_cached_or_extract_fast_with_registry_src_roots(dir, lookup_path, roots.as_slice()),
-            RustInspectRegistrySourceAuthority::Invalid => {
-                unreachable!("invalid authority returned above")
-            }
-        };
-        match metadata {
-            Ok(Some(hit)) => Some((*hit.metadata).clone()),
-            Err(err) => {
-                tracing::debug!(
-                    "rust-inspect fast metadata lookup failed for `{}` (query `{}`): {err}",
-                    canonical_path,
-                    lookup_path
-                );
-                None
-            }
-            Ok(None) => None,
-        }
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    /// Return Rust item metadata, falling back to extraction only after shipped ABI and cache-only reads miss.
-    fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
-            return None;
-        }
-        self.demanded_rust_item_metadata(canonical_path, lookup_path)
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    /// Return one demanded Rust item from shipped ABI, the cache, or extraction, without the identity-prewarm gate.
-    ///
-    /// The gate skips wrapper names (`Result`, `Box`) whose metadata a prewarm does not need; a caller that demands
-    /// the item itself, such as an alias named `Result`, resolves it here.
-    fn demanded_rust_item_metadata(&self, canonical_path: &str, lookup_path: &str) -> Option<RustItemMetadata> {
-        if let Some(metadata) = self.loaves.rust_abi_item(lookup_path) {
-            return Some(metadata);
-        }
-        let dir = self.rust_inspect_manifest_dir.as_ref()?;
-        if matches!(
-            self.rust_inspect_registry_source_authority,
-            RustInspectRegistrySourceAuthority::Invalid
-        ) {
-            tracing::debug!(
-                manifest_dir = %dir.display(),
-                "refusing blocking Rust identity lookup because sealed Oven source authority is invalid"
-            );
-            return None;
-        }
-        match self.rust_inspect_cache.get_cached(dir, lookup_path) {
-            Ok(Some(hit)) => return Some((*hit.metadata).clone()),
-            Ok(None) => {}
-            Err(err) => {
-                tracing::debug!(
-                    "rust-inspect cache lookup failed for `{}` (query `{}`): {err}",
-                    canonical_path,
-                    lookup_path
-                );
-            }
-        }
-        // stdlib interop paths are conventionally stable and intentionally stay cache-only.
-        if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
-            return self.rust_item_metadata_for_path(lookup_path);
-        }
-        match self.rust_inspect_cache.get_cached(dir, lookup_path) {
-            Ok(Some(hit)) => Some((*hit.metadata).clone()),
-            Ok(None) => {
-                let extracted = match &self.rust_inspect_registry_source_authority {
-                    RustInspectRegistrySourceAuthority::Ambient => {
-                        self.rust_inspect_cache.get_or_extract(dir, lookup_path, &|_| ())
-                    }
-                    RustInspectRegistrySourceAuthority::Sealed(roots) => self
-                        .rust_inspect_cache
-                        .get_or_extract_with_registry_src_roots(dir, lookup_path, roots.as_slice(), &|_| ()),
-                    RustInspectRegistrySourceAuthority::Invalid => {
-                        unreachable!("invalid authority returned above")
-                    }
-                };
-                match extracted {
-                    Ok(hit) => Some((*hit).clone()),
-                    Err(err) => {
-                        tracing::debug!(
-                            "rust-inspect extraction failed for `{}` (query `{}`): {err}",
-                            canonical_path,
-                            lookup_path
-                        );
-                        None
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::debug!(
-                    "rust-inspect cache lookup failed for `{}` (query `{}`): {err}",
-                    canonical_path,
-                    lookup_path
-                );
-                None
-            }
-        }
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    /// Return complete Rust type metadata for a compiler path that needs proven trait implementations.
-    ///
-    /// Fast source metadata can prove public inherent methods but not trait implementations. Escalate only when a
-    /// consumer explicitly needs a full type record so ordinary method calls retain their source-only fast path.
-    pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        #[cfg(test)]
-        self.rust_complete_type_lookup_requests
-            .set(self.rust_complete_type_lookup_requests.get() + 1);
-        let metadata = self.rust_item_metadata_for_path(canonical_path)?;
-        let RustItemKind::Type(type_info) = &metadata.kind else {
-            return Some(metadata);
-        };
-        if type_info.metadata_completeness.has_trait_impls() {
-            return Some(metadata);
-        }
-
-        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
-            return Some(metadata);
-        }
-        let dir = self.rust_inspect_manifest_dir.as_ref()?;
-        match self
-            .rust_inspect_cache
-            .get_or_extract_complete_deferred_persist(dir, lookup_path, &|_| ())
-        {
-            Ok(metadata) => Some((*metadata).clone()),
-            Err(err) => {
-                tracing::debug!(
-                    "rust-inspect complete type metadata lookup failed for `{}` (query `{}`): {err}",
-                    canonical_path,
-                    lookup_path
-                );
-                Some(metadata)
-            }
-        }
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    /// Return Rust type metadata suitable for resolving one inherent method call.
-    pub fn rust_item_metadata_for_method_call(&self, canonical_path: &str, method: &str) -> Option<RustItemMetadata> {
-        // A method call is an explicit source-level request for the receiver's ABI. Fast metadata can know the type
-        // without its inherent methods, so complete the lookup before falling back to generic call inference.
-        let metadata = self
-            .rust_item_metadata_for_path(canonical_path)
-            .or_else(|| self.rust_item_metadata_for_path_blocking(canonical_path))?;
-        let RustItemKind::Type(type_info) = &metadata.kind else {
-            return Some(metadata);
-        };
-        if type_info.methods.iter().any(|candidate| candidate.name == method)
-            || type_info.metadata_completeness.has_methods()
-        {
-            return Some(metadata);
-        }
-
-        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
-            return Some(metadata);
-        }
-        let dir = self.rust_inspect_manifest_dir.as_ref()?;
-        match self
-            .rust_inspect_cache
-            .get_or_extract_complete_deferred_persist(dir, lookup_path, &|_| ())
-        {
-            Ok(metadata) => Some((*metadata).clone()),
-            Err(err) => {
-                tracing::debug!(
-                    "rust-inspect complete method metadata lookup failed for `{}` (query `{}`): {err}",
-                    canonical_path,
-                    lookup_path
-                );
-                Some(metadata)
-            }
-        }
-    }
-
-    #[cfg(not(feature = "rust_inspect"))]
-    /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
+    /// Return Rust item metadata from the shipped ABI of the Loaves the checker reaches.
     fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         self.loaves.rust_abi_item(lookup_path)
     }
 
-    #[cfg(not(feature = "rust_inspect"))]
-    /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
+    /// Return Rust item metadata from the shipped ABI of the Loaves the checker reaches.
     pub fn rust_item_metadata_for_method_call(&self, canonical_path: &str, _method: &str) -> Option<RustItemMetadata> {
         self.rust_item_metadata_for_path(canonical_path)
     }
 
-    #[cfg(not(feature = "rust_inspect"))]
-    /// Return complete type metadata from shipped dependency ABI when rust-inspect support is not compiled in.
+    /// Return complete type metadata from the shipped ABI of the Loaves the checker reaches.
     pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         #[cfg(test)]
         self.rust_complete_type_lookup_requests
             .set(self.rust_complete_type_lookup_requests.get() + 1);
         self.rust_item_metadata_for_path(canonical_path)
-    }
-
-    #[cfg(not(feature = "rust_inspect"))]
-    /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
-    fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        self.lookup_rust_item_metadata_for_path(canonical_path)
-    }
-
-    #[cfg(not(feature = "rust_inspect"))]
-    /// Return one demanded Rust item from shipped dependency ABI when rust-inspect support is not compiled in.
-    fn demanded_rust_item_metadata(&self, canonical_path: &str, _lookup_path: &str) -> Option<RustItemMetadata> {
-        self.lookup_rust_item_metadata_for_path(canonical_path)
     }
 
     /// Split top-level generic arguments from a Rust display type.
@@ -1480,26 +1182,19 @@ impl TypeChecker {
     /// `foo::Bar<T>` or placeholder displays like `{unknown}`. This strips outer generic instantiation from a Rust
     /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
     fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
-        #[cfg(feature = "rust_inspect")]
-        {
-            Inspector::normalize_lookup_path(canonical_path)
+        let trimmed = canonical_path.trim();
+        if trimmed.is_empty() || trimmed == "{unknown}" {
+            return None;
         }
-        #[cfg(not(feature = "rust_inspect"))]
-        {
-            let trimmed = canonical_path.trim();
-            if trimmed.is_empty() || trimmed == "{unknown}" {
-                return None;
-            }
-            let had_generics = trimmed.contains('<');
-            let base = trimmed.split_once('<').map_or(trimmed, |(base, _)| base);
-            if had_generics && !base.contains("::") {
-                return None;
-            }
-            if base.is_empty() || base.contains(['{', '}', '(', ')', '[', ']', ',', ' ']) {
-                return None;
-            }
-            Some(base)
+        let had_generics = trimmed.contains('<');
+        let base = trimmed.split_once('<').map_or(trimmed, |(base, _)| base);
+        if had_generics && !base.contains("::") {
+            return None;
         }
+        if base.is_empty() || base.contains(['{', '}', '(', ')', '[', ']', ',', ' ']) {
+            return None;
+        }
+        Some(base)
     }
 
     /// Strip the synthetic `rust::` namespace prefix used in Incan source paths.
@@ -2268,7 +1963,7 @@ impl TypeChecker {
             return None;
         }
         let lookup_path = Self::rust_metadata_lookup_path(base)?;
-        let metadata = self.demanded_rust_item_metadata(base, lookup_path)?;
+        let metadata = self.loaves.rust_abi_item(lookup_path)?;
         self.record_rust_metadata_query(base);
         let RustItemKind::Type(info) = metadata.kind else {
             return None;
@@ -3742,7 +3437,7 @@ impl TypeChecker {
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
     /// current module, so lowering can resolve supertrait graphs, generic trait arity, and same-type method aliases
     /// across module boundaries.
-    fn record_trait_metadata_for_lowering(&mut self, program: &Program) {
+    fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
         self.type_info.traits.method_identities.clear();
@@ -7255,7 +6950,7 @@ impl TypeChecker {
             .c_abi
             .resolve_checked_facades(self.current_module_path.as_deref());
 
-        self.record_trait_metadata_for_lowering(program);
+        self.record_trait_metadata_for_lowering();
         self.record_standard_registry_types();
         self.record_trait_adoption_arguments_for_lowering(program);
         self.record_body_ir_bare_adoption_arguments(program);

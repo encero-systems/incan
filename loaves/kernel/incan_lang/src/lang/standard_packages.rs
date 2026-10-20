@@ -5,7 +5,7 @@
 //! selection; installed use must additionally authenticate original checked package/generation associations.
 
 /// One compiler-owned package declaration and the reserved top-level namespaces it may publish.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StandardPackageNamespacePolicy {
     /// Canonical ordinary package name, checked against the embedded authored declaration by the provider.
     pub package_name: &'static str,

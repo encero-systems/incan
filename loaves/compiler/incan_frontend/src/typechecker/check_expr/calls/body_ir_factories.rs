@@ -8,7 +8,6 @@ use crate::ast::{CallArg, Span};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::nominal_type_param_bounds::NominalTypeParamBounds;
-use incan_semantics_core::SymbolOrigin;
 
 impl TypeChecker {
     /// Close a selected source static factory from its original owner signature and already checked context.

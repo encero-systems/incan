@@ -9,7 +9,7 @@ use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, SymbolKind, TypeBou
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
     /// A surface-import call validates on its builtin path rather than through the ordinary generic validator. Use

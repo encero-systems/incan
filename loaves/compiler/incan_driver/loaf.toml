@@ -1,5 +1,4 @@
 [dependencies]
-clap = { features = ["derive"], loaf = "crates-io/clap", optional = true, version = "4.4" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
@@ -7,7 +6,6 @@ incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
 proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
-rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../rust_inspect" }
 rustix = { features = ["fs"], loaf = "crates-io/rustix", version = "1.1.4" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
@@ -28,17 +26,10 @@ private = true
 version = "0.6.0-dev.6"
 
 [project.features]
-cli = ["dep:clap", "rust_inspect"]
 default = [
-    "cli",
-    "rust_inspect",
     "std_testing",
     "std_async",
     "std_decorators",
-]
-rust_inspect = [
-    "incan_frontend/rust_inspect",
-    "rust_inspect/inspector",
 ]
 std_async = [
     "incan_frontend/std_async",
@@ -51,7 +42,6 @@ std_testing = [
 ]
 test_support = [
     "incan_frontend/test_support",
-    "rust_inspect/test_fixtures",
 ]
 
 [rust]
@@ -66,4 +56,3 @@ encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8" }
 incan_derive = { loaf = "incan_derive", path = "../../stdlib/derive/incan_derive" }
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
 incan_frontend = { features = ["test_support"] }
-rust_inspect = { features = ["test_fixtures"] }

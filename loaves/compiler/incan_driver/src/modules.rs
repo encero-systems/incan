@@ -15,7 +15,7 @@ use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
 use crate::session::CompilationSession;
 use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
-use incan_frontend::ast::{ImportKind, ImportPath, Program, Span};
+use incan_frontend::ast::{ImportKind, ImportPath, Program};
 use incan_frontend::module::{
     SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
     logical_module_segments_from_file, logical_source_import_candidates, resolve_program_source_imports,

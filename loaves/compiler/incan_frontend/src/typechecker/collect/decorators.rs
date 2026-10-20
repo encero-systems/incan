@@ -22,7 +22,6 @@ use incan_lang::lang::c_abi::{
 };
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives;
-use incan_lang::lang::stdlib;
 use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, HirSourceSpan, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolNamespace,
     SymbolOrigin,

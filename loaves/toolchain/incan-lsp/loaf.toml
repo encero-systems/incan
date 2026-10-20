@@ -7,8 +7,7 @@ description = "The Incan language server: diagnostics, hover, definitions and se
 
 [project.features]
 # The server ships the stdlib semantics packs and Rust inspection the way the toolchain does.
-default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["incan_frontend/rust_inspect", "incan_driver/rust_inspect"]
+default = ["std_testing", "std_async", "std_decorators"]
 std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing"]
 std_async = ["incan_frontend/std_async", "incan_driver/std_async"]
 std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"]

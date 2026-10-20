@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 use incan_lang::lang::standard_packages::{StandardPackageNamespacePolicy, standard_package_namespace_policy};
 use incan_lang::lang::stdlib;
 
-#[cfg(feature = "cli")]
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
 use crate::typecheck::typecheck_modules;

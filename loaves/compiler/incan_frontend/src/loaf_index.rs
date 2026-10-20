@@ -368,7 +368,12 @@ impl LoafIndex {
             hasher.update([0]);
             hasher.update(entry.artifact.dir.as_os_str().as_encoded_bytes());
             hasher.update([0]);
-            let manifest = serde_json::to_vec(entry.artifact.manifest.as_ref()).unwrap_or_default();
+            let manifest = entry
+                .artifact
+                .manifest
+                .to_json_string()
+                .map(String::into_bytes)
+                .unwrap_or_default();
             hasher.update(manifest.len().to_le_bytes());
             hasher.update(manifest);
         }

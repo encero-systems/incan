@@ -14,7 +14,7 @@ std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"
 [dependencies]
 clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
-incan_driver = { default-features = false, features = ["cli"], loaf = "incan_driver", path = "../../compiler/incan_driver" }
+incan_driver = { default-features = false, loaf = "incan_driver", path = "../../compiler/incan_driver" }
 incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }

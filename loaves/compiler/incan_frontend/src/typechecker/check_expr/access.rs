@@ -254,7 +254,7 @@ impl TypeChecker {
         if !seen.insert(canonical_path.clone()) {
             return None;
         }
-        if let Some(metadata) = self.rust_item_metadata_for_path_blocking(path)
+        if let Some(metadata) = self.rust_item_metadata_for_path(path)
             && let RustItemKind::Type(type_info) = &metadata.kind
             && let Some(target) = type_info.alias_target.as_ref()
         {
@@ -327,7 +327,7 @@ impl TypeChecker {
             let definition_item_path = format!("{definition_prefix}{item}");
             let canonical_item_path = format!("{canonical_prefix}{item}");
             let has_public_reexport = self
-                .rust_item_metadata_for_path_blocking(canonical_item_path.as_str())
+                .rust_item_metadata_for_path(canonical_item_path.as_str())
                 .is_some_and(|metadata| {
                     metadata.visibility == RustVisibility::Public
                         && metadata.definition_path.as_deref() == Some(definition_item_path.as_str())

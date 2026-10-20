@@ -8,7 +8,7 @@ tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_plan" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
 
-incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["rust_inspect", "std_async", "std_testing", "std_decorators"] }
+incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["std_async", "std_testing", "std_decorators"] }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
