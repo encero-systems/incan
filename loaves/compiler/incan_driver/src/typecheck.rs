@@ -12,12 +12,12 @@ use crate::diagnostics::{
     typecheck_diagnostic_phase, typecheck_warning_diagnostics,
 };
 use crate::modules::{imported_module_deps_for, module_key_index, register_module_path_segments};
+use crate::unit::UnitDescription;
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use incan_frontend::{diagnostics, typechecker};
 use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
-use oven_model::manifest::ProjectManifest;
 
 /// Products retained from one dependency-safe typechecking pass.
 pub struct TypecheckedModules {
@@ -40,7 +40,7 @@ pub struct TypecheckedModules {
 /// share a source file path.
 pub fn typecheck_modules(
     modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
+    unit: &UnitDescription,
     loaves: &Arc<LoafIndex>,
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
     package: Option<&str>,
@@ -48,7 +48,11 @@ pub fn typecheck_modules(
     visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
 ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
-    let declared = manifest.map(|m| m.declared_rust_crate_names());
+    let declared = unit
+        .rust_crates
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let module_idx_by_key = module_key_index(modules);
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
@@ -62,9 +66,7 @@ pub fn typecheck_modules(
         warnings_out.extend(parser_warning_diagnostics(module));
 
         let mut checker = typechecker::TypeChecker::new();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
+        checker.set_declared_crate_names(declared.clone());
         checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_current_package_identity(package.map(str::to_owned));
         register_module_path_segments(&mut checker, modules);
@@ -103,7 +105,7 @@ pub fn typecheck_modules(
     }
 
     if diagnostics_out.is_empty() {
-        verify_checked_c_bindings(modules, manifest, &mut type_infos, c_abi_plan, &mut diagnostics_out);
+        verify_checked_c_bindings(modules, unit, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 
     if diagnostics_out.is_empty() {
@@ -125,7 +127,7 @@ pub fn typecheck_modules(
 /// the declared header for the target; it neither imports arbitrary headers nor performs library discovery.
 fn verify_checked_c_bindings(
     modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
+    unit: &UnitDescription,
     type_infos: &mut [TypeCheckInfo],
     selected_plan: Option<&CAbiVerificationPlan>,
     diagnostics_out: &mut Vec<CliDiagnostic>,
@@ -173,7 +175,7 @@ fn verify_checked_c_bindings(
         }
     };
     for (module_index, module, binding) in bindings {
-        let verification_binding = resolve_package_owned_c_binding_header(manifest, &binding);
+        let verification_binding = resolve_package_owned_c_binding_header(unit, &binding);
         match verify_checked_c_binding(&toolchain, &plan, &verification_binding) {
             Ok(receipt) => {
                 let enum_values = &mut type_infos[module_index].c_abi.enum_values;
@@ -196,39 +198,16 @@ fn verify_checked_c_bindings(
     }
 }
 
-/// Resolve a manifest-declared package header before passing its spelling to Clang.
+/// Resolve a package-declared header before passing its spelling to Clang.
 ///
-/// Checked bindings keep the authored, package-relative header spelling in their public descriptor and lock identity.
-/// The verifier alone needs a concrete file location. Restricting this translation to a header declared under
-/// `[interop.c]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
-fn resolve_package_owned_c_binding_header(
-    manifest: Option<&ProjectManifest>,
-    binding: &CBindingDescriptor,
-) -> CBindingDescriptor {
-    let Some(manifest) = manifest else {
-        return binding.clone();
-    };
-    if Path::new(&binding.header).is_absolute() {
-        return binding.clone();
-    }
-    let declared = manifest.interop_c().is_some_and(|interop| {
-        interop.targets.iter().any(|target| {
-            target.headers.iter().any(|header| header == &binding.header)
-                || target
-                    .shims
-                    .iter()
-                    .flat_map(|shim| &shim.headers)
-                    .any(|header| header == &binding.header)
-        })
-    });
-    if !declared {
+/// Checked bindings keep the authored, package-relative header spelling in their public descriptor. The verifier alone
+/// needs a concrete file location. Restricting this translation to a header the package declares (the unit's
+/// `c_headers`) prevents an arbitrary relative binding path from becoming an ambient include-directory search.
+fn resolve_package_owned_c_binding_header(unit: &UnitDescription, binding: &CBindingDescriptor) -> CBindingDescriptor {
+    if Path::new(&binding.header).is_absolute() || !unit.c_headers.contains(&binding.header) {
         return binding.clone();
     }
     let mut resolved = binding.clone();
-    resolved.header = manifest
-        .project_root()
-        .join(&binding.header)
-        .to_string_lossy()
-        .into_owned();
+    resolved.header = unit.project_root.join(&binding.header).to_string_lossy().into_owned();
     resolved
 }

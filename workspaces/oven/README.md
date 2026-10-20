@@ -1,6 +1,6 @@
 # Oven control plane
 
-The Incan-authored half of Oven: the decisions a bake makes before any compiler runs. The Rust crates under `loaves/oven/` own the store, leases, direct `rustc` execution and receipts; this project owns reading `loaf.toml`, selecting a native plan, and activating Rust dependency features. It is written in Incan so the build system's own rules are expressed in the language it builds. Generated Rust is never edited.
+Oven, the one build system (DD-0008). It reads `loaf.toml`, resolves Loaves and writes the lock, plans each unit's Rust facet, orders and compiles units through `incan-rustc-driver`, and keeps the store. It is written in Incan so the build system's own rules are expressed in the language it builds; no Rust crate makes an Oven decision.
 
 ## What it decides
 

@@ -18,10 +18,9 @@ use incan_semantics_core::executable_representation::{
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::session::DEFAULT_PROFILE;
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
-use incan_frontend::loaf_index::{EXECUTABLE_REPRESENTATION_EXTENSION, LIBRARY_MANIFEST_EXTENSION, artifact_dir};
+use incan_frontend::loaf_index::{EXECUTABLE_REPRESENTATION_EXTENSION, LIBRARY_MANIFEST_EXTENSION};
 
 /// Output format for `incan inspect representation`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,29 +105,23 @@ pub fn inspect_representation(path: &Path, format: RepresentationInspectionForma
     render(&report, format)
 }
 
-/// Locate the `.incnlib` manifest that owns the published layout at `path`.
-///
-/// Three spellings are accepted because all three are how a reader arrives here: the manifest itself, a generated
-/// artifact root holding it, and a project root whose artifacts sit under the fixed generated subdirectory.
+/// Locate the `.incnlib` manifest at `path`: the manifest itself, or the Loaf artifact directory holding it (DD-0007).
 fn resolve_manifest_path(path: &Path) -> CliResult<PathBuf> {
     if path.is_file() {
         return Ok(path.to_path_buf());
     }
     if !path.is_dir() {
         return Err(CliError::failure(format!(
-            "no such path `{}`; pass a package manifest or a project root",
+            "no such path `{}`; pass a Loaf manifest or its artifact directory",
             path.display()
         )));
     }
-    for root in [path.to_path_buf(), artifact_dir(path, DEFAULT_PROFILE)] {
-        if let Some(manifest) = sole_manifest_in(&root)? {
-            return Ok(manifest);
-        }
-    }
-    Err(CliError::failure(format!(
-        "no `.incnlib` manifest under `{}` or its debug artifact directory; run `incan build --lib --debug` in the package first",
-        path.display()
-    )))
+    sole_manifest_in(path)?.ok_or_else(|| {
+        CliError::failure(format!(
+            "no `.incnlib` manifest in `{}`; pass a Loaf manifest or its artifact directory",
+            path.display()
+        ))
+    })
 }
 
 /// Return the one manifest in `root`, or a refusal when several are present and none can be preferred.

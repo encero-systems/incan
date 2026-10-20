@@ -33,7 +33,6 @@ use incan_semantics_core::stable_identity::{
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
-use crate::features::FeatureSelection;
 use incan_frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, Decorator, DecoratorArg, DecoratorArgValue,
     DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchBody,
@@ -53,12 +52,10 @@ use incan_frontend::typechecker::{
 use incan_lang::version::INCAN_VERSION;
 
 use crate::diagnostics::CliDiagnosticFailure;
-use crate::modules::{
-    collect_modules_detailed_with_selection, collect_modules_detailed_with_session,
-    collect_modules_detailed_with_session_at_path,
-};
-use crate::project::{discover_effective_project_manifest, read_source, resolve_project_root};
+use crate::modules::{collect_modules_detailed_with_session, collect_modules_detailed_with_session_at_path};
 use crate::session::{CompilationAnalysis, CompilationSession};
+use crate::sources::read_source;
+use crate::unit::UnitDescription;
 
 /// A failure while producing codegraph records.
 ///
@@ -105,21 +102,22 @@ impl From<CodegraphError> for crate::error::CliError {
     }
 }
 
-/// Collect checked or tolerant graph records for one normalized input path.
+/// Collect checked or tolerant graph records for one normalized input path, a file or a directory, whose sources the
+/// described units own (DD-0008).
 pub fn collect_codegraph_records(
     path: &Path,
+    units: &[UnitDescription],
     allow_errors: bool,
-    feature_selection: &FeatureSelection,
-    profile: &str,
 ) -> CodegraphResult<Vec<CodegraphRecord>> {
-    let package = package_identity(path)?;
+    let mut sessions = UnitSessions::new(units);
+    let package = package_identity(&sessions, path);
     let package_name = package.as_ref().and_then(|package| package.name.clone());
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
-    builder.semantic_contexts = collect_codegraph_semantic_contexts(path, feature_selection, profile, allow_errors)?;
+    builder.semantic_contexts = collect_codegraph_semantic_contexts(&mut sessions, allow_errors)?;
 
     if path.is_dir() {
         let files = discover_incan_files(path)?;
-        let (modules, analysis) = directory_modules_diagnostics_and_info(&files, feature_selection, profile)?;
+        let (modules, analysis) = directory_modules_diagnostics_and_info(&files, &mut sessions)?;
         if !analysis.diagnostics.is_empty() && !allow_errors {
             return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
         }
@@ -153,21 +151,8 @@ pub fn collect_codegraph_records(
                     true,
                 );
             }
-            let mut sessions = BTreeMap::new();
             for file in files.iter().filter(|file| !parsed_paths.contains(*file)) {
-                let project_root = resolve_project_root(file);
-                if !sessions.contains_key(&project_root) {
-                    sessions.insert(
-                        project_root.clone(),
-                        CompilationSession::discover(file, feature_selection, profile)?,
-                    );
-                }
-                let Some(session) = sessions.get(&project_root) else {
-                    return Err(CodegraphError::failure(format!(
-                        "failed to prepare codegraph compilation session for {}",
-                        project_root.display()
-                    )));
-                };
+                let session = sessions.for_file(file)?;
                 builder.collect_tolerant_file_with_session(file, session)?;
             }
         }
@@ -176,10 +161,10 @@ pub fn collect_codegraph_records(
             return Err(CodegraphError::failure(render_diagnostics(builder.diagnostics())));
         }
     } else {
-        let session = CompilationSession::discover(path, feature_selection, profile)?;
-        match collect_modules_detailed_with_session(path.to_path_buf(), &session) {
+        let session = sessions.for_file(path)?;
+        match collect_modules_detailed_with_session(path.to_path_buf(), session) {
             Ok(modules) => {
-                let analysis = typecheck_diagnostics_and_info(&session, &modules, package_name.as_deref())?;
+                let analysis = typecheck_diagnostics_and_info(session, &modules, package_name.as_deref())?;
                 if !analysis.diagnostics.is_empty() && !allow_errors {
                     return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
                 }
@@ -199,7 +184,7 @@ pub fn collect_codegraph_records(
                 builder.collect_diagnostics(analysis.diagnostics);
             }
             Err(failure) if allow_errors => {
-                builder.collect_tolerant_failure(path, failure, feature_selection, profile)?;
+                builder.collect_tolerant_failure(path, failure, session)?;
             }
             Err(failure) => return Err(CodegraphError::failure(failure.render_human())),
         }
@@ -224,13 +209,11 @@ type DirectoryTypecheckArtifacts = (Vec<ParsedModule>, CheckedCodegraphAnalysis)
 /// directory graph is clean.
 fn directory_modules_diagnostics_and_info(
     files: &[PathBuf],
-    feature_selection: &FeatureSelection,
-    profile: &str,
+    sessions: &mut UnitSessions<'_>,
 ) -> CodegraphResult<DirectoryTypecheckArtifacts> {
     let file_set = files.iter().cloned().collect::<BTreeSet<_>>();
     let mut modules_by_path = BTreeMap::new();
     let mut diagnostics = Vec::new();
-    let mut sessions = BTreeMap::new();
     let mut semantic_snapshots_by_path = BTreeMap::new();
     let mut signatures_by_identity = BTreeMap::new();
     let mut registry_metadata_by_path = BTreeMap::new();
@@ -238,19 +221,7 @@ fn directory_modules_diagnostics_and_info(
     let mut c_abi_by_path = BTreeMap::new();
 
     for file in files {
-        let project_root = resolve_project_root(file);
-        if !sessions.contains_key(&project_root) {
-            sessions.insert(
-                project_root.clone(),
-                CompilationSession::discover(file, feature_selection, profile)?,
-            );
-        }
-        let Some(session) = sessions.get(&project_root) else {
-            return Err(CodegraphError::failure(format!(
-                "failed to prepare codegraph compilation session for {}",
-                project_root.display()
-            )));
-        };
+        let session = sessions.for_file(file)?;
         let collected = logical_module_segments_from_file(&session.source_root, file).map_or_else(
             || collect_modules_detailed_with_session(file.clone(), session),
             |root_module_path| collect_modules_detailed_with_session_at_path(file.clone(), session, root_module_path),
@@ -530,43 +501,68 @@ fn should_skip_directory(path: &Path) -> bool {
 
 /// Read package identity from the nearest manifest so exported graph headers can be joined with build reports and
 /// metadata exports.
-fn package_identity(path: &Path) -> CodegraphResult<Option<CodegraphPackage>> {
-    let project_root = resolve_project_root(path);
-    let manifest = discover_effective_project_manifest(&project_root)
-        .map_err(|error| CodegraphError::failure(format!("failed to load project manifest: {error}")))?;
-    Ok(manifest.map(|manifest| CodegraphPackage {
-        name: manifest.project.as_ref().and_then(|project| project.name.clone()),
-        version: manifest.project.as_ref().and_then(|project| project.version.clone()),
-        root_path: Some(path_string(manifest.project_root())),
-    }))
+/// The package of the unit owning `path`, when one does.
+fn package_identity(sessions: &UnitSessions<'_>, path: &Path) -> Option<CodegraphPackage> {
+    let unit = sessions.unit_for(path).ok()?;
+    Some(CodegraphPackage {
+        name: Some(unit.package.clone()),
+        version: Some(unit.version.clone()),
+        root_path: Some(path_string(&unit.project_root)),
+    })
 }
 
-/// Build the Loaf header projection from the same sessions used by codegraph checking.
+/// Build the Loaf header projection from the same sessions used by codegraph checking: one per described unit.
 fn collect_codegraph_semantic_contexts(
-    path: &Path,
-    feature_selection: &FeatureSelection,
-    profile: &str,
+    sessions: &mut UnitSessions<'_>,
     allow_errors: bool,
 ) -> CodegraphResult<Vec<CodegraphSemanticContext>> {
-    let files = if path.is_dir() {
-        discover_incan_files(path)?
-    } else {
-        vec![path.to_path_buf()]
-    };
-    let mut representatives: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-    for file in files {
-        representatives.entry(resolve_project_root(&file)).or_insert(file);
-    }
     let mut contexts = Vec::new();
-    for (project_root, representative) in representatives {
-        let session = match CompilationSession::discover(&representative, feature_selection, profile) {
+    for unit in sessions.units {
+        let session = match sessions.for_file(&unit.source) {
             Ok(session) => session,
             Err(_) if allow_errors => continue,
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
-        contexts.push(codegraph_semantic_context(&project_root, &session));
+        contexts.push(codegraph_semantic_context(&unit.project_root, session));
     }
     Ok(contexts)
+}
+
+/// The sessions of the described units, each opened on first use. A file belongs to the unit whose project root is
+/// its nearest ancestor.
+struct UnitSessions<'u> {
+    units: &'u [UnitDescription],
+    sessions: BTreeMap<PathBuf, CompilationSession>,
+}
+
+impl<'u> UnitSessions<'u> {
+    fn new(units: &'u [UnitDescription]) -> Self {
+        Self {
+            units,
+            sessions: BTreeMap::new(),
+        }
+    }
+
+    /// The unit whose project contains `file`.
+    fn unit_for(&self, file: &Path) -> CodegraphResult<&'u UnitDescription> {
+        self.units
+            .iter()
+            .filter(|unit| file.starts_with(&unit.project_root))
+            .max_by_key(|unit| unit.project_root.components().count())
+            .ok_or_else(|| CodegraphError::failure(format!("no described unit owns {}", file.display())))
+    }
+
+    /// The session of the unit that contains `file`.
+    fn for_file(&mut self, file: &Path) -> CodegraphResult<&CompilationSession> {
+        let unit = self.unit_for(file)?;
+        if !self.sessions.contains_key(&unit.project_root) {
+            self.sessions
+                .insert(unit.project_root.clone(), CompilationSession::new(unit)?);
+        }
+        self.sessions
+            .get(&unit.project_root)
+            .ok_or_else(|| CodegraphError::failure(format!("no session for {}", unit.project_root.display())))
+    }
 }
 
 /// Project the Loaves a session indexed into the storage-agnostic codegraph wire contract.
@@ -781,28 +777,16 @@ impl CodegraphBuilder {
         &mut self,
         path: &Path,
         failure: CliDiagnosticFailure,
-        feature_selection: &FeatureSelection,
-        profile: &str,
+        session: &CompilationSession,
     ) -> CodegraphResult<()> {
         let before = self.diagnostics.len();
         if path.is_file() {
-            self.collect_tolerant_file(path, feature_selection, profile)?;
+            self.collect_tolerant_file_with_session(path, session)?;
         }
         if self.diagnostics.len() == before {
             self.collect_diagnostics(stable_diagnostics(failure));
         }
         Ok(())
-    }
-
-    /// Parse one file with project-aware vocabulary context and record either syntax facts or parse diagnostics.
-    fn collect_tolerant_file(
-        &mut self,
-        path: &Path,
-        feature_selection: &FeatureSelection,
-        profile: &str,
-    ) -> CodegraphResult<()> {
-        let session = CompilationSession::discover(path, feature_selection, profile)?;
-        self.collect_tolerant_file_with_session(path, &session)
     }
 
     /// Parse one file with a caller-provided project-aware session, avoiding repeated manifest/vocab discovery.

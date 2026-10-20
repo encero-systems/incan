@@ -1,70 +1,32 @@
-# Authored toolchain facet; Cargo declarations are retained migration inputs only.
 [project]
 name = "incan_cli"
 version = "0.6.0-dev.6"
 private = true
 license = "Apache-2.0"
-description = "The incan command: clap surface, terminal rendering, exit codes, the test runner"
+description = "The compiler's commands over Oven-described units: check, explain, format and inspect"
 
 [project.features]
-default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_driver/rust_inspect"]
+default = ["std_testing", "std_async", "std_decorators"]
 std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing"]
 std_async = ["incan_frontend/std_async", "incan_driver/std_async"]
 std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
-tracing = { loaf = "crates-io/tracing", version = "0.1" }
+clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
-incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_driver = { default-features = false, features = ["cli"], loaf = "incan_driver", path = "../../compiler/incan_driver" }
 incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
-incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
-incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
-oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
-rust_inspect = { default-features = false, loaf = "rust_inspect", optional = true, path = "../../compiler/rust_inspect" }
-clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
-hex = { loaf = "crates-io/hex", version = "0.4.3" }
-semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
-sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
-tempfile = { loaf = "crates-io/tempfile", version = "3" }
-toml = { loaf = "crates-io/toml", version = "0.9" }
-toml_edit = { features = ["parse", "serde"], loaf = "crates-io/toml_edit", version = "0.25" }
-tracing-subscriber = { features = ["env-filter"], loaf = "crates-io/tracing-subscriber", version = "0.3" }
 
 [rust]
 name = "incan_cli"
 type = "lib"
 edition = "2024"
 
-[[rust.bin]]
-name = "incan"
-path = "src/main.rs"
-
-# Test-only dependencies and helper features; production defaults are unchanged.
+# The behavior roots run the behavior fixtures through the test harness.
 [envs.test.dependencies]
 incan_test_support = { loaf = "incan_test_support", path = "../../compiler/incan_test_support" }
-incan_driver = { features = ["test_support"] }
-
-# Rust integration roots and their generated-code controls use these ordinary test dependencies.
-blake2 = { loaf = "crates-io/blake2", version = "0.10" }
-blake3 = { loaf = "crates-io/blake3", version = "1" }
-byteorder = { loaf = "crates-io/byteorder", version = "1" }
-bzip2 = { loaf = "crates-io/bzip2", version = "0.6" }
-crc32fast = { loaf = "crates-io/crc32fast", version = "1" }
-flate2 = { loaf = "crates-io/flate2", version = "1" }
-hmac = { loaf = "crates-io/hmac", version = "0.12", features = ["reset"] }
-md5_010 = { loaf = "crates-io/md-5", version = "0.10" }
-rand = { loaf = "crates-io/rand", version = "0.8" }
-regex = { loaf = "crates-io/regex", version = "1" }
-sha1 = { loaf = "crates-io/sha1", version = "0.10" }
-sha3 = { loaf = "crates-io/sha3", version = "0.10" }
-snap = { loaf = "crates-io/snap", version = "1" }
-wat = { loaf = "crates-io/wat", version = "1" }
-xxhash_rust = { loaf = "crates-io/xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
-xz2 = { loaf = "crates-io/xz2", version = "0.1", features = ["static"] }
-zstd = { loaf = "crates-io/zstd", version = "0.13" }

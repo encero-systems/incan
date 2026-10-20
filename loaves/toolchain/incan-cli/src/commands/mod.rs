@@ -1,31 +1,22 @@
-//! CLI command implementations
+//! The compiler's commands, each over a unit the Oven describes (DD-0008).
 //!
-//! All command functions return `CliResult<ExitCode>` instead of calling `process::exit`. Error handling and exits
-//! happen in the top-level `run()`.
+//! Every function returns `CliResult<ExitCode>`; the Oven's command line renders errors and exits.
 //!
-//! - `build`: `incan build` and `incan run` through one compiled unit
-//! - `debug`: lex, parse and check debug commands
+//! - `diagnostics`: `check` and `explain`
+//! - `debug`: lex and parse
 //! - `format`: source formatting
-//! - `init`: project scaffolding
-//! - `lifecycle`: `version` and `env`
+//! - `codegraph`, `binding_inspect`, `representation_inspect`: compiler-backed projections
 
 pub mod binding_inspect;
-pub mod build;
 pub mod codegraph;
 pub mod debug;
 pub mod diagnostics;
-pub mod feature_inspect;
 pub mod format;
-pub mod init;
-pub mod lifecycle;
 pub mod representation_inspect;
 
 pub use binding_inspect::{BindingInspectionFormat, inspect_bindings};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
-pub use debug::{check_file, lex_file, parse_file};
-pub use diagnostics::{DiagnosticOutputFormat, check_path, check_path_with_features, explain_diagnostic};
-pub use feature_inspect::{FeatureInspectionFormat, inspect_features};
+pub use debug::{lex_file, parse_file};
+pub use diagnostics::{DiagnosticOutputFormat, check, explain_diagnostic};
 pub use format::format_files;
-pub use init::init_project;
-pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use representation_inspect::{RepresentationInspectionFormat, inspect_representation};

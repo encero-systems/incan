@@ -4,9 +4,8 @@
 use super::*;
 
 use incan_driver::diagnostics::CliDiagnostic;
-use incan_driver::features::FeatureSelection;
 use incan_driver::modules::collect_document_modules;
-use incan_driver::session::DEFAULT_PROFILE;
+use incan_driver::unit::UnitDescription;
 use incan_frontend::module::logical_module_segments_from_file;
 
 impl IncanLanguageServer {
@@ -135,7 +134,7 @@ fn analyze(
     open_sources: &HashMap<PathBuf, String>,
 ) -> (Vec<Diagnostic>, Option<DocumentState>) {
     let mut diagnostics = Vec::new();
-    let session = match CompilationSession::discover(path, &FeatureSelection::default(), DEFAULT_PROFILE) {
+    let session = match unit_description(path).and_then(|unit| CompilationSession::new(&unit)) {
         Ok(session) => session,
         Err(error) => return (vec![lsp_root_error_diagnostic(error.to_string())], None),
     };
@@ -360,4 +359,25 @@ fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
     .into_iter()
     .find(|candidate| candidate.is_file())
     .map(|path| path.canonicalize().unwrap_or(path))
+}
+
+/// The description of the unit that owns `path`, from the Oven (`incan describe-unit PATH`), which is the only reader
+/// of project manifests (DD-0008). The `incan` beside this server answers it.
+fn unit_description(path: &Path) -> incan_driver::error::CliResult<UnitDescription> {
+    use incan_driver::error::CliError;
+    let incan = std::env::current_exe()
+        .map_err(|error| CliError::failure(format!("cannot locate the language server: {error}")))?
+        .with_file_name("incan");
+    let output = std::process::Command::new(&incan)
+        .arg("describe-unit")
+        .arg(path)
+        .output()
+        .map_err(|error| CliError::failure(format!("cannot run {}: {error}", incan.display())))?;
+    if !output.status.success() {
+        return Err(CliError::failure(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| CliError::failure(format!("`incan describe-unit` printed no unit description: {error}")))
 }

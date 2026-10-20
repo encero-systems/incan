@@ -17,9 +17,6 @@ help:  ## Display this help message
 	@echo "\033[1mBuild:\033[0m"
 	@grep -E '^.PHONY: .*?## build - .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ".PHONY: |## build - "}; {printf "  \033[36m%-24s\033[0m %s\n", $$2, $$3}'
 	@echo ""
-	@echo "\033[1mTesting:\033[0m"
-	@grep -E '^.PHONY: .*?## test - .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ".PHONY: |## test - "}; {printf "  \033[36m%-24s\033[0m %s\n", $$2, $$3}'
-	@echo ""
 	@echo "\033[1mCode Quality:\033[0m"
 	@grep -E '^.PHONY: .*?## quality - .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ".PHONY: |## quality - "}; {printf "  \033[36m%-24s\033[0m %s\n", $$2, $$3}'
 	@echo ""

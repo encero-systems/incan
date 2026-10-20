@@ -1,36 +1,31 @@
-//! The compilation session: one per command, owning the project, the compiled Loaves it imports from, and the
-//! analysis every stage after parsing consumes (DD-0007).
+//! The compilation session: one per unit, owning the unit's description, the compiled Loaves it imports from, and
+//! the analysis every stage after parsing consumes (DD-0007).
 //!
-//! A session is opened once from the project and reused by every stage, so the Loaves, the vocabulary they bring and
-//! the active features are decided once per command.
+//! A session is opened once from the unit description the Oven supplies (DD-0008) and reused by every stage, so the
+//! Loaves, the vocabulary they bring and the active features are decided once per unit.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use incan_lang::lang::standard_packages::{
-    STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy, standard_package_namespace_policy,
-};
+use incan_lang::lang::standard_packages::{StandardPackageNamespacePolicy, standard_package_namespace_policy};
 use incan_lang::lang::stdlib;
 
 #[cfg(feature = "cli")]
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
-use crate::features::{FeatureSelection, PackageFeatureGraph};
-use crate::project::{discover_effective_project_manifest, resolve_project_root, resolve_source_root};
 use crate::typecheck::typecheck_modules;
+use crate::unit::UnitDescription;
 use incan_frontend::ast::{Program, Span};
 use incan_frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
-use incan_frontend::loaf_index::{LoafEntry, LoafIndex, artifact_dir};
+use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
-use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
-use oven_model::toolchain_layout::CompilerOwnedSourceLayout;
 
 /// The build profile a command reads Loaf artifacts for unless it names another.
 pub const DEFAULT_PROFILE: &str = "debug";
@@ -90,15 +85,16 @@ impl CompilationAnalysis {
     }
 }
 
-/// Shared source-analysis context for CLI commands and the LSP.
+/// Shared source-analysis context for the pinned driver, the compiler's commands and the language server.
 ///
-/// The session owns the project-level inputs that affect parsing and checking, so entrypoints never rediscover
-/// manifests, Loaves, vocabulary or checked contract metadata.
+/// The session owns the unit-level inputs that affect parsing and checking, so no stage re-derives the Loaves,
+/// vocabulary or checked contract metadata.
 #[derive(Debug, Clone)]
 pub struct CompilationSession {
     /// Vocabulary module map shared across cloned sessions; fresh source and guest state remain local.
     pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::WasmDesugarerRuntime>>>,
-    pub manifest: Option<ProjectManifest>,
+    /// The unit as the Oven describes it.
+    unit: UnitDescription,
     pub source_root: PathBuf,
     /// The compiled Loaves the program imports from: its dependencies and the standard packages.
     loaves: Arc<LoafIndex>,
@@ -116,62 +112,44 @@ pub struct CompilationSession {
 }
 
 impl CompilationSession {
-    /// Open the session for the program whose entry is `entry_path`, reading the Loaf artifacts of `profile`.
+    /// Open the session for one described unit, reading every Loaf it reaches from its artifact directory.
     ///
-    /// Every dependency is compiled before its consumer is checked (DD-0005), so a dependency without an artifact
-    /// refuses here rather than being checked from source.
-    pub fn discover(entry_path: &Path, features: &FeatureSelection, profile: &str) -> CliResult<Self> {
-        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::discover_session", input = %entry_path.display()).entered();
-        let inferred_project_root = resolve_project_root(entry_path);
-        let manifest = discover_effective_project_manifest(&inferred_project_root)?;
-        let project_root = manifest
-            .as_ref()
-            .map(|manifest| manifest.project_root().to_path_buf())
-            .unwrap_or(inferred_project_root);
-        let source_root = resolve_source_root(&project_root, manifest.as_ref());
-        let graph = manifest
-            .as_ref()
-            .map(PackageFeatureGraph::from_manifest)
-            .transpose()
+    /// Every Loaf is compiled before its consumer is checked (DD-0005), so a Loaf without an artifact refuses here.
+    pub fn new(unit: &UnitDescription) -> CliResult<Self> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
+        let entries = unit
+            .loaves
+            .iter()
+            .map(|loaf| {
+                if loaf.standard {
+                    LoafIndex::standard(&loaf.name, &loaf.dir)
+                } else {
+                    LoafIndex::dependency(&loaf.key, &loaf.name, &loaf.dir)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|error| CliError::failure(error.to_string()))?;
-        let resolved = graph
-            .as_ref()
-            .map(|graph| graph.resolve(features))
-            .transpose()
-            .map_err(|error| CliError::failure(error.to_string()))?
-            .unwrap_or_default();
-        let declared_features = graph
-            .map(|graph| graph.declared_features().map(str::to_string).collect())
-            .unwrap_or_default();
-        let own_standard_package = manifest
-            .as_ref()
-            .and_then(|manifest| manifest.project.as_ref()?.name.as_deref())
-            .and_then(standard_package_namespace_policy);
-        let loaves = Arc::new(index_loaves(
-            manifest.as_ref(),
-            &resolved.active_optional_dependencies,
-            own_standard_package,
-            profile,
-        )?);
-        let contract_model_bundles = manifest
-            .as_ref()
-            .map(|manifest| read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths()))
-            .transpose()
-            .map_err(|error| CliError::failure(error.to_string()))?
-            .unwrap_or_default();
+        let loaves = Arc::new(LoafIndex::new(entries).map_err(|error| CliError::failure(error.to_string()))?);
+        let contract_model_bundles = read_project_model_bundles(&unit.project_root, &unit.contract_models)
+            .map_err(|error| CliError::failure(error.to_string()))?;
         Ok(Self {
             vocab_runtime: Arc::default(),
-            manifest,
-            source_root,
+            source_root: unit.source_root.clone(),
             library_imported_vocab: loaves.imported_vocab(),
             library_imported_dsl_surfaces: loaves.imported_dsl_surfaces(),
             loaves,
-            own_standard_package,
-            profile: profile.to_string(),
-            active_features: resolved.active_features,
-            declared_features,
+            own_standard_package: standard_package_namespace_policy(&unit.package),
+            profile: unit.profile.clone(),
+            active_features: unit.active_features.clone(),
+            declared_features: unit.declared_features.clone(),
             contract_model_bundles,
+            unit: unit.clone(),
         })
+    }
+
+    /// The unit as the Oven describes it.
+    pub fn unit(&self) -> &UnitDescription {
+        &self.unit
     }
 
     /// The compiled Loaves the program imports from.
@@ -204,7 +182,7 @@ impl CompilationSession {
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
         let type_infos = typecheck_modules(
             modules,
-            self.manifest.as_ref(),
+            &self.unit,
             &self.loaves,
             self.own_standard_package,
             package,
@@ -246,12 +224,9 @@ impl CompilationSession {
         })
     }
 
-    /// Return the Rust crate names declared by the project manifest, or an empty set outside a project.
+    /// The Rust crate names the package declares.
     pub fn declared_crate_names(&self) -> HashSet<String> {
-        self.manifest
-            .as_ref()
-            .map(ProjectManifest::declared_rust_crate_names)
-            .unwrap_or_default()
+        self.unit.rust_crates.iter().cloned().collect()
     }
 
     /// Lex and parse one source file using the project-aware vocabulary surfaces, without running desugarers or
@@ -371,89 +346,4 @@ impl CompilationSession {
             }
         }
     }
-}
-
-/// Index every Loaf the program reaches: its active dependencies and theirs, read from each dependency's own root,
-/// and the standard packages the toolchain has built, other than the program's own.
-fn index_loaves(
-    manifest: Option<&ProjectManifest>,
-    active_optional_dependencies: &BTreeSet<String>,
-    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
-    profile: &str,
-) -> CliResult<LoafIndex> {
-    let mut entries = BTreeMap::<String, LoafEntry>::new();
-    if let Some(manifest) = manifest {
-        // A direct dependency is keyed as the consumer spells it; a transitive one, which no consumer spells, by its
-        // package name.
-        let mut pending = active_dependency_roots(manifest, active_optional_dependencies)
-            .into_iter()
-            .map(|(key, root)| (Some(key), root))
-            .collect::<Vec<_>>();
-        let mut visited = BTreeSet::new();
-        while let Some((key, root)) = pending.pop() {
-            if !visited.insert(root.clone()) {
-                continue;
-            }
-            let dependency = ProjectManifest::load(&root.join(LOAF_MANIFEST_FILENAME))
-                .map_err(|error| CliError::failure(format!("dependency at {}: {error}", root.display())))?;
-            let name = dependency
-                .project
-                .as_ref()
-                .and_then(|project| project.name.clone())
-                .ok_or_else(|| CliError::failure(format!("dependency at {} names no package", root.display())))?;
-            let key = key.unwrap_or_else(|| name.clone());
-            let entry = LoafIndex::dependency(&key, &name, &root, profile).map_err(|error| {
-                CliError::failure(format!(
-                    "dependency `{key}` has no compiled Loaf for profile `{profile}`: {error}"
-                ))
-            })?;
-            pending.extend(
-                active_dependency_roots(&dependency, &BTreeSet::new())
-                    .into_iter()
-                    .map(|(_, root)| (None, root)),
-            );
-            entries.insert(key, entry);
-        }
-    }
-    if let Some(std_root) = standard_root()? {
-        for policy in STANDARD_PACKAGE_NAMESPACE_POLICIES {
-            if own_standard_package.is_some_and(|own| own.package_name == policy.package_name) {
-                continue;
-            }
-            let dir = artifact_dir(&std_root.join(policy.source_directory), profile);
-            if !dir.is_dir() {
-                continue;
-            }
-            let entry = LoafIndex::standard(policy.package_name, &std_root, profile)
-                .map_err(|error| CliError::failure(error.to_string()))?;
-            entries.insert(entry.key.clone(), entry);
-        }
-    }
-    LoafIndex::new(entries.into_values()).map_err(|error| CliError::failure(error.to_string()))
-}
-
-/// The active path dependencies a manifest declares: every non-optional one and the optional ones its features
-/// activate, each with its root.
-fn active_dependency_roots(
-    manifest: &ProjectManifest,
-    active_optional_dependencies: &BTreeSet<String>,
-) -> Vec<(String, PathBuf)> {
-    manifest
-        .library_dependencies()
-        .iter()
-        .filter(|(key, spec)| !spec.optional || active_optional_dependencies.contains(*key))
-        .map(|(key, spec)| (key.clone(), spec.path.clone()))
-        .collect()
-}
-
-/// The toolchain's standard-library root: `ROOT/stdlib` installed, `ROOT/loaves/stdlib` in a checkout.
-fn standard_root() -> CliResult<Option<PathBuf>> {
-    let Some(layout) = CompilerOwnedSourceLayout::discover().map_err(|error| CliError::failure(error.to_string()))?
-    else {
-        return Ok(None);
-    };
-    let root = layout
-        .verified_source_root()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    Ok(Some(root.to_path_buf()))
 }

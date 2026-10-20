@@ -197,7 +197,7 @@ pub fn resolve_source_module_import_from_source_file(
         };
     }
 
-    let identity_root = effective_source_root(base_dir, source_root);
+    let identity_root = source_root.map(Path::to_path_buf);
     let can_use_root_import = !path.is_absolute && path.parent_levels == 0;
 
     let primary_base = primary_import_base_dir(base_dir, source_root, path);
@@ -307,7 +307,8 @@ fn source_import_candidates(import: &ImportDecl) -> Option<(&ImportPath, Vec<Vec
 /// Determine the primary base directory for resolving an import path.
 fn primary_import_base_dir(base_dir: &Path, source_root: Option<&Path>, path: &ImportPath) -> PathBuf {
     if path.is_absolute {
-        return effective_source_root(base_dir, source_root)
+        return source_root
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| discover_source_root_from_layout(base_dir));
     }
 
@@ -316,13 +317,6 @@ fn primary_import_base_dir(base_dir: &Path, source_root: Option<&Path>, path: &I
         base = base.parent().map(Path::to_path_buf).unwrap_or(base);
     }
     base
-}
-
-/// Find the effective source root for imports when one is known or discoverable.
-fn effective_source_root(base_dir: &Path, source_root: Option<&Path>) -> Option<PathBuf> {
-    source_root
-        .map(Path::to_path_buf)
-        .or_else(|| resolve_source_root_for_imports(base_dir))
 }
 
 /// Infer a source root from conventional project layout when no manifest-driven root is available.
@@ -553,26 +547,6 @@ fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf
     }
 
     None
-}
-
-/// Returns the project's configured or conventional source root for resolving unqualified module imports.
-///
-/// Walks up from `start_dir` to find `loaf.toml`, then uses `[build] source-root` when set; otherwise `src/` if it
-/// exists, else the project root. Returns `None` if no manifest is found.
-fn resolve_source_root_for_imports(start_dir: &Path) -> Option<PathBuf> {
-    let manifest = oven_model::manifest::ProjectManifest::discover(start_dir)
-        .ok()
-        .flatten()?;
-    let project_root = manifest.project_root().to_path_buf();
-    if let Some(custom) = manifest.build.as_ref().and_then(|build| build.source_root.as_deref()) {
-        return Some(project_root.join(custom));
-    }
-    let src_root = project_root.join("src");
-    if src_root.exists() {
-        Some(src_root)
-    } else {
-        Some(project_root)
-    }
 }
 
 /// Extract symbols exported by a module.

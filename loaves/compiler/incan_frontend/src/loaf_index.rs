@@ -26,11 +26,6 @@ pub const LIBRARY_MANIFEST_EXTENSION: &str = "incnlib";
 /// The extension of a Loaf's executable representation, `<name>.incnbody`.
 pub const EXECUTABLE_REPRESENTATION_EXTENSION: &str = "incnbody";
 
-/// The artifact directory of a Loaf rooted at `root`, for one profile: `<root>/target/incan/loaf/<profile>`.
-pub fn artifact_dir(root: &Path, profile: &str) -> PathBuf {
-    root.join("target/incan/loaf").join(profile)
-}
-
 /// The identity of one compiled Loaf: its package, version, manifest digest and public feature projection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LoafIdentity {
@@ -230,28 +225,27 @@ impl LoafIndex {
         Ok(Self { entries: indexed })
     }
 
-    /// The entry for one dependency, read from the dependency's own root.
-    pub fn dependency(key: &str, name: &str, root: &Path, profile: &str) -> Result<LoafEntry, LoafIndexError> {
+    /// The entry for one dependency, read from its artifact directory.
+    pub fn dependency(key: &str, name: &str, dir: &Path) -> Result<LoafEntry, LoafIndexError> {
         Ok(LoafEntry {
             key: key.to_owned(),
             namespace: LoafNamespace::Dependency { key: key.to_owned() },
-            artifact: LoafArtifact::read(&artifact_dir(root, profile), name)?,
+            artifact: LoafArtifact::read(dir, name)?,
         })
     }
 
-    /// The entry for one standard package, read below the toolchain's standard root.
-    pub fn standard(package: &str, std_root: &Path, profile: &str) -> Result<LoafEntry, LoafIndexError> {
+    /// The entry for one standard package, read from its artifact directory.
+    pub fn standard(package: &str, dir: &Path) -> Result<LoafEntry, LoafIndexError> {
         let policy = STANDARD_PACKAGE_NAMESPACE_POLICIES
             .iter()
             .find(|policy| policy.package_name == package)
             .ok_or_else(|| LoafIndexError::UnknownStandardPackage {
                 package: package.to_owned(),
             })?;
-        let root = std_root.join(policy.source_directory);
         Ok(LoafEntry {
             key: policy.package_name.to_owned(),
             namespace: LoafNamespace::Standard { policy },
-            artifact: LoafArtifact::read(&artifact_dir(&root, profile), policy.package_name)?,
+            artifact: LoafArtifact::read(dir, policy.package_name)?,
         })
     }
 

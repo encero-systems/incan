@@ -20,7 +20,6 @@ incan_frontend = { default-features = false, loaf = "incan_frontend", path = "..
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab" }
-oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }

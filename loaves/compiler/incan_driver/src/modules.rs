@@ -13,9 +13,8 @@ use incan_lang::lang::stdlib;
 
 use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
-use crate::features::FeatureSelection;
-use crate::project::{collect_incan_source_files, read_source_for_diagnostics};
-use crate::session::{CompilationSession, DEFAULT_PROFILE};
+use crate::session::CompilationSession;
+use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
 use incan_frontend::ast::{ImportKind, ImportPath, Program, Span};
 use incan_frontend::module::{
     SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
@@ -24,53 +23,6 @@ use incan_frontend::module::{
 };
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
-
-/// Collect and parse the entry file and all its dependencies.
-///
-/// Only the program's own source modules are collected: every other module it imports belongs to a compiled Loaf
-/// (DD-0007).
-pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
-    collect_modules_detailed(entry_path).map_err(|failure| CliError::failure(failure.render_human()))
-}
-
-/// Collect and parse the entry file and all its dependencies, preserving structured diagnostic context.
-pub fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
-    collect_modules_detailed_with_selection(entry_path, &FeatureSelection::default(), DEFAULT_PROFILE)
-}
-
-/// Collect and parse the entry file and all dependencies for one package-feature projection and build profile.
-pub fn collect_modules_detailed_with_selection(
-    entry_path: &str,
-    feature_selection: &FeatureSelection,
-    profile: &str,
-) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
-    let path = if Path::new(entry_path).is_absolute() {
-        PathBuf::from(entry_path)
-    } else {
-        std::env::current_dir()
-            .map_err(|error| {
-                CliDiagnosticFailure::single(
-                    entry_path,
-                    "",
-                    diagnostics::CompileError::new(
-                        format!("failed to determine current directory: {error}"),
-                        Span::default(),
-                    ),
-                    diagnostics::DiagnosticPhase::Tooling,
-                )
-            })?
-            .join(entry_path)
-    };
-    let session = CompilationSession::discover(&path, feature_selection, profile).map_err(|error| {
-        CliDiagnosticFailure::single(
-            path.to_string_lossy(),
-            "",
-            diagnostics::CompileError::new(error.message, Span::default()),
-            diagnostics::DiagnosticPhase::Import,
-        )
-    })?;
-    collect_modules_detailed_with_session(path, &session)
-}
 
 /// Collect one source graph through an already-resolved compilation session.
 pub fn collect_modules_detailed_with_session(

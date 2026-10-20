@@ -4,8 +4,7 @@
 //! analysis runs the ordinary host-target C verifier, but this report is not a reusable verification receipt and does
 //! not resolve native artifacts or infer bridge and facade roles from source layout.
 
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use clap::ValueEnum;
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
@@ -13,7 +12,6 @@ use serde::Serialize;
 use std::fmt::Write as _;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::features::FeatureSelection;
 use incan_frontend::ParsedModule;
 use incan_frontend::ast::Span;
 use incan_frontend::typechecker::{
@@ -22,7 +20,8 @@ use incan_frontend::typechecker::{
 };
 
 use incan_driver::modules::collect_modules_detailed_with_session;
-use incan_driver::session::{CompilationAnalysis, CompilationSession, DEFAULT_PROFILE};
+use incan_driver::session::{CompilationAnalysis, CompilationSession};
+use incan_driver::unit::UnitDescription;
 
 /// Compatibility version for the checked C binding inspection report.
 const BINDING_INSPECTION_SCHEMA_VERSION: u32 = 2;
@@ -197,15 +196,9 @@ struct BindingSourceSpan {
 /// The command runs the ordinary compiler collection and typecheck path exactly once, including host-target C
 /// verification, then projects only descriptors produced by that pass. It is strict: invalid source returns ordinary
 /// compiler diagnostics instead of a partial report whose facts could be mistaken for a checked contract.
-pub fn inspect_bindings(
-    path: &Path,
-    format: BindingInspectionFormat,
-    feature_selection: &FeatureSelection,
-) -> CliResult<ExitCode> {
-    let path = std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?;
-    let entry_path = resolve_binding_entry_path(&path)?;
-    let session = CompilationSession::discover(&entry_path, feature_selection, DEFAULT_PROFILE)?;
-    let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
+pub fn inspect_bindings(unit: &UnitDescription, format: BindingInspectionFormat) -> CliResult<ExitCode> {
+    let session = CompilationSession::new(unit)?;
+    let modules = collect_modules_detailed_with_session(unit.source.clone(), &session)
         .map_err(|failure| CliError::failure(failure.render_human()))?;
     let analysis = session
         .analyze_modules(&modules)
@@ -213,34 +206,6 @@ pub fn inspect_bindings(
     let report = binding_inspection_report(&modules, &analysis)?;
     print!("{}", render_binding_inspection_report(&report, format)?);
     Ok(ExitCode::SUCCESS)
-}
-
-fn resolve_binding_entry_path(path: &Path) -> CliResult<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        env::current_dir()
-            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
-            .join(path)
-    };
-    if absolute.is_file() {
-        return Ok(absolute);
-    }
-    if absolute.is_dir() {
-        for candidate in [absolute.join("src/main.incn"), absolute.join("src/lib.incn")] {
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-        return Err(CliError::failure(format!(
-            "binding inspection requires an Incan source file, or a project directory with `src/main.incn` or `src/lib.incn`: {}",
-            absolute.display()
-        )));
-    }
-    Err(CliError::failure(format!(
-        "binding inspection path does not exist: {}",
-        absolute.display()
-    )))
 }
 
 /// Project all checked binding descriptors from one successful shared compilation analysis.

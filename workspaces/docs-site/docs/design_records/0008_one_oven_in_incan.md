@@ -40,7 +40,7 @@ The compiler is the Rust code the Oven calls. `incan-rustc-driver` compiles one 
 
 ### One program, no exchange
 
-The Oven's decisions and the actions they lead to run in one program, so they share typed values rather than exchanging documents. The `incan.oven.*` wire schemas are removed. The unit description and the lock are the only formats that cross a boundary.
+The Oven's decisions and the actions they lead to run in one program, so they share typed values rather than exchanging documents. The `incan.oven.*` wire schemas are removed. The unit description and the lock are the only formats that cross a boundary. A tool that runs outside the Oven, such as the language server, asks for the description of the unit owning a file with `incan describe-unit PATH`.
 
 ### Bootstrap
 

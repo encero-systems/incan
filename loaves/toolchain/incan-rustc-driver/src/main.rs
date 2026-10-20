@@ -51,13 +51,13 @@ mod values;
 
 use std::path::Path;
 
-/// Compile an Incan unit (`--source`) or a Rust unit (`--rust-unit`) through the pinned rustc.
+/// Compile an Incan unit (`--unit`, from its unit description) or a Rust unit (`--rust-unit`) through the pinned rustc.
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|arg| arg == "--source") {
+    if args.first().is_some_and(|arg| arg == "--unit") {
         return frontend::compile(&args[1..]);
     }
     if args.first().is_some_and(|arg| arg == "--rust-unit") {
@@ -69,5 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unit::compile(&args[separator + 1..], Path::new(sysroot), &args[2..separator])?;
         return Ok(());
     }
-    Err("usage: incan-rustc-driver --source SOURCE CRATE OUTPUT SYSROOT [OPTIONS] | --rust-unit SYSROOT ... -- RUSTC_ARGS".into())
+    Err(
+        "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --rust-unit SYSROOT ... -- RUSTC_ARGS"
+            .into(),
+    )
 }

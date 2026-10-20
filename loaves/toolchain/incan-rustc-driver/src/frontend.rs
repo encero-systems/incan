@@ -2,10 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use incan_driver::features::FeatureSelection;
+use sha2::{Digest, Sha256};
+
 use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::CompilationSession;
+use incan_driver::unit::UnitDescription;
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::LoafNativeClosure;
@@ -39,7 +41,7 @@ fn report_missing_entrypoint(source: &Path) -> Result<(), Box<dyn std::error::Er
     let report = serde_json::json!({
         "schema_version": 1,
         "kind": "missing_entrypoint",
-        "source_digest": oven_model::digest::digest_content(&source),
+        "source_digest": format!("sha256:{}", hex::encode(Sha256::digest(source.as_bytes()))),
     });
     std::fs::write(path, serde_json::to_vec(&report)?)?;
     Ok(())
@@ -70,33 +72,26 @@ struct CheckedProgram {
     manifest: Option<LibraryManifest>,
 }
 
-/// Collect and analyze the original source through the CLI's compilation session, retaining canonical checked facts.
+/// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
 ///
 /// Native-only declaration refusals follow analysis; desugaring and the Loaves the program imports from are owned by
 /// the session. The declarations the program reaches in its Loaves (DD-0007) come from their `.incnbody` records, and
 /// every module lowers against them. Private checked re-export calls add their exact package targets to the request
-/// without changing the ordinary reference graph. An explicit invocation package affects only checked registry
-/// materialization, independently of the native crate's symbol identity.
+/// without changing the ordinary reference graph. The unit's package is its registry package.
 ///
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass.
-fn checked_modules(
-    path: &Path,
-    package_override: Option<&str>,
-    profile: &str,
-    library: bool,
-) -> Result<CheckedProgram, String> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %path.display()).entered();
-    let path = path.canonicalize().map_err(|error| error.to_string())?;
-    let session = CompilationSession::discover(&path, &FeatureSelection::default(), profile)
-        .map_err(|error| error.to_string())?;
+fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgram, String> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
+    let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
+    let session = CompilationSession::new(unit).map_err(|error| error.to_string())?;
     let modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
     } else {
         collect_modules_detailed_with_session(path.clone(), &session)
     }
     .map_err(|failure| failure.render_human())?;
-    let package_identity = package_override.unwrap_or_else(|| registry_package_identity(&session, &path));
+    let package_identity = unit.package.as_str();
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
@@ -114,14 +109,13 @@ fn checked_modules(
         .ok_or("entry module is missing")?;
     let manifest = match publication {
         Some(publication) => {
-            let version = session
-                .manifest
-                .as_ref()
-                .and_then(|manifest| manifest.project.as_ref())
-                .and_then(|project| project.version.as_deref())
-                .unwrap_or("0.1.0");
             let manifest = publication
-                .library_manifest(&modules, &modules[entry], version, &session.contract_model_bundles)
+                .library_manifest(
+                    &modules,
+                    &modules[entry],
+                    &unit.version,
+                    &session.contract_model_bundles,
+                )
                 .map_err(|error| error.to_string())?;
             Some(manifest)
         }
@@ -235,18 +229,6 @@ fn checked_modules(
         own: loaf_modules,
         manifest,
     })
-}
-
-/// Select the same manifest-or-entrypoint package name as legacy project preparation, independently of the native crate
-/// name.
-fn registry_package_identity<'a>(session: &'a CompilationSession, path: &'a Path) -> &'a str {
-    session
-        .manifest
-        .as_ref()
-        .and_then(|manifest| manifest.project.as_ref())
-        .and_then(|project| project.name.as_deref())
-        .or_else(|| path.file_stem().and_then(|stem| stem.to_str()))
-        .unwrap_or("incan_project")
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
@@ -566,23 +548,16 @@ fn validate_generic_adoptions(
 struct Dependencies {
     externs: Vec<(String, PathBuf)>,
     directories: Vec<PathBuf>,
-    /// Explicit logical package selected by the source caller, independent of the native crate's name.
-    package_identity: Option<String>,
     /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
     library: bool,
-    /// The build profile whose Loaf artifacts the program reads (`--profile`).
-    profile: String,
     /// Arguments the Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
 }
 
-/// Parse declared native externs, search directories and a logical package override; no ambient crate discovery is
-/// performed.
+/// Parse declared native externs, search directories and rustc arguments; no ambient crate discovery is performed.
 fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
     let mut externs = Vec::new();
     let mut directories = Vec::new();
-    let mut package_identity = None;
-    let mut profile = None;
     let mut library = false;
     let mut rustc_args = Vec::new();
     let mut remaining = arguments.iter();
@@ -599,27 +574,13 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
             }
             "--search" => directories.push(PathBuf::from(value)),
             "--rustc-arg" => rustc_args.push(value.clone()),
-            "--package-name" => {
-                if value.is_empty() || package_identity.is_some() {
-                    return Err("--package-name requires one nonempty package identity".to_owned());
-                }
-                package_identity = Some(value.clone());
-            }
-            "--profile" => {
-                if value.is_empty() || profile.is_some() {
-                    return Err("--profile requires one nonempty profile name".to_owned());
-                }
-                profile = Some(value.clone());
-            }
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
     Ok(Dependencies {
         externs,
         directories,
-        package_identity,
         library,
-        profile: profile.unwrap_or_else(|| incan_driver::session::DEFAULT_PROFILE.to_owned()),
         rustc_args,
     })
 }
@@ -630,30 +591,23 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--rustc-arg ARG] [--package-name NAME] [--profile NAME] [--library]"
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--rustc-arg ARG] [--library]"
                 .into(),
         );
     }
 
     // ---- Checked source and Incan plan ----
-    let source_path = PathBuf::from(&arguments[0]);
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_source", input = %source_path.display()).entered();
+    let unit = UnitDescription::read(Path::new(&arguments[0])).map_err(|error| error.message)?;
+    let source_path = unit.source.clone();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let dependencies = dependencies(&arguments[4..])?;
-    let checked_source = source_path.clone();
-    let checked_package = dependencies.package_identity.clone();
-    let checked_profile = dependencies.profile.clone();
     let checked_library = dependencies.library;
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(
-            &checked_source,
-            checked_package.as_deref(),
-            &checked_profile,
-            checked_library,
-        )
+        checked_modules(&unit, checked_library)
     });
     let program = match checked {
         Ok(program) => program,

@@ -3,13 +3,11 @@
 //! `incan check` and `incan explain` expose the same compiler diagnostics as the legacy debug flags, but with stable
 //! JSON output and catalog-backed explanations for tooling consumers.
 
-use std::path::Path;
-
 use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::features::FeatureSelection;
+use incan_driver::unit::UnitDescription;
 use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION};
 
 /// Output format for stable diagnostics commands.
@@ -26,34 +24,9 @@ struct ExplainReport {
     entry: diagnostics::DiagnosticCatalogEntry,
 }
 
-/// Run the canonical check pipeline for a file or project entrypoint.
-pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
-    check_path_with_features(path, format, &FeatureSelection::default())
-}
-
-/// Run the canonical check pipeline for an explicit Incan package-feature projection.
-pub fn check_path_with_features(
-    path: &Path,
-    format: DiagnosticOutputFormat,
-    feature_selection: &FeatureSelection,
-) -> CliResult<ExitCode> {
-    check_path_with_interop_target_selection(path, format, feature_selection, None)
-}
-
-/// Run the canonical check pipeline with an explicit declared target for checked C ABI verification only.
-pub(crate) fn check_path_with_interop_target_selection(
-    path: &Path,
-    format: DiagnosticOutputFormat,
-    feature_selection: &FeatureSelection,
-    interop_target: Option<&str>,
-) -> CliResult<ExitCode> {
-    let report = incan_driver::build::check::execute_request(&incan_driver::build::check::CheckRequest {
-        path: std::path::absolute(path).map_err(|error| CliError::failure(error.to_string()))?,
-        features: feature_selection.clone(),
-        profile: None,
-        interop_target: interop_target.map(str::to_owned),
-    })?;
-    render_check_report(report, format)
+/// Check one described unit and render its report.
+pub fn check(unit: &UnitDescription, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
+    render_check_report(incan_driver::check::check_unit(unit)?, format)
 }
 
 /// Print a catalog-backed diagnostic explanation.
@@ -97,7 +70,7 @@ pub fn explain_diagnostic(code: &str, format: DiagnosticOutputFormat) -> CliResu
 
 /// Render one already-evaluated check result in either human text or the stable JSON report shape.
 fn render_check_report(
-    report: incan_driver::build::check::CheckOutput,
+    report: incan_driver::check::CheckOutput,
     format: DiagnosticOutputFormat,
 ) -> CliResult<ExitCode> {
     for warning in report.warnings {

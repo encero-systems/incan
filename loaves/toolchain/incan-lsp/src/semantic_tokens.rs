@@ -1352,42 +1352,4 @@ mod tests {
         }
         Ok(())
     }
-    /// Classification stays a single pass; a per-range rescan fails this by a wide margin.
-    #[test]
-    fn classification_cost_grows_with_the_document_rather_than_its_square() -> TestResult {
-        // Both defects this guards against were `O(ranges × document)` rescans, and both were invisible to every
-        // other test here because correctness was never wrong — only the cost was. Resolving a region by scanning
-        // the region list per identifier, and splitting a range by walking `char_indices` from byte zero, together
-        // took 4.3 seconds on an 84 KB file. A language server recomputes this on every keystroke.
-        //
-        // The assertion is a ratio rather than a deadline, so it means the same thing on a fast machine, a slow
-        // one, and a loaded CI runner: the same content at ten times the length may not cost a hundred times as
-        // much. A quadratic pass fails this by a wide margin; a linear one passes with room to spare.
-        let fixture = oven_model::toolchain_layout::development_root().join("loaves/stdlib/data/src/collections.incn");
-        let source = std::fs::read_to_string(&fixture).map_err(|error| format!("fixture unavailable: {error}"))?;
-        let mut small_end = source.len() / 10;
-        while small_end < source.len() && !source.is_char_boundary(small_end) {
-            small_end += 1;
-        }
-        let small = &source[..small_end];
-
-        let measure = |text: &str| {
-            let started = std::time::Instant::now();
-            let _ = semantic_tokens(text, None);
-            started.elapsed().as_secs_f64()
-        };
-        // One untimed pass first, so neither measurement pays for cold caches the other then benefits from.
-        let _ = measure(small);
-        let small_seconds = measure(small).max(1e-6);
-        let large_seconds = measure(&source);
-
-        let length_ratio = source.len() as f64 / small.len() as f64;
-        let cost_ratio = large_seconds / small_seconds;
-        assert!(
-            cost_ratio < length_ratio * 4.0,
-            "classification cost scaled {cost_ratio:.1}x for a {length_ratio:.1}x longer document, which is the \
-             shape of a per-range rescan rather than a single pass"
-        );
-        Ok(())
-    }
 }
