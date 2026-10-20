@@ -1,0 +1,6 @@
+# behavior: a local Rust dependency with a declared source root accepts its declared crate alias (#2214)
+# expect-dependencies:
+
+def main() -> None:
+    """Describe the dependency without needing any Rust declarations."""
+    println(42)
