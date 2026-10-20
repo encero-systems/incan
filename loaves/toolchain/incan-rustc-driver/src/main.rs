@@ -44,33 +44,45 @@ mod statics;
 mod terminators;
 mod types;
 mod union_debug;
-mod unit;
 mod validation;
 mod value_enum_serde;
 mod values;
 
 use std::path::Path;
 
-/// Compile an Incan unit (`--unit`, from its unit description) or a Rust unit (`--rust-unit`) through the pinned rustc.
+use incan_cli::commands::DiagnosticOutputFormat;
+use incan_driver::unit::UnitDescription;
+
+const USAGE: &str =
+    "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT [--format text|json]";
+
+/// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote.
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|arg| arg == "--unit") {
-        return frontend::compile(&args[1..]);
+    match args.first().map(String::as_str) {
+        Some("--unit") => frontend::compile(&args[1..]),
+        Some("--check") => check(&args[1..]),
+        _ => Err(USAGE.into()),
     }
-    if args.first().is_some_and(|arg| arg == "--rust-unit") {
-        let separator = args
-            .iter()
-            .position(|arg| arg == "--")
-            .ok_or("Rust unit invocation requires -- before rustc arguments")?;
-        let sysroot = args.get(1).ok_or("Rust unit invocation requires a sysroot")?;
-        unit::compile(&args[separator + 1..], Path::new(sysroot), &args[2..separator])?;
-        return Ok(());
+}
+
+/// Check one unit and exit with the check's status; the report goes to stdout, a refusal's message to stderr.
+fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let (path, format) = match arguments {
+        [path] => (path, DiagnosticOutputFormat::Text),
+        [path, flag, format] if flag == "--format" && format == "text" => (path, DiagnosticOutputFormat::Text),
+        [path, flag, format] if flag == "--format" && format == "json" => (path, DiagnosticOutputFormat::Json),
+        _ => return Err(USAGE.into()),
+    };
+    let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
+    if let Err(error) = incan_cli::commands::check(&unit, format) {
+        if !error.message.is_empty() {
+            eprintln!("{}", error.message);
+        }
+        std::process::exit(error.exit_code.0);
     }
-    Err(
-        "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --rust-unit SYSROOT ... -- RUSTC_ARGS"
-            .into(),
-    )
+    Ok(())
 }

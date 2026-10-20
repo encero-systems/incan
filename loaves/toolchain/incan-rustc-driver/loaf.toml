@@ -5,8 +5,8 @@ private = true
 
 [dependencies]
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
-incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_plan" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
+incan_cli = { loaf = "incan_cli", path = "../incan-cli" }
 
 incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["std_async", "std_testing", "std_decorators"] }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
