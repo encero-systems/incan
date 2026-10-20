@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::diagnostics::errors;
-use crate::resolved_type_subst::map_resolved_type_leaves;
+use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::{collection_type_id, render_resolved_type_as_rust_arg};
 use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
@@ -348,6 +348,17 @@ impl TypeChecker {
         Self::specialize_rust_signature(sig, &substitutions, owner)
     }
 
+    /// Instantiate a checked Rust signature structurally so Incan argument identities survive the foreign boundary.
+    /// Rendering an Incan model into a Rust display must not replace its retained declaration with a bare name.
+    fn instantiate_rust_signature_type(
+        &self,
+        ty: &ResolvedType,
+        parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> ResolvedType {
+        substitute_resolved_type(&self.rust_inference_type(ty, parameters), bindings)
+    }
+
     /// Retain a declaration-ordered inference result for Body IR; conflicting constraints are source errors.
     fn record_inferred_rust_arguments(
         &mut self,
@@ -398,7 +409,12 @@ impl TypeChecker {
         let Some(arguments) = arguments else {
             return;
         };
-        let parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
+        let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
+        for (parameter, declared) in parameters.iter_mut().zip(&signature.params) {
+            let template =
+                self.resolved_rust_boundary_target_from_param_display_for_owner_path(&declared.type_display, path);
+            parameter.ty = self.instantiate_rust_signature_type(&template, &signature.type_params, bindings);
+        }
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
@@ -1227,10 +1243,11 @@ impl TypeChecker {
             self.validate_rust_boundary_value(path, param.type_display.as_str(), arg_expr, arg_ty, false);
         }
 
-        let ret = self.resolved_rust_call_type_from_sig(&effective_sig, path, span);
+        let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
+        let ret = self.instantiate_rust_signature_type(&ret, &sig.type_params, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         if self.errors.len() == errors_before {
-            self.retain_checked_rust_function(path, &effective_sig, &callable_returns, &ret, span);
+            self.retain_checked_rust_function(path, sig, &callable_returns, &ret, span);
         }
         ret
     }

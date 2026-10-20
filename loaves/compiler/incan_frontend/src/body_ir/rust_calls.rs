@@ -4,8 +4,21 @@ use super::args::DeclaredSlot;
 use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span, nominal_carriers, parameter_types};
 
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
-/// The signature is already instantiated by checking; this boundary only projects its types into Body IR.
-pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
+/// The signature is already instantiated by checking. Source-local declarations supply the canonical carrier for an
+/// inferred model argument even when no annotation introduced that name into the checker's type-position map.
+pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclaration]) -> Vec<bir::LoafCallable> {
+    let mut identities = parameter_types::retained_type_identities(facts);
+    for declaration in locals {
+        let name = declaration.canonical.declaration_name.clone();
+        if identities
+            .get(&name)
+            .is_some_and(|identity| identity != &declaration.canonical)
+        {
+            identities.remove(&name);
+        } else {
+            identities.insert(name, declaration.canonical.clone());
+        }
+    }
     let mut calls = Vec::new();
     let mut checked_calls = facts.rust.checked_calls.iter().collect::<Vec<_>>();
     checked_calls.sort_by_key(|(span, _)| **span);
@@ -16,6 +29,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
         let checked = |ty| {
             let mut projected = parameter_types::checked_semantic_type(ty, facts);
             nominal_carriers::retain_checked_type(&mut projected, ty, facts);
+            nominal_carriers::retain_declared_type(&mut projected, &identities);
             projected
         };
         let declaration = bir::LoafCallable {

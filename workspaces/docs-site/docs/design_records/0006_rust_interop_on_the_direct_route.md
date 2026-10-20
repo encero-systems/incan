@@ -54,6 +54,8 @@ Declared reference arguments retain the caller's place through ordinary argument
 
 A free function reached through an imported Rust module uses that module's public child item metadata, then the same free-function inference and retained callee record as a directly imported function. A module binding's source spelling does not become an executable target.
 
+Generic signature types substitute the checker's structured argument types before Body IR projection. This retains an Incan model's declaration identity across calls such as `swap` and `size_of_val`; a rendered Rust display of that model is not a replacement identity. A source-local declaration supplies its canonical carrier even when an inferred value never required a written type annotation.
+
 ## Non-goals
 
 - Field access, pattern matching on variants, or construction by fields of opaque Rust values.
