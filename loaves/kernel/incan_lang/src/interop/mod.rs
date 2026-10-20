@@ -24,7 +24,7 @@ pub use metadata::{
     RustCollectionFamily, RustExpandedDeriveTrait, RustFieldInfo, RustFunctionParamRule, RustFunctionSig,
     RustFunctionSignatureRule, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMacroInfo, RustMethodSig,
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustMutableReferenceCandidate, RustMutableReferenceTypeParam,
-    RustParam, RustPayloadCarrier, RustReceiverContract, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
+    RustParam, RustPayloadCarrier, RustReceiverContract, RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo,
     RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility,
     ancestral_rust_display, ancestral_rust_path, compiler_owned_function_signature, is_box_carrier_path,
     metadata_free_function_signature, metadata_free_method_signature, parse_rust_type_shape_text,

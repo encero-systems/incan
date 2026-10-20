@@ -2219,14 +2219,12 @@ impl TypeChecker {
         let is_default = |path: &str| {
             traits::rust_paths(TraitId::Default).contains(&path) || path == traits::as_str(TraitId::Default)
         };
-        type_info
-            .implemented_traits
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.is_unconditional() && !implemented.mutable_reference && is_default(implemented.path.as_str())
+        }) || type_info
+            .expanded_derive_traits
             .iter()
-            .any(|implemented| !implemented.mutable_reference && is_default(implemented.path.as_str()))
-            || type_info
-                .expanded_derive_traits
-                .iter()
-                .any(|implemented| is_default(implemented.path.as_str()))
+            .any(|implemented| is_default(implemented.path.as_str()))
     }
 
     /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.

@@ -3064,6 +3064,31 @@ impl TypeChecker {
     ) -> RustFunctionSig {
         RustFunctionSig {
             receiver_contract: sig.receiver_contract,
+            bounds: sig
+                .bounds
+                .iter()
+                .map(|bound| incan_lang::interop::RustTraitBound {
+                    self_type: Self::substitute_rust_owner_display(&bound.self_type, substitutions, receiver_display),
+                    path: bound.path.clone(),
+                    type_arguments: bound
+                        .type_arguments
+                        .iter()
+                        .map(|argument| Self::substitute_rust_owner_display(argument, substitutions, receiver_display))
+                        .collect(),
+                    associated_type_bindings: bound
+                        .associated_type_bindings
+                        .iter()
+                        .map(|binding| incan_lang::interop::RustAssociatedTypeBinding {
+                            name: binding.name.clone(),
+                            value_path: Self::substitute_rust_owner_display(
+                                &binding.value_path,
+                                substitutions,
+                                receiver_display,
+                            ),
+                        })
+                        .collect(),
+                })
+                .collect(),
             type_params: sig.type_params.clone(),
             params: sig
                 .params
@@ -4109,9 +4134,10 @@ impl TypeChecker {
         }
         let trait_suffix = Self::rust_trait_path_suffix(&import.trait_path);
         let implemented = type_info.implemented_traits.iter().any(|implemented| {
-            implemented.path == import.trait_path
-                || Some(implemented.path.as_str()) == import.definition_path.as_deref()
-                || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix
+            implemented.is_unconditional()
+                && (implemented.path == import.trait_path
+                    || Some(implemented.path.as_str()) == import.definition_path.as_deref()
+                    || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix)
         });
         implemented.then(|| Self::rust_trait_method_signature(import, method))
     }

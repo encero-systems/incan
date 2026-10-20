@@ -1526,6 +1526,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(argument)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -1590,6 +1591,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: "()".to_string(),
@@ -1633,6 +1635,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("callback".to_string()),
@@ -1681,6 +1684,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("callback".to_string()),
@@ -1725,6 +1729,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("task".to_string()),
@@ -1750,6 +1755,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: "()".to_string(),
@@ -1774,6 +1780,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -1820,6 +1827,7 @@ mod validate_rust_function_call_tests {
         ];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -1908,6 +1916,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -1941,6 +1950,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -1978,6 +1988,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -2024,6 +2035,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -2103,6 +2115,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -2149,6 +2162,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -2187,6 +2201,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -2236,6 +2251,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -2284,6 +2300,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -2331,6 +2348,7 @@ mod validate_rust_function_call_tests {
         let arg_types = [ResolvedType::RustPath("std::io::Cursor<Vec<u8>>".to_string())];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("buf".to_string()),
@@ -2376,6 +2394,7 @@ mod validate_rust_function_call_tests {
         let arg_types = [ResolvedType::Str];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
@@ -2413,6 +2432,7 @@ mod validate_rust_function_call_tests {
         let arg_types = [ResolvedType::Bytes];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("buf".to_string()),
@@ -2475,6 +2495,7 @@ mod validate_rust_function_call_tests {
         );
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {
@@ -2535,6 +2556,7 @@ mod validate_rust_function_call_tests {
         let arg_types = [ResolvedType::Str];
         let sig = RustFunctionSig {
             receiver_contract: None,
+            bounds: Vec::new(),
             type_params: Vec::new(),
             params: vec![
                 RustParam {

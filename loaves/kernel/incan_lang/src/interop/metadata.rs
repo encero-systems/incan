@@ -407,6 +407,7 @@ pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<R
         .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
     Some(RustFunctionSig {
         receiver_contract: None,
+        bounds: Vec::new(),
         type_params: Vec::new(),
         params: rule
             .params
@@ -449,6 +450,7 @@ pub fn compiler_owned_function_signature(rust_path: &str) -> Option<RustFunction
 fn function_signature_from_rule(rule: &RustFunctionSignatureRule) -> RustFunctionSig {
     RustFunctionSig {
         receiver_contract: None,
+        bounds: Vec::new(),
         type_params: Vec::new(),
         params: rule
             .params
@@ -487,6 +489,9 @@ pub struct RustFunctionSig {
     /// rustc.
     #[serde(default)]
     pub type_params: Vec<String>,
+    /// Declared trait predicates, including callable inputs and associated output equalities.
+    #[serde(default)]
+    pub bounds: Vec<RustTraitBound>,
     pub params: Vec<RustParam>,
     pub return_type: String,
     pub is_async: bool,
@@ -525,6 +530,36 @@ pub struct RustImplementedTrait {
     /// Whether the implementation is proven for `&mut Self` instead of `Self`.
     #[serde(default)]
     pub mutable_reference: bool,
+    /// Impl self template; conditional implementations are candidates, not unconditional proof.
+    pub self_type: String,
+    /// Native impl type binders, before substitution into the trait reference.
+    pub type_params: Vec<String>,
+    /// Trait arguments after Self, in native declaration order.
+    pub type_arguments: Vec<String>,
+    /// Conditions that must hold before this implementation applies.
+    pub bounds: Vec<RustTraitBound>,
+    /// Associated type definitions instantiated with the impl's identity arguments.
+    pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
+}
+
+/// A Rust trait predicate with its exact Self, arguments, and associated type equalities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RustTraitBound {
+    /// The type constrained by this predicate, usually a declared generic parameter.
+    pub self_type: String,
+    /// Canonical trait identity from rustc metadata.
+    pub path: String,
+    /// Type arguments after Self; lifetimes carry no layout.
+    pub type_arguments: Vec<String>,
+    /// Projection equalities, including FnOnce::Output for closure expressions.
+    pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
+}
+
+impl RustImplementedTrait {
+    /// Whether this record proves a closed implementation without solving generic predicates.
+    pub fn is_unconditional(&self) -> bool {
+        self.type_params.is_empty() && self.bounds.is_empty()
+    }
 }
 
 /// One concrete associated-type value attached to an inspected trait implementation.
@@ -1502,6 +1537,8 @@ pub enum RustTraitAssoc {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustTraitInfo {
+    /// Trait type binders after Self, in native declaration order.
+    pub type_params: Vec<String>,
     pub items: Vec<RustTraitAssoc>,
     /// Co-located derive-macro namespace metadata for this same Rust path, when invoked by the project.
     ///

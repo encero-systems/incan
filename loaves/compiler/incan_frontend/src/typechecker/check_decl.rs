@@ -4601,9 +4601,10 @@ impl TypeChecker {
         }
         let trait_suffix = Self::rust_trait_path_suffix(trait_path);
         type_info.implemented_traits.iter().any(|implemented| {
-            implemented.path == trait_path
-                || Some(implemented.path.as_str()) == trait_definition_path
-                || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix
+            implemented.is_unconditional()
+                && (implemented.path == trait_path
+                    || Some(implemented.path.as_str()) == trait_definition_path
+                    || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix)
         })
     }
 

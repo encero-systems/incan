@@ -44,7 +44,7 @@ The compiler is a rustc driver (DD-0004). rustc's own crate metadata therefore d
 4. **Storage.**
    - **Layout:** a cache uses `.incnbody`'s layout. A version comes first, then a postcard index of each path's payload range, then one postcard payload per item.
    - **Reading:** a reader decodes the index once, and decodes an item only when checking asks for it.
-   - **Shape:** the metadata types serialize field by field (no skipped fields), so JSON and the binary cache use one shape. Layout version 2 includes each inherent method's impl type parameters and self type; version 1 caches must be regenerated.
+   - **Shape:** the metadata types serialize field by field (no skipped fields), so JSON and the binary cache use one shape. Layout version 3 adds trait impl templates, their conditions and associated type definitions, and function trait predicates with projection equalities. The latter retain callable inputs and `FnOnce::Output` without guessing a closure expression's signature. Earlier caches must be regenerated. Conditional impls are candidates, not unconditional implementation proof; a selected closed callee remains subject to rustc's signature and predicate validation.
 
 ## Consequences
 
@@ -56,7 +56,7 @@ The compiler is a rustc driver (DD-0004). rustc's own crate metadata therefore d
 
 ## Non-goals
 
-- Receiver contracts (returned borrows) and a type's implemented traits are not extracted yet. A missing contract authorizes no inferred borrowing.
+- Receiver contracts (returned borrows) are not extracted yet. A missing contract authorizes no inferred borrowing.
 - How calls on Rust values lower to the plan is DD-0006's.
 
 ## Revisit condition

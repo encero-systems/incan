@@ -5841,10 +5841,11 @@ impl TypeChecker {
         let RustItemKind::Type(type_info) = &metadata.kind else {
             return false;
         };
-        type_info
-            .implemented_traits
-            .iter()
-            .any(|implemented| implemented.path == required_trait && implemented.mutable_reference == mutable_reference)
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.is_unconditional()
+                && implemented.path == required_trait
+                && implemented.mutable_reference == mutable_reference
+        })
     }
 
     /// Match local type derivations and adoptions to an exact inspected Rust trait identity.
