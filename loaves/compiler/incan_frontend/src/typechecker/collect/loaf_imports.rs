@@ -228,7 +228,13 @@ impl TypeChecker {
         if let Some(info) = self.standard_traits.get(name) {
             return Some(info.clone());
         }
-        let segments = stdlib::trait_method_module_segments(name)?;
+        // The derive-method table names a derivable trait's module; every other builtin trait (`TryFrom`, `Error`)
+        // names its declaring module itself.
+        let segments = stdlib::trait_method_module_segments(name).or_else(|| {
+            incan_lang::lang::traits::from_str(name)
+                .and_then(incan_lang::lang::traits::source_module)
+                .map(|module| module.split('.').map(str::to_string).collect())
+        })?;
         let info = self.loaf_trait(&segments, name)?;
         self.standard_traits.insert(name.to_string(), info.clone());
         Some(info)
