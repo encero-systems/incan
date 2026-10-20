@@ -1823,6 +1823,12 @@ def lower_local_assignment(
         PlanType.SetRef(_leaf) => return iterator_assignment(builder, target, value, span)
         PlanType.DictRef(_key, _value) => return iterator_assignment(builder, target, value, span)
         PlanType.ListRef(_leaf, _depth) => return iterator_assignment(builder, target, value, span)
+        PlanType.FrozenCollection(name, _elements) =>
+            match value:
+                RustRvalue.Aggregate(kind, _items) =>
+                    if name == "FrozenList" and kind == RustAggregateKind.List:
+                        return frozen_list_assignment(builder, target, value, span)
+                _ => pass
         _ => pass
     if is_collection(place_type(builder.locals, target)):
         return collection_assignment(builder, target, value, span)
@@ -8012,6 +8018,33 @@ pub def append_list_value(
         unit,
         span,
     )
+    return Ok(None)
+
+
+def frozen_list_assignment(mut builder: Builder, target: Place, value: &RustRvalue, span: SourceSpan) -> Result[None, str]:
+    """
+    Freeze a list literal: build the list, then keep it for the program as the frozen list's storage.
+
+    Only a computed constant's initializer constructs a frozen list of values that are not literals, and it runs once.
+    """
+    ty = place_type(builder.locals, target)
+    snapshot = frozen_list_snapshot_type(ty)?
+    values = temporary(builder, snapshot, span)
+    list_assignment(builder, values, value, span)?
+    match ty:
+        PlanType.FrozenCollection(_name, elements) =>
+            instantiated_external_call(
+                builder,
+                "incan_native_runtime::freeze_list",
+                elements,
+                [snapshot],
+                ty,
+                [read_place(values, true, span)],
+                target,
+                span,
+            )?
+        _ => return Err("unsupported Body IR frozen list assignment")
+    forget_owned(builder, values.local)
     return Ok(None)
 
 

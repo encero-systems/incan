@@ -177,6 +177,11 @@ pub struct FrozenList<T: 'static> {
 }
 
 impl<T: 'static> FrozenList<T> {
+    /// Keep values computed once (a computed constant's) as the frozen list's storage for the rest of the program.
+    pub fn leak(values: Vec<T>) -> Self {
+        Self::new(Box::leak(values.into_boxed_slice()))
+    }
+
     /// Construct a frozen list from a baked `'static` slice.
     pub const fn new(data: &'static [T]) -> Self {
         Self { data }

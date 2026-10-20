@@ -1,0 +1,26 @@
+# behavior: a const frozen list of model values is measured, passed to a function and stored in a model field
+# expect-stdout:
+#   2
+#   2
+#   2
+
+model Ref:
+    label: FrozenStr
+
+
+model Holder:
+    refs: FrozenList[Ref]
+
+
+const refs: FrozenList[Ref] = [Ref(label="a"), Ref(label="b")]
+
+
+def count(values: FrozenList[Ref]) -> int:
+    return len(values)
+
+
+def main() -> None:
+    println(len(refs))
+    println(count(refs))
+    holder = Holder(refs=refs)
+    println(len(holder.refs))

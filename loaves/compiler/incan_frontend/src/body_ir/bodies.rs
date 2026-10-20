@@ -212,6 +212,29 @@ pub(super) fn lower_static_initializer_body(
     finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
 }
 
+/// Lower a computed constant's initializer as a computed static's: a body with no parameters that returns the value,
+/// under the constant's own identity and declaration-span ids. A constant's initializer has no effects and nothing
+/// writes it, so running it once where the module initializes its storage observes what every read observes.
+pub(super) fn lower_constant_initializer_body(
+    item: &ast::ConstDecl,
+    decl_span: ast::Span,
+    canonical: &CanonicalSymbolId,
+    ty: &IncanType,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> bir::Body {
+    let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
+    builder
+        .type_overrides
+        .insert((item.value.span.start, item.value.span.end), ty.clone());
+    let root_scope = builder.new_scope(None, hir_span(decl_span));
+    let source = [ast::Spanned::new(
+        ast::Statement::Return(Some(item.value.clone())),
+        item.value.span,
+    )];
+    let (stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
+    finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
+}
+
 /// Finish a compiler-owned static frame, retaining its actual ownership and source/module provenance.
 /// Registration effects use the same once-only storage boundary after the original declaration initializers.
 pub(super) fn finish_static_initializer_body(

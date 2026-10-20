@@ -158,25 +158,48 @@ impl TypeChecker {
             return;
         }
         let module = vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_REGISTRY.to_string()];
-        let Some((library, rest)) = self.loaf_module(&module) else {
-            return;
+        let standard = if self.owns_standard_module(&module) {
+            self.own_standard_registry_types(&module)
+        } else {
+            self.loaf_standard_registry_types(&module)
         };
+        if let Some(standard) = standard {
+            self.type_info.registry.standard = Some(standard);
+        }
+    }
+
+    /// The standard `Registry` declarations of the package that declares `std.registry`: its own checked modules.
+    fn own_standard_registry_types(&self, module: &[String]) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let path = ImportPath {
+            parent_levels: 0,
+            is_absolute: false,
+            segments: module.to_vec(),
+        };
+        let Some(SymbolKind::Type(TypeInfo::Class(registry_class))) =
+            self.dependency_member_symbol_for_path(&path, "Registry")
+        else {
+            return None;
+        };
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.dependency_member_identity(&path, "Registry")?,
+            registry_class,
+            entry: self.dependency_member_identity(&path, "RegistryEntry")?,
+        })
+    }
+
+    /// The standard `Registry` declarations, read from the standard Loaf that owns `std.registry`.
+    fn loaf_standard_registry_types(&mut self, module: &[String]) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let (library, rest) = self.loaf_module(module)?;
         let Some((SymbolKind::Type(TypeInfo::Class(registry_class)), _)) =
             self.lookup_pub_library_module_symbol_member(&library, &rest, "Registry")
         else {
-            return;
+            return None;
         };
-        let (Some(registry), Some(entry)) = (
-            self.loaf_member_identity(&module, "Registry"),
-            self.loaf_member_identity(&module, "RegistryEntry"),
-        ) else {
-            return;
-        };
-        self.type_info.registry.standard = Some(crate::typechecker::StandardRegistryTypes {
-            registry,
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.loaf_member_identity(module, "Registry")?,
             registry_class,
-            entry,
-        });
+            entry: self.loaf_member_identity(module, "RegistryEntry")?,
+        })
     }
 
     /// The standard declaration of the builtin trait `name` (`Eq`, `Ord`, …), read once from the standard package

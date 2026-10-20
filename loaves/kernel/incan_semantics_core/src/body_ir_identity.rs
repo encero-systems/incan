@@ -53,22 +53,22 @@ fn decorated_input_type_matches(parameter: &crate::IncanCallableParam, packed: &
 impl BodyIrModule {
     /// Prove a static belongs to this module and its initializer matches its exact retained carrier. A computed
     /// initializer's body must carry the static's own canonical identity and declaration id, so a module cannot attach
-    /// another declaration's body to it.
+    /// another declaration's body to it. A `const` that is not a retained constant is read-only storage of the same
+    /// shape.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
-        if matches!(
-            declaration.canonical.kind,
-            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
-        ) {
-            return self.decorated_bindings.iter().any(|binding| {
-                binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
-                    && self.is_well_formed_decorated_binding(binding)
-            });
-        }
-        let Some(declaration_id) = self.declaration_id_for_canonical(
-            &declaration.canonical,
-            SymbolNamespace::OrdinaryLexical,
-            SemanticSourceTargetKind::Static,
-        ) else {
+        let kind = match declaration.canonical.kind {
+            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method => {
+                return self.decorated_bindings.iter().any(|binding| {
+                    binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
+                        && self.is_well_formed_decorated_binding(binding)
+                });
+            }
+            SemanticSourceTargetKind::Const => SemanticSourceTargetKind::Const,
+            _ => SemanticSourceTargetKind::Static,
+        };
+        let Some(declaration_id) =
+            self.declaration_id_for_canonical(&declaration.canonical, SymbolNamespace::OrdinaryLexical, kind)
+        else {
             return false;
         };
         if let StaticInitializer::Computed(body) = &declaration.initial

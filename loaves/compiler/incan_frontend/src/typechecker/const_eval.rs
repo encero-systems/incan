@@ -151,6 +151,13 @@ impl TypeChecker {
                 .push(errors::const_missing_type_annotation(&konst.name, decl_span));
         }
 
+        // A value the evaluator does not fold to a scalar (a list of model values, for one) is lowered as computed
+        // storage, which reads the checked types and identities of the initializer's own expressions.
+        if result.value.is_none() && !matches!(result.ty, ResolvedType::Unknown) {
+            let expected = result.ty.clone();
+            self.check_expr_with_expected(&konst.value, Some(&expected));
+        }
+
         // Record the root initializer type so lowering/codegen can use it.
         self.record_expr_type(konst.value.span, result.ty.clone());
         self.const_eval_cache.insert(konst.name.clone(), result.clone());

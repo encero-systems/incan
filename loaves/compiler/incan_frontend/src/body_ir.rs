@@ -287,6 +287,11 @@ pub fn build_body_ir_module(
         })
         .collect::<Vec<_>>();
     let mut static_declarations = collect::collect_statics(program, &lowering_facts);
+    static_declarations.extend(collect::collect_computed_constants(
+        program,
+        &lowering_facts,
+        &constant_declarations,
+    ));
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);

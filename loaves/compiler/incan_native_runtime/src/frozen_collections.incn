@@ -13,6 +13,11 @@ from rust::incan_std_core::errors import raise_key_error
 from std.rust import Static
 
 
+pub def freeze_list[T with Static](values: list[T]) -> RuntimeFrozenList[T]:
+    """Keep a list computed once, a computed constant's value, as frozen storage for the rest of the program."""
+    return RuntimeFrozenList.leak(values)
+
+
 pub def frozen_list_length[T with Static](value: RuntimeFrozenList[T]) -> int:
     """Measure immutable static storage without allocating an owned collection."""
     return int(value.len())
