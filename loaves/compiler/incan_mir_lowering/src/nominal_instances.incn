@@ -1,6 +1,6 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
 from symbols import type_component
 from type_parameters import substitute
@@ -17,6 +17,13 @@ pub model NominalInstance:
     pub ancestors: list[str]
 
 
+pub def template_base(declaration: &NominalDeclaration) -> str:
+    """The base a generic nominal's uses spell: a Rust item's path (its opaque name, DD-0006), else its declared name."""
+    match declaration.canonical.origin:
+        SymbolOrigin.RustCrate(path) => return "::".join(path)
+        _ => return str(declaration.canonical.declaration_name)
+
+
 pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
     """Encode a concrete nominal carrier independently of diagnostic aliases and field spellings."""
     mut name = base + "__incan_instance"
@@ -29,7 +36,7 @@ pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclarati
     """Recover a closed layout's arguments from the checked types that scheduled its specialization."""
     if declaration.type_parameter_count == 0:
         return Ok([])
-    base = str(declaration.canonical.declaration_name)
+    base = template_base(declaration)
     name = str(declaration.name)
     for body in nominal_frames(module)?:
         match find_instance_arguments(body.return_type, base, name):

@@ -25,7 +25,7 @@ from pub::incan_mir_plan import (
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
-from nominal_instances import nominal_symbol
+from nominal_instances import nominal_symbol, template_base
 from types import primitive_type
 from closures import function_pointer_type
 from layout_types import native_source_type as retained_type
@@ -68,7 +68,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 return Ok(PlanType.FrozenCollection(str(base), storage))
             for index in range(len(declarations)):
                 declaration = declarations[index]
-                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(
+                if declaration.type_parameter_count != 0 and template_base(declaration) == str(base) and declaration.name == nominal_symbol(
                     str(base),
                     arguments,
                 ):

@@ -188,7 +188,7 @@ from generator_adapters import is_generator_adapter, generator_adapter, iterator
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
-from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments
+from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions, string_conversion_callee
 from string_conversion_contracts import validate_conversion_placement
@@ -4203,7 +4203,7 @@ def library_receiver_arguments(
     if names == ["Self"]:
         if len(arguments) == 0:
             return Ok([RustType.Named(str(declaration.name))])
-        concrete: RustType = generic(str(declaration.canonical.declaration_name), arguments)
+        concrete: RustType = generic(template_base(declaration), arguments)
         return Ok([concrete])
     if len(arguments) == len(names):
         return Ok(arguments)

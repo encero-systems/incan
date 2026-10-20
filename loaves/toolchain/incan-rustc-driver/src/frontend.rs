@@ -12,7 +12,7 @@ use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
@@ -222,6 +222,13 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
             }
         });
     }
+    // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
+    let held = rust_value_modules(incan_semantics_core::body_ir::held_rust_items(&bodies));
+    let held_modules = held.len();
+    files.splice(loaf_modules..loaf_modules, held.iter().map(|module| module.module_id.path().to_owned()));
+    sources.splice(loaf_modules..loaf_modules, held.iter().map(|_| String::new()));
+    bodies.splice(loaf_modules..loaf_modules, held);
+    let entry = entry + held_modules;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
     entry_module.string_conversion_contract = string_conversion_contract;
     entry_module.loaf_callables = loaf_callables;
@@ -230,9 +237,26 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
         sources,
         files,
         entry,
-        own: loaf_modules,
+        own: loaf_modules + held_modules,
         manifest,
     })
+}
+
+/// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
+/// lowering lays a value of it out as the item itself.
+fn rust_value_modules(held: Vec<NominalDeclaration>) -> Vec<BodyIrModule> {
+    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
+    for declaration in held {
+        let Some(owner) = incan_semantics_core::body_ir::native_nominal_module(&declaration.canonical) else {
+            continue;
+        };
+        owners
+            .entry(owner.clone())
+            .or_insert_with(|| BodyIrModule::declarations_only(owner))
+            .nominal_declarations
+            .push(declaration);
+    }
+    owners.into_values().collect()
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
