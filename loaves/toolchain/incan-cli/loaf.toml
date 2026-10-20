@@ -8,10 +8,10 @@ description = "The incan command: clap surface, terminal rendering, exit codes, 
 
 [project.features]
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_driver/rust_inspect", "oven-cli/rust_inspect"]
-std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing", "oven-cli/std_testing"]
-std_async = ["incan_frontend/std_async", "incan_driver/std_async", "oven-cli/std_async"]
-std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators", "oven-cli/std_decorators"]
+rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_driver/rust_inspect"]
+std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_driver/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
@@ -20,15 +20,10 @@ incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_driver = { default-features = false, features = ["cli"], loaf = "incan_driver", path = "../../compiler/incan_driver" }
 incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
-incan_oven_facet = { loaf = "incan_oven_facet", path = "../../compiler/incan_oven_facet" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
 oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
-oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
-oven_interop = { loaf = "oven_interop", path = "../../oven/oven_interop", version = "0.6.0-dev.5" }
-oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
-oven-cli = { loaf = "oven_cli", path = "../oven-cli" }
 rust_inspect = { default-features = false, loaf = "rust_inspect", optional = true, path = "../../compiler/rust_inspect" }
 clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
@@ -54,7 +49,6 @@ path = "src/main.rs"
 [envs.test.dependencies]
 incan_test_support = { loaf = "incan_test_support", path = "../../compiler/incan_test_support" }
 incan_driver = { features = ["test_support"] }
-oven-cli = { default-features = false }
 
 # Rust integration roots and their generated-code controls use these ordinary test dependencies.
 blake2 = { loaf = "crates-io/blake2", version = "0.10" }

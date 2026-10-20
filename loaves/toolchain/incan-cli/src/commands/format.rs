@@ -5,8 +5,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeMap;
+
 use crate::{CliError, CliResult, ExitCode};
-use incan_format::format_diff_from_formatted;
+use incan_driver::features::FeatureSelection;
+use incan_driver::project::resolve_project_root;
+use incan_driver::session::{CompilationSession, DEFAULT_PROFILE};
+use incan_format::{FormatConfig, format_diff_from_formatted, format_parsed_source_with_config};
+use incan_frontend::diagnostics;
 
 /// Format Incan source files.
 pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<ExitCode> {
@@ -34,7 +40,11 @@ pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<
 
         inputs.push((file_path.clone(), source));
     }
-    let results = oven_cli::project_owner::format_sources(&inputs)?;
+    let mut sessions = BTreeMap::new();
+    let results = inputs
+        .iter()
+        .map(|(file_path, source)| format_source(file_path, source, &mut sessions))
+        .collect::<Vec<_>>();
     for ((file_path, source), result) in inputs.iter().zip(results) {
         match result {
             Ok(formatted) => {
@@ -123,4 +133,32 @@ fn collect_incn_files(path: &Path) -> Vec<PathBuf> {
     }
 
     files
+}
+
+/// Format one file's source, parsing it with its project's vocabulary; one session serves every file of a project.
+fn format_source(
+    file_path: &Path,
+    source: &str,
+    sessions: &mut BTreeMap<PathBuf, CompilationSession>,
+) -> CliResult<String> {
+    let path = std::path::absolute(file_path).map_err(|error| CliError::failure(error.to_string()))?;
+    let root = resolve_project_root(&path);
+    if !sessions.contains_key(&root) {
+        let session = CompilationSession::discover(&path, &FeatureSelection::default(), DEFAULT_PROFILE)?;
+        sessions.insert(root.clone(), session);
+    }
+    let session = sessions
+        .get(&root)
+        .ok_or_else(|| CliError::failure(format!("no session for {}", root.display())))?;
+    let ast = session.parse_source_for_collection(&path, source).map_err(|errors| {
+        let file_name = file_path.to_string_lossy();
+        CliError::failure(
+            errors
+                .iter()
+                .map(|error| diagnostics::format_error(file_name.as_ref(), source, error))
+                .collect::<String>(),
+        )
+    })?;
+    format_parsed_source_with_config(source, &ast, FormatConfig::default())
+        .map_err(|error| CliError::failure(error.to_string()))
 }

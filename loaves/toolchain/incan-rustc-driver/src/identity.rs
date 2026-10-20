@@ -125,7 +125,7 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
             "the process loaded a different rustc_driver shared library".into(),
         ));
     }
-    let digest = incan_driver::build::native_runtime_inputs::digest_native_compiler_input(&library)?;
+    let digest = oven_model::digest::digest_bytes(&fs::read(&library)?);
     if digest.strip_prefix("sha256:") != Some(built_digest) {
         return Err(IdentityError::Mismatch(
             "rustc_driver shared-library bytes differ from the build identity".into(),

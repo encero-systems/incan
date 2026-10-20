@@ -1,47 +1,35 @@
-//! The `incan` command line.
+//! The compiler's commands: the part of the `incan` command line that checks, formats and inspects source.
 //!
-//! - `build [FILE] [--lib]`: compile a program, or the project's Loaf as a library unit
-//! - `run [FILE] [-c CODE] [-- ARGS]`: compile and run a program, defaulting to `[project.scripts].main`
+//! Building, running and testing belong to the Oven (DD-0008), which compiles each unit through `incan-rustc-driver`.
+//!
 //! - `check [PATH]`: check a file or project entrypoint, with optional stable JSON diagnostics
-//! - `test [PATH]`: run tests
 //! - `fmt [PATH]`, `new [NAME]`, `init [PATH]`, `version`, `env`, `explain CODE`
 //! - `inspect codegraph|features|bindings|representation`: compiler-backed projections
 //!
-//! Every compilation goes through one unit (`incan_driver::compile::compile_unit`), which prepares the Loaves the unit
-//! reaches first. Command functions return `CliResult`; only [`run`] exits the process.
+//! Command functions return `CliResult`; only [`run`] exits the process.
 
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
 pub mod commands;
 
-use std::env;
-use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
 
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use commands::binding_inspect::BindingInspectionFormat;
-use commands::build::BuildRequest;
 use commands::codegraph::CodegraphInspectionFormat;
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::feature_inspect::FeatureInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::representation_inspect::RepresentationInspectionFormat;
 use incan_driver::features::FeatureSelection;
-use oven_model::manifest::ProjectManifest;
 
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
-/// Shared opt-in invocation diagnostics used by both CLI entrypoints.
-pub use oven_cli::invocation_trace;
+/// Shared opt-in invocation diagnostics.
+pub use incan_driver::invocation_trace;
 
-/// ASCII art logo, embedded at compile time from the package's assets/logo.txt.
-const LOGO: &str = include_str!("assets/logo.txt");
 const VERSION: &str = incan_lang::version::INCAN_VERSION;
-
-// ============================================================================
-// Clap CLI definition
-// ============================================================================
 
 /// The Incan programming language compiler
 #[derive(Parser, Debug)]
@@ -71,24 +59,9 @@ pub struct Cli {
     /// Output format for the --check debug path
     #[arg(long = "format", value_enum, default_value = "text", requires = "check_file")]
     pub check_format: DiagnosticOutputFormat,
-
-    /// Disable the ASCII logo banner
-    #[arg(long = "no-banner")]
-    pub no_banner: bool,
-
-    /// Control ANSI color output
-    #[arg(long = "color", value_enum, default_value = "auto")]
-    pub color: ColorMode,
 }
 
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColorMode {
-    Auto,
-    Always,
-    Never,
-}
-
-/// The Incan package-feature selection a compiling command takes.
+/// The Incan package-feature selection a checking command takes.
 #[derive(Args, Debug, Clone, Default)]
 pub struct PackageFeatureCliFlags {
     /// Incan package features to enable (comma-separated)
@@ -114,27 +87,6 @@ impl From<PackageFeatureCliFlags> for FeatureSelection {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Compile a program, or the project's Loaf with `--lib` (release profile by default)
-    Build {
-        /// Program entry file (default: `[project.scripts].main`)
-        #[arg(value_name = "FILE")]
-        file: Option<PathBuf>,
-        /// Compile the project's `src/lib.incn` as a library unit
-        #[arg(long = "lib")]
-        lib_mode: bool,
-        /// Output directory (default: `target/incan/<name>/<profile>`)
-        #[arg(value_name = "OUTPUT_DIR")]
-        output_dir: Option<PathBuf>,
-        #[command(flatten)]
-        package_features: PackageFeatureCliFlags,
-        /// Compile with the debug profile
-        #[arg(long, conflicts_with = "release")]
-        debug: bool,
-        /// Compile with the release profile (the default for `incan build`)
-        #[arg(long)]
-        release: bool,
-    },
-
     /// Type check a file or project entrypoint
     Check {
         /// File or project entrypoint to check
@@ -158,24 +110,6 @@ pub enum Command {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: DiagnosticOutputFormat,
-    },
-
-    /// Compile and run a program (debug profile by default)
-    Run {
-        /// Program entry file (default: `[project.scripts].main`)
-        #[arg(value_name = "FILE", conflicts_with = "command")]
-        file: Option<PathBuf>,
-        /// Run inline source code
-        #[arg(short = 'c', long = "command", value_name = "CODE")]
-        command: Option<String>,
-        #[command(flatten)]
-        package_features: PackageFeatureCliFlags,
-        /// Compile with the release profile
-        #[arg(long)]
-        release: bool,
-        /// Arguments passed to the program after `--`
-        #[arg(last = true, value_name = "PROGRAM_ARG")]
-        program_args: Vec<String>,
     },
 
     /// Format Incan source files
@@ -220,12 +154,6 @@ pub enum Command {
     Inspect {
         #[command(subcommand)]
         command: InspectCommand,
-    },
-
-    /// Run Incan tests
-    Test {
-        #[command(flatten)]
-        arguments: oven_cli::cli::TestArgs,
     },
 
     /// Create a new Incan project directory
@@ -374,10 +302,6 @@ pub enum EnvCommand {
     },
 }
 
-// ============================================================================
-// CLI entry point
-// ============================================================================
-
 /// Parse the arguments, execute the selected command, and exit the process: the only place that exits.
 pub fn run() {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::run", input = ?std::env::args_os().skip(1).collect::<Vec<_>>()).entered();
@@ -393,13 +317,7 @@ pub fn run() {
             process::exit(exit_code.0);
         }
     };
-
-    let use_color = should_use_color(cli.color);
-    if should_print_banner(&cli, use_color) {
-        print_logo(use_color);
-    }
-
-    match execute(cli, use_color) {
+    match execute(cli) {
         Ok(exit_code) => {
             if exit_code.0 != 0 {
                 process::exit(exit_code.0);
@@ -415,7 +333,7 @@ pub fn run() {
 }
 
 /// Execute one already-parsed request without terminating the process.
-fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
+fn execute(cli: Cli) -> CliResult<ExitCode> {
     if let Some(file) = cli.lex_file {
         return commands::lex_file(&file.to_string_lossy());
     }
@@ -427,24 +345,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     }
 
     match cli.command {
-        Some(Command::Build {
-            file,
-            lib_mode,
-            output_dir,
-            package_features,
-            debug,
-            release: _,
-        }) => commands::build::build(&BuildRequest {
-            source: if lib_mode {
-                file.unwrap_or_else(|| PathBuf::from("."))
-            } else {
-                main_script_entry(file, "build", "FILE unless `--lib` is set")?
-            },
-            library: lib_mode,
-            output_dir,
-            features: package_features.into(),
-            profile: if debug { "debug" } else { "release" },
-        }),
         Some(Command::Check {
             path,
             format,
@@ -457,30 +357,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             interop_target.as_deref(),
         ),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
-        Some(Command::Run {
-            file,
-            command,
-            package_features,
-            release,
-            program_args,
-        }) => {
-            let features = package_features.into();
-            let profile = if release { "release" } else { "debug" };
-            match command {
-                Some(code) if code.is_empty() => Err(CliError::failure("-c/--command requires source code")),
-                Some(code) => commands::build::run_inline_source(&code, &features, profile, &program_args),
-                None => commands::build::run_file(
-                    &main_script_entry(file, "run", "a file path or -c/--command")?,
-                    &features,
-                    profile,
-                    &program_args,
-                ),
-            }
-        }
         Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
-        Some(Command::Test { arguments }) => {
-            oven_cli::test_command::run(arguments, use_color, oven_cli::test_runner::TestLanguages::Incan)
-        }
         Some(Command::Version {
             bump,
             set,
@@ -521,7 +398,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 path,
                 format,
                 package_features,
-            } => commands::inspect_bindings(&path, format, &package_features.into(), None),
+            } => commands::inspect_bindings(&path, format, &package_features.into()),
             InspectCommand::Representation { path, format } => commands::inspect_representation(&path, format),
         },
         Some(Command::New {
@@ -571,24 +448,6 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     }
 }
 
-/// An explicit entry file, or the project's `[project.scripts].main`.
-fn main_script_entry(file: Option<PathBuf>, command_name: &str, explicit_target: &str) -> CliResult<PathBuf> {
-    if let Some(file) = file {
-        return Ok(file);
-    }
-    let cwd = env::current_dir().map_err(|e| CliError::failure(format!("failed to read current directory: {e}")))?;
-    let manifest = ProjectManifest::discover(&cwd).map_err(|e| CliError::failure(e.to_string()))?;
-    if let Some(manifest) = manifest
-        && let Some(project) = &manifest.project
-        && let Some(main) = project.scripts.get("main")
-    {
-        return Ok(manifest.project_root().join(main));
-    }
-    Err(CliError::failure(format!(
-        "{command_name} requires {explicit_target} or [project.scripts].main"
-    )))
-}
-
 /// Render top-level CLI help text.
 fn render_cli_help_text() -> String {
     let mut command = Cli::command();
@@ -598,84 +457,4 @@ fn render_cli_help_text() -> String {
     } else {
         "Run `incan --help` for usage.".to_string()
     }
-}
-
-/// Print the ASCII logo banner to stderr (colored or not)
-fn print_logo(use_color: bool) {
-    // Color scheme inspired by the wordmark:
-    // - Solid blocks (█) = Gold
-    // - Shadow blocks (░) = Cyan/Magenta based on position
-    let gold = "\x1b[1;33m";
-    let cyan = "\x1b[1;36m";
-    let magenta = "\x1b[1;35m";
-    let reset = "\x1b[0m";
-
-    for line in LOGO.lines() {
-        let mut colored_line = String::new();
-        let chars: Vec<char> = line.chars().collect();
-        let len = chars.len();
-
-        for (i, ch) in chars.iter().enumerate() {
-            if use_color {
-                let color = if *ch == '░' {
-                    // Shadow chars: cyan on left half, magenta on right half (diagonal effect)
-                    if i < len / 2 { cyan } else { magenta }
-                } else {
-                    // Solid blocks and all other characters get gold
-                    gold
-                };
-                colored_line.push_str(color);
-                colored_line.push(*ch);
-            } else {
-                colored_line.push(*ch);
-            }
-        }
-        if use_color {
-            eprintln!("{}{}", colored_line, reset);
-        } else {
-            eprintln!("{}", colored_line);
-        }
-    }
-}
-
-/// Decide whether ANSI color output is enabled.
-///
-/// Note: `NO_COLOR` only affects `ColorMode::Auto`; explicit user flags (`--color=always` / `--color=never`) override
-/// the environment.
-fn should_use_color(color: ColorMode) -> bool {
-    match color {
-        ColorMode::Always => true,
-        ColorMode::Never => false,
-        ColorMode::Auto => {
-            if env::var_os("NO_COLOR").is_some() {
-                return false;
-            }
-            io::stdout().is_terminal() && io::stderr().is_terminal()
-        }
-    }
-}
-
-/// Decide whether this command should show the banner when running interactively.
-fn command_prefers_banner(cli: &Cli) -> bool {
-    matches!(cli.command, Some(Command::Build { .. }) | Some(Command::Run { .. }))
-}
-
-/// Decide whether to print the ASCII logo banner.
-///
-/// Banner suppression (`--no-banner` / `INCAN_NO_BANNER`) always wins. Banners are also suppressed when output is not a
-/// TTY (script-friendly). By default, branding is shown only for interactive `build` and `run` flows.
-fn should_print_banner(cli: &Cli, _use_color: bool) -> bool {
-    if cli.no_banner || env::var_os("INCAN_NO_BANNER").is_some() {
-        return false;
-    }
-
-    if !command_prefers_banner(cli) {
-        return false;
-    }
-
-    if !io::stdout().is_terminal() || !io::stderr().is_terminal() {
-        return false;
-    }
-
-    true
 }

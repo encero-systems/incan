@@ -572,6 +572,8 @@ struct Dependencies {
     library: bool,
     /// The build profile whose Loaf artifacts the program reads (`--profile`).
     profile: String,
+    /// Arguments the Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
+    rustc_args: Vec<String>,
 }
 
 /// Parse declared native externs, search directories and a logical package override; no ambient crate discovery is
@@ -582,6 +584,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
     let mut package_identity = None;
     let mut profile = None;
     let mut library = false;
+    let mut rustc_args = Vec::new();
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -595,6 +598,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
                 externs.push((name.to_owned(), PathBuf::from(path)));
             }
             "--search" => directories.push(PathBuf::from(value)),
+            "--rustc-arg" => rustc_args.push(value.clone()),
             "--package-name" => {
                 if value.is_empty() || package_identity.is_some() {
                     return Err("--package-name requires one nonempty package identity".to_owned());
@@ -616,6 +620,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
         package_identity,
         library,
         profile: profile.unwrap_or_else(|| incan_driver::session::DEFAULT_PROFILE.to_owned()),
+        rustc_args,
     })
 }
 
@@ -625,7 +630,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--package-name NAME] [--profile NAME] [--library]"
+            "usage: --source SOURCE CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--rustc-arg ARG] [--package-name NAME] [--profile NAME] [--library]"
                 .into(),
         );
     }
@@ -633,40 +638,9 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // ---- Checked source and Incan plan ----
     let source_path = PathBuf::from(&arguments[0]);
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_source", input = %source_path.display()).entered();
-    let identity = crate::identity::verify(Path::new(&arguments[3]))?;
-    let (native_link, link_identity) = crate::native_link(&identity)?;
+    crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let dependencies = dependencies(&arguments[4..])?;
-    let reuse = incan_driver::build::native_source_output::NativeSourceOutput::observe(
-        incan_driver::build::native_source_output::NativeSourceOutputRequest {
-            source: &source_path,
-            output,
-            crate_name: &arguments[1],
-            package_identity: dependencies.package_identity.as_deref(),
-            sysroot: &identity.sysroot,
-            target: &identity.target,
-            toolchain: &identity.toolchain,
-            link_identity: &link_identity,
-            externs: &dependencies.externs,
-            search_paths: &dependencies.directories,
-        },
-    )?;
-    // A library unit is reused only together with its Loaf, whose manifest is written last.
-    let loaf_written = !dependencies.library
-        || dependencies
-            .package_identity
-            .as_ref()
-            .is_some_and(|name| output.with_file_name(format!("{name}.incnlib")).is_file());
-    if loaf_written
-        && let Some(reuse) = &reuse
-        && reuse.try_reuse()?
-    {
-        return Ok(());
-    }
-    if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE").is_some() {
-        return Err("required completed project reuse missed before frontend preparation".into());
-    }
-    crate::relaunch_with_native_environment(&native_link)?;
     let checked_source = source_path.clone();
     let checked_package = dependencies.package_identity.clone();
     let checked_profile = dependencies.profile.clone();
@@ -753,16 +727,10 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Path::new(&arguments[3]),
         &dependencies.externs,
         &dependencies.directories,
-        &native_link,
+        &dependencies.rustc_args,
         dependencies.library,
     )
     .map_err(|error| error.to_string())?;
-    if let Some(reuse) = reuse {
-        if crate::native_link(&identity)?.1 != link_identity {
-            return Err("native link inputs changed during compilation; completed output was not published".into());
-        }
-        reuse.publish()?
-    }
 
     // ---- The Loaf beside a library unit's rlib (DD-0007) ----
     if let Some(manifest) = program.manifest {
