@@ -1,0 +1,13 @@
+# behavior: explicit newtype construction outside its module calls from_underlying exactly once (#2009)
+# pending: #2009 an imported checked-newtype hook body is unsupported
+# expect-stdout:
+#   validated
+#   0.5
+
+from percentile import Percentile
+
+
+def main() -> None:
+    """Construct a valid value through the imported newtype."""
+    checked = Percentile(0.5)
+    println(checked.0)

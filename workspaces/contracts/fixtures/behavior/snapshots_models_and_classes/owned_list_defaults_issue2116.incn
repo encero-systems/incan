@@ -1,0 +1,21 @@
+# behavior: model list defaults are fresh owned values and supplied lists remain usable when another field is defaulted (#2116)
+# expect-stdout:
+#   1 0
+#   1 2 0
+
+model Values:
+    """Two independently defaulted lists."""
+    tags: list[str] = []
+    notes: list[str] = []
+
+
+def main() -> None:
+    """Mutate one default and one supplied field independently."""
+    mut first = Values()
+    second = Values()
+    first.tags.append("first")
+    println(f"{len(first.tags)} {len(second.tags)}")
+    source = ["original"]
+    mut supplied = Values(tags=source)
+    supplied.tags.append("added")
+    println(f"{len(source)} {len(supplied.tags)} {len(supplied.notes)}")

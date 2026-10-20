@@ -1,0 +1,13 @@
+# behavior: explicit newtype construction outside its module refuses an invalid value (#2009)
+# pending: #2009 an imported checked-newtype hook body is unsupported
+# expect-exit: 101
+# expect-stderr-contains:
+#   percentile out of range
+
+from percentile import Percentile
+
+
+def main() -> None:
+    """Require an invalid external construction to terminate with its error."""
+    checked = Percentile(1.5)
+    println(checked.0)
