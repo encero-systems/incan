@@ -152,7 +152,9 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
                 .map(|call| call.canonical.clone()),
         )
         // A library unit's own declarations carry its package identity; they compile here, never from a Loaf.
-        .filter(|identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity))
+        .filter(
+            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
+        )
         .collect();
     let mut bodies = incan_frontend::executable_resolution::resolve_loaf_declarations(session.loaves(), &requested)
         .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))?
