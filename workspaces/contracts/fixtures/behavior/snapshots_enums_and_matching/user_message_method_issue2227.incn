@@ -1,5 +1,4 @@
 # behavior: an enum's user-defined message method returns its own text (#2227)
-# pending: #2227 payload access in message fails nominal receiver reference validation
 # expect-stdout:
 #   io: boom
 #   usage: help

@@ -570,14 +570,15 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Require a field path's root to have its explicit owned shape, or a receiver or exclusive enum reference to one.
+/// Require a field path's root to have its explicit owned shape or a nominal receiver reference to that shape.
+/// Shared enum receivers permit payload reads; mutable reborrows remain guarded by `borrow_result`.
 fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
     if !dereference {
         return Ok(ty);
     }
     match ty {
         Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
-        Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
+        Scalar::EnumRef(owner) | Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
         Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
         _ => Err(invalid(
             function,
