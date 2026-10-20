@@ -1,0 +1,3 @@
+pub def message() -> str:
+    """The greeting exported by this library."""
+    return "hello"

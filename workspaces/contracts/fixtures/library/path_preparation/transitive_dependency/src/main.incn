@@ -1,0 +1,10 @@
+# behavior: a path library can call its own path dependency without the consumer declaring that dependency
+# expect-stdout:
+#   42
+
+from pub::pricing import price
+
+
+def main() -> None:
+    """Print the price computed across both libraries."""
+    println(price())

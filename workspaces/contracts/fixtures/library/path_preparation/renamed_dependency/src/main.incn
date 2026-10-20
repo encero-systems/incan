@@ -1,0 +1,10 @@
+# behavior: a path dependency is available through its declared alias on the first run
+# expect-stdout:
+#   hello
+
+from pub::greeting import message
+
+
+def main() -> None:
+    """Print the dependency's greeting."""
+    println(message())

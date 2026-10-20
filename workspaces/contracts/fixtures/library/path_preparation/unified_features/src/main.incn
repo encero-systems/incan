@@ -1,0 +1,11 @@
+# behavior: a shared path dependency receives the features selected by all consumers and enables its optional dependency
+# expect-stdout:
+#   42
+
+from pub::pricing import price
+from pub::catalog import extra
+
+
+def main() -> None:
+    """Use the feature shared by the direct and transitive dependency."""
+    println(price() + extra())

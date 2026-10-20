@@ -8,8 +8,10 @@ search directories; these are the same inputs for checking and compilation.
 
 from rust::std::process import Command
 from std.fs import Path
+from home import dependency_artifact_dir
 from toolchain import Toolchain
-from unit import UnitDescription
+from unit import UnitDescription, dependency_units
+from unit_freshness import artifact_files, compiler_fingerprint, reusable, source_fingerprint
 
 
 pub def crate_name(unit: UnitDescription) -> str:
@@ -21,6 +23,9 @@ pub def crate_name(unit: UnitDescription) -> str:
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
     """Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code."""
+    prepared = prepare_dependencies(unit, toolchain)?
+    if prepared != 0:
+        return Ok(prepared)
     path = write_unit(unit, crate_name(unit))?
     arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
     return run_compiler(toolchain, arguments)
@@ -37,6 +42,41 @@ pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, ch
 
 pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
     """Compile the described program, library or test unit to `output`. Returns the compiler's exit code."""
+    prepared = prepare_dependencies(unit, toolchain)?
+    if prepared != 0:
+        return Ok(prepared)
+    return compile_prepared_unit(unit, toolchain, output)
+
+
+pub def prepare_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
+    """Prepare path libraries once in dependency order for every command that checks or compiles a unit."""
+    dependencies = dependency_units(unit)?
+    if len(dependencies) == 0:
+        return Ok(0)
+    compiler = compiler_fingerprint(toolchain)?
+    for dependency in dependencies:
+        mut library_unit = dependency
+        library_unit.kind = "library"
+        directory = dependency_artifact_dir(unit.project_root, dependency.package, unit.profile)
+        digest = source_fingerprint(library_unit, compiler)?
+        if reusable(directory, dependency.package, digest)?:
+            continue
+        stamp = directory.joinpath(".oven-inputs.sha256")
+        if stamp.is_file():
+            stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
+        output = directory.joinpath(f"lib{crate_name(dependency)}.rlib")
+        compiled = compile_prepared_unit(library_unit, toolchain, output)?
+        if compiled != 0:
+            return Ok(compiled)
+        for artifact in artifact_files(directory, dependency.package):
+            if not artifact.is_file():
+                return Err(f"compiler did not publish {artifact.0}")
+        stamp.write_text(digest, "utf-8", "strict", None).map_err((error) => f"{stamp.0}: {error.message()}")?
+    return Ok(0)
+
+
+def compile_prepared_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
+    """Compile one unit after its dependencies are ready; preparation owns ordering and is never recursive here."""
     compiled = crate_name(unit)
     path = write_unit(unit, compiled)?
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?

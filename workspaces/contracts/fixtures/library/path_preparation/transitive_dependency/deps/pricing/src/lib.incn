@@ -1,0 +1,6 @@
+from pub::stock import amount
+
+
+pub def price() -> int:
+    """Price the amount supplied by the catalog."""
+    return amount() + 2

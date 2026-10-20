@@ -2,3 +2,6 @@
 name = "dev7_nested_carrier_ownership"
 version = "0.1.0"
 private = true
+
+[project.scripts]
+main = "src/main.incn"

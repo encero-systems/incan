@@ -9,7 +9,8 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `main.incn` | The `incan` command line: `run`, `check`, `test`, `describe-unit`, `build`. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
 | `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
-| `incan_units.incn` | Checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`). |
+| `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
+| `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
 | `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, one `rustc` per unit against compiled registry units (`incan build`). A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
 | `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
@@ -33,3 +34,7 @@ Fixtures, test parameters, async tests, timeouts and resource markers currently 
 Until a dev.8 toolchain builds itself, the frozen dev.7 compiler builds Oven: `incan build src/main.incn` in this directory produces the `incan` program. Its standard packages come from `INCAN_STDLIB`.
 
 `incan run` and `incan check` need an installed toolchain: its `toolchain.json` names `incan-rustc-driver` and the closure of the runtime and the standard packages' Rust crates, and the standard packages' Loaves sit in the toolchain's `loaves/` directory.
+
+`incan run`, `incan check` and `incan build` compile active path dependencies before their consumer. Each library receives the features unified across the root project's selected graph and writes its four DD-0007 artifacts under the root's `target/incan/loaves/<package>/<profile>` directory. A successful input fingerprint beside the complete artifact set allows unchanged libraries to be reused. Source additions, removals, content changes, feature changes and changed dependency artifacts invalidate that fingerprint.
+
+`incan build PATH` compiles an Incan source file without running it. A directory selects `src/lib.incn` when present, otherwise `src/main.incn`. Supplying `--registry-units FILE` selects the Rust-facet build command.
