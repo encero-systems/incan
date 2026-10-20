@@ -1,6 +1,6 @@
-//! Import collection: the one dispatch from an import declaration to its home. A module of a compiled Loaf (`pub::<key>`
-//! or a `std.*` namespace of a standard package) is bound from the Loaf's manifest (`loaf_imports`), a `rust::` path
-//! from Rust metadata (`rust_imports`), and anything else from the program's own source modules (here).
+//! Import collection: the one dispatch from an import declaration to its home. A module of a compiled Loaf
+//! (`pub::<key>` or a `std.*` namespace of a standard package) is bound from the Loaf's manifest (`loaf_imports`), a
+//! `rust::` path from Rust metadata (`rust_imports`), and anything else from the program's own source modules (here).
 
 use std::collections::HashSet;
 
@@ -175,7 +175,12 @@ impl TypeChecker {
     ///
     /// Routes through the same symbol definition `from module import item` uses, so the two import spellings cannot
     /// disagree about what a given item is.
-    pub(super) fn collect_module_import_as_item(&mut self, path: &ImportPath, alias: Option<&Ident>, span: Span) -> bool {
+    pub(super) fn collect_module_import_as_item(
+        &mut self,
+        path: &ImportPath,
+        alias: Option<&Ident>,
+        span: Span,
+    ) -> bool {
         if path.segments.len() < 2 {
             return false;
         }
@@ -282,7 +287,12 @@ impl TypeChecker {
     }
 
     /// Materialize one imported source dependency, preserving package-private implementation facts.
-    pub(super) fn materialize_source_dependency_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
+    pub(super) fn materialize_source_dependency_import(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        span: Span,
+    ) -> bool {
         let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) else {
             return false;
         };
@@ -295,7 +305,12 @@ impl TypeChecker {
     ///
     /// The package's source keeps physical paths such as `registry`, while its public surface is spelled
     /// `std.registry`; resolve the physical path and require that the checked module graph contains the member.
-    pub(super) fn materialize_own_standard_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
+    pub(super) fn materialize_own_standard_import(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        span: Span,
+    ) -> bool {
         if !Self::is_standard_path(module) || !self.owns_standard_module(&module.segments) {
             return false;
         }
@@ -317,7 +332,12 @@ impl TypeChecker {
     ///
     /// This keeps dependency metadata imports, especially statics, from being rewritten as module path proxies.
     /// Returns `true` when the caller should skip fallback placeholder materialization.
-    pub(super) fn preserve_existing_from_import_symbol(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
+    pub(super) fn preserve_existing_from_import_symbol(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        span: Span,
+    ) -> bool {
         let Some(mut imported_kind) = self.existing_from_import_symbol_kind(&item.name) else {
             return false;
         };
@@ -370,8 +390,7 @@ impl TypeChecker {
     /// all. It is deliberately separate from [`crate::typechecker::SourceTargetInfo::module_path`], which keeps its
     /// existing meaning of the path as written at the import.
     pub(super) fn record_resolved_import_owner(&mut self, module: &ImportPath, item: &ImportItem, local_name: &str) {
-        let identity = self
-            .dependency_member_identity(module, &item.name);
+        let identity = self.dependency_member_identity(module, &item.name);
         if let Some(identity) = identity {
             // A binding materialized before this proof starts identity-less; attach the proof to that binding —
             // and only to an import binding — so reference-side recording never has to reach past the symbol
@@ -423,10 +442,15 @@ impl TypeChecker {
     /// The proven declaring identity is attached to the binding and recorded as a checked fact: lowering keys a
     /// stdlib trait's protocol on that identity, and a spelling alone cannot tell `std.serde.json.Serialize` from an
     /// unrelated trait of the same name (#1431).
-    pub(super) fn define_from_import_symbol(&mut self, module: &ImportPath, item: &ImportItem, kind: SymbolKind, span: Span) {
+    pub(super) fn define_from_import_symbol(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        kind: SymbolKind,
+        span: Span,
+    ) {
         let local_name = Self::import_item_local_name(item);
-        let target_identity = self
-            .dependency_member_identity(module, &item.name);
+        let target_identity = self.dependency_member_identity(module, &item.name);
         let symbol_id =
             self.define_named_import_symbol(module, item, local_name.clone(), kind, target_identity.clone(), span);
         if let Some(identity) = target_identity
@@ -440,7 +464,11 @@ impl TypeChecker {
     }
 
     /// Return the exact source dependency member targeted by a `from module import item` declaration.
-    pub(super) fn imported_source_dependency_symbol_kind(&self, module: &ImportPath, item: &ImportItem) -> Option<SymbolKind> {
+    pub(super) fn imported_source_dependency_symbol_kind(
+        &self,
+        module: &ImportPath,
+        item: &ImportItem,
+    ) -> Option<SymbolKind> {
         self.dependency_member_symbol_for_path(module, &item.name)
     }
 

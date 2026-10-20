@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
-    checked_api_declaration_is_public_namespace_member,
-    checked_api_modules_for_public_namespace, checked_api_public_module_paths, checked_api_public_namespace,
-    class_export_from_api, enum_export_from_api, function_export_from_api, function_export_from_api_projected,
-    manifest_partial_with_target_defaults, model_export_from_api, newtype_export_from_api, partial_export_from_api,
-    partial_export_with_target_defaults, trait_export_from_api,
+    checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
+    checked_api_public_module_paths, checked_api_public_namespace, class_export_from_api, enum_export_from_api,
+    function_export_from_api, function_export_from_api_projected, manifest_partial_with_target_defaults,
+    model_export_from_api, newtype_export_from_api, partial_export_from_api, partial_export_with_target_defaults,
+    trait_export_from_api,
 };
 use crate::ast::*;
 use crate::diagnostics::errors;
@@ -152,7 +152,9 @@ impl TypeChecker {
     /// selects the registry's reserved methods from the checked declaration.
     pub(in crate::typechecker) fn record_standard_registry_types(&mut self) {
         let registry = &self.type_info.registry;
-        if registry.definitions.is_empty() && registry.imported_definitions.is_empty() && registry.explicit_entries.is_empty()
+        if registry.definitions.is_empty()
+            && registry.imported_definitions.is_empty()
+            && registry.explicit_entries.is_empty()
         {
             return;
         }
@@ -236,7 +238,11 @@ impl TypeChecker {
     }
 
     /// The manifest of the Loaf indexed as `library`, or `None` after refusing the unknown key.
-    pub(super) fn loaf_manifest_or_refuse(&mut self, library: &str, span: Span) -> Option<std::sync::Arc<LibraryManifest>> {
+    pub(super) fn loaf_manifest_or_refuse(
+        &mut self,
+        library: &str,
+        span: Span,
+    ) -> Option<std::sync::Arc<LibraryManifest>> {
         if let Some(entry) = self.loaves.entry(library) {
             return Some(std::sync::Arc::clone(&entry.artifact.manifest));
         }
@@ -246,7 +252,13 @@ impl TypeChecker {
     }
 
     /// Refuse a module path the Loaf's manifest does not publish, listing the modules it does.
-    pub(super) fn push_loaf_module_not_found(&mut self, library: &str, manifest: &LibraryManifest, module: &[Ident], span: Span) {
+    pub(super) fn push_loaf_module_not_found(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+        module: &[Ident],
+        span: Span,
+    ) {
         let available = Self::manifest_public_module_paths(manifest)
             .into_iter()
             .map(|module_path| module_path.join("."))
@@ -429,7 +441,14 @@ impl TypeChecker {
     /// Record the compiler-known surface a `std.*` import binds: surface types (`Html`), surface functions and the
     /// `std.testing` markers. Their declarations come from the manifest like any other; this only records which local
     /// name now spells the surface.
-    pub(super) fn record_standard_surface_import(&mut self, root: &[String], module: &[Ident], item: &ImportItem, local_name: &str, span: Span) {
+    pub(super) fn record_standard_surface_import(
+        &mut self,
+        root: &[String],
+        module: &[Ident],
+        item: &ImportItem,
+        local_name: &str,
+        span: Span,
+    ) {
         if root != [stdlib::STDLIB_ROOT] {
             return;
         }
@@ -459,7 +478,13 @@ impl TypeChecker {
     /// Record an imported `std.testing` marker alias so decorator validation can reject runtime calls consistently.
     ///
     /// The markers are read from the checked metadata of the standard package that owns `std.testing`.
-    pub(super) fn record_testing_marker_import(&mut self, module: &[Ident], item: &ImportItem, local_name: &str, span: Span) {
+    pub(super) fn record_testing_marker_import(
+        &mut self,
+        module: &[Ident],
+        item: &ImportItem,
+        local_name: &str,
+        span: Span,
+    ) {
         let mut module_path = vec![stdlib::STDLIB_ROOT.to_string()];
         module_path.extend(module.iter().cloned());
         let Some(manifest) = self.loaves.owner_of(&module_path).map(|entry| &entry.artifact.manifest) else {
@@ -478,7 +503,8 @@ impl TypeChecker {
         marker_path.push(item.name.clone());
         let module_feature = self.surface_context.decorator_feature_for_path(&marker_path);
         let is_marker = semantics.marker_kind(&item.name).is_some();
-        if module_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction)) && is_marker {
+        if module_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction)) && is_marker
+        {
             self.testing_marker_import_bindings.insert(local_name.to_string());
         }
         self.testing_marker_semantics = Some(semantics);
@@ -1466,10 +1492,12 @@ impl TypeChecker {
             let Some(kind) = self.lookup_pub_library_symbol_member(library, member) else {
                 return Ok(None);
             };
-            let canonical = self
-                .loaves
-                .manifest(library)
-                .and_then(|manifest| manifest.contract_metadata.identity_graph.canonical_for_public_name(member));
+            let canonical = self.loaves.manifest(library).and_then(|manifest| {
+                manifest
+                    .contract_metadata
+                    .identity_graph
+                    .canonical_for_public_name(member)
+            });
             return Ok(Some(ResolvedPublicModuleSymbol {
                 kind,
                 canonical,
@@ -1477,7 +1505,11 @@ impl TypeChecker {
                 source_name: member.to_string(),
             }));
         }
-        let Some(manifest) = self.loaves.entry(library).map(|entry| std::sync::Arc::clone(&entry.artifact.manifest)) else {
+        let Some(manifest) = self
+            .loaves
+            .entry(library)
+            .map(|entry| std::sync::Arc::clone(&entry.artifact.manifest))
+        else {
             return Ok(None);
         };
         let Some(resolved) = self.public_module_member(library, &manifest, module_path, member)? else {
@@ -1684,7 +1716,10 @@ impl TypeChecker {
     }
 
     /// Find one manifest export by name without following alias entries.
-    pub(super) fn find_manifest_non_alias_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
+    pub(super) fn find_manifest_non_alias_export<'a>(
+        manifest: &'a LibraryManifest,
+        name: &str,
+    ) -> Option<ManifestExportRef<'a>> {
         if let Some(item) = manifest.exports.models.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Model(item));
         }
@@ -1812,7 +1847,10 @@ impl TypeChecker {
     }
 
     /// Reconstruct a checked `rust::` reexport from the ABI metadata shipped beside the public manifest.
-    pub(super) fn symbol_kind_from_manifest_rust_target(manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
+    pub(super) fn symbol_kind_from_manifest_rust_target(
+        manifest: &LibraryManifest,
+        target_path: &[String],
+    ) -> Option<SymbolKind> {
         let [namespace, crate_name, rest @ ..] = target_path else {
             return None;
         };
@@ -1830,7 +1868,10 @@ impl TypeChecker {
     }
 
     /// Return the canonical target path published by the manifest identity graph for one public name.
-    pub(super) fn manifest_identity_target_path<'a>(manifest: &'a LibraryManifest, public_name: &str) -> Option<&'a [String]> {
+    pub(super) fn manifest_identity_target_path<'a>(
+        manifest: &'a LibraryManifest,
+        public_name: &str,
+    ) -> Option<&'a [String]> {
         manifest
             .contract_metadata
             .identity_graph
@@ -1839,7 +1880,11 @@ impl TypeChecker {
     }
 
     /// Resolve an exact manifest identity path into a semantic symbol kind before falling back to final-segment lookup.
-    pub(super) fn symbol_kind_from_manifest_path(&self, manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
+    pub(super) fn symbol_kind_from_manifest_path(
+        &self,
+        manifest: &LibraryManifest,
+        target_path: &[String],
+    ) -> Option<SymbolKind> {
         if let Some(kind) = self.symbol_kind_from_api_target_path(manifest, target_path) {
             return Some(kind);
         }
@@ -1849,7 +1894,11 @@ impl TypeChecker {
     }
 
     /// Convert one non-alias manifest export into checker symbol metadata.
-    pub(super) fn find_manifest_non_alias_symbol_kind(&self, manifest: &LibraryManifest, name: &str) -> Option<SymbolKind> {
+    pub(super) fn find_manifest_non_alias_symbol_kind(
+        &self,
+        manifest: &LibraryManifest,
+        name: &str,
+    ) -> Option<SymbolKind> {
         match Self::find_manifest_non_alias_export(manifest, name)? {
             ManifestExportRef::Model(export) => {
                 Some(SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export))))
@@ -2345,7 +2394,10 @@ impl TypeChecker {
     }
 
     /// Rewrite all resolved carrier types in one imported method signature and its generic or trait-target bounds.
-    pub(super) fn remap_method_info_with_import_aliases(info: &mut MethodInfo, imported_type_aliases: &HashMap<String, String>) {
+    pub(super) fn remap_method_info_with_import_aliases(
+        info: &mut MethodInfo,
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
         for param in &mut info.params {
             Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
         }
@@ -2379,7 +2431,10 @@ impl TypeChecker {
     }
 
     /// Rewrite resolved type names through import aliases after stdlib materialization.
-    pub(super) fn remap_resolved_type_with_import_aliases(ty: &mut ResolvedType, imported_type_aliases: &HashMap<String, String>) {
+    pub(super) fn remap_resolved_type_with_import_aliases(
+        ty: &mut ResolvedType,
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
         match ty {
             ResolvedType::Named(name) => {
                 if let Some(alias) = imported_type_aliases.get(name) {
@@ -2451,7 +2506,11 @@ impl TypeChecker {
     ///
     /// The partial's leftover defaulted parameters are completed from its target in the manifest's checked API, so a
     /// call may omit one exactly when its default can be filled in (#1760).
-    pub(super) fn partial_info_from_manifest(&self, manifest: &LibraryManifest, export: &PartialExport) -> FunctionInfo {
+    pub(super) fn partial_info_from_manifest(
+        &self,
+        manifest: &LibraryManifest,
+        export: &PartialExport,
+    ) -> FunctionInfo {
         self.partial_info_from_export(&manifest_partial_with_target_defaults(
             manifest.contract_metadata.api.as_ref(),
             export,
@@ -2631,7 +2690,9 @@ impl TypeChecker {
     }
 
     /// Convert manifest partial target kind metadata into frontend projection vocabulary.
-    pub(super) fn partial_projection_target_kind_from_manifest(kind: PartialTargetKindExport) -> PartialProjectionTargetKind {
+    pub(super) fn partial_projection_target_kind_from_manifest(
+        kind: PartialTargetKindExport,
+    ) -> PartialProjectionTargetKind {
         match kind {
             PartialTargetKindExport::Function => PartialProjectionTargetKind::Function,
             PartialTargetKindExport::ModelConstructor => PartialProjectionTargetKind::ModelConstructor,
@@ -3212,7 +3273,10 @@ impl TypeChecker {
     }
 
     /// Convert manifest methods into the legacy single-method-per-name lookup map.
-    pub(super) fn methods_from_manifest(&self, methods: &[MethodExport]) -> std::collections::HashMap<String, MethodInfo> {
+    pub(super) fn methods_from_manifest(
+        &self,
+        methods: &[MethodExport],
+    ) -> std::collections::HashMap<String, MethodInfo> {
         methods
             .iter()
             .map(|method| (method.name.clone(), self.method_info_from_manifest(method)))
@@ -3324,7 +3388,6 @@ impl TypeChecker {
             None => None,
         }
     }
-
 }
 
 /// Convert a manifest parameter kind into a checked parameter kind.
@@ -3364,4 +3427,3 @@ fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> Strin
         .collect::<Vec<_>>()
         .join("::")
 }
-

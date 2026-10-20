@@ -376,4 +376,3 @@ pub fn with_native_nominal_origins<T: VisitTypeRefs>(
     value.visit_type_refs(&mut |ty| attach(ty, origins));
     value
 }
-

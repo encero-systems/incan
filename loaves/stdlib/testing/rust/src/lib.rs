@@ -28,7 +28,9 @@ pub fn panic_text<F: FnOnce()>(block: F) -> Option<String> {
     let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(block)).err()?;
     let text = match payload.downcast_ref::<String>() {
         Some(text) => text.clone(),
-        None => payload.downcast_ref::<&str>().map_or_else(String::new, |text| (*text).to_string()),
+        None => payload
+            .downcast_ref::<&str>()
+            .map_or_else(String::new, |text| (*text).to_string()),
     };
     Some(text)
 }

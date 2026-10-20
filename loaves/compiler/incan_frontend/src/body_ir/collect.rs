@@ -93,13 +93,12 @@ pub(super) fn collect_constants(
                 None if type_info.expr_type(item.value.span) == Some(&ResolvedType::Int) => {
                     bir::Constant::Int(literal_integer_constant(&item.value.node)?)
                 }
-                _ => checked_newtype_constant(&item.value, type_info, nominals)
-                    .or_else(|| {
-                        frozen_literal_constant(
-                            &item.value.node,
-                            &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
-                        )
-                    })?,
+                _ => checked_newtype_constant(&item.value, type_info, nominals).or_else(|| {
+                    frozen_literal_constant(
+                        &item.value.node,
+                        &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
+                    )
+                })?,
             };
             Some(bir::ConstantDeclaration { canonical, value })
         })

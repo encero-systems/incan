@@ -48,7 +48,10 @@ impl TypeChecker {
                 if module_path.first().map(String::as_str) != Some(*namespace) {
                     continue;
                 }
-                if Self::public_module_member_names(manifest, &module_path).iter().any(|member| member == name) {
+                if Self::public_module_member_names(manifest, &module_path)
+                    .iter()
+                    .any(|member| member == name)
+                {
                     return Some(format!("{}.{}", stdlib::STDLIB_ROOT, module_path.join(".")));
                 }
             }

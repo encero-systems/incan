@@ -3643,7 +3643,8 @@ impl TypeChecker {
         if let Some(paths) = self.dependency_trait_rust_derive_paths.get(&key) {
             return paths.clone();
         }
-        self.loaf_trait_rust_derive_paths(module, trait_name).unwrap_or_default()
+        self.loaf_trait_rust_derive_paths(module, trait_name)
+            .unwrap_or_default()
     }
 
     /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.

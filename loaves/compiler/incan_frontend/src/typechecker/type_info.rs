@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::ast::{Expr, ParamKind, Span, Spanned, Visibility};
 use crate::library_exports::{CheckedParamDefault, CheckedPresetValue};
 use crate::symbols::{
-    CallableParam, ClassInfo, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo, NewtypePrimitiveConstraint,
-    ResolvedType, TypeBoundInfo,
+    CallableParam, ClassInfo, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo,
+    NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
 };
 use crate::testing_markers::TestingFixtureScope;
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
@@ -951,8 +951,8 @@ pub struct RustInteropArtifacts {
     /// paths without re-running import resolution.
     pub rusttype_canonical_paths: HashMap<String, String>,
     /// Every spelling of an imported Rust item (its import path and its definition path) → the public path that names
-    /// it. Rust metadata spells a returned type by its definition (`std::sync::poison::mutex::Mutex`), an annotation by
-    /// its import (`std::sync::Mutex`); direct-route storage keys both on the one public path (DD-0006).
+    /// it. Rust metadata spells a returned type by its definition (`std::sync::poison::mutex::Mutex`), an annotation
+    /// by its import (`std::sync::Mutex`); direct-route storage keys both on the one public path (DD-0006).
     pub item_public_paths: HashMap<String, String>,
     /// Typechecker-approved mutable-reference projections for generic Rust type annotations.
     ///

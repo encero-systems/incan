@@ -484,10 +484,9 @@ impl BodyIrModule {
             declaration.canonical.origin,
             crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
         ) {
-            let exact = crate::body_ir::native_carrier_nominal(&declaration.canonical)
-                .or_else(|| {
-                    crate::body_ir::native_opaque_nominal(&declaration.canonical, declaration.type_parameter_count)
-                });
+            let exact = crate::body_ir::native_carrier_nominal(&declaration.canonical).or_else(|| {
+                crate::body_ir::native_opaque_nominal(&declaration.canonical, declaration.type_parameter_count)
+            });
             return exact.as_ref() == Some(declaration)
                 && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
                     == Some(self.module_id.path());

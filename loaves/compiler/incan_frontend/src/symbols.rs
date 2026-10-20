@@ -2346,7 +2346,13 @@ impl std::fmt::Display for ResolvedType {
                 write!(f, "{}[{}]", collections::descriptor(CollectionTypeId::FrozenList), elem)
             }
             ResolvedType::FrozenDict(k, v) => {
-                write!(f, "{}[{}, {}]", collections::descriptor(CollectionTypeId::FrozenDict), k, v)
+                write!(
+                    f,
+                    "{}[{}, {}]",
+                    collections::descriptor(CollectionTypeId::FrozenDict),
+                    k,
+                    v
+                )
             }
             ResolvedType::FrozenSet(elem) => {
                 write!(f, "{}[{}]", collections::descriptor(CollectionTypeId::FrozenSet), elem)

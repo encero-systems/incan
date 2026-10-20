@@ -27,8 +27,8 @@ use ra_ap_syntax::{
 
 use super::error::RustMetadataError;
 use super::generic_params::{SourceOwnerGenerics, source_owner_generics};
-use super::prelude_names::{names_prelude_item, prelude_type_module};
 use super::loader::RustWorkspace;
+use super::prelude_names::{names_prelude_item, prelude_type_module};
 
 const INCAN_DERIVE_PROBE_PREFIX: &str = "__IncanDeriveProbe";
 
@@ -203,7 +203,9 @@ fn source_module_type_path_identity_display(module: Module, text: &str, db: &Roo
     // A prelude name keeps its short display unless the module imports another item under it: `std::panic` writes
     // `Result<R>` after `use crate::thread::Result;`, which is that alias, not the prelude `Result`.
     if prelude_type_module(text.as_str()).is_some()
-        && resolved.as_deref().is_none_or(|path| names_prelude_item(path, text.as_str()))
+        && resolved
+            .as_deref()
+            .is_none_or(|path| names_prelude_item(path, text.as_str()))
     {
         return Some(text);
     }

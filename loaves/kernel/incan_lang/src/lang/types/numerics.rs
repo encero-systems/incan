@@ -317,7 +317,10 @@ pub const INTEGER_HELPERS: &[IntegerHelperInfo] = &[
 /// ## Notes
 /// - Matching is **case-insensitive ASCII**.
 pub fn from_str(name: &str) -> Option<NumericTypeId> {
-    if let Some(t) = NUMERIC_TYPES.iter().find(|t| super::spelling_matches(t.canonical, name)) {
+    if let Some(t) = NUMERIC_TYPES
+        .iter()
+        .find(|t| super::spelling_matches(t.canonical, name))
+    {
         return Some(t.id);
     }
     NUMERIC_TYPES

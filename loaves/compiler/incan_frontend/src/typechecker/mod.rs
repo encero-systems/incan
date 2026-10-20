@@ -87,9 +87,8 @@ pub use type_info::{
     QualifiedTypeReferenceInfo, RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry,
     RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
     RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StandardRegistryTypes, StaticBindingInfo,
-    TestingFixtureInfo, TypeCheckInfo,
-    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
-    c_binding_descriptor_identity,
+    TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
+    ValidatedNewtypeCoercionStep, c_binding_descriptor_identity,
 };
 
 use std::cell::{Cell, RefCell};
@@ -2570,8 +2569,9 @@ impl TypeChecker {
                                 .first()
                                 .map(|p| self.resolved_type_from_rust_display(p))
                                 .unwrap_or(ResolvedType::Unknown);
-                            // Without alias metadata (`datafusion_common::error::Result<T>` outside the inspected graph)
-                            // keep the success path semantic and degrade only the missing error arm.
+                            // Without alias metadata (`datafusion_common::error::Result<T>` outside the inspected
+                            // graph) keep the success path semantic and degrade only the
+                            // missing error arm.
                             let err_ty = args
                                 .get(1)
                                 .map(|p| self.resolved_type_from_rust_display(p))
@@ -5438,7 +5438,6 @@ impl TypeChecker {
         }
     }
 
-
     /// Resolve the declaration a module-qualified type spelling names, if the checker can prove one.
     ///
     /// The root must be an Incan module binding; the remaining segments walk nested modules and end at a member that
@@ -5488,7 +5487,12 @@ impl TypeChecker {
             }
             let identity = resolved.canonical?;
             let root_len = self.loaf_binding_root(&library).len();
-            let mut source_type_path = resolved.source_module_path.iter().skip(root_len).cloned().collect::<Vec<_>>();
+            let mut source_type_path = resolved
+                .source_module_path
+                .iter()
+                .skip(root_len)
+                .cloned()
+                .collect::<Vec<_>>();
             source_type_path.push(resolved.source_name);
             let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
             return Some(QualifiedTypeReferenceInfo {
@@ -7338,10 +7342,7 @@ impl TypeChecker {
             let [root, library, ..] = target_path.as_slice() else {
                 continue;
             };
-            if root == "pub"
-                && export.identity.canonical.is_some()
-                && self.loaves.entry(library).is_some()
-            {
+            if root == "pub" && export.identity.canonical.is_some() && self.loaves.entry(library).is_some() {
                 roots.insert(library.clone());
             }
         }
@@ -7377,15 +7378,24 @@ impl TypeChecker {
 
     /// The `std.*` path of the module declaring `identity`, when a standard package declares it: another Loaf's
     /// declaration (its origin names the package) or one of the program's own standard modules.
-    pub(in crate::typechecker) fn standard_declaring_module(&self, identity: &CanonicalSymbolId) -> Option<Vec<String>> {
-        let std_path = |path: &[String]| std::iter::once(stdlib::STDLIB_ROOT.to_string()).chain(path.iter().cloned()).collect();
+    pub(in crate::typechecker) fn standard_declaring_module(
+        &self,
+        identity: &CanonicalSymbolId,
+    ) -> Option<Vec<String>> {
+        let std_path = |path: &[String]| {
+            std::iter::once(stdlib::STDLIB_ROOT.to_string())
+                .chain(path.iter().cloned())
+                .collect()
+        };
         match &identity.origin {
             SymbolOrigin::Package { library, module_path }
                 if incan_lang::lang::standard_packages::standard_package_namespace_policy(library).is_some() =>
             {
                 Some(std_path(module_path))
             }
-            SymbolOrigin::Module(path) if path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) => Some(path.clone()),
+            SymbolOrigin::Module(path) if path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) => {
+                Some(path.clone())
+            }
             SymbolOrigin::Module(path) if self.own_standard_package.is_some() => Some(std_path(path)),
             _ => None,
         }

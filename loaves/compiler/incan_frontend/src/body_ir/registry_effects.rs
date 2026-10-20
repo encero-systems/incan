@@ -332,7 +332,10 @@ pub(super) fn entry(
     let definition = info.registry.definitions.get(&entry.registry_name)?;
     let standard = info.registry.standard.as_ref()?;
     let owner_identity = standard.registry.clone();
-    let method = standard.registry_class.methods.get(&entry.entry_method_identity.declaration_name)?;
+    let method = standard
+        .registry_class
+        .methods
+        .get(&entry.entry_method_identity.declaration_name)?;
     if method.receiver != Some(ast::Receiver::Mutable)
         || method.params.len() != 3
         || !method.type_params.is_empty()

@@ -4,7 +4,6 @@
 //! have theirs — and they are decided where the failure is understood, which is the driver. The CLI only carries
 //! the code to the process boundary.
 
-
 use std::fmt;
 /// Exit code for CLI operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

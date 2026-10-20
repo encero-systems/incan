@@ -50,11 +50,13 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
 
 /// Every checked type a module's Body IR lays out: expressions, call results, signatures and model fields.
 fn checked_types(type_info: &TypeCheckInfo) -> impl Iterator<Item = &ResolvedType> {
-    let signatures = type_info
-        .declarations
-        .function_bindings
-        .values()
-        .flat_map(|binding| binding.params.iter().map(|param| &param.ty).chain([&binding.return_type]));
+    let signatures = type_info.declarations.function_bindings.values().flat_map(|binding| {
+        binding
+            .params
+            .iter()
+            .map(|param| &param.ty)
+            .chain([&binding.return_type])
+    });
     type_info
         .expressions
         .expr_types

@@ -597,7 +597,8 @@ pub fn compile(
         "debuginfo=2".into(),
         "-o".into(),
         output.to_string_lossy().into_owned(),
-        // rustc reads stdin to the end for `-`; a named input is never read, since `config` installs the source-free root.
+        // rustc reads stdin to the end for `-`; a named input is never read, since `config` installs the source-free
+        // root.
         plan.span.file.clone(),
     ];
     // A library unit is an rlib its dependents link; an executable keeps rustc's default binary crate type.

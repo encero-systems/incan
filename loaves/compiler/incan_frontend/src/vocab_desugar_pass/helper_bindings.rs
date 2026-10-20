@@ -127,13 +127,7 @@ pub(super) fn resolve_helper_bindings_in_statements(
     helper_imports: &mut HelperImportAccumulator,
 ) -> Result<(), String> {
     for statement in statements {
-        resolve_helper_bindings_in_statement(
-            statement,
-            keyword_metadata,
-            keyword,
-            loaves,
-            helper_imports,
-        )?;
+        resolve_helper_bindings_in_statement(statement, keyword_metadata, keyword, loaves, helper_imports)?;
     }
     Ok(())
 }
@@ -160,53 +154,17 @@ fn resolve_helper_bindings_in_statement(
             then_body,
             else_body,
         } => {
-            resolve_helper_bindings_in_expr(
-                condition,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )?;
-            resolve_helper_bindings_in_statements(
-                then_body,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )?;
-            resolve_helper_bindings_in_statements(
-                else_body,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )
+            resolve_helper_bindings_in_expr(condition, keyword_metadata, keyword, loaves, helper_imports)?;
+            resolve_helper_bindings_in_statements(then_body, keyword_metadata, keyword, loaves, helper_imports)?;
+            resolve_helper_bindings_in_statements(else_body, keyword_metadata, keyword, loaves, helper_imports)
         }
         incan_vocab::IncanStatement::While { condition, body } => {
-            resolve_helper_bindings_in_expr(
-                condition,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )?;
-            resolve_helper_bindings_in_statements(
-                body,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )
+            resolve_helper_bindings_in_expr(condition, keyword_metadata, keyword, loaves, helper_imports)?;
+            resolve_helper_bindings_in_statements(body, keyword_metadata, keyword, loaves, helper_imports)
         }
         incan_vocab::IncanStatement::For { iter, body, .. } => {
             resolve_helper_bindings_in_expr(iter, keyword_metadata, keyword, loaves, helper_imports)?;
-            resolve_helper_bindings_in_statements(
-                body,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )
+            resolve_helper_bindings_in_statements(body, keyword_metadata, keyword, loaves, helper_imports)
         }
         incan_vocab::IncanStatement::Pass | incan_vocab::IncanStatement::Return(None) => Ok(()),
         _ => Ok(()),
@@ -228,40 +186,21 @@ pub(super) fn resolve_helper_bindings_in_expr(
                     "keyword `{keyword}` does not carry provider metadata, so helper `{helper_key}` cannot be resolved"
                 )
             })?;
-            let exported_name =
-                resolve_helper_export_name(loaves, &keyword_metadata.dependency_key, helper_key)?;
+            let exported_name = resolve_helper_export_name(loaves, &keyword_metadata.dependency_key, helper_key)?;
             let alias = helper_imports.register(&keyword_metadata.dependency_key, &exported_name);
             *expr = incan_vocab::IncanExpr::Name(alias);
             Ok(())
         }
         incan_vocab::IncanExpr::List(items) | incan_vocab::IncanExpr::Tuple(items) => {
             for item in items {
-                resolve_helper_bindings_in_expr(
-                    item,
-                    keyword_metadata,
-                    keyword,
-                    loaves,
-                    helper_imports,
-                )?;
+                resolve_helper_bindings_in_expr(item, keyword_metadata, keyword, loaves, helper_imports)?;
             }
             Ok(())
         }
         incan_vocab::IncanExpr::Dict(entries) => {
             for (key_expr, value_expr) in entries {
-                resolve_helper_bindings_in_expr(
-                    key_expr,
-                    keyword_metadata,
-                    keyword,
-                    loaves,
-                    helper_imports,
-                )?;
-                resolve_helper_bindings_in_expr(
-                    value_expr,
-                    keyword_metadata,
-                    keyword,
-                    loaves,
-                    helper_imports,
-                )?;
+                resolve_helper_bindings_in_expr(key_expr, keyword_metadata, keyword, loaves, helper_imports)?;
+                resolve_helper_bindings_in_expr(value_expr, keyword_metadata, keyword, loaves, helper_imports)?;
             }
             Ok(())
         }
@@ -273,31 +212,15 @@ pub(super) fn resolve_helper_bindings_in_expr(
             resolve_helper_bindings_in_expr(value, keyword_metadata, keyword, loaves, helper_imports)
         }
         incan_vocab::IncanExpr::Call { callee, args } => {
-            resolve_helper_bindings_in_expr(
-                callee,
-                keyword_metadata,
-                keyword,
-                loaves,
-                helper_imports,
-            )?;
+            resolve_helper_bindings_in_expr(callee, keyword_metadata, keyword, loaves, helper_imports)?;
             for arg in args {
-                resolve_helper_bindings_in_expr(
-                    arg,
-                    keyword_metadata,
-                    keyword,
-                    loaves,
-                    helper_imports,
-                )?;
+                resolve_helper_bindings_in_expr(arg, keyword_metadata, keyword, loaves, helper_imports)?;
             }
             Ok(())
         }
-        incan_vocab::IncanExpr::Field { object, .. } => resolve_helper_bindings_in_expr(
-            object,
-            keyword_metadata,
-            keyword,
-            loaves,
-            helper_imports,
-        ),
+        incan_vocab::IncanExpr::Field { object, .. } => {
+            resolve_helper_bindings_in_expr(object, keyword_metadata, keyword, loaves, helper_imports)
+        }
         _ => Ok(()),
     }
 }
@@ -311,11 +234,7 @@ pub(super) fn resolve_helper_bindings_in_expr(
 /// That default is the point of #1032. A companion that re-states its package's export names is maintaining a
 /// second copy of that surface, kept honest only by a test; the copy is what drifts. Resolving the key against the
 /// package removes the copy rather than validating it.
-fn resolve_helper_export_name(
-    loaves: &LoafIndex,
-    dependency_key: &str,
-    helper_key: &str,
-) -> Result<String, String> {
+fn resolve_helper_export_name(loaves: &LoafIndex, dependency_key: &str, helper_key: &str) -> Result<String, String> {
     let Some(entry) = loaves.entry(dependency_key) else {
         return Err(format!("provider `pub::{dependency_key}` is not loaded"));
     };

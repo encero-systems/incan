@@ -34,8 +34,8 @@ use crate::cache_timing::{CallTrace, log_timing_stage, rust_inspect_timing_enabl
 use crate::error::RustMetadataError;
 use crate::extractor::{extract_rust_item, rust_type_implements_trait};
 use crate::generic_params::{SourceOwnerGenerics, source_owner_generics};
-use crate::prelude_names::prelude_type_module;
 use crate::loader::RustWorkspace;
+use crate::prelude_names::prelude_type_module;
 
 /// Cache for [`RustWorkspace`] instances and extracted [`RustItemMetadata`].
 ///

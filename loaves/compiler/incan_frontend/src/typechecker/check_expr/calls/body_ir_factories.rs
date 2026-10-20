@@ -10,7 +10,6 @@ use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
 use crate::typechecker::nominal_type_param_bounds::NominalTypeParamBounds;
 use incan_semantics_core::SymbolOrigin;
 
-
 impl TypeChecker {
     /// Close a selected source static factory from its original owner signature and already checked context.
     /// Private bindings and Body IR tables keep legacy's open Self result and Rust inference unchanged.

@@ -8,7 +8,13 @@ use crate::typechecker::TypeChecker;
 
 impl TypeChecker {
     /// Collect a Rust crate or crate-path import and attach metadata when available.
-    pub(super) fn collect_rust_crate_import(&mut self, crate_name: &str, path: &[Ident], alias: Option<&Ident>, span: Span) {
+    pub(super) fn collect_rust_crate_import(
+        &mut self,
+        crate_name: &str,
+        path: &[Ident],
+        alias: Option<&Ident>,
+        span: Span,
+    ) {
         if self.reject_unsupported_rust_core_alloc(crate_name, span) {
             return;
         }
@@ -34,7 +40,13 @@ impl TypeChecker {
     }
 
     /// Collect `from rust::... import ...` items and attach any already-prepared metadata.
-    pub(super) fn collect_rust_from_imports(&mut self, crate_name: &str, path: &[Ident], items: &[ImportItem], span: Span) {
+    pub(super) fn collect_rust_from_imports(
+        &mut self,
+        crate_name: &str,
+        path: &[Ident],
+        items: &[ImportItem],
+        span: Span,
+    ) {
         if self.reject_unsupported_rust_core_alloc(crate_name, span) {
             return;
         }
@@ -139,5 +151,4 @@ impl TypeChecker {
             scope: 0, // Will be set by define()
         })
     }
-
 }

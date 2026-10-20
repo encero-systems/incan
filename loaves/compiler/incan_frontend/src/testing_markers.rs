@@ -451,4 +451,3 @@ fn checked_metadata_string_triplet(value: &DecoratorValue) -> Option<[String; 3]
         checked_metadata_string(third)?.to_string(),
     ])
 }
-

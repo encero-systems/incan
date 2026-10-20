@@ -145,7 +145,10 @@ pub const COLLECTION_TYPES: &[CollectionTypeInfo] = &[
 /// ## Notes
 /// - Matching is **case-insensitive ASCII**.
 pub fn from_str(name: &str) -> Option<CollectionTypeId> {
-    if let Some(t) = COLLECTION_TYPES.iter().find(|t| super::spelling_matches(t.canonical, name)) {
+    if let Some(t) = COLLECTION_TYPES
+        .iter()
+        .find(|t| super::spelling_matches(t.canonical, name))
+    {
         return Some(t.id);
     }
     COLLECTION_TYPES
