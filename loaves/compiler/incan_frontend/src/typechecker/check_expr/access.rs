@@ -46,7 +46,7 @@ use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, I
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
@@ -4690,7 +4690,8 @@ impl TypeChecker {
     /// Ordinary method checking computes argument types before overload selection. That is useful for overloaded
     /// methods, but it is actively harmful for unambiguous source methods because collection literals can be checked
     /// before their parameter context is known. This path lets the declared method signature drive argument checking
-    /// directly, the same way function calls do.
+    /// directly, the same way function calls do. A compiler-owned receiver keeps its registered builtin method
+    /// contract; loading a standard trait's source declaration must not replace that contract with a source dispatch.
     fn resolve_unambiguous_source_method_without_arg_prepass(
         &mut self,
         call: &SourceMethodPrepass<'_>,
@@ -4699,6 +4700,15 @@ impl TypeChecker {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
         };
+        if Self::compiler_builtin_method_identity(call.receiver_ty, call.method).is_some()
+            && self
+                .symbols
+                .lookup(type_name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+                .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin)
+        {
+            return None;
+        }
         let type_info = self.lookup_semantic_type_info(type_name).cloned();
         let Some(type_info) = type_info else {
             self.lookup_semantic_trait_info(type_name)?;
