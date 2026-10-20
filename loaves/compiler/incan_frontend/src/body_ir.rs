@@ -85,6 +85,9 @@ pub struct BodyIrContext<'a> {
     pub provider_operations: &'a ProviderOperationCatalog,
     /// The compilation's package identity, which explicit registry subjects are keyed by.
     pub registry_package: Option<&'a str>,
+    /// The package a library unit's own declarations belong to; `None` for a program. A library's modules are its
+    /// package's modules (`pub::<package>::<module>`), the identity its consumers read them under.
+    pub library_package: Option<&'a str>,
 }
 
 /// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a
@@ -139,9 +142,12 @@ pub fn build_body_ir_module(
     let type_info = &facts;
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
+    let module_identity = match context.library_package {
+        Some(package) => incan_semantics_core::package_module_identity(package, module_path),
+        None => body_ir_module_identity(module_path),
+    };
     let retain_nominal_carriers = true;
     let context = context.modules;
-    let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
