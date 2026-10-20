@@ -1,0 +1,24 @@
+# behavior: a dict[str, int] answers get with a str parameter, a loop binding and a str literal, and indexing with a str literal reads the stored value
+# expect-stdout:
+#   the=2
+#   cat=1
+#   dog missing
+#   literal 2
+#   indexed 2
+
+def lookup(counts: dict[str, int], word: str) -> str:
+    match counts.get(word):
+        Some(count) => return f"{word}={count}"
+        None => return f"{word} missing"
+
+
+def main() -> None:
+    counts: dict[str, int] = {"the": 2, "cat": 1}
+    println(lookup(counts, "the"))
+    words: list[str] = ["cat", "dog"]
+    for word in words:
+        println(lookup(counts, word))
+    match counts.get("the"):
+        Some(count) => println(f"literal {count}")
+        None => println("literal missing")
+    println(f"indexed {counts["the"]}")

@@ -1,50 +1,20 @@
-//! The compiler driver: what a command does between argument parsing and rendering.
+//! The compiler driver: the compilation session, module collection, typecheck orchestration, checking, Loaf
+//! publication and the inspection analyses that the Oven (DD-0008), the pinned driver and the language server call.
 //!
-//! Project discovery, the compilation session, module collection and typecheck orchestration, Cargo policy for
-//! the compatibility path, the rust-inspect workspace, the build pipeline, the generated project (`backend`), the
-//! inspection analyses (`inspect`) and the generated-output cache live here.
-//! Nothing in this crate parses `clap` arguments; the binaries render what the driver returns, and the LSP and
-//! codegraph consume the same sessions. The provider is `incan_provider`, which this crate consumes as a client.
-//!
-//! The driver is not yet silent, and an embedder should know where it speaks. Warnings that have no record to ride
-//! home in are still written to stderr where they arise — the ignored `Cargo.toml` beside a `loaf.toml` in
-//! [`project`], typecheck warnings in [`diagnostics`] and [`testing::module_graph`] — and the build pipeline and the
-//! generated-project runner print their progress and the program's output as they go. Moving those onto the returned
-//! records is the remaining half of the boundary; the moves that made this crate did not change any of it.
+//! Nothing in this crate parses `clap` arguments or plans a build; callers render what the driver returns.
 
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 pub mod backend;
-// The build pipeline still rides the `cli` feature the root crate gave it: it links the generator's managed-cache
-// lease, which is gated the same way, and it reads Rust metadata on every route. The `cli` feature therefore enables
-// `rust_inspect`; disabling defaults alone still leaves this module absent. Separating this lifecycle from argument
-// derives remains #1479 work.
-#[cfg(feature = "cli")]
-pub mod build;
-pub mod build_report;
-pub mod build_unit;
-pub mod cargo_policy;
+pub mod check;
 pub mod diagnostics;
 pub mod error;
-pub mod generated_cache;
 pub mod inspect;
-pub mod interop_plan;
-pub mod lock;
-pub mod metadata_packages;
+pub mod invocation_trace;
+pub mod loaf_publication;
 pub mod modules;
-pub mod oven_store;
-pub mod project;
-#[cfg(feature = "rust_inspect")]
-pub mod rust_inspect_workspace;
-#[cfg(feature = "rust_inspect")]
-pub mod sdk_closure;
 pub mod session;
-#[cfg(test)]
-mod source_authority_stage_tests;
+pub mod sources;
 pub mod testing;
-#[cfg(test)]
-mod tests;
 pub mod typecheck;
-
-pub use backend::IrCodegen;
-pub use backend::project::ProjectGenerator;
+pub mod unit;

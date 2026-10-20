@@ -1,0 +1,18 @@
+# behavior: ** over a literal base, a negated or grouped literal base or a literal-bound name computes in the result type, and a narrow integer base computes in its own type
+# expect-stdout:
+#   8
+#   4.0
+#   -8
+#   9
+#   8
+#   225
+
+def main() -> None:
+    println(2 ** 3)
+    println(2.0 ** 2.0)
+    println((-2) ** 3)
+    println((1 + 2) ** 2)
+    base = 2
+    println(base ** 3)
+    small: u8 = 15
+    println(small ** 2)

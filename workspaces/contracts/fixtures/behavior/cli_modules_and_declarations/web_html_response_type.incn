@@ -1,0 +1,32 @@
+# behavior: a route handler and ordinary functions may declare the std.web Html response as their return type, through a direct import, an item alias or a module binding
+# expect-stdout:
+#   rendered
+
+import std.async
+import std.web as web
+from std.web import Html, route, GET
+from std.web import Html as Page
+
+
+@route("/page", method=GET)
+async def page() -> Html:
+    return Html("<p>ok</p>")
+
+
+def render_html(value: str) -> Html:
+    return Html(value)
+
+
+def render_page(value: str) -> Page:
+    return Page(value)
+
+
+def render_qualified(value: str) -> web.Html:
+    return Html(value)
+
+
+def main() -> None:
+    render_html("<p>ok</p>")
+    render_page("<p>ok</p>")
+    render_qualified("<p>ok</p>")
+    println("rendered")

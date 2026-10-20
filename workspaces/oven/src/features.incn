@@ -1,0 +1,159 @@
+"""
+Package feature resolution over a local graph (RFC 114).
+
+Features are additive and unified across every active edge: a package reached through several edges gets the union of
+what they request. A dependency edge is active when it is not optional, or when an active feature of its requester
+selects it (`dep:<alias>`). An active edge selects the dependency's `default` feature unless it disables defaults,
+plus the features it lists. A feature request against a dependency (`<alias>/<feature>`) applies once that edge is
+active.
+"""
+
+from intake import DependencyEdge, LocalDependency, LocalIntake, LocalProject
+
+
+pub model FeatureRequest:
+    """The features a command asks the root package for."""
+
+    pub features: list[str] = []
+    pub default_features: bool = true
+    pub all_features: bool = false
+
+
+pub model ActiveGraph:
+    """The packages a root reaches through active edges, and the features active in each."""
+
+    # Project roots in the order they were reached, the root first.
+    pub reached: list[str]
+    # The active features of each reached project, sorted.
+    pub active: Dict[str, list[str]]
+    # The active edges, in the order they became active.
+    pub edges: list[DependencyEdge]
+
+
+model Resolution:
+    """The resolution's state while the work list drains."""
+
+    projects: Dict[str, LocalProject]
+    dependencies: Dict[str, LocalDependency]
+    targets: Dict[str, str]
+    reached: list[str]
+    active: Dict[str, list[str]]
+    edges: list[DependencyEdge]
+    active_edges: list[str]
+    deferred: Dict[str, list[str]]
+    # Work items: `feature`, the project root and the feature; or `edge`, the requester root and the alias.
+    work: list[tuple[str, str, str]]
+
+    def reach(mut self, root: str) -> None:
+        """Reach a project and queue its non-optional edges."""
+        if root in self.reached:
+            return
+        self.reached.append(root)
+        self.active[root] = []
+        for dependency in self.projects[root].intent.dependencies:
+            if not dependency.optional and not dependency.rust_facet:
+                self.work.append(("edge", root, dependency.alias))
+
+    def activate_edge(mut self, requester: str, alias: str) -> None:
+        """Activate one edge: reach its dependency and queue the features the edge requests."""
+        key = edge_key(requester, alias)
+        if key in self.active_edges:
+            return
+        self.active_edges.append(key)
+        dependency = self.dependencies[key]
+        target = self.targets[key]
+        self.edges.append(DependencyEdge(requester_root=requester, alias=alias, dependency_root=target))
+        self.reach(target)
+        if dependency.default_features and "default" in self.projects[target].intent.features:
+            self.work.append(("feature", target, "default"))
+        for feature in dependency.features:
+            self.work.append(("feature", target, feature))
+        if key in self.deferred:
+            for feature in self.deferred[key]:
+                self.work.append(("feature", target, feature))
+
+    def activate_feature(mut self, root: str, name: str) -> Result[None, str]:
+        """Activate one feature and queue what it includes, selects and requests."""
+        if name in self.active[root]:
+            return Ok(None)
+        project = self.projects[root]
+        if name not in project.intent.features:
+            return Err(f"{project.intent.name} has no feature `{name}`")
+        mut names = self.active[root]
+        names.append(name)
+        self.active[root] = names
+        declaration = project.intent.features[name]
+        for included in declaration.includes:
+            self.work.append(("feature", root, included))
+        for alias in declaration.optional_dependencies:
+            self.work.append(("edge", root, alias))
+        for alias in sorted([key for key in declaration.dependency_features.keys()]):
+            key = edge_key(root, alias)
+            if key in self.active_edges:
+                for feature in declaration.dependency_features[alias]:
+                    self.work.append(("feature", self.targets[key], feature))
+            else:
+                mut later: list[str] = []
+                if key in self.deferred:
+                    later = self.deferred[key]
+                for feature in declaration.dependency_features[alias]:
+                    later.append(feature)
+                self.deferred[key] = later
+        return Ok(None)
+
+
+def edge_key(requester: str, alias: str) -> str:
+    """The key of the edge `alias` declared by the project at `requester`."""
+    return f"{requester}\n{alias}"
+
+
+pub def resolve_features(intake: LocalIntake, root: str, request: FeatureRequest) -> Result[ActiveGraph, str]:
+    """The packages `root` reaches and their active features, for the features `request` asks of `root`."""
+    mut projects: Dict[str, LocalProject] = {}
+    for project in intake.projects:
+        projects[project.root] = project
+    mut dependencies: Dict[str, LocalDependency] = {}
+    mut targets: Dict[str, str] = {}
+    for edge in intake.edges:
+        targets[edge_key(edge.requester_root, edge.alias)] = edge.dependency_root
+        for dependency in projects[edge.requester_root].intent.dependencies:
+            if dependency.alias == edge.alias:
+                dependencies[edge_key(edge.requester_root, edge.alias)] = dependency
+    if root not in projects:
+        return Err(f"{root} is not a project of this graph")
+    mut state = Resolution(
+        projects=projects,
+        dependencies=dependencies,
+        targets=targets,
+        reached=[],
+        active={},
+        edges=[],
+        active_edges=[],
+        deferred={},
+        work=[],
+    )
+    state.reach(root)
+    declared = sorted([name for name in projects[root].intent.features.keys()])
+    if request.all_features:
+        for name in declared:
+            state.work.append(("feature", root, name))
+    elif request.default_features and "default" in declared:
+        state.work.append(("feature", root, "default"))
+    for name in request.features:
+        state.work.append(("feature", root, name))
+    mut index = 0
+    while index < len(state.work):
+        kind, owner, name = state.work[index]
+        index += 1
+        if kind == "edge":
+            state.activate_edge(owner, name)
+        else:
+            state.activate_feature(owner, name)?
+    for key in sorted([key for key in state.deferred.keys()]):
+        if key not in state.active_edges:
+            parts = key.split("\n")
+            return Err(f"{projects[parts[0]].intent.name} requests features of `{parts[1]}`, an optional dependency no active feature selects")
+    mut active: Dict[str, list[str]] = {}
+    for reached in state.reached:
+        active[reached] = sorted(state.active[reached])
+    return Ok(ActiveGraph(reached=state.reached, active=active, edges=state.edges))

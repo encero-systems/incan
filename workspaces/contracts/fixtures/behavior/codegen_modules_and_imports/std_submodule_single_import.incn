@@ -1,0 +1,11 @@
+# behavior: one function imported from a std submodule is callable, and gzip decompression of bytes that are not gzip is an error, not a value
+# expect-stdout:
+#   error
+
+from std.compression.gzip import decompress
+
+
+def main() -> None:
+    match decompress(b"data"):
+        Ok(_) => println("value")
+        Err(_) => println("error")

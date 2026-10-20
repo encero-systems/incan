@@ -19,8 +19,10 @@ mod decl_helpers;
 mod declaration_scopes;
 pub(super) mod decorators;
 mod forward_references;
+mod imports;
+pub(in crate::typechecker) mod loaf_imports;
+mod rust_imports;
 mod std_root_imports;
-mod stdlib_imports;
 
 use self::decl_helpers::{
     collect_fields, collect_method_aliases, collect_method_overloads, collect_methods_from_overloads,
@@ -285,7 +287,7 @@ impl TypeChecker {
                     module_path
                 };
                 self.dependency_member_identity(&ImportPath::simple(module_path.clone()), member)
-                    .or_else(|| self.stdlib_cache.lookup_identity(&module_path, member))
+                    .or_else(|| self.loaf_member_identity(&module_path, member))
             }
             [] => None,
         }
@@ -380,21 +382,9 @@ impl TypeChecker {
                 if let Some(kind) = self.source_dependency_member_symbol_kind(&module_path, member) {
                     return Some(kind);
                 }
-                if let Some(kind) = self.stdlib_cache.lookup_function_symbol(&module_path, member) {
-                    return Some(kind);
-                }
-                if let Some(info) = self.stdlib_cache.lookup_type(&module_path, member) {
-                    return Some(SymbolKind::Type(info));
-                }
-                if let Some(info) = self.stdlib_cache.lookup_trait(&module_path, member) {
-                    return Some(SymbolKind::Trait(info));
-                }
-                if module_path.len() >= 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-                    return self
-                        .lookup_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)
-                        .map(|(kind, _)| kind);
-                }
-                None
+                let (library, rest) = self.loaf_module(&module_path)?;
+                self.lookup_pub_library_module_symbol_member(&library, &rest, member)
+                    .map(|(kind, _)| kind)
             }
             [] => None,
         }
@@ -1159,73 +1149,50 @@ impl TypeChecker {
         Some((name.to_string(), info))
     }
 
-    /// Look up a module's RFC 024 `__derives__` trait list from stdlib or imported dependency metadata.
+    /// Look up a module's RFC 024 `__derives__` trait list from its source module or its Loaf.
     pub fn lookup_derivable_traits(&mut self, module_path: &[String]) -> Option<Vec<String>> {
-        if let Some(traits) = self.dependency_derivable_modules.get(&module_path.join(".")) {
-            return (!traits.is_empty()).then(|| traits.clone());
-        }
-        self.stdlib_cache.lookup_derivable_traits(module_path)
+        let traits = match self.dependency_derivable_modules.get(&module_path.join(".")) {
+            Some(traits) => traits.clone(),
+            None => self.loaf_module_derivable_traits(module_path)?,
+        };
+        (!traits.is_empty()).then_some(traits)
     }
 
     /// Look up a trait declared by an imported module, falling back to the current scope for direct imports.
     ///
-    /// The module is a project module, a standard-library module or a `pub::` package module, so `with t.Tag` after
-    /// `import pub::tags as t` names the package's own trait, or the trait a package alias of it names.
+    /// The module is a project module or a module of a Loaf (`std.*` or `pub::`), so `with t.Tag` after
+    /// `import pub::tags as t` names the package's own trait, or the trait a package alias of it names. A Loaf owns
+    /// its modules: a trait it does not publish is not answered from anywhere else.
     pub fn lookup_imported_module_trait(&mut self, module_path: &[String], trait_name: &str) -> Option<TraitInfo> {
         let module_key = module_path.join(".");
         if let Some(info) = self.dependency_module_traits.get(&format!("{module_key}.{trait_name}")) {
             return Some(info.clone());
         }
-        if self
-            .provider_plan
-            .active_sdk_provider_for_module(module_path)
-            .is_some_and(|provider| provider.manifest.is_some())
-        {
-            return None;
+        if self.loaf_module(module_path).is_some() {
+            return self.loaf_trait(module_path, trait_name);
         }
         if let Some(SymbolKind::Trait(info)) = self.source_dependency_member_symbol_kind(module_path, trait_name) {
-            return Some(info);
-        }
-        if let Some(info) = self.stdlib_cache.lookup_trait(module_path, trait_name) {
-            return Some(info);
-        }
-        if let [root, library, rest @ ..] = module_path
-            && root == super::PUBLIC_LIBRARY_NAMESPACE
-            && let Some((SymbolKind::Trait(info), _)) =
-                self.lookup_pub_library_module_symbol_member(library, rest, trait_name)
-        {
             return Some(info);
         }
         self.lookup_trait_info(trait_name).cloned()
     }
 
-    /// Return whether a module-qualified trait may be adopted through `@derive(...)`.
+    /// Return whether a module-qualified trait may be adopted through `@derive(...)`: the module lists it among its
+    /// derivable traits, or the trait declares the Rust derives that implement it.
     pub fn imported_trait_is_derivable(&mut self, module_path: &[String], trait_name: &str) -> bool {
-        if self
-            .provider_plan
-            .active_sdk_provider_for_module(module_path)
-            .is_some_and(|provider| provider.manifest.is_some())
-        {
-            return self.lookup_imported_module_trait(module_path, trait_name).is_some()
-                && (self
-                    .lookup_derivable_traits(module_path)
-                    .is_some_and(|traits| traits.iter().any(|name| name == trait_name))
-                    || self
-                        .dependency_trait_rust_derive_paths
-                        .get(&format!("{}.{}", module_path.join("."), trait_name))
-                        .is_some_and(|paths| !paths.is_empty()));
+        if self.lookup_imported_module_trait(module_path, trait_name).is_none() {
+            return false;
         }
-        if self
-            .stdlib_cache
-            .lookup_trait_meta(module_path, trait_name)
-            .is_some_and(|meta| meta.rust_module_path.is_some() || !meta.rust_derive_paths.is_empty())
-        {
-            return true;
-        }
-        self.lookup_imported_module_trait(module_path, trait_name).is_some()
-            && self
-                .lookup_derivable_traits(module_path)
-                .is_some_and(|traits| traits.iter().any(|name| name == trait_name))
+        let key = format!("{}.{}", module_path.join("."), trait_name);
+        self.lookup_derivable_traits(module_path)
+            .is_some_and(|traits| traits.iter().any(|name| name == trait_name))
+            || self
+                .dependency_trait_rust_derive_paths
+                .get(&key)
+                .is_some_and(|paths| !paths.is_empty())
+            || self
+                .loaf_trait_rust_derive_paths(module_path, trait_name)
+                .is_some_and(|paths| !paths.is_empty())
     }
 
     /// Resolve an imported name or alias to a module path.

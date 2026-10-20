@@ -293,7 +293,7 @@ fn invalid(function: &Function, reason: impl Into<String>) -> PlanError {
 ///
 /// This pass checks references, signatures, scalar expression types, and cleanup edges. It is not an ownership
 /// checker: stage 3c must only submit checked bodies, and rustc's borrow checker remains a backstop.
-pub fn validate(plan: &Plan) -> Result<(), PlanError> {
+pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
     span(&plan.span)?;
     let mut names = BTreeSet::new();
     for function in &plan.functions {
@@ -344,18 +344,21 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
             });
         }
     }
-    let main = plan
-        .functions
-        .iter()
-        .find(|function| function.name == "main")
-        .ok_or_else(|| PlanError::UnknownCallee("main".into()))?;
-    if !main.parameters.is_empty()
-        || (scalar(&main.return_type) != Scalar::Unit && !entry_result(plan, &main.return_type))
-    {
-        return Err(invalid(
-            main,
-            "native binary main must take no parameters and return unit or a unit Result",
-        ));
+    // A library unit has no entry point; an executable must have exactly the binary main Rust accepts.
+    if !library {
+        let main = plan
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .ok_or_else(|| PlanError::UnknownCallee("main".into()))?;
+        if !main.parameters.is_empty()
+            || (scalar(&main.return_type) != Scalar::Unit && !entry_result(plan, &main.return_type))
+        {
+            return Err(invalid(
+                main,
+                "native binary main must take no parameters and return unit or a unit Result",
+            ));
+        }
     }
     for function in &plan.functions {
         validate_closure_constructor(function)?;

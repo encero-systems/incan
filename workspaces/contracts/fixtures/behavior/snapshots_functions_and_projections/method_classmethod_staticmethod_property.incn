@@ -1,0 +1,38 @@
+# behavior: an instance method, a classmethod, a staticmethod and a computed property each return their declared value when called through the matching receiver
+# expect-stdout:
+#   42
+#   42
+#   42
+#   100
+
+class Counter:
+    value: int
+
+    def next(self) -> int:
+        return self.value + 1
+
+
+class Factory:
+    @classmethod
+    def answer(cls) -> int:
+        return 42
+
+    @staticmethod
+    def twice(value: int) -> int:
+        return value * 2
+
+
+model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents
+
+
+def main() -> None:
+    counter: Counter = Counter(value=41)
+    println(counter.next())
+    println(Factory.answer())
+    println(Factory.twice(21))
+    account: Account = Account(cents=100)
+    println(account.dollars)

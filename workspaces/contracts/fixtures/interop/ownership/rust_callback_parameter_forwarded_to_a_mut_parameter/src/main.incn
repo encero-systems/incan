@@ -1,0 +1,15 @@
+# behavior: the mutable Rust value a Rust callback lends to a closure is forwarded to an Incan function declaring its parameter mut, and the changes that function makes are seen by the host after each call
+# expect-stdout:
+#   11
+
+from rust::tiny_ui import Ui, with_ui
+
+
+# The host starts its counter at 1 and calls the closure twice; `paint` adds 5 each time. A copy of the lent value,
+# rather than the value itself, would leave the host at 1.
+def paint(mut ui: Ui) -> None:
+    ui.n += 5
+
+
+def main() -> None:
+    println(with_ui((ui) => paint(ui)))

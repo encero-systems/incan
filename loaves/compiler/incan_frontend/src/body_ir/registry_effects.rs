@@ -1,7 +1,6 @@
 //! Checked registration effects and explicit subject materialization for the direct route.
 
 use super::*;
-use crate::symbols::TypeInfo;
 use crate::typechecker::RegistryDescriptionRegistry;
 use crate::typechecker::RegistryExplicitEntryInfo;
 use incan_semantics_core::SemanticRegistrySubjectKind;
@@ -16,10 +15,7 @@ fn function_helper(info: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
     {
         return None;
     }
-    let mut cache = info.body_ir_stdlib_cache();
-    let TypeInfo::Class(owner) = cache.lookup_type(&["std".to_owned(), "registry".to_owned()], "Registry")? else {
-        return None;
-    };
+    let owner = &info.registry.standard.as_ref()?.registry_class;
     let helper = owner.methods.get("_describe_function")?;
     if helper.receiver != Some(ast::Receiver::Mutable)
         || helper.params.len() != 3
@@ -264,7 +260,7 @@ fn append_description(
             canonical: Some(helper.clone()),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: None,
+            loaf_trait: None,
             native_trait_delegation: None,
             type_args: Vec::new(),
             binding: positional_binding(3),
@@ -334,18 +330,16 @@ pub(super) fn entry(
         return None;
     };
     let definition = info.registry.definitions.get(&entry.registry_name)?;
-    let mut cache = info.body_ir_stdlib_cache();
-    let path = ["std".to_owned(), "registry".to_owned()];
-    let owner_identity = cache.lookup_identity(&path, "Registry")?;
-    let TypeInfo::Class(owner) = cache.lookup_type(&path, "Registry")? else {
-        return None;
-    };
-    let method = owner.methods.get(&entry.entry_method_identity.declaration_name)?;
+    let standard = info.registry.standard.as_ref()?;
+    let owner_identity = standard.registry.clone();
+    let method = standard
+        .registry_class
+        .methods
+        .get(&entry.entry_method_identity.declaration_name)?;
     if method.receiver != Some(ast::Receiver::Mutable)
         || method.params.len() != 3
         || !method.type_params.is_empty()
-        || library_nominals::sdk_identity(method.identity.as_ref()?)
-            != library_nominals::sdk_identity(&entry.entry_method_identity)
+        || method.identity.as_ref() != Some(&entry.entry_method_identity)
     {
         return None;
     }
@@ -395,7 +389,7 @@ pub(super) fn entry(
             canonical: Some(entry.entry_method_identity.clone()),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: None,
+            loaf_trait: None,
             native_trait_delegation: None,
             type_args: Vec::new(),
             binding,
@@ -420,8 +414,7 @@ pub(super) fn entry_type(storage: &ast::StaticDecl, span: ast::Span, info: &Type
         return None;
     }
     let definition = info.registry.definitions.get(&entry.registry_name)?;
-    let mut cache = info.body_ir_stdlib_cache();
-    let owner = cache.lookup_identity(&["std".to_owned(), "registry".to_owned()], "RegistryEntry")?;
+    let owner = info.registry.standard.as_ref()?.entry.clone();
     Some(IncanType::Generic {
         base: owner.declaration_name,
         args: vec![

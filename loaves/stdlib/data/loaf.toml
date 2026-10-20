@@ -12,10 +12,6 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
-[sdk]
-profile = "minimal"
-components = ["stdlib-system"]
-
 [dependencies]
 blake2 = { loaf = "crates-io/blake2", version = "0.10", features = [], default-features = true }
 blake3 = { loaf = "crates-io/blake3", version = "1", features = [], default-features = true }

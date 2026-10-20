@@ -1,0 +1,16 @@
+# behavior: two public functions sharing one name are distinct overloads selected by their parameter type
+# expect-stdout:
+#   2
+#   a!
+
+pub def convert(value: int) -> int:
+    return value + 1
+
+
+pub def convert(value: str) -> str:
+    return value + "!"
+
+
+def main() -> None:
+    println(convert(1))
+    println(convert("a"))

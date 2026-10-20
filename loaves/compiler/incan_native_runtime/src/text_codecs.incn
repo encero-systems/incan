@@ -2,7 +2,7 @@
 
 from rust::std::string import String as RustString
 from rust::std::vec import Vec as RustVec
-from rust::std::str import from_utf8
+from rust::incan_std_core::strings import utf8_error_message
 from rust::incan_lang::lang::text_codecs import normalize_encoding_label, is_utf8_encoding_label
 from rust::incan_std_core::validation import ValidationError as RuntimeError
 from rust::incan_std_core::errors import raise_value_error
@@ -42,10 +42,11 @@ pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustSt
                 "unknown-errors-policy",
             ),
         )
-    match from_utf8(value.as_slice()):
-        Ok(text) => return Ok(str(text))
-        Err(error) =>
+    # The core facet reports Rust's own UTF-8 error text; valid bytes decode losslessly.
+    match utf8_error_message(value.as_slice()):
+        Some(error) =>
             return Err(make_coded_validation_error(f"'utf-8' codec can't decode bytes: {error}", "invalid-utf8"))
+        None => return Ok(RustString.from_utf8_lossy(value.as_slice()).into_owned())
 
 
 pub def decode_frozen_bytes(

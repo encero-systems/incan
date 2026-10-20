@@ -1,0 +1,15 @@
+# behavior: refuses unsupported or malformed targets at a trusted span before effects
+# expect-stdout:
+#   must not run
+#   true
+
+"""Refuses unsupported or malformed targets at a trusted span before effects."""
+def probe(value: int | str) -> bool:
+  """Emit the pre-check marker before testing the value."""
+  println("must not run")
+  return isinstance(value, int)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(probe(1))

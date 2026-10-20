@@ -22,7 +22,6 @@ use incan_lang::lang::c_abi::{
 };
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives;
-use incan_lang::lang::stdlib;
 use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, HirSourceSpan, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolNamespace,
     SymbolOrigin,
@@ -100,25 +99,20 @@ pub(in crate::typechecker) fn positional_derive_names(
 }
 
 impl TypeChecker {
-    /// Return whether a checked provider manifest declares this resolved path as an extern-backed decorator function.
-    fn provider_declares_decorator_function(&self, resolved: &[String]) -> bool {
+    /// Return whether the Loaf owning this resolved path declares it as an extern-backed decorator function.
+    pub(in crate::typechecker) fn provider_declares_decorator_function(&self, resolved: &[String]) -> bool {
         let Some((function_name, module_path)) = resolved.split_last() else {
             return false;
         };
-        let Some(provider) = self.provider_plan.active_sdk_provider_for_module(module_path) else {
+        let Some((library, provider_module_path)) = self.loaf_module(module_path) else {
             return false;
         };
-        let Some(api) = provider
-            .manifest
-            .as_deref()
+        let Some(api) = self
+            .loaves
+            .manifest(&library)
             .and_then(|manifest| manifest.contract_metadata.api.as_ref())
         else {
             return false;
-        };
-        let provider_module_path = if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
-            &module_path[1..]
-        } else {
-            module_path
         };
         api.modules
             .iter()
@@ -167,11 +161,7 @@ impl TypeChecker {
                 let is_stdlib_decorator_function = feature
                     == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
                     && resolved.len() >= 3
-                    && (self.provider_declares_decorator_function(&resolved)
-                        || self
-                            .stdlib_cache
-                            .lookup_function_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-                            .is_some_and(|f| f.is_rust_extern && f.rust_module_path.is_some()));
+                    && self.provider_declares_decorator_function(&resolved);
                 if is_stdlib_decorator_function {
                     continue;
                 }
@@ -464,10 +454,7 @@ impl TypeChecker {
         let is_stdlib_decorator_function = feature
             == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
             && resolved.len() >= 3
-            && self
-                .stdlib_cache
-                .lookup_function_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-                .is_some_and(|f| f.is_rust_extern && f.rust_module_path.is_some());
+            && self.provider_declares_decorator_function(&resolved);
         !is_stdlib_decorator_function
     }
 

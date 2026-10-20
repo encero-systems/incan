@@ -1,0 +1,8 @@
+# behavior: a consumer that imports a dependency's feature-gated export while that package feature is off is refused at check time with the package-feature remedy
+# expect-diagnostic: INCAN-I0103
+
+from pub::feature_library import alpha_value
+
+
+def main() -> None:
+    println(alpha_value())

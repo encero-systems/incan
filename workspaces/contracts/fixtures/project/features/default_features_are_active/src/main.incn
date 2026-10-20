@@ -1,0 +1,7 @@
+# behavior: the default feature and the features its list names are active, and the others are not
+# expect-active-features:
+#   default
+#   fast
+
+def main() -> None:
+    println("features")

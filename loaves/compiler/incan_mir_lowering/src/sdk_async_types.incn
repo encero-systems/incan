@@ -27,7 +27,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentBinding,
     Pattern,
     ResultVariantKind,
-    StdlibDelegation,
+    LoafCallable,
     ArgumentElement,
     MethodTarget,
     NominalDeclaration,
@@ -70,7 +70,7 @@ pub def primary_async_body(module: &BodyIrModule, body: &Body) -> Option[Body]:
     """Retain semantic storage only for primary nongeneric frames using the admitted async SDK contracts."""
     if not body.is_async or len(body.type_parameters) != 0:
         return None
-    for record in module.stdlib_delegations:
+    for record in module.loaf_callables:
         if async_record(record):
             return Some(body.clone())
     return None
@@ -78,7 +78,7 @@ pub def primary_async_body(module: &BodyIrModule, body: &Body) -> Option[Body]:
 
 pub def async_call_type_arguments(
     body: &Body,
-    record: &StdlibDelegation,
+    record: &LoafCallable,
     arguments: &list[ArgumentElement],
     destination: &Option[Place],
 ) -> Result[Option[list[Ty]], str]:
@@ -321,7 +321,7 @@ def partial_type(formal: &Ty, names: list[str], bindings: list[Option[Ty]]) -> T
     return formal.clone()
 
 
-def async_record(record: &StdlibDelegation) -> bool:
+def async_record(record: &LoafCallable) -> bool:
     """Limit completion to retained catalog-owned channel/synchronization declarations with a native counterpart."""
     match record.canonical.origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
@@ -444,15 +444,15 @@ def visit_call(module: &BodyIrModule, mut frame: AsyncTypeFrame, kind: &Statemen
                             return Ok(None)
                 _ => return Ok(None)
             mut selected = -1
-            for index in range(len(module.stdlib_delegations)):
-                record = module.stdlib_delegations[index]
+            for index in range(len(module.loaf_callables)):
+                record = module.loaf_callables[index]
                 if identity == Some(record.canonical) and async_record(record):
-                    if selected >= 0 and module.stdlib_delegations[selected] != record:
+                    if selected >= 0 and module.loaf_callables[selected] != record:
                         return Err("unsupported Body IR ambiguous checked async signature")
                     selected = index
             if selected < 0:
                 return Ok(None)
-            record = module.stdlib_delegations[selected]
+            record = module.loaf_callables[selected]
             if len(record.parameters) != len(args):
                 return Ok(None)
             retain_result_owners(module, frame, record.return_type)?
@@ -601,7 +601,7 @@ pub def selected_async_receiver(
     body: &Body,
     target: &MethodTarget,
     arguments: &list[ArgumentElement],
-) -> Result[Option[StdlibDelegation], str]:
+) -> Result[Option[LoafCallable], str]:
     """Select a receiver-only signature from its checked nominal owner and exact retained member anchor."""
     if target.canonical != None or len(target.type_args) != 0 or len(arguments) != 1:
         return Ok(None)
@@ -617,7 +617,7 @@ pub def selected_async_receiver(
                             return Ok(None)
                     match body.named_type_identities.get(str(base)):
                         Some(identity) =>
-                            mut selected: Option[StdlibDelegation] = None
+                            mut selected: Option[LoafCallable] = None
                             for owner in module.nominal_declarations:
                                 if owner.canonical != identity.clone() or str(owner.canonical.declaration_name) != str(base) or not async_source_owner(
                                     owner,
@@ -627,7 +627,7 @@ pub def selected_async_receiver(
                                     continue
                                 if len(owner.type_parameters) != 0 and len(owner.type_parameters) != len(values):
                                     continue
-                                for record in module.stdlib_delegations:
+                                for record in module.loaf_callables:
                                     if not async_record(record) or str(record.canonical.declaration_name) != str(
                                         target.name,
                                     ):

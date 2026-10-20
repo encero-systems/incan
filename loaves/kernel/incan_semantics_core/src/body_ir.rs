@@ -81,10 +81,10 @@ pub struct BodyIrModule {
     /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
     #[serde(default)]
     pub enum_declarations: Vec<EnumDeclaration>,
-    /// Checked stdlib wrappers that forward every parameter unchanged to a Rust function. Other imported
-    /// implementations are absent and must refuse.
+    /// The callables of the linked Loaves this module calls, as their declaration records state them (DD-0007).
+    /// A call of one names the Loaf's compiled item.
     #[serde(default)]
-    pub stdlib_delegations: Vec<StdlibDelegation>,
+    pub loaf_callables: Vec<LoafCallable>,
     /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
     ///
     /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
@@ -278,54 +278,91 @@ pub struct NativeUnionDeclaration {
     pub members: Vec<IncanType>,
 }
 
-/// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
+/// A callable a linked Loaf declares, as its declaration record states it (DD-0007). A consumer calls the Loaf's
+/// compiled item; the driver checks the signature recorded here against the rlib's metadata.
 ///
 /// Every field is encoded, including empty vectors, because the executable representation uses positional records.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StdlibDelegation {
-    /// Exact source declaration identity selected by checking, independent of the caller's spelling.
+pub struct LoafCallable {
+    /// Exact declaration identity selected by checking, independent of the caller's spelling.
     pub canonical: CanonicalSymbolId,
-    /// Checked Rust item selected by the wrapper call; consumers must validate its callable signature against native
-    /// metadata and must not recover its path from the source callable's name.
-    pub target: CanonicalSymbolId,
+    /// The compiled item, `<crate>::<encoded identity>` ([`loaf_item_path`]).
+    pub item: String,
     /// Declaration-order parameter types; argument binding still belongs to the call site.
     pub parameters: Vec<IncanType>,
-    /// The declared wrapper result type, verified against native metadata before execution.
+    /// The declared result type, verified against native metadata before execution.
     pub return_type: IncanType,
     /// The callee's own type parameters in declaration order, which `parameters` and `return_type` name. A call
     /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
     #[serde(default)]
     pub type_parameters: Vec<String>,
-    /// Declaration-owned native instantiation for an explicit SDK trait implementation, Self first and then the
-    /// trait's arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the
-    /// existing function or owner-binder instantiation; consumers must not reconstruct these arguments from names.
+    /// Declaration-owned native instantiation for an explicit trait implementation, Self first and then the trait's
+    /// arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the function or
+    /// owner-binder instantiation; consumers must not reconstruct these arguments from names.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
     /// [`CallableParamDefault::Source`] computation without statements whose result is the constant the call passes,
-    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant. A record listing none admits no
-    /// omitted argument.
+    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant.
     #[serde(default)]
     pub parameter_defaults: Vec<CallableParamDefault>,
 }
 
-impl StdlibDelegation {
-    /// Materialize only a checker-proven Rust call target path, never a source-module identity. An unresolved
-    /// `RustItem` still requires native metadata validation before execution.
-    pub fn rust_path(&self) -> Option<String> {
-        match &self.target.origin {
-            crate::SymbolOrigin::RustCrate(path)
-                if matches!(
-                    self.target.kind,
-                    crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::RustItem
-                ) =>
-            {
-                Some(path.join("::"))
+/// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
+/// letter or digit spelled `_`, and a leading `_` when the name would start with a digit.
+pub fn loaf_crate_name(package: &str) -> String {
+    let mut name = package
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
             }
-            _ => None,
-        }
+        })
+        .collect::<String>();
+    if name.is_empty() || name.starts_with(|character: char| character.is_ascii_digit()) {
+        name.insert(0, '_');
+    }
+    name
+}
+
+/// The compiled item a linked Loaf declares `canonical` as (DD-0007): `<crate>::<encoded identity>`, the item the Loaf
+/// exports at its crate root under the encoding of the declaration's canonical identity. `None` for an identity no
+/// Loaf declares.
+pub fn loaf_item_path(canonical: &CanonicalSymbolId) -> Option<String> {
+    let crate::SymbolOrigin::Package { library, .. } = &canonical.origin else {
+        return None;
+    };
+    Some(format!(
+        "{}::{}",
+        loaf_crate_name(library),
+        crate::encode_incan_symbol_identity(canonical)
+    ))
+}
+
+impl LoafCallable {
+    /// The declaration record of a Loaf's callable body: its parameters, result, type parameters and defaults, and the
+    /// compiled item its package identity names. `None` for a body no Loaf declares.
+    pub fn from_body(body: &Body) -> Option<Self> {
+        let canonical = body.canonical.clone()?;
+        let item = loaf_item_path(&canonical)?;
+        Some(Self {
+            item,
+            parameters: body.params.iter().map(|param| param.ty.clone()).collect(),
+            return_type: body.return_type.clone(),
+            type_parameters: body.type_parameters.clone(),
+            native_type_arguments: Vec::new(),
+            parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
+            canonical,
+        })
+    }
+
+    /// The compiled item a call of this callable names.
+    pub fn rust_path(&self) -> Option<String> {
+        Some(self.item.clone())
     }
 }
 
@@ -482,8 +519,9 @@ pub struct NominalDeclaration {
     /// Checked explicit and derive-expanded adoptions; an absent older fact grants no native trait authority.
     #[serde(default)]
     pub trait_adoptions: Vec<TraitAdoption>,
-    /// Exact foreign runtime item selected by the direct-route bridge. Empty keeps the ordinary source or SDK
-    /// declaration; consumers validate a nonempty item against its retained canonical owner before linking it.
+    /// The compiled item that owns this layout: a linked Loaf's item (DD-0007) or a foreign runtime item the
+    /// direct-route bridge selects. Empty for a layout this compilation declares; consumers validate a nonempty
+    /// item against its retained canonical owner before linking it.
     #[serde(default)]
     pub native_item: String,
     /// Checked local class parent and nearest source method implementations; absent for noninherited carriers.
@@ -580,33 +618,16 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
             || identity.kind != crate::SemanticSourceTargetKind::RustItem
             || identity.scope_discriminant.is_some()
             || identity.declaration_span != crate::HirSourceSpan::new(0, 0)
+            || path.len() < 2
             || path.last() != Some(&identity.declaration_name)
         {
             return None;
         }
-        let item = match path.as_slice() {
-            [root, name] if root == "axum" && name == "Json" => "incan_stdlib_web::web::response::Json",
-            [root, module, name] if root == "axum" && module == "extract" && name == "Query" => {
-                "incan_stdlib_web::web::request::Query"
-            }
-            [root, module, name] if root == "axum" && module == "extract" && name == "Path" => {
-                "incan_stdlib_web::web::request::Path"
-            }
-            [root, module, name] if root == "axum" && module == "response" && name == "Html" => {
-                "incan_stdlib_web::web::response::Html"
-            }
-            _ => return None,
-        };
-        return Some(item.to_owned());
+        // A web extractor or response is stored as its stdlib carrier; any other Rust item is stored as itself.
+        return Some(web_carrier_item(path).map_or_else(|| path.join("::"), str::to_owned));
     }
-    if identity.origin == crate::SymbolOrigin::Builtin
-        && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
-        && identity.kind == crate::SemanticSourceTargetKind::Builtin
-        && identity.declaration_name == "ValidationError"
-        && identity.scope_discriminant.is_none()
-        && identity.declaration_span == crate::HirSourceSpan::new(0, 0)
-    {
-        return Some("incan_std_core::validation::ValidationError".to_owned());
+    if let Some(builtin) = crate::RuntimeBuiltinType::from_identity(identity) {
+        return Some(builtin.carrier_path().to_owned());
     }
     let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;
@@ -616,6 +637,18 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
         .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
+}
+
+/// The stdlib web carrier that stores an axum extractor or response, with its public tuple payload.
+fn web_carrier_item(path: &[String]) -> Option<&'static str> {
+    let path = path.iter().map(String::as_str).collect::<Vec<_>>();
+    match path.as_slice() {
+        ["axum", "Json"] => Some("incan_stdlib_web::web::response::Json"),
+        ["axum", "extract", "Query"] => Some("incan_stdlib_web::web::request::Query"),
+        ["axum", "extract", "Path"] => Some("incan_stdlib_web::web::request::Path"),
+        ["axum", "response", "Html"] => Some("incan_stdlib_web::web::response::Html"),
+        _ => None,
+    }
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
@@ -650,6 +683,11 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         identity.origin,
         crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
     ) {
+        return None;
+    }
+    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin
+        && web_carrier_item(path).is_none()
+    {
         return None;
     }
     let native_item = native_nominal_item(identity)?;
@@ -712,6 +750,77 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         type_parameter_count,
     })
 }
+
+/// Opaque storage of a Rust item a program holds as a value (DD-0006): the item itself, with `arity` written type
+/// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into.
+///
+/// Web carriers keep their payload shape through [`native_carrier_nominal`]; every other Rust item uses this one.
+pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Option<NominalDeclaration> {
+    let crate::SymbolOrigin::RustCrate(path) = &identity.origin else {
+        return None;
+    };
+    if web_carrier_item(path).is_some() {
+        return None;
+    }
+    let native_item = native_nominal_item(identity)?;
+    let module = native_nominal_module(identity)?;
+    let type_parameters = (0..arity).map(|index| format!("T{index}")).collect::<Vec<_>>();
+    Some(NominalDeclaration {
+        trait_adoptions: Vec::new(),
+        native_item,
+        class_inheritance: None,
+        native_type_arguments: Vec::new(),
+        direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
+        canonical: identity.clone(),
+        name: identity.declaration_name.clone(),
+        fields: Vec::new(),
+        field_identities: Vec::new(),
+        field_types: Vec::new(),
+        field_public: Vec::new(),
+        field_aliases: Vec::new(),
+        reflection_fields: None,
+        reflection_metadata: None,
+        comparison_equality: None,
+        public: true,
+        has_field_defaults: false,
+        field_default_body: None,
+        method_partial_defaults: Vec::new(),
+        display_method: None,
+        newtype_deserialize: NewtypeDeserialize::Unselected,
+        newtype_string_conversion: NewtypeStringConversion::Unselected,
+        derives: Vec::new(),
+        named_type_identities: Default::default(),
+        type_parameters,
+        type_parameter_count: arity,
+    })
+}
+
+/// The canonical identity of a Rust item named by its path (`std::sync::Arc`), as a program's Rust import records it.
+pub fn rust_item_identity(path: &str) -> Option<CanonicalSymbolId> {
+    let segments = path.split("::").map(str::to_owned).collect::<Vec<_>>();
+    let name = segments.last()?.clone();
+    if segments.len() < 2 || segments.iter().any(|segment| !is_rust_identifier(segment)) {
+        return None;
+    }
+    Some(CanonicalSymbolId {
+        namespace: crate::SymbolNamespace::OrdinaryLexical,
+        origin: crate::SymbolOrigin::RustCrate(segments),
+        declaration_name: name,
+        kind: crate::SemanticSourceTargetKind::RustItem,
+        scope_discriminant: None,
+        declaration_span: crate::HirSourceSpan::new(0, 0),
+    })
+}
+
+/// Whether `segment` is one Rust identifier (ASCII letters, digits and `_`, not starting with a digit).
+fn is_rust_identifier(segment: &str) -> bool {
+    segment
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && segment.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
 /// A checked local class inheritance edge and the nearest implementations of its ancestor source method slots.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClassInheritance {
@@ -794,6 +903,9 @@ pub struct FieldlessEnumDeclaration {
 /// Canonical payload layout of a checked source or SDK enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
+    /// The compiled item a linked Loaf declares this enum as (DD-0007); empty for an enum this compilation declares.
+    #[serde(default)]
+    pub native_item: String,
     /// Exact source-local declaration identity derived from the enum's span.
     pub direct_declaration_id: CompilerNodeId,
     /// Exact checker identity of the enum owner.
@@ -3658,10 +3770,10 @@ pub struct MethodTarget {
     /// Source methods and older publications carry None, so a spelling alone never grants reflection behavior.
     #[serde(default)]
     pub reflection: Option<ReflectionOperation>,
-    /// Exact SDK trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
-    /// Older publications and calls without checked trait dispatch retain None and grant no generic SDK dispatch.
+    /// Exact Loaf trait selected by checking, including its trait arguments. The receiver layout remains in args[0].
+    /// Calls without checked trait dispatch into a Loaf retain None.
     #[serde(default)]
-    pub sdk_trait: Option<StdlibTraitCall>,
+    pub loaf_trait: Option<LoafTraitCall>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -3670,12 +3782,12 @@ pub struct MethodTarget {
     /// Resolved explicit call-site type arguments, in declared type-parameter order. Empty when the call site wrote
     /// none.
     pub type_args: Vec<IncanType>,
-    /// SDK trait item and native instantiation selected at this exact checked call site. Declaration records alone
+    /// Loaf trait item and native instantiation selected at this exact checked call site. Declaration records alone
     /// cannot distinguish two calls of one generic trait slot. A source implementation keeps dispatch priority;
     /// consumers validate the entire recorded native signature before using this selection. Boxed so ordinary method
     /// calls do not reserve the full native signature when no delegation is selected.
     #[serde(default)]
-    pub native_trait_delegation: Option<Box<StdlibDelegation>>,
+    pub native_trait_delegation: Option<Box<LoafCallable>>,
     /// Resolved binding of the surrounding call's arguments *after* the receiver to this method's declared
     /// parameters.
     pub binding: ArgumentBinding,
@@ -3707,7 +3819,7 @@ impl MethodTarget {
             name: name.into(),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: None,
+            loaf_trait: None,
             canonical: None,
             type_args: Vec::new(),
             native_trait_delegation: None,
@@ -3726,12 +3838,12 @@ impl MethodTarget {
     }
 }
 
-/// A checked SDK trait slot, separate from the method's own type arguments and the concrete receiver frame.
+/// A checked trait slot a Loaf declares, separate from the method's own type arguments and the concrete receiver frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StdlibTraitCall {
-    /// Declaring SDK trait identity, authenticated against the exact method declaration.
+pub struct LoafTraitCall {
+    /// Declaring trait identity, authenticated against the exact method declaration.
     pub trait_identity: CanonicalSymbolId,
-    /// Compiled SDK item path for that declaration, never inferred by the lowering from a method spelling.
+    /// Compiled Loaf item path for that declaration, never inferred by the lowering from a method spelling.
     pub native_item: String,
     /// Checked trait instantiation in declaration order; Self comes from the concrete nominal frame or checked scalar
     /// receiver.
@@ -5490,7 +5602,7 @@ mod tests {
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
-            stdlib_delegations: Vec::new(),
+            loaf_callables: Vec::new(),
             native_union_declarations: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),

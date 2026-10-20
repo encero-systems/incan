@@ -1,0 +1,15 @@
+# behavior: a partial and a static re-exported through a facade module are callable and readable under a consumer alias
+# expect-stdout:
+#   core
+#   portable
+#   1
+
+from facade import portable as make_spec
+from facade import counter as shared
+
+
+def main() -> None:
+    let spec = make_spec(policy="portable")
+    println(spec.namespace)
+    println(spec.policy)
+    println(shared)

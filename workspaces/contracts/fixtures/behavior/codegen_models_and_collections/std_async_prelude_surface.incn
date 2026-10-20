@@ -1,0 +1,33 @@
+# behavior: std.async exports sleep, spawn, JoinHandle, Mutex and RaceArm; a spawned task joins with its value after sleeping
+# expect-stdout:
+#   1
+
+import std.async
+from std.async import sleep, spawn, JoinHandle, Mutex, RaceArm
+
+
+async def work() -> int:
+    await sleep(0.01)
+    return 1
+
+
+def touch_handle(handle: JoinHandle[int]) -> None:
+    pass
+
+
+def touch_lock(lock: Mutex[int]) -> None:
+    pass
+
+
+def launch() -> JoinHandle[int]:
+    return spawn(work())
+
+
+def touch_arm(arm_value: RaceArm[int]) -> None:
+    pass
+
+
+async def main() -> None:
+    match await launch():
+        Ok(value) => println(value)
+        Err(_) => println("failed")

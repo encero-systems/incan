@@ -110,6 +110,19 @@ impl RuntimeBuiltinType {
         }
     }
 
+    /// Return the Rust path of the runtime storage this builtin is.
+    pub fn carrier_path(&self) -> &'static str {
+        match self {
+            Self::ValidationError => "incan_std_core::validation::ValidationError",
+        }
+    }
+
+    /// Recognize this builtin's own Rust carrier, which a Rust import names by path; it is the builtin itself.
+    pub fn from_carrier_path(path: &str) -> Option<Self> {
+        let path = path.trim().trim_start_matches("::");
+        (path == Self::ValidationError.carrier_path()).then_some(Self::ValidationError)
+    }
+
     /// Recognize the complete root builtin identity; source declarations and aliases with different origins refuse.
     pub fn from_identity(identity: &crate::CanonicalSymbolId) -> Option<Self> {
         (identity.namespace == crate::SymbolNamespace::OrdinaryLexical

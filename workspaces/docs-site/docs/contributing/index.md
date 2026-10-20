@@ -11,7 +11,6 @@ If you’re new, start with:
 
 - [Extending the Language](how-to/extending_language.md) — when to add builtins vs new syntax; end-to-end checklists
 - [Author Library DSLs with `incan_vocab`](how-to/authoring_vocab_crates.md) — how to publish import-activated DSL blocks, scoped surfaces, and desugarers
-- [Auditing generated Rust](how-to/auditing_generated_rust.md) — how to produce strict-surface generated Rust review reports
 
 ## Tutorials (learn)
 
@@ -20,19 +19,13 @@ If you’re new, start with:
 ## Explanation (understand)
 
 - [Architecture](explanation/architecture.md) — compilation pipeline, module layout, internal stages
-- [Duckborrowing](explanation/duckborrowing.md) — backend ownership planning for generated Rust
-- [Generated Rust quality](explanation/generated_rust_quality.md) — quality, performance, and hostability contract for emitted Rust
-- [Rust-source backend deprecation](explanation/rust_source_backend_deprecation.md) — the policy for changing the Rust-source backend while semantic authority moves out of generated Rust
 - [Readable, maintainable Rust](explanation/readable-maintainable-rust.md) — team conventions and engineering practices
 
 ## Reference (look up)
 
 - [Contributors](contributors.md) — community acknowledgments for external contributions
-- [Backend behavior inventory](reference/backend_behavior_inventory.md) — behavior categories, evidence lanes and classified behavior for backend replacement
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
-- [Generated Rust stdlib coverage](reference/generated_rust_stdlib_coverage.md) — generated-Rust coverage inventory for stdlib modules
 - [Hees.ai v0.5 dependency inventory](reference/hees_ai_v05_dependency_inventory.md) — proof-lane dependency map and scope guardrails
-- [Rust-source backend migration notes and freeze](reference/rust_source_backend_deprecation.md) — migration-note fields, semantic owners, the emission-tree freeze and backend guardrails
 
 ## Design (RFCs and roadmap)
 

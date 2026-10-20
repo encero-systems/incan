@@ -1,0 +1,17 @@
+# behavior: a str returned by a Rust core helper is appended to a local with += (#896)
+# expect-stdout:
+#   a
+#   ab
+
+from rust::incan_std_core::strings import str_slice_byte_range
+
+
+def concat_slice(text: str) -> str:
+    mut out = ""
+    out += str_slice_byte_range(text, 0, 1)
+    return out
+
+
+def main() -> None:
+    println(concat_slice("abc"))
+    println(concat_slice("abc") + "b")

@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Name one node that [`build_body_ir_module_v0`]'s input contract required the *caller* to resolve before
+/// Name one node that [`build_body_ir_module`]'s input contract required the *caller* to resolve before
 /// lowering, rather than one this stage has simply not modeled yet (#1166).
 ///
 /// The distinction is worth carrying in the diagnostic text. An unmodeled construct is remaining work on Body IR
@@ -120,13 +120,13 @@ pub(super) fn unsupported_provider_operation(
 /// here. Async surface (`await`, `race for`) and vocab/scoped-DSL surface are named rather than left to the generic
 /// label, because a diagnostic reading only "expression" hides which one a program actually hit. The two are not the
 /// same kind of finding: async surface is remaining Body IR work under #1164, while a vocab node is a violation of
-/// [`build_body_ir_module_v0`]'s input contract (#1166).
+/// [`build_body_ir_module`]'s input contract (#1166).
 pub(super) fn unsupported_expr_label(expr: &ast::Expr) -> String {
     match expr {
         ast::Expr::Yield(_) => "yield expression".to_string(),
         ast::Expr::Surface(surface) => surface_expr_label(&surface.payload),
         ast::Expr::VocabBlock(_) => undesugared_label("vocab block expression"),
-        // RFC 081 (#1023): unlike `VocabBlock`/`Surface`, an embedded fragment is *not* a `build_body_ir_module_v0`
+        // RFC 081 (#1023): unlike `VocabBlock`/`Surface`, an embedded fragment is *not* a `build_body_ir_module`
         // input-contract violation -- it is meant to reach lowering as itself (see `IrExprKind::EmbeddedFragment`'s
         // rustdoc in `loaves/compiler/incan_ir/src/expr.rs`, the pipeline this replacement-backend Body IR does not yet
         // share). This still-maturing pipeline simply does not cover it yet, so it falls through this fallback

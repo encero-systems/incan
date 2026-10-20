@@ -108,7 +108,7 @@ impl BodyBuilder<'_, '_> {
                 name: identity.declaration_name.rsplit('.').next()?.to_owned(),
                 intrinsic_carrier: None,
                 reflection: None,
-                sdk_trait: None,
+                loaf_trait: None,
                 canonical: Some(identity),
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(defaults.len()),

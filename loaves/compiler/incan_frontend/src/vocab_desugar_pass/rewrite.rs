@@ -1,6 +1,6 @@
 use crate::ast;
 use crate::diagnostics::CompileError;
-use crate::library_manifest_index::LibraryManifestIndex;
+use crate::loaf_index::LoafIndex;
 use crate::vocab_ast_bridge::{
     internal_vocab_block_to_public, public_declarations_to_internal_with_anchor, public_expr_to_internal_with_anchor,
     public_statements_to_internal_with_anchor,
@@ -27,9 +27,9 @@ use super::{VocabDesugarPassError, WasmDesugarerRuntime};
 pub fn desugar_program_vocab_blocks(
     program: &mut ast::Program,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
 ) -> Result<(), Vec<CompileError>> {
-    desugar_program_vocab_blocks_with_runtime(program, module_path, library_manifest_index, &mut None)
+    desugar_program_vocab_blocks_with_runtime(program, module_path, loaves, &mut None)
 }
 
 /// Rewrite fresh source using the caller's retained runtime; every vocabulary invocation still uses a fresh guest.
@@ -37,7 +37,7 @@ pub fn desugar_program_vocab_blocks(
 pub fn desugar_program_vocab_blocks_with_runtime(
     program: &mut ast::Program,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     retained: &mut Option<WasmDesugarerRuntime>,
 ) -> Result<(), Vec<CompileError>> {
     let runtime = match retained {
@@ -58,7 +58,7 @@ pub fn desugar_program_vocab_blocks_with_runtime(
     rewrite_declaration_list(
         &mut program.declarations,
         module_path,
-        library_manifest_index,
+        loaves,
         runtime,
         &mut helper_imports,
         &mut errors,
@@ -76,7 +76,7 @@ pub fn desugar_program_vocab_blocks_with_runtime(
 fn rewrite_declaration_list(
     declarations: &mut Vec<ast::Spanned<ast::Declaration>>,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
@@ -88,14 +88,13 @@ fn rewrite_declaration_list(
         let required_features = declaration.required_features.clone();
         match declaration.node {
             ast::Declaration::VocabBlock(block) => {
-                let mut lowered =
-                    match desugar_vocab_declaration(&block, span, module_path, library_manifest_index, runtime) {
-                        Ok(declarations) => declarations,
-                        Err(error) => {
-                            errors.push(error);
-                            continue;
-                        }
-                    };
+                let mut lowered = match desugar_vocab_declaration(&block, span, module_path, loaves, runtime) {
+                    Ok(declarations) => declarations,
+                    Err(error) => {
+                        errors.push(error);
+                        continue;
+                    }
+                };
                 for (index, declaration) in lowered.iter_mut().enumerate() {
                     declaration.span = span;
                     declaration.leading_blank_lines = if index == 0 { leading_blank_lines } else { 0 };
@@ -103,7 +102,7 @@ fn rewrite_declaration_list(
                     rewrite_declaration(
                         &mut declaration.node,
                         module_path,
-                        library_manifest_index,
+                        loaves,
                         runtime,
                         helper_imports,
                         errors,
@@ -112,14 +111,7 @@ fn rewrite_declaration_list(
                 rewritten.extend(lowered);
             }
             mut declaration => {
-                rewrite_declaration(
-                    &mut declaration,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_declaration(&mut declaration, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.push(ast::Spanned {
                     node: declaration,
                     span,
@@ -137,7 +129,7 @@ fn desugar_vocab_declaration(
     block: &ast::VocabBlockStmt,
     span: ast::Span,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
 ) -> Result<Vec<ast::Spanned<ast::Declaration>>, CompileError> {
     let bridged = internal_vocab_block_to_public(block, span).map_err(|source| {
@@ -151,11 +143,7 @@ fn desugar_vocab_declaration(
     })?;
     let keyword = bridged.keyword.clone();
     let desugared = runtime
-        .desugar_node(
-            library_manifest_index,
-            &incan_vocab::VocabSyntaxNode::Declaration(bridged),
-            module_path,
-        )
+        .desugar_node(loaves, &incan_vocab::VocabSyntaxNode::Declaration(bridged), module_path)
         .map_err(|error| error_from_pass_error(error, span))?;
     let incan_vocab::DesugarOutput::Declarations(declarations) = desugared.output else {
         return Err(error_from_pass_error(
@@ -179,131 +167,68 @@ fn desugar_vocab_declaration(
 fn rewrite_declaration(
     declaration: &mut ast::Declaration,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     match declaration {
         ast::Declaration::Const(konst) => {
-            rewrite_spanned_expr(
-                &mut konst.value,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(&mut konst.value, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Declaration::Static(static_decl) => rewrite_spanned_expr(
             &mut static_decl.value,
             module_path,
-            library_manifest_index,
+            loaves,
             runtime,
             helper_imports,
             errors,
         ),
         ast::Declaration::Partial(partial) => {
-            rewrite_partial_args(
-                &mut partial.args,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_partial_args(&mut partial.args, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Declaration::Function(function) => {
-            rewrite_statement_list(
-                &mut function.body,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_statement_list(&mut function.body, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Declaration::Model(model) => {
-            rewrite_field_defaults(
-                &mut model.fields,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_field_defaults(&mut model.fields, module_path, loaves, runtime, helper_imports, errors);
             rewrite_method_partial_args(
                 &mut model.method_partials,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
             for property in &mut model.properties {
                 if let Some(body) = property.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
             for method in &mut model.methods {
                 if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
         }
         ast::Declaration::Class(class) => {
-            rewrite_field_defaults(
-                &mut class.fields,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_field_defaults(&mut class.fields, module_path, loaves, runtime, helper_imports, errors);
             rewrite_method_partial_args(
                 &mut class.method_partials,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
             for property in &mut class.properties {
                 if let Some(body) = property.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
             for method in &mut class.methods {
                 if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
         }
@@ -311,33 +236,19 @@ fn rewrite_declaration(
             rewrite_method_partial_args(
                 &mut trait_decl.method_partials,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
             for property in &mut trait_decl.properties {
                 if let Some(body) = property.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
             for method in &mut trait_decl.methods {
                 if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
         }
@@ -345,21 +256,14 @@ fn rewrite_declaration(
             rewrite_method_partial_args(
                 &mut newtype_decl.method_partials,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
             for method in &mut newtype_decl.methods {
                 if let Some(body) = method.node.body.as_mut() {
-                    rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
         }
@@ -367,7 +271,7 @@ fn rewrite_declaration(
             rewrite_declaration_list(
                 &mut test_module.body,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
@@ -381,21 +285,14 @@ fn rewrite_declaration(
 fn rewrite_field_defaults(
     fields: &mut [ast::Spanned<ast::FieldDecl>],
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     for field in fields {
         if let Some(default) = field.node.default.as_mut() {
-            rewrite_spanned_expr(
-                default,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(default, module_path, loaves, runtime, helper_imports, errors);
         }
     }
 }
@@ -404,7 +301,7 @@ fn rewrite_field_defaults(
 fn rewrite_method_partial_args(
     partials: &mut [ast::Spanned<ast::MethodPartialDecl>],
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
@@ -413,7 +310,7 @@ fn rewrite_method_partial_args(
         rewrite_partial_args(
             &mut partial.node.args,
             module_path,
-            library_manifest_index,
+            loaves,
             runtime,
             helper_imports,
             errors,
@@ -425,20 +322,13 @@ fn rewrite_method_partial_args(
 fn rewrite_partial_args(
     args: &mut [ast::PartialArg],
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     for arg in args {
-        rewrite_spanned_expr(
-            &mut arg.value,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        );
+        rewrite_spanned_expr(&mut arg.value, module_path, loaves, runtime, helper_imports, errors);
     }
 }
 
@@ -469,7 +359,7 @@ fn vocab_block_body_is_embedded_fragment(block: &ast::VocabBlockStmt) -> bool {
 fn rewrite_statement_list(
     statements: &mut Vec<ast::Spanned<ast::Statement>>,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
@@ -487,14 +377,7 @@ fn rewrite_statement_list(
             // that embedded-fragment descriptors never need.
             ast::Statement::VocabBlock(block) if vocab_block_body_is_embedded_fragment(&block) => {
                 let mut body = block.body;
-                rewrite_statement_list(
-                    &mut body,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_statement_list(&mut body, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.extend(body);
             }
             ast::Statement::VocabBlock(block) => {
@@ -517,7 +400,7 @@ fn rewrite_statement_list(
                 let bridged_keyword = bridged.keyword.clone();
                 let bridged_keyword_metadata = bridged.keyword_metadata.clone();
                 let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
-                let desugared = runtime.desugar_node(library_manifest_index, &request_node, module_path);
+                let desugared = runtime.desugar_node(loaves, &request_node, module_path);
                 let desugared = match desugared {
                     Ok(value) => value,
                     Err(err) => {
@@ -546,7 +429,7 @@ fn rewrite_statement_list(
                     &mut public_statements,
                     bridged_keyword_metadata.as_ref(),
                     &bridged_keyword,
-                    library_manifest_index,
+                    loaves,
                     helper_imports,
                 ) {
                     errors.push(error_from_pass_error(
@@ -575,21 +458,14 @@ fn rewrite_statement_list(
                 for lowered_statement in &mut lowered {
                     lowered_statement.span = span;
                 }
-                rewrite_statement_list(
-                    &mut lowered,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_statement_list(&mut lowered, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.extend(lowered);
             }
             ast::Statement::Assignment(mut assignment) => {
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -600,7 +476,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.object,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -608,7 +484,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -619,7 +495,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.object,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -627,7 +503,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.index,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -635,7 +511,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -644,14 +520,7 @@ fn rewrite_statement_list(
             }
             ast::Statement::Return(mut expr) => {
                 if let Some(expr) = expr.as_mut() {
-                    rewrite_spanned_expr(
-                        expr,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
                 }
                 rewritten.push(ast::Spanned::new(ast::Statement::Return(expr), span));
             }
@@ -660,7 +529,7 @@ fn rewrite_statement_list(
                 rewrite_condition_exprs(
                     &mut if_stmt.condition,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -668,38 +537,17 @@ fn rewrite_statement_list(
                 rewrite_statement_list(
                     &mut if_stmt.then_body,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
                 );
                 for (elif_condition, elif_body) in &mut if_stmt.elif_branches {
-                    rewrite_spanned_expr(
-                        elif_condition,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
-                    rewrite_statement_list(
-                        elif_body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_spanned_expr(elif_condition, module_path, loaves, runtime, helper_imports, errors);
+                    rewrite_statement_list(elif_body, module_path, loaves, runtime, helper_imports, errors);
                 }
                 if let Some(else_body) = if_stmt.else_body.as_mut() {
-                    rewrite_statement_list(
-                        else_body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_statement_list(else_body, module_path, loaves, runtime, helper_imports, errors);
                 }
                 rewritten.push(ast::Spanned::new(ast::Statement::If(if_stmt), span));
             }
@@ -707,7 +555,7 @@ fn rewrite_statement_list(
                 rewrite_condition_exprs(
                     &mut while_stmt.condition,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -715,7 +563,7 @@ fn rewrite_statement_list(
                 rewrite_statement_list(
                     &mut while_stmt.body,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -726,7 +574,7 @@ fn rewrite_statement_list(
                 rewrite_statement_list(
                     &mut loop_stmt.body,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -734,49 +582,21 @@ fn rewrite_statement_list(
                 rewritten.push(ast::Spanned::new(ast::Statement::Loop(loop_stmt), span));
             }
             ast::Statement::For(mut for_stmt) => {
-                rewrite_spanned_expr(
-                    &mut for_stmt.iter,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
-                rewrite_statement_list(
-                    &mut for_stmt.body,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(&mut for_stmt.iter, module_path, loaves, runtime, helper_imports, errors);
+                rewrite_statement_list(&mut for_stmt.body, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.push(ast::Spanned::new(ast::Statement::For(for_stmt), span));
             }
             ast::Statement::Expr(mut expr) => {
-                rewrite_spanned_expr(
-                    &mut expr,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(&mut expr, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.push(ast::Spanned::new(ast::Statement::Expr(expr), span));
             }
             ast::Statement::VocabExpressionItem(mut item) => {
-                rewrite_spanned_expr(
-                    &mut item.expr,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(&mut item.expr, module_path, loaves, runtime, helper_imports, errors);
                 for modifier in &mut item.modifiers {
                     rewrite_spanned_expr(
                         &mut modifier.value,
                         module_path,
-                        library_manifest_index,
+                        loaves,
                         runtime,
                         helper_imports,
                         errors,
@@ -785,26 +605,12 @@ fn rewrite_statement_list(
                 rewritten.push(ast::Spanned::new(ast::Statement::VocabExpressionItem(item), span));
             }
             ast::Statement::Assert(mut assert_stmt) => {
-                rewrite_assert_exprs(
-                    &mut assert_stmt,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_assert_exprs(&mut assert_stmt, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.push(ast::Spanned::new(ast::Statement::Assert(assert_stmt), span));
             }
             ast::Statement::Break(mut expr) => {
                 if let Some(expr) = expr.as_mut() {
-                    rewrite_spanned_expr(
-                        expr,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
                 }
                 rewritten.push(ast::Spanned::new(ast::Statement::Break(expr), span));
             }
@@ -812,7 +618,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -823,7 +629,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -832,19 +638,12 @@ fn rewrite_statement_list(
             }
             ast::Statement::TupleAssign(mut assignment) => {
                 for target in &mut assignment.targets {
-                    rewrite_spanned_expr(
-                        target,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_spanned_expr(target, module_path, loaves, runtime, helper_imports, errors);
                 }
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -855,7 +654,7 @@ fn rewrite_statement_list(
                 rewrite_spanned_expr(
                     &mut assignment.value,
                     module_path,
-                    library_manifest_index,
+                    loaves,
                     runtime,
                     helper_imports,
                     errors,
@@ -873,20 +672,15 @@ fn rewrite_statement_list(
 fn rewrite_condition_exprs(
     condition: &mut ast::Condition,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     match condition {
-        ast::Condition::Expr(expr) | ast::Condition::Let { value: expr, .. } => rewrite_spanned_expr(
-            expr,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        ),
+        ast::Condition::Expr(expr) | ast::Condition::Let { value: expr, .. } => {
+            rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors)
+        }
     }
 }
 
@@ -894,46 +688,24 @@ fn rewrite_condition_exprs(
 fn rewrite_assert_exprs(
     assert_stmt: &mut ast::AssertStmt,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     match &mut assert_stmt.kind {
-        ast::AssertKind::Condition(expr) => rewrite_spanned_expr(
-            expr,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        ),
-        ast::AssertKind::IsPattern { value, .. } => rewrite_spanned_expr(
-            value,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        ),
-        ast::AssertKind::Raises { call, .. } => rewrite_spanned_expr(
-            call,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        ),
+        ast::AssertKind::Condition(expr) => {
+            rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors)
+        }
+        ast::AssertKind::IsPattern { value, .. } => {
+            rewrite_spanned_expr(value, module_path, loaves, runtime, helper_imports, errors)
+        }
+        ast::AssertKind::Raises { call, .. } => {
+            rewrite_spanned_expr(call, module_path, loaves, runtime, helper_imports, errors)
+        }
     }
     if let Some(message) = assert_stmt.message.as_mut() {
-        rewrite_spanned_expr(
-            message,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        );
+        rewrite_spanned_expr(message, module_path, loaves, runtime, helper_imports, errors);
     }
 }
 
@@ -941,7 +713,7 @@ fn rewrite_assert_exprs(
 fn rewrite_spanned_expr(
     expr: &mut ast::Spanned<ast::Expr>,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
@@ -951,14 +723,7 @@ fn rewrite_spanned_expr(
         let ast::Expr::VocabBlock(block) = std::mem::replace(&mut expr.node, placeholder) else {
             unreachable!("raw vocab expression was checked immediately before replacement");
         };
-        match desugar_vocab_block_to_expression(
-            &block,
-            expr.span,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-        ) {
+        match desugar_vocab_block_to_expression(&block, expr.span, module_path, loaves, runtime, helper_imports) {
             Ok(node) => expr.node = node,
             Err(err) => {
                 errors.push(err);
@@ -969,197 +734,68 @@ fn rewrite_spanned_expr(
 
     match &mut expr.node {
         ast::Expr::Binary(left, _, right) => {
-            rewrite_spanned_expr(
-                left,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                right,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(left, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(right, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Unary(_, inner)
         | ast::Expr::Try(inner)
         | ast::Expr::Paren(inner)
         | ast::Expr::Yield(Some(inner)) => {
-            rewrite_spanned_expr(
-                inner,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(inner, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Call(callee, _, args) => {
-            rewrite_spanned_expr(
-                callee,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_call_args(
-                args,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(callee, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Index(base, index) => {
-            rewrite_spanned_expr(
-                base,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                index,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(base, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(index, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Slice(base, slice) => {
-            rewrite_spanned_expr(
-                base,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(base, module_path, loaves, runtime, helper_imports, errors);
             if let Some(start) = slice.start.as_mut() {
-                rewrite_spanned_expr(
-                    start,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(start, module_path, loaves, runtime, helper_imports, errors);
             }
             if let Some(end) = slice.end.as_mut() {
-                rewrite_spanned_expr(
-                    end,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(end, module_path, loaves, runtime, helper_imports, errors);
             }
             if let Some(step) = slice.step.as_mut() {
-                rewrite_spanned_expr(
-                    step,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(step, module_path, loaves, runtime, helper_imports, errors);
             }
         }
         ast::Expr::Field(base, _) => {
-            rewrite_spanned_expr(
-                base,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(base, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::MethodCall(receiver, _, _, args) => {
-            rewrite_spanned_expr(
-                receiver,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_call_args(
-                args,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(receiver, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Partial(partial) => {
             rewrite_spanned_expr(
                 &mut partial.target,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
             for arg in &mut partial.args {
-                rewrite_spanned_expr(
-                    &mut arg.value,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(&mut arg.value, module_path, loaves, runtime, helper_imports, errors);
             }
         }
         ast::Expr::Match(scrutinee, arms) => {
-            rewrite_spanned_expr(
-                scrutinee,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(scrutinee, module_path, loaves, runtime, helper_imports, errors);
             for arm in arms {
                 if let Some(guard) = arm.node.guard.as_mut() {
-                    rewrite_spanned_expr(
-                        guard,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_spanned_expr(guard, module_path, loaves, runtime, helper_imports, errors);
                 }
                 match &mut arm.node.body {
-                    ast::MatchBody::Expr(body) => rewrite_spanned_expr(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    ),
-                    ast::MatchBody::Block(body) => rewrite_statement_list(
-                        body,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    ),
+                    ast::MatchBody::Expr(body) => {
+                        rewrite_spanned_expr(body, module_path, loaves, runtime, helper_imports, errors)
+                    }
+                    ast::MatchBody::Block(body) => {
+                        rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors)
+                    }
                 }
             }
         }
@@ -1167,7 +803,7 @@ fn rewrite_spanned_expr(
             rewrite_spanned_expr(
                 &mut if_expr.condition,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
@@ -1175,117 +811,47 @@ fn rewrite_spanned_expr(
             rewrite_statement_list(
                 &mut if_expr.then_body,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
             if let Some(else_body) = if_expr.else_body.as_mut() {
-                rewrite_statement_list(
-                    else_body,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_statement_list(else_body, module_path, loaves, runtime, helper_imports, errors);
             }
         }
         ast::Expr::Loop(loop_expr) => {
             rewrite_statement_list(
                 &mut loop_expr.body,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
         }
         ast::Expr::ListComp(comp) => {
-            rewrite_spanned_expr(
-                &mut comp.expr,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                &mut comp.iter,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(&mut comp.expr, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(&mut comp.iter, module_path, loaves, runtime, helper_imports, errors);
             if let Some(filter) = comp.filter.as_mut() {
-                rewrite_spanned_expr(
-                    filter,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(filter, module_path, loaves, runtime, helper_imports, errors);
             }
-            rewrite_comprehension_clauses(
-                &mut comp.clauses,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_comprehension_clauses(&mut comp.clauses, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::DictComp(comp) => {
-            rewrite_spanned_expr(
-                &mut comp.key,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                &mut comp.value,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                &mut comp.iter,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(&mut comp.key, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(&mut comp.value, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(&mut comp.iter, module_path, loaves, runtime, helper_imports, errors);
             if let Some(filter) = comp.filter.as_mut() {
-                rewrite_spanned_expr(
-                    filter,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(filter, module_path, loaves, runtime, helper_imports, errors);
             }
-            rewrite_comprehension_clauses(
-                &mut comp.clauses,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_comprehension_clauses(&mut comp.clauses, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Generator(generator) => {
             rewrite_spanned_expr(
                 &mut generator.expr,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
@@ -1293,46 +859,25 @@ fn rewrite_spanned_expr(
             rewrite_comprehension_clauses(
                 &mut generator.clauses,
                 module_path,
-                library_manifest_index,
+                loaves,
                 runtime,
                 helper_imports,
                 errors,
             );
         }
         ast::Expr::Closure(_, body) => {
-            rewrite_spanned_expr(
-                body,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(body, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::Tuple(items) | ast::Expr::Set(items) => {
             for item in items {
-                rewrite_spanned_expr(
-                    item,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(item, module_path, loaves, runtime, helper_imports, errors);
             }
         }
         ast::Expr::List(items) => {
             for item in items {
                 match item {
                     ast::ListEntry::Element(expr) | ast::ListEntry::Spread(expr) => {
-                        rewrite_spanned_expr(
-                            expr,
-                            module_path,
-                            library_manifest_index,
-                            runtime,
-                            helper_imports,
-                            errors,
-                        );
+                        rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
                     }
                 }
             }
@@ -1341,86 +886,32 @@ fn rewrite_spanned_expr(
             for entry in entries {
                 match entry {
                     ast::DictEntry::Pair(key, value) => {
-                        rewrite_spanned_expr(
-                            key,
-                            module_path,
-                            library_manifest_index,
-                            runtime,
-                            helper_imports,
-                            errors,
-                        );
-                        rewrite_spanned_expr(
-                            value,
-                            module_path,
-                            library_manifest_index,
-                            runtime,
-                            helper_imports,
-                            errors,
-                        );
+                        rewrite_spanned_expr(key, module_path, loaves, runtime, helper_imports, errors);
+                        rewrite_spanned_expr(value, module_path, loaves, runtime, helper_imports, errors);
                     }
                     ast::DictEntry::Spread(value) => {
-                        rewrite_spanned_expr(
-                            value,
-                            module_path,
-                            library_manifest_index,
-                            runtime,
-                            helper_imports,
-                            errors,
-                        );
+                        rewrite_spanned_expr(value, module_path, loaves, runtime, helper_imports, errors);
                     }
                 }
             }
         }
         ast::Expr::Constructor(_, args) => {
-            rewrite_call_args(
-                args,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::Expr::FString(parts) => {
             for part in parts {
                 if let ast::FStringPart::Expr { expr, .. } = part {
-                    rewrite_spanned_expr(
-                        expr,
-                        module_path,
-                        library_manifest_index,
-                        runtime,
-                        helper_imports,
-                        errors,
-                    );
+                    rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
                 }
             }
         }
         ast::Expr::Range { start, end, .. } => {
-            rewrite_spanned_expr(
-                start,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                end,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(start, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(end, module_path, loaves, runtime, helper_imports, errors);
         }
-        ast::Expr::Surface(surface) => rewrite_surface_expr(
-            surface,
-            module_path,
-            library_manifest_index,
-            runtime,
-            helper_imports,
-            errors,
-        ),
+        ast::Expr::Surface(surface) => {
+            rewrite_surface_expr(surface, module_path, loaves, runtime, helper_imports, errors)
+        }
         // RFC 081 (#1023): unlike `VocabBlock`/`Surface` above, the embedded-fragment container itself is *not*
         // erased or replaced by this pass -- it must survive into typecheck/lowering as itself so its holes get
         // real Incan typing (see `EmbeddedFragmentExpr`'s rustdoc). Its expression holes are still recursed into
@@ -1428,14 +919,7 @@ fn rewrite_spanned_expr(
         // or scoped surface still gets desugared correctly.
         ast::Expr::Embedded(fragment) => {
             for hole in fragment.holes_mut() {
-                rewrite_spanned_expr(
-                    hole,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(hole, module_path, loaves, runtime, helper_imports, errors);
             }
         }
         ast::Expr::Ident(_)
@@ -1450,7 +934,7 @@ fn rewrite_spanned_expr(
 fn rewrite_call_args(
     args: &mut [ast::CallArg],
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
@@ -1461,14 +945,7 @@ fn rewrite_call_args(
             | ast::CallArg::Named(_, expr)
             | ast::CallArg::PositionalUnpack(expr)
             | ast::CallArg::KeywordUnpack(expr) => {
-                rewrite_spanned_expr(
-                    expr,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
             }
         }
     }
@@ -1478,7 +955,7 @@ fn rewrite_call_args(
 fn rewrite_comprehension_clauses(
     clauses: &mut [ast::ComprehensionClause],
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
@@ -1486,14 +963,7 @@ fn rewrite_comprehension_clauses(
     for clause in clauses {
         match clause {
             ast::ComprehensionClause::For { iter, .. } | ast::ComprehensionClause::If(iter) => {
-                rewrite_spanned_expr(
-                    iter,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(iter, module_path, loaves, runtime, helper_imports, errors);
             }
         }
     }
@@ -1503,84 +973,35 @@ fn rewrite_comprehension_clauses(
 fn rewrite_surface_expr(
     surface: &mut ast::SurfaceExpr,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
     match &mut surface.payload {
         ast::SurfaceExprPayload::PrefixUnary(inner) => {
-            rewrite_spanned_expr(
-                inner,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(inner, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::SurfaceExprPayload::RaceFor(race) => {
             for arm in &mut race.arms {
-                rewrite_spanned_expr(
-                    &mut arm.awaitable,
-                    module_path,
-                    library_manifest_index,
-                    runtime,
-                    helper_imports,
-                    errors,
-                );
+                rewrite_spanned_expr(&mut arm.awaitable, module_path, loaves, runtime, helper_imports, errors);
                 match &mut arm.body {
                     ast::RaceForBody::Expr(expr) => {
-                        rewrite_spanned_expr(
-                            expr,
-                            module_path,
-                            library_manifest_index,
-                            runtime,
-                            helper_imports,
-                            errors,
-                        );
+                        rewrite_spanned_expr(expr, module_path, loaves, runtime, helper_imports, errors);
                     }
                     ast::RaceForBody::Block(body) => {
-                        rewrite_statement_list(
-                            body,
-                            module_path,
-                            library_manifest_index,
-                            runtime,
-                            helper_imports,
-                            errors,
-                        );
+                        rewrite_statement_list(body, module_path, loaves, runtime, helper_imports, errors);
                     }
                 }
             }
         }
         ast::SurfaceExprPayload::LeadingDotPath { .. } => {}
         ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-            rewrite_spanned_expr(
-                left,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
-            rewrite_spanned_expr(
-                right,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_spanned_expr(left, module_path, loaves, runtime, helper_imports, errors);
+            rewrite_spanned_expr(right, module_path, loaves, runtime, helper_imports, errors);
         }
         ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-            rewrite_call_args(
-                args,
-                module_path,
-                library_manifest_index,
-                runtime,
-                helper_imports,
-                errors,
-            );
+            rewrite_call_args(args, module_path, loaves, runtime, helper_imports, errors);
         }
     }
 }
@@ -1590,7 +1011,7 @@ fn desugar_vocab_block_to_expression(
     block: &ast::VocabBlockStmt,
     span: ast::Span,
     module_path: Option<&str>,
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     runtime: &mut WasmDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
 ) -> Result<ast::Expr, CompileError> {
@@ -1607,7 +1028,7 @@ fn desugar_vocab_block_to_expression(
     let bridged_keyword_metadata = bridged.keyword_metadata.clone();
     let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
     let mut desugared = runtime
-        .desugar_node(library_manifest_index, &request_node, module_path)
+        .desugar_node(loaves, &request_node, module_path)
         .map_err(|err| error_from_pass_error(err, span))?;
 
     let incan_vocab::DesugarOutput::Expression(expression) = &mut desugared.output else {
@@ -1623,7 +1044,7 @@ fn desugar_vocab_block_to_expression(
         expression,
         bridged_keyword_metadata.as_ref(),
         &bridged_keyword,
-        library_manifest_index,
+        loaves,
         helper_imports,
     )
     .map_err(|message| {

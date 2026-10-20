@@ -1,0 +1,462 @@
+"""
+Rust units: a local Loaf's Rust facet and the local facets it reaches, compiled with one `rustc` per unit against
+compiled registry units (DD-0008).
+
+The graph is `loaf_local_graph.local_facets`. Each unit compiles after the local units it links. A unit's output lives
+under the root project's target directory, named by the unit's identity: its project, domain, features and profile.
+Registry units come compiled: their rlibs by root name and the directories their dependencies live in.
+"""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std import toml
+from std.toml import TomlValue
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.hash import sha256
+from std.encoding.hex import hexlify
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
+from semver_req import compare_version_order, parse_version
+
+
+@derive(Eq)
+pub model RegistryUnit:
+    """One compiled registry unit: its package, version and domain, and the directory its artifacts are in."""
+
+    pub loaf: str
+    pub version: str
+    pub domain: str
+    pub directory: str
+
+
+pub model RegistryUnits:
+    """Compiled registry units, and every directory they live in."""
+
+    pub units: list[RegistryUnit]
+    pub search: list[str]
+
+    def artifact(self, loaf: str, requirement: str, domain: str) -> Result[str, str]:
+        """The library of the highest compiled version of `loaf` that satisfies `requirement`, in `domain` when
+        there is one there, else in the other domain."""
+        mut best: Option[RegistryUnit] = None
+        for preferred in [domain, "host", "target"]:
+            for unit in self.units:
+                if unit.loaf != loaf or unit.domain != preferred:
+                    continue
+                if not version_matches(requirement, unit.version, loaf).map_err((error) => error.message())?:
+                    continue
+                match best:
+                    None => best = Some(unit)
+                    Some(current) =>
+                        if compare_version_order(parse_version(unit.version)?, parse_version(current.version)?) > 0:
+                            best = Some(unit)
+            if best != None:
+                break
+        match best:
+            None => return Err(f"no compiled registry unit of {loaf} satisfies {requirement}")
+            Some(unit) =>
+                for candidate in Path(unit.directory).iterdir().map_err((error) => error.message())?:
+                    name = candidate.name()
+                    if name.startswith("lib") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
+                        return Ok(candidate.0)
+                return Err(f"the compiled unit of {loaf} {unit.version} has no library in {unit.directory}")
+
+
+pub model RustFacet:
+    """What a local Loaf's manifest says about its Rust crate."""
+
+    pub crate_name: str
+    # `lib` or `proc-macro`; empty when the Loaf has no library crate.
+    pub kind: str
+    pub edition: str
+    # The library crate's root file, when there is one.
+    pub library: str
+    # The `[[rust.bin]]` crates: name and root file.
+    pub binaries: list[Tuple[str, str]]
+    # The package name and version the unit is compiled as.
+    pub package: str
+    pub version: str
+    # Whether a binary needs the toolchain's unstable features (`unstable_features`).
+    pub unstable: bool
+
+
+pub model BuiltUnit:
+    """One compiled local unit: what its dependents pass as `--extern`, and where its outputs are."""
+
+    pub crate_name: str
+    pub artifact: str
+    pub directory: str
+
+
+pub def read_registry_units(path: Path) -> Result[RegistryUnits, str]:
+    """Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory."""
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    document = parse(text).map_err((error) => f"{path.0}: {error.message()}")?
+    mut entries = ""
+    externs_table = document.require("externs").map_err((error) => error.message())?
+    for name in externs_table.keys():
+        extern = externs_table.require(name).map_err((error) => error.message())?
+        artifact = extern.require("path").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        entries = Path(artifact).parent().parent().parent().0
+        break
+    if entries == "":
+        return Err(f"{path.0} names no compiled unit")
+    mut units: list[RegistryUnit] = []
+    mut search: list[str] = []
+    for unit in document.require("units").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?:
+        entry = unit.require("entry").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        directory = Path(entries).joinpath(entry.replace(":", "-")).joinpath("artifacts").0
+        units.append(RegistryUnit(
+            loaf=unit.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?,
+            version=unit.require("version").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?,
+            domain=unit.require("domain").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?,
+            directory=directory,
+        ))
+        if directory not in search:
+            search.append(directory)
+    return Ok(RegistryUnits(units=units, search=search))
+
+
+pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
+    """The host target and its complete `cfg`, as the pinned rustc prints them."""
+    host = run_text(rustc, ["-vV"])?
+    mut triple = ""
+    for line in host.split("\n"):
+        if line.startswith("host: "):
+            triple = line[6:].strip()
+    if triple == "":
+        return Err(f"{rustc} -vV names no host")
+    printed = run_text(rustc, ["--print", "cfg", "--target", triple])?
+    mut flags: list[str] = []
+    mut values: Dict[str, list[str]] = {}
+    for line in printed.split("\n"):
+        entry = line.strip()
+        if entry == "":
+            continue
+        if "=" in entry:
+            parts = entry.split("=")
+            name = parts[0]
+            value = unquoted("=".join(parts[1:]))
+            mut known: list[str] = []
+            if name in values:
+                known = values[name]
+            known.append(value)
+            values[name] = known
+        else:
+            flags.append(entry)
+    return Ok(TargetConfiguration(triple=triple, cfg=Some(CfgSnapshot(flags=flags, values=values))))
+
+
+def run_text(program: str, arguments: list[str]) -> Result[str, str]:
+    """Run a program to completion and return its stdout; a failure returns its stderr."""
+    mut command = Command.new(program)
+    for argument in arguments:
+        command.arg(argument)
+    match command.output():
+        Err(error) => return Err(f"cannot run {program}: {error}")
+        Ok(output) =>
+            stdout = decoded(output.stdout)
+            if not output.status.success():
+                return Err(f"{program} {' '.join(arguments)} failed:\n{decoded(output.stderr)}")
+            return Ok(stdout)
+
+
+def decoded(bytes: bytes) -> str:
+    """Process output as text; output that is not UTF-8 is named, not repaired."""
+    match RustString.from_utf8(bytes):
+        Ok(text) => return str(text)
+        Err(_) => return "(output that is not UTF-8)"
+
+
+pub def rust_facet(project: str) -> Result[RustFacet, str]:
+    """The Rust crate a local Loaf's manifest declares."""
+    root = Path(project)
+    source = root.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    document = toml.parse(source).map_err((error) => error.message())?
+    package = document.get[str]("project.name").map_err((error) => error.message())?
+    mut crate_name = package.replace("-", "_")
+    if let Some(declared) = document.get_optional[str]("rust.name").map_err((error) => error.message())?:
+        crate_name = declared.replace("-", "_")
+    mut edition = "2024"
+    if let Some(declared) = document.get_optional[str]("build.rust-edition").map_err((error) => error.message())?:
+        edition = declared
+    if let Some(declared) = document.get_optional[str]("rust.edition").map_err((error) => error.message())?:
+        edition = declared
+    mut source_root = root
+    if let Some(declared) = document.get_optional[str]("rust.source.root").map_err((error) => error.message())?:
+        source_root = root.joinpath(declared)
+    library = source_root.joinpath("src").joinpath("lib.rs")
+    mut kind = ""
+    mut library_path = ""
+    if library.is_file():
+        kind = "lib"
+        library_path = library.0
+        if let Some(declared) = document.get_optional[str]("rust.type").map_err((error) => error.message())?:
+            kind = declared
+    mut binaries: list[Tuple[str, str]] = []
+    mut unstable = false
+    for binary in declared_binaries(document)?:
+        name = binary.get[str]("name").map_err((error) => error.message())?
+        path = binary.get[str]("path").map_err((error) => error.message())?
+        binaries.append((name, root.joinpath(path).0))
+        if let Some(features) = binary.get_optional[list[str]]("unstable_features").map_err((error) => error.message())?:
+            if len(features) > 0:
+                unstable = true
+    if kind == "" and len(binaries) == 0:
+        if root.joinpath("src").joinpath("lib.incn").is_file():
+            return Err(f"{project} is an Incan Loaf; its Rust crate comes from compiling it, which this build does not do yet")
+        return Err(f"{project} declares no Rust crate: no {library.0} and no [[rust.bin]]")
+    version = document.get[str]("project.version").map_err((error) => error.message())?
+    return Ok(RustFacet(crate_name=crate_name, kind=kind, edition=edition, library=library_path, binaries=binaries, package=package, version=version, unstable=unstable))
+
+
+def identity(facet: LocalFacet, profile: str) -> str:
+    """A unit's identity: its project, domain, features and profile."""
+    text = f"{facet.project}\n{facet.domain.value()}\n{','.join(sorted(facet.features))}\n{profile}"
+    return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
+
+
+def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
+    """The facets in an order where every unit follows the local units it links."""
+    mut done: list[str] = []
+    mut result: list[LocalFacet] = []
+    while len(result) < len(facets):
+        mut progressed = false
+        for facet in facets:
+            key = f"{facet.project}@{facet.domain.value()}"
+            if key in done:
+                continue
+            mut ready = true
+            for edge in facet.local:
+                if f"{edge.project}@{edge.domain.value()}" not in done:
+                    ready = false
+            if ready:
+                done.append(key)
+                result.append(facet)
+                progressed = true
+        if not progressed:
+            return Err("the local Rust units depend on each other in a cycle")
+    return Ok(result)
+
+
+pub model RustBuild:
+    """One build of a local Loaf's Rust facet."""
+
+    pub project: str
+    pub profile: str = "debug"
+    pub rustc: str = "rustc"
+    pub registry: RegistryUnits
+    pub features: list[str] = []
+    pub default_features: bool = true
+    # Loaves to use in place of the Loaf of a package name, wherever the graph reaches it.
+    pub substitutes: Dict[str, str] = {}
+
+
+pub def build_rust(request: RustBuild) -> Result[list[str], str]:
+    """Compile the project's Rust facet and every local facet it reaches, then its binaries; returns their paths.
+
+    A unit that fails does not stop the others: every unit whose local dependencies compiled is attempted, the units
+    that link a failed one are reported as blocked by it, and the build fails with every report.
+    """
+    configuration = target_configuration(request.rustc)?
+    root = Path(request.project).resolve().map_err((error) => f"{request.project}: {error.message()}")?
+    demand = LocalDemand(project=root.0, domain=DependencyDomain.Target, features=request.features, defaults=request.default_features)
+    facets = ordered(local_facets(demand, configuration, None, request.substitutes)?)?
+    output = root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile)
+    mut built: Dict[str, BuiltUnit] = {}
+    mut failed: Dict[str, str] = {}
+    mut reports: list[str] = []
+    mut search = request.registry.search
+    mut binaries: list[str] = []
+    for facet in facets:
+        key = f"{facet.project}@{facet.domain.value()}"
+        mut blocker = ""
+        for edge in facet.local:
+            edge_key = f"{edge.project}@{edge.domain.value()}"
+            if edge_key in failed and blocker == "":
+                blocker = failed[edge_key]
+        if blocker != "":
+            failed[key] = blocker
+            reports.append(f"{facet.project}: blocked by {blocker}")
+            continue
+        match unit_outputs(facet, root, output, request, built, search):
+            Err(reason) =>
+                failed[key] = facet.project
+                reports.append(reason)
+            Ok(outputs) =>
+                unit, programs = outputs
+                if let Some(library) = unit:
+                    built[key] = library
+                    search.append(library.directory)
+                for program in programs:
+                    binaries.append(program)
+    if len(reports) > 0:
+        body = "\n\n".join(reports)
+        return Err(f"{len(reports)} of {len(facets)} Rust units did not compile:\n\n{body}")
+    return Ok(binaries)
+
+
+def unit_outputs(
+    facet: LocalFacet,
+    root: Path,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+) -> Result[Tuple[Option[BuiltUnit], list[str]], str]:
+    """Compile one facet's library, and the root facet's binaries."""
+    declared = rust_facet(facet.project)?
+    mut library: Option[BuiltUnit] = None
+    mut local_built = built
+    if declared.kind != "":
+        unit = compile_library(facet, declared, output, request, built, search)?
+        println(f"compiled {declared.crate_name} ({facet.domain.value()})")
+        local_built[f"{facet.project}@{facet.domain.value()}"] = unit
+        library = Some(unit)
+    mut programs: list[str] = []
+    if facet.project == root.0 and facet.domain == DependencyDomain.Target:
+        for name, source in declared.binaries:
+            programs.append(compile_binary(name, source, facet, declared, output, request, local_built, search)?)
+            println(f"compiled {name}")
+    return Ok((library, programs))
+
+
+def linking(facet: LocalFacet, request: RustBuild, built: Dict[str, BuiltUnit], search: list[str]) -> Result[list[str], str]:
+    """The arguments that link a unit: its features, the search directories and one `--extern` per edge."""
+    mut arguments: list[str] = []
+    for feature in facet.features:
+        arguments.append("--cfg")
+        arguments.append(f"feature=\"{feature}\"")
+    for directory in search:
+        arguments.append("-L")
+        arguments.append(f"dependency={directory}")
+    for edge in facet.local:
+        key = f"{edge.project}@{edge.domain.value()}"
+        if key not in built:
+            return Err(f"{facet.project} links {edge.alias}, which has no compiled library")
+        arguments.append("--extern")
+        arguments.append(f"{edge.alias.replace('-', '_')}={built[key].artifact}")
+    for index in range(len(facet.registry)):
+        alias = facet.registry_aliases[index]
+        selected = facet.registry[index]
+        loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        artifact = request.registry.artifact(loaf, requirement, facet.domain.value()).map_err((reason) => f"{facet.project} links `{alias}`: {reason}")?
+        arguments.append("--extern")
+        arguments.append(f"{alias.replace('-', '_')}={artifact}")
+    if request.profile == "release":
+        arguments.append("-C")
+        arguments.append("opt-level=3")
+    arguments.append("-C")
+    arguments.append("debuginfo=0")
+    return Ok(arguments)
+
+
+def compile_library(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+) -> Result[BuiltUnit, str]:
+    """Compile one library unit into its own directory and return its artifact."""
+    unit = identity(facet, request.profile)
+    directory = output.joinpath(f"{declared.crate_name}-{unit}")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    mut arguments = [declared.library, "--crate-name", declared.crate_name, "--crate-type", declared.kind, "--edition", declared.edition]
+    arguments = arguments + ["--out-dir", directory.0, "-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
+    if declared.kind == "proc-macro":
+        arguments = arguments + ["--extern", "proc_macro"]
+    arguments = arguments + linking(facet, request, built, search)?
+    invoke_rustc(request.rustc, arguments, package_environment(facet.project, declared, declared.crate_name), false, declared.crate_name)?
+    for candidate in directory.iterdir().map_err((error) => error.message())?:
+        name = candidate.name()
+        if name.startswith(f"lib{declared.crate_name}-{unit}.") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
+            return Ok(BuiltUnit(crate_name=declared.crate_name, artifact=candidate.0, directory=directory.0))
+    return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+
+
+def compile_binary(
+    name: str,
+    source: str,
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+) -> Result[str, str]:
+    """Compile one `[[rust.bin]]` crate of the root facet, linking the root's own library when it has one."""
+    directory = output.joinpath("bin")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    binary = directory.joinpath(name)
+    mut arguments = [source, "--crate-name", name.replace("-", "_"), "--crate-type", "bin", "--edition", declared.edition, "-o", binary.0]
+    key = f"{facet.project}@{facet.domain.value()}"
+    if key in built:
+        arguments = arguments + ["--extern", f"{declared.crate_name}={built[key].artifact}"]
+    arguments = arguments + linking(facet, request, built, search)?
+    invoke_rustc(request.rustc, arguments, package_environment(facet.project, declared, name.replace("-", "_")), declared.unstable, name)?
+    return Ok(binary.0)
+
+
+def invoke_rustc(rustc: str, arguments: list[str], environment: Dict[str, str], unstable: bool, unit: str) -> Result[None, str]:
+    """Run the pinned rustc for one unit; a failure carries rustc's diagnostics."""
+    mut command = Command.new(rustc)
+    for argument in arguments:
+        command.arg(argument)
+    for name in sorted([key for key in environment.keys()]):
+        value = environment[name]
+        command.env(name, value)
+    if unstable:
+        command.env("RUSTC_BOOTSTRAP", "1")
+    match command.output():
+        Err(error) => return Err(f"cannot run {rustc}: {error}")
+        Ok(result) =>
+            if result.status.success():
+                return Ok(None)
+            return Err(f"rustc failed for {unit}:\n{decoded(result.stderr)}")
+
+
+def unquoted(text: str) -> str:
+    """A `cfg` value without the quotes rustc prints around it."""
+    if len(text) >= 2 and text.startswith("\"") and text.endswith("\""):
+        return text[1:len(text) - 1]
+    return text
+
+
+def declared_binaries(document: TomlValue) -> Result[list[TomlValue], str]:
+    """The `[[rust.bin]]` tables of a manifest."""
+    root = document.as_table().map_err((error) => error.message())?
+    if "rust" not in root:
+        return Ok([])
+    facet = root["rust"].as_table().map_err((error) => error.message())?
+    if "bin" not in facet:
+        return Ok([])
+    return facet["bin"].as_array().map_err((error) => error.message())
+
+
+def package_environment(project: str, declared: RustFacet, crate_name: str) -> Dict[str, str]:
+    """The package environment Rust code reads at compile time (`env!`), under the names the Rust ecosystem uses."""
+    mut environment: Dict[str, str] = {
+        "CARGO_PKG_NAME": declared.package,
+        "CARGO_PKG_VERSION": declared.version,
+        "CARGO_MANIFEST_DIR": project,
+        "CARGO_CRATE_NAME": crate_name,
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "",
+    }
+    release = declared.version.split("-")
+    mut pre = ""
+    if len(release) > 1:
+        pre = "-".join(release[1:])
+    numbers = release[0].split(".")
+    names = ["CARGO_PKG_VERSION_MAJOR", "CARGO_PKG_VERSION_MINOR", "CARGO_PKG_VERSION_PATCH"]
+    for index in range(3):
+        mut number = "0"
+        if index < len(numbers):
+            number = numbers[index]
+        environment[names[index]] = number
+    environment["CARGO_PKG_VERSION_PRE"] = pre
+    return environment

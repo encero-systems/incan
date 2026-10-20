@@ -1,0 +1,9 @@
+[project]
+name = "declared_standard_package"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+incan_stdlib_core = { standard = true }

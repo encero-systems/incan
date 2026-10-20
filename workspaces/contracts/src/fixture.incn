@@ -1,0 +1,148 @@
+"""
+Fixture discovery and materialization.
+
+A fixtures root holds one directory per family, a family one directory per area, and an area one entry per fixture.
+An entry is one of three shapes: `<name>.incn` (a single-file program), `<name>/main.incn` (a module fixture whose
+siblings are importable modules) or `<name>/loaf.toml` (a complete project whose program is `src/main.incn`). Hidden
+entries are skipped; anything else, and an area with nothing in it, is refused: something in the tree that proves
+nothing is what the families exist to prevent.
+"""
+
+from std.fs import IoError, Path
+
+
+# The manifest every single-file and module fixture runs under.
+const MINIMAL_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+
+# The manifest a testing fixture runs under: a project with no program.
+const PROJECT_ONLY_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"
+
+
+pub model Fixture:
+    """One fixture: where it lives and what shape it has."""
+
+    pub family: str
+    pub area: str
+    pub name: str
+    # `file`, `module` or `project`.
+    pub shape: str
+    # The fixture's entry in its area: the `.incn` file or the directory.
+    pub entry: Path
+    # The program that carries the header.
+    pub program: Path
+
+    def case_name(self) -> str:
+        """The case's name in reports and selectors: `<family>/<area>/<name>`."""
+        return f"{self.family}/{self.area}/{self.name}"
+
+
+pub def discover_family(root: Path, family: str) -> Result[list[Fixture], str]:
+    """Every fixture of `family` under `root`, area by area in name order."""
+    directory = root.joinpath(family)
+    if not directory.is_dir():
+        return Err(f"{directory.0}: the family `{family}` has no directory")
+    mut fixtures: list[Fixture] = []
+    for area in children(directory)?:
+        name = area.name()
+        if not area.is_dir():
+            if name == "README.md":
+                continue
+            return Err(f"{area.0}: a family holds area directories and its README.md; this file is neither")
+        found = discover_area(area, family, name)?
+        if len(found) == 0:
+            return Err(f"{area.0}: the area holds no fixture")
+        for fixture in found:
+            fixtures.append(fixture)
+    return Ok(fixtures)
+
+
+def discover_area(area: Path, family: str, area_name: str) -> Result[list[Fixture], str]:
+    """The fixtures of one area, refusing an entry of no known shape."""
+    mut fixtures: list[Fixture] = []
+    for entry in children(area)?:
+        file_name = entry.name()
+        if entry.is_file():
+            if not file_name.endswith(".incn"):
+                return Err(f"{entry.0}: an area holds `<name>.incn`, `<name>/main.incn` or `<name>/loaf.toml` fixtures; this file is none of them")
+            name = file_name[0:len(file_name) - 5]
+            check_name(entry, name)?
+            fixtures.append(Fixture(family=family, area=area_name, name=name, shape="file", entry=entry, program=entry))
+            continue
+        check_name(entry, file_name)?
+        if entry.joinpath("loaf.toml").is_file():
+            program = entry.joinpath("src").joinpath("main.incn")
+            if not program.is_file():
+                return Err(f"{entry.0}: a project fixture's program is `src/main.incn`, which it does not have")
+            fixtures.append(Fixture(family=family, area=area_name, name=file_name, shape="project", entry=entry, program=program))
+            continue
+        program = entry.joinpath("main.incn")
+        if not program.is_file():
+            return Err(f"{entry.0}: a fixture directory holds `main.incn` (a module fixture) or `loaf.toml` (a project fixture)")
+        fixtures.append(Fixture(family=family, area=area_name, name=file_name, shape="module", entry=entry, program=program))
+    return Ok(fixtures)
+
+
+def children(directory: Path) -> Result[list[Path], str]:
+    """The visible entries of `directory`, in name order."""
+    mut by_name: dict[str, Path] = {}
+    match directory.iterdir():
+        Ok(entries) =>
+            for entry in entries:
+                if not entry.name().startswith("."):
+                    by_name[entry.name()] = entry
+        Err(error) => return Err(f"{directory.0}: {error.message()}")
+    return Ok([by_name[name] for name in sorted([name for name in by_name.keys()])])
+
+
+def check_name(entry: Path, name: str) -> Result[None, str]:
+    """Refuse a fixture name that is not lowercase letters, digits and `_`, starting with a letter or `_`."""
+    if name == "":
+        return Err(f"{entry.0}: a fixture needs a name")
+    for index in range(len(name)):
+        character = name[index]
+        if character not in "abcdefghijklmnopqrstuvwxyz0123456789_":
+            return Err(f"{entry.0}: name a fixture with lowercase letters, digits and `_`; `{character}` is none of them")
+    if name[0] in "0123456789":
+        return Err(f"{entry.0}: a fixture name starts with a letter or `_`")
+    return Ok(None)
+
+
+pub def materialize(fixture: Fixture, scratch: Path) -> Result[Path, str]:
+    """Copy the fixture into a fresh project directory under `scratch` and return the project's root."""
+    project = scratch.joinpath(f"{fixture.family}-{fixture.area}-{fixture.name}")
+    if project.exists():
+        io(project.remove_tree(), project)?
+    if fixture.shape == "project":
+        copied(fixture.entry.copy(project, false, false), project)?
+        return Ok(project)
+    mut manifest = MINIMAL_MANIFEST.replace("{name}", fixture.name)
+    if fixture.family == "testing":
+        # A test file runs from the project's `tests/` directory; the project has no program of its own.
+        tests = project.joinpath("tests")
+        io(tests.mkdir(true, false), tests)?
+        copied(fixture.entry.copy(tests.joinpath(f"{fixture.name}.incn"), false, false), tests)?
+        manifest = PROJECT_ONLY_MANIFEST.replace("{name}", fixture.name)
+    else:
+        source = project.joinpath("src")
+        if fixture.shape == "module":
+            io(project.mkdir(true, false), project)?
+            copied(fixture.entry.copy(source, false, false), source)?
+        else:
+            io(source.mkdir(true, false), source)?
+            copied(fixture.entry.copy(source.joinpath("main.incn"), false, false), source)?
+    io(project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None), project)?
+    return Ok(project)
+
+
+def io(result: Result[None, IoError], path: Path) -> Result[None, str]:
+    """An I/O result with its error named after `path`."""
+    match result:
+        Ok(_) => return Ok(None)
+        Err(error) => return Err(f"{path.0}: {error.message()}")
+
+
+def copied(result: Result[Path, IoError], path: Path) -> Result[None, str]:
+    """A copy result with its error named after `path`."""
+    match result:
+        Ok(_) => return Ok(None)
+        Err(error) => return Err(f"{path.0}: {error.message()}")

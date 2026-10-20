@@ -1,22 +1,11 @@
 [dependencies]
-clap = { features = ["derive"], loaf = "crates-io/clap", optional = true, version = "4.4" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
-incan_emit = { default-features = false, loaf = "incan_emit", path = "../incan_emit" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
-incan_ir = { default-features = false, loaf = "incan_ir", path = "../incan_ir" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
-incan_oven_facet = { loaf = "incan_oven_facet", path = "../incan_oven_facet" }
-incan_provider = { default-features = false, loaf = "incan_provider", path = "../incan_provider" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
-oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../oven/oven_cargo_compat", version = "0.6.0-dev.5" }
-oven_interop = { loaf = "oven_interop", path = "../../oven/oven_interop", version = "0.6.0-dev.5" }
-oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
-oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
-oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
 proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
-rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../rust_inspect" }
 rustix = { features = ["fs"], loaf = "crates-io/rustix", version = "1.1.4" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
@@ -27,55 +16,32 @@ thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 toml = { loaf = "crates-io/toml", version = "0.9" }
 toml_edit = { features = ["parse", "serde"], loaf = "crates-io/toml_edit", version = "0.25" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
+tracing-subscriber = { features = ["env-filter"], loaf = "crates-io/tracing-subscriber", version = "0.3" }
 
 [project]
-description = "The Incan compiler driver: sessions, builds, the generated project, inspection and the compatibility corpus"
+description = "The Incan compiler driver: sessions, checking, Loaf publication and inspection"
 license = "Apache-2.0"
 name = "incan_driver"
 private = true
 version = "0.6.0-dev.6"
 
 [project.features]
-cli = ["dep:clap", "rust_inspect"]
 default = [
-    "cli",
-    "rust_inspect",
     "std_testing",
     "std_async",
     "std_decorators",
 ]
-rust_inspect = [
-    "incan_frontend/rust_inspect",
-    "incan_ir/rust_inspect",
-    "incan_emit/rust_inspect",
-    "incan_provider/rust_inspect",
-    "rust_inspect/inspector",
-]
 std_async = [
     "incan_frontend/std_async",
-    "incan_ir/std_async",
-    "incan_emit/std_async",
-    "incan_provider/std_async",
 ]
 std_decorators = [
     "incan_frontend/std_decorators",
-    "incan_ir/std_decorators",
-    "incan_emit/std_decorators",
-    "incan_provider/std_decorators",
 ]
 std_testing = [
     "incan_frontend/std_testing",
-    "incan_ir/std_testing",
-    "incan_emit/std_testing",
-    "incan_provider/std_testing",
 ]
 test_support = [
-    "incan_provider/test_support",
-    "incan_emit/test_support",
     "incan_frontend/test_support",
-    "rust_inspect/test_fixtures",
-    "oven_store/test_support",
-    "oven_rustc/test_support",
 ]
 
 [rust]
@@ -89,9 +55,4 @@ byteorder = { loaf = "crates-io/byteorder", version = "1" }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8" }
 incan_derive = { loaf = "incan_derive", path = "../../stdlib/derive/incan_derive" }
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
-incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
-incan_emit = { features = ["test_support"] }
-incan_provider = { features = ["test_support"] }
-oven_rustc = { features = ["test_support"] }
-oven_store = { features = ["test_support"] }
-rust_inspect = { features = ["test_fixtures"] }
+incan_frontend = { features = ["test_support"] }

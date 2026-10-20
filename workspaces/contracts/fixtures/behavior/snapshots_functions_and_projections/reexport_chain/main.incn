@@ -1,0 +1,9 @@
+# behavior: a function re-exported under a new alias at each of two facade modules is callable from the consumer through the last alias
+# expect-stdout:
+#   42
+
+from crate.public_api import exported_calculate as compute
+
+
+def main() -> None:
+    println(compute(41))

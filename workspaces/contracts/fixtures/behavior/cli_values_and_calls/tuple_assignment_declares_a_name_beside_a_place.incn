@@ -1,0 +1,13 @@
+# behavior: a tuple assignment that writes a list element beside a name with no binding declares the name with its element, in a loop body too, as `name = value` declares it
+# expect-stdout:
+#   2
+#   3
+#   30 2 10
+
+def main() -> None:
+    mut items = [10, 20, 30]
+    items[0], fresh = (items[2], items[0])
+    for n in [1, 2]:
+        items[1], latest = (n, n + 1)
+        println(latest)
+    println(f"{items[0]} {items[1]} {fresh}")

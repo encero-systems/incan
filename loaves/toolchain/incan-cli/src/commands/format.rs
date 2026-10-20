@@ -6,10 +6,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_format::format_diff_from_formatted;
+use incan_driver::session::CompilationSession;
+use incan_driver::unit::UnitDescription;
+use incan_format::{FormatConfig, format_diff_from_formatted, format_parsed_source_with_config};
+use incan_frontend::diagnostics;
 
-/// Format Incan source files.
-pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<ExitCode> {
+/// Format the Incan source files at `path`, which belong to `unit`; each parses with the unit's vocabulary.
+pub fn format_files(path: &str, unit: &UnitDescription, check_mode: bool, diff_mode: bool) -> CliResult<ExitCode> {
+    let session = CompilationSession::new(unit)?;
     let path = Path::new(path);
     let files = collect_incn_files(path);
 
@@ -34,7 +38,10 @@ pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<
 
         inputs.push((file_path.clone(), source));
     }
-    let results = oven_cli::project_owner::format_sources(&inputs)?;
+    let results = inputs
+        .iter()
+        .map(|(file_path, source)| format_source(file_path, source, &session))
+        .collect::<Vec<_>>();
     for ((file_path, source), result) in inputs.iter().zip(results) {
         match result {
             Ok(formatted) => {
@@ -123,4 +130,20 @@ fn collect_incn_files(path: &Path) -> Vec<PathBuf> {
     }
 
     files
+}
+
+/// Format one file's source, parsing it with its unit's vocabulary.
+fn format_source(file_path: &Path, source: &str, session: &CompilationSession) -> CliResult<String> {
+    let path = std::path::absolute(file_path).map_err(|error| CliError::failure(error.to_string()))?;
+    let ast = session.parse_source_for_collection(&path, source).map_err(|errors| {
+        let file_name = file_path.to_string_lossy();
+        CliError::failure(
+            errors
+                .iter()
+                .map(|error| diagnostics::format_error(file_name.as_ref(), source, error))
+                .collect::<String>(),
+        )
+    })?;
+    format_parsed_source_with_config(source, &ast, FormatConfig::default())
+        .map_err(|error| CliError::failure(error.to_string()))
 }

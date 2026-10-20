@@ -203,22 +203,6 @@ impl TypeChecker {
         }
     }
 
-    /// Record the declared bounds of an imported standard-library nominal, read from its source, under the declaration
-    /// the import just bound `local_name` to.
-    ///
-    /// The binding's identity is a compiled standard-library provider's when one serves the module, and the source
-    /// declaration's otherwise; keying by the binding keeps the record where the lookup looks in both cases.
-    pub(in crate::typechecker) fn record_imported_stdlib_type_param_bounds(
-        &mut self,
-        module_path: &[String],
-        name: &str,
-        local_name: &str,
-    ) {
-        let bounds = self.stdlib_cache.lookup_type_param_bounds(module_path, name);
-        let key = self.nominal_declaration_key(local_name);
-        self.record_nominal_type_param_bounds(key, bounds);
-    }
-
     /// Resolve a nominal's declared plain trait bounds the way a generic callable's active bounds are resolved, so the
     /// two compare by the same trait identity.
     fn declared_nominal_type_param_bounds(&mut self, type_params: &[TypeParam]) -> NominalTypeParamBounds {

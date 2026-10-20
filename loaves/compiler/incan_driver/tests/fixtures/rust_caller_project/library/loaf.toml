@@ -1,6 +1,0 @@
-[project]
-name = "typed_boundary"
-version = "0.1.0"
-
-[build]
-rust-edition = "2024"

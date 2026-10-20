@@ -66,14 +66,13 @@ pub(super) fn collect_local_receiver_methods(
 }
 
 /// Retain checker-evaluated constants, checked literal integer arithmetic and static literal aggregates once. Computed
-/// or symbolic values remain absent except exact Rust float imports proven by the original source authority. These
+/// or symbolic values remain absent. These
 /// Body IR facts never update legacy evaluation tables.
 pub(super) fn collect_constants(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
     nominals: &[bir::NominalDeclaration],
 ) -> Vec<bir::ConstantDeclaration> {
-    let mut cache = type_info.body_ir_stdlib_cache();
     program
         .declarations
         .iter()
@@ -94,14 +93,12 @@ pub(super) fn collect_constants(
                 None if type_info.expr_type(item.value.span) == Some(&ResolvedType::Int) => {
                     bir::Constant::Int(literal_integer_constant(&item.value.node)?)
                 }
-                _ => checked_newtype_constant(&item.value, type_info, nominals)
-                    .or_else(|| {
-                        frozen_literal_constant(
-                            &item.value.node,
-                            &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
-                        )
-                    })
-                    .or_else(|| super::library_constants::constant_value(&canonical, &mut cache))?,
+                _ => checked_newtype_constant(&item.value, type_info, nominals).or_else(|| {
+                    frozen_literal_constant(
+                        &item.value.node,
+                        &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
+                    )
+                })?,
             };
             Some(bir::ConstantDeclaration { canonical, value })
         })
@@ -449,6 +446,7 @@ pub(super) fn collect_local_enum_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::EnumDeclaration {
+                native_item: String::new(),
                 native_type_arguments: Vec::new(),
                 direct_declaration_id: CompilerNodeId::declaration_span(
                     module_identity,
@@ -643,6 +641,24 @@ pub(super) fn collect_published_callable_returns(
         .filter_map(|body| {
             let identity = body.canonical.as_ref()?;
             (identity.kind == SemanticSourceTargetKind::Function).then(|| (identity.clone(), body.return_type.clone()))
+        })
+        .collect()
+}
+
+/// Retain each published callable's parameter defaults, in parameter order, from its declaration record among the
+/// linked Loaves' declarations, so a call that omits an argument passes the declared default.
+pub(super) fn collect_published_callable_defaults(
+    context: &[bir::BodyIrModule],
+) -> HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>> {
+    context
+        .iter()
+        .flat_map(|module| &module.bodies)
+        .filter_map(|body| {
+            let identity = body.canonical.as_ref()?;
+            Some((
+                identity.clone(),
+                body.params.iter().map(|param| param.default.clone()).collect(),
+            ))
         })
         .collect()
 }

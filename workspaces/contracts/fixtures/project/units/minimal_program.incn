@@ -1,0 +1,17 @@
+# behavior: a program with no dependencies sees every standard package the toolchain ships, depends on nothing else, and has no active features
+# expect-dependencies:
+# expect-std-packages:
+#   incan_stdlib_async
+#   incan_stdlib_codecs
+#   incan_stdlib_compression
+#   incan_stdlib_core
+#   incan_stdlib_data
+#   incan_stdlib_interop
+#   incan_stdlib_observability
+#   incan_stdlib_system
+#   incan_stdlib_testing
+#   incan_stdlib_web
+# expect-active-features:
+
+def main() -> None:
+    println("minimal")

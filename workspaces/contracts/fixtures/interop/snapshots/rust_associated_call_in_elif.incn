@@ -1,0 +1,22 @@
+# behavior: an imported Rust associated function call inside an elif branch runs like one in the if branch
+# expect-stdout:
+#   true
+#   false
+#   false
+
+from rust::std::path import Path
+
+
+def f(kind: str, output_uri: str) -> bool:
+    if kind == "a":
+        return Path.new(output_uri).exists()
+    elif kind == "b":
+        return Path.new(output_uri).exists()
+    else:
+        return false
+
+
+def main() -> None:
+    println(f("a", "/"))
+    println(f("b", "/definitely/not/a/directory"))
+    println(f("c", "/"))

@@ -1,0 +1,12 @@
+# behavior: a Rust standard-input handle assigned to a second name is used through that name and the program continues
+# expect-stdout:
+#   handle taken over
+
+from rust::std::io import stdin
+
+
+def main() -> None:
+    input = stdin()
+    handle = input
+    _ = handle.lock()
+    println("handle taken over")

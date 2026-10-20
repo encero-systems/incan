@@ -5,7 +5,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentBinding as RustBinding,
     ArgumentElement as RustArgument,
     Operand as RustOperand,
-    StdlibDelegation,
+    LoafCallable,
 )
 from frame import Builder
 from pub::incan_mir_plan import PlanType
@@ -15,7 +15,7 @@ from type_parameters import substitute
 
 pub def sdk_owned_callable_bindings(
     builder: Builder,
-    delegation: &StdlibDelegation,
+    delegation: &LoafCallable,
     binding: &RustBinding,
     arguments: &list[RustArgument],
     types: list[PlanType],
@@ -107,7 +107,7 @@ pub def sdk_callable_type(
 
 pub def sdk_callable_type_arguments(
     builder: Builder,
-    delegation: &StdlibDelegation,
+    delegation: &LoafCallable,
     names: list[str],
     closed: list[RustType],
     owned: list[tuple[str, PlanType]],

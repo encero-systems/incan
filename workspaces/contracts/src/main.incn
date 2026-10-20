@@ -1,0 +1,190 @@
+"""
+The contract table runner.
+
+    contracts INCAN FIXTURES_ROOT [--scratch DIR] [SELECTOR...]
+
+Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, or only the cases a selector names
+(`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Each case is materialized as its own project under the
+scratch directory (a fresh temporary directory unless `--scratch` names one), run, compared and removed. The runner
+prints one line per case (`PASS`, `FAIL` with its reasons, `PEND` with what it waits for), one summary per area and
+one in total, and exits 1 when a case fails or a family cannot be read. A pending case that now holds fails: its
+`pending:` line is stale.
+"""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from compare import compare
+from families import FAMILIES, admit, command
+from fixture import Fixture, discover_family, materialize
+from header import parse_header
+from run import invoke
+
+
+pub model Tally:
+    """Case counts for one area, or for the whole run."""
+
+    pub passed: int
+    pub failed: int
+    pub pending: int
+
+    def line(self, label: str) -> str:
+        """The summary line for `label`."""
+        return f"{label}: {self.passed} passed, {self.failed} failed, {self.pending} pending"
+
+
+pub enum Verdict:
+    """What one case showed."""
+
+    Pass
+    Fail(list[str])
+    Pend(str)
+
+
+def main() -> None:
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) < 3:
+        println("usage: contracts INCAN FIXTURES_ROOT [--scratch DIR] [SELECTOR...]")
+        exit(2)
+    incan = arguments[1]
+    root = Path(arguments[2])
+    mut scratch_dir = ""
+    mut selectors: list[str] = []
+    mut index = 3
+    while index < len(arguments):
+        if arguments[index] == "--scratch" and index + 1 < len(arguments):
+            scratch_dir = arguments[index + 1]
+            index += 2
+            continue
+        mut selector = arguments[index]
+        while selector.endswith("/"):
+            selector = selector[0:len(selector) - 1]
+        selectors.append(selector)
+        index += 1
+    match TemporaryDirectory.try_new():
+        Err(error) =>
+            println(f"cannot create a scratch directory: {error.message()}")
+            exit(2)
+        Ok(temporary) =>
+            mut scratch = temporary.path()
+            if scratch_dir != "":
+                scratch = Path(scratch_dir)
+            if not run_all(incan, root, scratch, selectors):
+                exit(1)
+
+
+def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool:
+    """Run every selected case; whether all of them held."""
+    mut total = Tally(passed=0, failed=0, pending=0)
+    mut refused = 0
+    for family in FAMILIES:
+        if not selected_family(family, selectors):
+            continue
+        match discover_family(root, family):
+            Err(reason) =>
+                println(f"REFUSED {family}: {reason}")
+                refused += 1
+            Ok(fixtures) =>
+                mut area = ""
+                mut tally = Tally(passed=0, failed=0, pending=0)
+                for fixture in fixtures:
+                    if not selected_case(fixture.case_name(), selectors):
+                        continue
+                    if fixture.area != area:
+                        if area != "":
+                            println(tally.line(f"area {family}/{area}"))
+                        area = fixture.area
+                        tally = Tally(passed=0, failed=0, pending=0)
+                    match run_case(incan, scratch, fixture):
+                        Verdict.Pass =>
+                            println(f"PASS {fixture.case_name()}")
+                            tally.passed += 1
+                            total.passed += 1
+                        Verdict.Pend(reason) =>
+                            println(f"PEND {fixture.case_name()} ({reason})")
+                            tally.pending += 1
+                            total.pending += 1
+                        Verdict.Fail(failures) =>
+                            println(f"FAIL {fixture.case_name()}")
+                            for failure in failures:
+                                println(indented(failure))
+                            tally.failed += 1
+                            total.failed += 1
+                if area != "":
+                    println(tally.line(f"area {family}/{area}"))
+    println(total.line("total"))
+    if refused > 0:
+        println(f"{refused} families could not be read")
+    return total.failed == 0 and refused == 0
+
+
+def run_case(incan: str, scratch: Path, fixture: Fixture) -> Verdict:
+    """Materialize, run and compare one case, then remove its project."""
+    match fixture.program.read_text("utf-8", "strict"):
+        Err(error) => return Verdict.Fail([f"{fixture.program.0}: {error.message()}"])
+        Ok(source) =>
+            match parse_header(source):
+                Err(reason) => return Verdict.Fail([f"{fixture.program.0}: {reason}"])
+                Ok(header) =>
+                    match admit(fixture, header):
+                        Err(reason) => return Verdict.Fail([f"{fixture.program.0}: {reason}"])
+                        Ok(_) => pass
+                    match materialize(fixture, scratch):
+                        Err(reason) => return Verdict.Fail([reason])
+                        Ok(project) =>
+                            mut failures: list[str] = []
+                            match invoke(incan, command(fixture, header), project):
+                                Err(reason) => failures.append(reason)
+                                Ok(outcome) =>
+                                    failures = compare(fixture.family, header, outcome)
+                                    if len(failures) > 0 and outcome.stderr.strip() != "":
+                                        failures.append(f"stderr:\n{tail(outcome.stderr)}")
+                            match project.remove_tree():
+                                Err(error) => failures.append(f"cannot remove {project.0}: {error.message()}")
+                                Ok(_) => pass
+                            match header.pending:
+                                Some(reason) =>
+                                    if len(failures) == 0:
+                                        return Verdict.Fail([f"the case holds, so its `pending: {reason}` line is stale; remove it"])
+                                    return Verdict.Pend(reason)
+                                None => pass
+                            if len(failures) == 0:
+                                return Verdict.Pass
+                            return Verdict.Fail(failures)
+
+
+def selected_family(family: str, selectors: list[str]) -> bool:
+    """Whether any selector reaches into `family`."""
+    if len(selectors) == 0:
+        return true
+    for selector in selectors:
+        if selector == family or selector.startswith(f"{family}/"):
+            return true
+    return false
+
+
+def selected_case(name: str, selectors: list[str]) -> bool:
+    """Whether a selector names the case `name`, its area or its family."""
+    if len(selectors) == 0:
+        return true
+    for selector in selectors:
+        if name == selector or name.startswith(f"{selector}/"):
+            return true
+    return false
+
+
+def tail(text: str) -> str:
+    """The last 40 lines of `text`, as a report shows them."""
+    lines = text.strip().split("\n")
+    mut start = 0
+    if len(lines) > 40:
+        start = len(lines) - 40
+    return "\n".join([f"    {line}" for line in lines[start:]])
+
+
+def indented(text: str) -> str:
+    """A failure as a report shows it under its case."""
+    return "\n".join([f"  {line}" for line in text.split("\n")])

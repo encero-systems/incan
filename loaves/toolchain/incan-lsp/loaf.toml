@@ -1,0 +1,41 @@
+[project]
+name = "incan_lsp"
+version = "0.6.0-dev.6"
+private = true
+license = "Apache-2.0"
+description = "The Incan language server: diagnostics, hover, definitions and semantic tokens over stdio"
+
+[project.features]
+# The server ships the stdlib semantics packs and Rust inspection the way the toolchain does.
+default = ["std_testing", "std_async", "std_decorators"]
+std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_driver/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"]
+
+[dependencies]
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_driver = { default-features = false, loaf = "incan_driver", path = "../../compiler/incan_driver" }
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+# A multi-thread runtime, stdio transport, `spawn_blocking`, and the `RwLock`/`spawn` surface `backend.rs` uses.
+tokio = { features = ["rt-multi-thread", "io-std", "io-util", "sync", "macros"], loaf = "crates-io/tokio", version = "1" }
+tower-lsp = { loaf = "crates-io/tower-lsp", version = "0.20" }
+
+[rust]
+name = "incan_lsp"
+type = "lib"
+edition = "2024"
+
+[[rust.bin]]
+name = "incan-lsp"
+path = "src/main.rs"
+
+[envs.test.dependencies]
+incan_driver = { features = ["test_support"] }
+incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }

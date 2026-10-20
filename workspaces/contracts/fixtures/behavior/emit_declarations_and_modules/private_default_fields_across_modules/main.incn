@@ -1,0 +1,21 @@
+# behavior: models and classes imported from other modules construct by their exact module identity: a model with private defaulted fields from its public fields alone, an all-public model directly, a class with a required private field from all its fields, and the same-named class from two modules and through a two-hop facade each with its own field types
+# expect-stdout:
+#   public sealed r1
+#   open 2
+#   text r7 6
+#   5 provider-default 42
+#   exported r7 3
+
+from text_vaults import Vault
+from number_vaults import Vault as NumberVault
+from public_api import ExportedVault as ConsumerVault
+from sealed_models import Sealed, Open
+
+
+def main() -> None:
+    println(Sealed(label="public").describe())
+    open = Open(label="open", revision=2)
+    println(f"{open.label} {open.revision}")
+    println(Vault(secret="hidden", label="text").describe())
+    println(NumberVault(secret=42, label=5).describe())
+    println(ConsumerVault(secret="key", label="exported").describe())

@@ -1,0 +1,13 @@
+# behavior: a dependency's function whose defaults name a private const, call a private function or name a private enum's variant takes their values when a consumer omits the arguments, directly and through a partial over the function
+# expect-stdout:
+#   flat of size 2cm
+#   flat of size 3cm
+#   gloss
+
+from pub::shapes import build, default_build, finish
+
+
+def main() -> None:
+    println(build(2))
+    println(default_build())
+    println(finish())

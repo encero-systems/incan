@@ -62,22 +62,6 @@ pub struct ResolvedProgramSourceImport {
     pub resolution: SourceModuleImportResolution,
 }
 
-/// Select the package origin used when minting declarations for one source module.
-///
-/// A compiled library gives its own modules a package origin. Compiler-owned stdlib modules retain the module origin
-/// assigned at their declaration site even when a consumer package embeds them under the generated `__incan_std`
-/// namespace.
-pub fn declaration_package_identity(package_identity: Option<&str>, module_path: Option<&[String]>) -> Option<String> {
-    package_identity
-        .filter(|_| {
-            !matches!(
-                module_path.and_then(|path| path.first()).map(String::as_str),
-                Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
-            )
-        })
-        .map(str::to_owned)
-}
-
 /// Resolve every import declaration in `program` through the canonical source-module resolver.
 ///
 /// `base_dir` is the directory of `program`'s source file. `source_root` is optional but should be supplied by CLI and
@@ -213,7 +197,7 @@ pub fn resolve_source_module_import_from_source_file(
         };
     }
 
-    let identity_root = effective_source_root(base_dir, source_root);
+    let identity_root = source_root.map(Path::to_path_buf);
     let can_use_root_import = !path.is_absolute && path.parent_levels == 0;
 
     let primary_base = primary_import_base_dir(base_dir, source_root, path);
@@ -323,7 +307,8 @@ fn source_import_candidates(import: &ImportDecl) -> Option<(&ImportPath, Vec<Vec
 /// Determine the primary base directory for resolving an import path.
 fn primary_import_base_dir(base_dir: &Path, source_root: Option<&Path>, path: &ImportPath) -> PathBuf {
     if path.is_absolute {
-        return effective_source_root(base_dir, source_root)
+        return source_root
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| discover_source_root_from_layout(base_dir));
     }
 
@@ -332,13 +317,6 @@ fn primary_import_base_dir(base_dir: &Path, source_root: Option<&Path>, path: &I
         base = base.parent().map(Path::to_path_buf).unwrap_or(base);
     }
     base
-}
-
-/// Find the effective source root for imports when one is known or discoverable.
-fn effective_source_root(base_dir: &Path, source_root: Option<&Path>) -> Option<PathBuf> {
-    source_root
-        .map(Path::to_path_buf)
-        .or_else(|| resolve_source_root_for_imports(base_dir))
 }
 
 /// Infer a source root from conventional project layout when no manifest-driven root is available.
@@ -354,6 +332,12 @@ fn discover_source_root_from_layout(base_dir: &Path) -> PathBuf {
     } else {
         project_root
     }
+}
+
+/// Resolve a module path under `source_root` to its source file, the way a crate-root import of it resolves; a
+/// standard package reaches its own `std.<root>` modules this way.
+pub fn resolve_source_module_path(source_root: &Path, segments: &[String]) -> Option<SourceModuleRef> {
+    resolve_first_source_candidate(source_root, Some(source_root), &[segments.to_vec()])
 }
 
 /// Resolve the first candidate path that exists under `base`.
@@ -563,26 +547,6 @@ fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf
     }
 
     None
-}
-
-/// Returns the project's configured or conventional source root for resolving unqualified module imports.
-///
-/// Walks up from `start_dir` to find `loaf.toml`, then uses `[build] source-root` when set; otherwise `src/` if it
-/// exists, else the project root. Returns `None` if no manifest is found.
-fn resolve_source_root_for_imports(start_dir: &Path) -> Option<PathBuf> {
-    let manifest = oven_model::manifest::ProjectManifest::discover(start_dir)
-        .ok()
-        .flatten()?;
-    let project_root = manifest.project_root().to_path_buf();
-    if let Some(custom) = manifest.build.as_ref().and_then(|build| build.source_root.as_deref()) {
-        return Some(project_root.join(custom));
-    }
-    let src_root = project_root.join("src");
-    if src_root.exists() {
-        Some(src_root)
-    } else {
-        Some(project_root)
-    }
 }
 
 /// Extract symbols exported by a module.
@@ -805,22 +769,6 @@ pub enum ExportedSymbol {
 mod tests {
     use super::*;
 
-    #[test]
-    fn declaration_package_identity_excludes_source_and_generated_stdlib_modules() {
-        let package = Some("consumer");
-        assert_eq!(
-            declaration_package_identity(package, Some(&["feature".to_string()])),
-            Some("consumer".to_string())
-        );
-        assert_eq!(
-            declaration_package_identity(package, Some(&["std".to_string(), "io".to_string()])),
-            None
-        );
-        assert_eq!(
-            declaration_package_identity(package, Some(&["__incan_std".to_string(), "io".to_string()])),
-            None
-        );
-    }
     use crate::ast::{
         ClassDecl, ConstDecl, Declaration, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
         ImportPath, IntLiteral, Literal, ModelDecl, NewtypeDecl, Program, Span, Spanned, StaticDecl, TraitDecl, Type,
@@ -828,9 +776,44 @@ mod tests {
     };
     use crate::{lexer, parser};
 
-    /// Shared with `loaves/toolchain/incan-cli/tests/integration_tests.rs` (GitHub #247 export + CLI fmt coverage).
-    const BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE: &str =
-        include_str!("../../incan_test_support/fixtures/block_docstring_public_type_like.incn");
+    /// Public type-like declarations whose block docstrings the export summary reads.
+    const BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE: &str = r##"pub model CliModelProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    pub id: int
+
+pub class CliClassProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    pub x: int
+
+pub enum CliEnumProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    V
+
+pub trait CliTraitProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    def meth(self) -> None: ...
+
+pub type CliNewtypeProbe = newtype int:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+
+    def zero(self) -> int:
+        return 0
+"##;
 
     fn make_spanned<T>(node: T) -> Spanned<T> {
         Spanned {

@@ -1,0 +1,10 @@
+# behavior: `import this` prints the Zen of Incan, naming the one obvious way once, before main runs
+# expect-stdout-contains:
+#   done
+#     › One obvious way             ─  conventions beat novelty,
+
+import this
+
+
+def main() -> None:
+    println("done")

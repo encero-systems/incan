@@ -1,0 +1,9 @@
+[project]
+name = "transitive_path_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+alpha = { path = "deps/alpha" }

@@ -1,0 +1,22 @@
+# behavior: a model named FieldInfo, a name std.reflection also uses, is the program's own type in a program that does not import std.reflection
+# expect-stdout:
+#   custom
+#   made
+#   made
+
+model FieldInfo:
+    label: str
+
+    @staticmethod
+    def made() -> FieldInfo:
+        return FieldInfo(label="made")
+
+
+def describe(info: FieldInfo) -> str:
+    return info.label
+
+
+def main() -> None:
+    println(FieldInfo(label="custom").label)
+    println(FieldInfo.made().label)
+    println(describe(FieldInfo.made()))

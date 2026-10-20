@@ -1,34 +1,7 @@
+//! What a test file declares: its tests, fixtures, parametrized cases and markers.
+
 use std::path::PathBuf;
 use std::time::Duration;
-
-use incan_provider::FeatureSelection;
-
-use crate::cargo_policy::CargoPolicy;
-
-/// Output format for `incan test` results.
-///
-/// The `clap` derive rides the `cli` feature: the runner owns the choice, the command line is one way to make it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-pub enum TestOutputFormat {
-    /// Human-oriented pytest-style console output.
-    Console,
-    /// JSON Lines result output with a final summary record.
-    Json,
-}
-
-/// Authoritative counts and elapsed time from one fresh test run.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct TestSummary {
-    pub total: usize,
-    pub passed: usize,
-    pub failed: usize,
-    pub skipped: usize,
-    pub xfailed: usize,
-    /// Unexpected passes contribute to a failed run.
-    pub xpassed: usize,
-    pub duration: Duration,
-}
 
 /// Information about a discovered test
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -132,141 +105,10 @@ pub struct FixtureInfo {
     pub is_async: bool,
 }
 
-/// Result of running a single test.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum TestResult {
-    Passed(Duration),
-    Failed(Duration, String),
-    Skipped(String),
-    XFailed(Duration, String),
-    #[allow(dead_code)]
-    XPassed(Duration),
-}
-
-/// One completed case with its already resolved portable identity and original typed result.
-/// Clients format these facts without consulting source files or reinterpreting execution outcomes.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct TestCaseResult {
-    /// Stable root-relative identifier established by the executing request.
-    pub id: String,
-    /// Original collection facts, including display parameters and markers.
-    pub test: TestInfo,
-    /// Fresh execution result after skip and expected-failure policy.
-    pub result: TestResult,
-}
-
-/// Completed test facts crossing the owner/client boundary, independent of the requested display format.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct TestRunReport {
-    /// Results in selected execution/report order; passing results are never retained for another invocation.
-    pub results: Vec<TestCaseResult>,
-    /// Counts and duration calculated by the single runner.
-    pub summary: TestSummary,
-    /// Actual shuffle seed, if shuffling was requested.
-    pub shuffle_seed: Option<u64>,
-    /// Command outcome, including fail-on-empty policy.
-    pub exit_code: i32,
-}
-
-/// Request-local test progress facts. Presentation and terminal styling belong to the invoking client.
-/// Raw child output remains a separate byte-preserving stream rather than being interpreted as progress.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum TestProgress {
-    /// Current fixture metadata requested by verbose collection, in discovery order.
-    FixturesDiscovered { fixtures: Vec<FixtureInfo> },
-    /// Selection completed without any cases; failure policy remains in the completion result.
-    NoTestsCollected,
-    /// Selected inventory and execution policy, emitted before any test body runs.
-    SessionStarted {
-        collected: usize,
-        shuffle_seed: Option<u64>,
-        jobs: usize,
-    },
-    /// Existing scheduler finished grouping selected cases into execution units.
-    UnitsPlanned { units: usize, elapsed: Duration },
-    /// One selected unit is queued for execution; filenames retain sorted source order.
-    UnitStarting { files: Vec<PathBuf>, tests: usize },
-    /// Fresh execution completed, before result policy and final report assembly.
-    ExecutionCompleted { elapsed: Duration },
-    /// Detailed timing facts for an Incan harness; no display strings are produced by the worker.
-    HarnessCompleted {
-        file: PathBuf,
-        frontend: Duration,
-        generation: Duration,
-        receipt: Duration,
-        selection: Duration,
-        native: Duration,
-        execution: Duration,
-        native_reused: bool,
-    },
-}
-
 /// Result of discovering tests and fixtures in a file.
 pub struct DiscoveryResult {
     pub tests: Vec<TestInfo>,
     pub fixtures: Vec<FixtureInfo>,
     pub default_marks: Vec<String>,
     pub known_markers: Vec<String>,
-}
-
-/// Source languages admitted to the common test inventory and scheduler.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum TestLanguages {
-    /// Collect Incan tests and preserve their fixture scopes.
-    #[default]
-    Incan,
-    /// Collect native libtest cases from authored Rust crate roots.
-    Rust,
-    /// Combine both adapters in the same selection and reporting lifecycle.
-    All,
-}
-
-/// Configuration for a test run, grouping the many options that `run_tests` needs.
-pub struct TestRunConfig<'a> {
-    /// Source adapters selected by the command; Incan's wrapper always selects only Incan.
-    pub languages: TestLanguages,
-    pub path: &'a str,
-    pub verbose: bool,
-    pub stop_on_fail: bool,
-    pub include_slow: bool,
-    pub filter: Option<&'a str>,
-    pub use_color: bool,
-    pub fail_on_empty: bool,
-    pub list_only: bool,
-    pub report_format: TestOutputFormat,
-    pub junit_path: Option<PathBuf>,
-    pub durations: Option<usize>,
-    pub shuffle: bool,
-    pub seed: Option<u64>,
-    pub run_xfail: bool,
-    pub marker_expr: Option<&'a str>,
-    pub strict_markers: bool,
-    /// Global native thread / execution-unit budget.
-    pub jobs: usize,
-    /// Preserve individual Rust test processes rather than sharing one native root.
-    pub isolate: bool,
-    pub test_features: Vec<String>,
-    pub package_features: FeatureSelection,
-    pub sdk_profile: Option<String>,
-    pub timeout: Option<&'a str>,
-    pub no_capture: bool,
-    pub cargo_policy: CargoPolicy,
-    pub cargo_features: Vec<String>,
-    pub cargo_no_default_features: bool,
-    pub cargo_all_features: bool,
-    /// Compiler-owned workspace identity attached to every observable test result for a fan-out invocation.
-    pub workspace_context: Option<WorkspaceTestContext>,
-}
-
-/// Member identity supplied by RFC 077 orchestration to a single test-batch run.
-///
-/// The runner does not discover workspaces itself: it only projects this context into JSON Lines test records and
-/// summaries after the CLI has validated scope selection.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkspaceTestContext {
-    pub workspace_root: PathBuf,
-    pub scope_origin: String,
-    pub member_name: String,
-    pub member_root: PathBuf,
 }

@@ -1,0 +1,7 @@
+# behavior: a feature that requests features of an optional dependency no active feature selects refuses the unit, naming the dependency
+# expect-exit: 1
+# expect-stderr-contains:
+#   `engine`
+
+def main() -> None:
+    println("unreachable")

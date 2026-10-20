@@ -105,13 +105,7 @@ impl BodyBuilder<'_, '_> {
             canonical: Some(canonical.clone()),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: super::library_calls::trait_dispatch(
-                canonical,
-                hook.dispatch.as_ref(),
-                None,
-                &self.type_parameters,
-                self.type_info,
-            ),
+            loaf_trait: None,
             type_args: hook.type_args.iter().map(|ty| self.checked_type(ty)).collect(),
             binding,
         };

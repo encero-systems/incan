@@ -57,18 +57,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }) else {
             return value;
         };
-        let published = library_nominals::sdk_identity(identity);
-        let local = self.local_enum_declarations.values().any(|declaration| {
-            declaration.canonical == *identity
-                || published.as_ref().is_some_and(|canonical| {
-                    library_nominals::sdk_identity(&declaration.canonical).as_ref() == Some(canonical)
-                })
-        });
-        let sdk = published.as_ref().is_some_and(|canonical| {
-            canonical.kind == SemanticSourceTargetKind::Enum
-                && library_type_identities(self.type_info).contains(canonical)
-        });
-        if !local && !sdk {
+        let local = self
+            .local_enum_declarations
+            .values()
+            .any(|declaration| declaration.canonical == *identity);
+        let loaf = super::is_loaf_identity(identity) && identity.kind == SemanticSourceTargetKind::Enum;
+        if !local && !loaf {
             return value;
         }
         self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out)
@@ -312,7 +306,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             name: method.to_string(),
             intrinsic_carrier: None,
             reflection: None,
-            sdk_trait: None,
+            loaf_trait: None,
             canonical: self
                 .type_info
                 .resolved_identity(span)

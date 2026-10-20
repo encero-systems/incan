@@ -1,0 +1,28 @@
+# behavior: a tuple unpacking into names that are already bound reassigns them, so a, b = (b, a + b) inside a loop advances a Fibonacci pair, and a swap inside a branch is still visible after it
+# expect-stdout:
+#   55
+#   0 1 1 2 3 5 8 13
+#   1 2
+
+def fib(n: int) -> int:
+    mut a = 0
+    mut b = 1
+    for _ in range(n):
+        a, b = (b, a + b)
+    return a
+
+
+def main() -> None:
+    println(fib(10))
+    mut first = 0
+    mut second = 1
+    mut terms: list[str] = []
+    while first < 20:
+        terms.append(str(first))
+        first, second = (second, first + second)
+    println(" ".join(terms))
+    mut low = 2
+    mut high = 1
+    if low > high:
+        low, high = (high, low)
+    println(f"{low} {high}")

@@ -9,7 +9,7 @@ use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, SymbolKind, TypeBou
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
     /// A surface-import call validates on its builtin path rather than through the ordinary generic validator. Use
@@ -265,10 +265,7 @@ impl TypeChecker {
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
         let identity = identity?;
-        let source = self.stdlib_cache.callable_source_identity(identity)?;
-        let SymbolOrigin::Module(mut path) = source.origin else {
-            return None;
-        };
+        let mut path = self.standard_declaring_module(identity)?;
         path.push(identity.declaration_name.clone());
         let helper = testing::assert_helper_id_from_std_path(&path)?;
         if helper == TestingAssertHelperId::AssertIsNone && matches!(expression.node, Expr::Literal(Literal::None)) {

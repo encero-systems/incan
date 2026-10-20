@@ -1,0 +1,15 @@
+# behavior: a consumer that imports neither a dependency's public model nor its public class omits the arguments whose defaults construct them, directly and through a partial, and calls a partial whose preset constructs the model; each call takes the constructed value, including the private field the model's declaration defaults and a field argument naming a private const
+# expect-stdout:
+#   note of size 4
+#   3
+#   6
+#   t: ace of size 4
+
+from pub::shapes import count, show, stacked_twice, tag_ace
+
+
+def main() -> None:
+    println(show())
+    println(count())
+    println(stacked_twice())
+    println(tag_ace(tag="t:"))

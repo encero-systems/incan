@@ -1,0 +1,24 @@
+# behavior: an imported trait's defaults, adopted through a module that re-exports the trait, return a variant of the trait module's enum, match on it, construct a model the trait module imports and call a private helper of the trait module, and a re-exported trait without defaults takes the adopter's method
+# expect-stdout:
+#   6
+#   true
+#   card
+
+from geometry import Measured, Plain
+
+
+model Card with Measured, Plain:
+    w: int
+
+    def width(self) -> int:
+        return self.w
+
+    def label(self) -> str:
+        return "card"
+
+
+def main() -> None:
+    card = Card(w=3)
+    println(card.size().n)
+    println(card.is_top())
+    println(card.label())

@@ -11,116 +11,72 @@ use crate::diagnostics::{
     CliDiagnostic, CliDiagnosticFailure, parser_warning_diagnostics, render_module_warnings,
     typecheck_diagnostic_phase, typecheck_warning_diagnostics,
 };
-#[cfg(test)]
-use crate::error::{CliError, CliResult};
-use crate::modules::{imported_module_deps_for_with_provider_plan, module_key_index, register_module_path_segments};
+use crate::modules::{imported_module_deps_for, module_key_index, register_module_path_segments};
+use crate::unit::UnitDescription;
+use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
-use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use incan_frontend::{diagnostics, typechecker};
-use incan_provider::ProviderPlan;
-use oven_model::manifest::ProjectManifest;
-/// Typecheck all collected modules in dependency-safe order using shared CLI diagnostics formatting.
-///
-/// This helper centralizes the per-module checker setup used by `build` and `check` paths so warning/error rendering
-/// stays consistent across command flows.
-#[cfg(test)]
-pub fn typecheck_modules_with_import_graph(
-    modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
-    provider_plan: &Arc<ProviderPlan>,
-    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
-) -> CliResult<()> {
-    typecheck_modules_with_import_graph_detailed_for_c_abi_target(
-        modules,
-        manifest,
-        provider_plan,
-        None,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir,
-    )
-    .map(|_warnings| ())
-    .map_err(|failure| CliError::failure(failure.render_human()))
-}
-
-/// Typecheck modules while selecting one already-validated C ABI target for this invocation.
-///
-/// Returns the non-fatal parser and typechecker diagnostics collected along the way, so callers that emit a
-/// machine-readable report can include them; callers that only care about acceptance can discard them.
-pub fn typecheck_modules_with_import_graph_detailed_for_c_abi_target(
-    modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
-    provider_plan: &Arc<ProviderPlan>,
-    c_abi_plan: Option<&CAbiVerificationPlan>,
-    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
-) -> Result<Vec<CliDiagnostic>, CliDiagnosticFailure> {
-    typecheck_modules_with_import_graph_artifacts(
-        modules,
-        manifest,
-        provider_plan,
-        c_abi_plan,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir,
-    )
-    .map(|artifacts| artifacts.warnings)
-}
+use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
 
 /// Products retained from one dependency-safe typechecking pass.
-pub struct TypecheckModuleArtifacts {
+pub struct TypecheckedModules {
+    /// One result per input module, in input order.
     pub type_infos: Vec<TypeCheckInfo>,
-    pub stdlib_cache: StdlibAstCache,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
     /// byte-stable across runs of the same source.
-    pub(crate) warnings: Vec<CliDiagnostic>,
+    pub warnings: Vec<CliDiagnostic>,
 }
 
-/// Typecheck a collected graph in dependency-safe order and retain one result for every input module plus the
-/// source-backed stdlib metadata lowering needs.
+/// Typecheck a collected graph in dependency-safe order against the program's Loaves, retaining one result for every
+/// input module, and verify its checked C bindings against `c_abi_plan` (the host when absent). A library unit passes
+/// its `package`, the package identity of every declaration it checks (DD-0007). `visit` sees each module's checker
+/// once it is checked, cleanly or not: publication reads the same pass and only uses one that succeeds, and an editor
+/// reads the facts of a module with errors too.
 ///
 /// Ordering is intentional: session analysis also needs an identity-keyed representation for synthetic modules that
 /// share a source file path.
-pub fn typecheck_modules_with_import_graph_artifacts(
+pub fn typecheck_modules(
     modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
-    provider_plan: &Arc<ProviderPlan>,
+    unit: &UnitDescription,
+    loaves: &Arc<LoafIndex>,
+    own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
+    package: Option<&str>,
     c_abi_plan: Option<&CAbiVerificationPlan>,
-    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
-) -> Result<TypecheckModuleArtifacts, CliDiagnosticFailure> {
+    visit: &mut dyn FnMut(&ParsedModule, &typechecker::TypeChecker),
+) -> Result<TypecheckedModules, CliDiagnosticFailure> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
-    let declared = manifest.map(|m| m.declared_rust_crate_names());
+    let declared = unit
+        .rust_crates
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let module_idx_by_key = module_key_index(modules);
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
-    let mut stdlib_cache = StdlibAstCache::new();
 
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module =
-            imported_module_deps_for_with_provider_plan(modules, idx, &module_idx_by_key, provider_plan);
+        let deps_for_module = imported_module_deps_for(modules, idx, &module_idx_by_key, own_standard_package);
 
         // Parser warnings were already rendered at parse time; collect them here so both warning classes reach
         // machine-readable reports from one deterministic sweep.
         warnings_out.extend(parser_warning_diagnostics(module));
 
         let mut checker = typechecker::TypeChecker::new();
-        checker.stdlib_cache = stdlib_cache.clone();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
+        checker.set_declared_crate_names(declared.clone());
         checker.set_current_module_path(Some(module.path_segments.clone()));
+        checker.set_current_package_identity(package.map(str::to_owned));
         register_module_path_segments(&mut checker, modules);
-        checker.set_provider_plan(Arc::clone(provider_plan));
-        #[cfg(feature = "rust_inspect")]
-        if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir {
-            checker.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.to_path_buf());
+        checker.set_loaves(Arc::clone(loaves));
+        if let Some(policy) = own_standard_package {
+            checker.set_own_standard_package(policy);
         }
 
-        // A provider producer checks its complete source package before publishing the public checked facade.
-        let check_result = if provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
-            || provider_plan.standard_source_publication().is_some()
-        {
+        // A standard package checks its complete source before publishing its public checked facade.
+        let check_result = if own_standard_package.is_some() {
             checker.check_with_imports_allow_private(&module.ast, &deps_for_module)
         } else {
             checker.check_with_imports(&module.ast, &deps_for_module)
@@ -134,13 +90,10 @@ pub fn typecheck_modules_with_import_graph_artifacts(
         );
         warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
 
+        visit(module, &checker);
         match check_result {
-            Ok(()) => {
-                type_infos.push(checker.type_info().clone());
-                stdlib_cache = checker.stdlib_cache.clone();
-            }
+            Ok(()) => type_infos.push(checker.type_info().clone()),
             Err(errs) => {
-                stdlib_cache = checker.stdlib_cache.clone();
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                     file_path: module.file_path.to_string_lossy().to_string(),
                     source: module.source.clone(),
@@ -152,13 +105,12 @@ pub fn typecheck_modules_with_import_graph_artifacts(
     }
 
     if diagnostics_out.is_empty() {
-        verify_checked_c_bindings(modules, manifest, &mut type_infos, c_abi_plan, &mut diagnostics_out);
+        verify_checked_c_bindings(modules, unit, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 
     if diagnostics_out.is_empty() {
-        Ok(TypecheckModuleArtifacts {
+        Ok(TypecheckedModules {
             type_infos,
-            stdlib_cache,
             warnings: warnings_out,
         })
     } else {
@@ -175,7 +127,7 @@ pub fn typecheck_modules_with_import_graph_artifacts(
 /// the declared header for the target; it neither imports arbitrary headers nor performs library discovery.
 fn verify_checked_c_bindings(
     modules: &[ParsedModule],
-    manifest: Option<&ProjectManifest>,
+    unit: &UnitDescription,
     type_infos: &mut [TypeCheckInfo],
     selected_plan: Option<&CAbiVerificationPlan>,
     diagnostics_out: &mut Vec<CliDiagnostic>,
@@ -223,7 +175,7 @@ fn verify_checked_c_bindings(
         }
     };
     for (module_index, module, binding) in bindings {
-        let verification_binding = resolve_package_owned_c_binding_header(manifest, &binding);
+        let verification_binding = resolve_package_owned_c_binding_header(unit, &binding);
         match verify_checked_c_binding(&toolchain, &plan, &verification_binding) {
             Ok(receipt) => {
                 let enum_values = &mut type_infos[module_index].c_abi.enum_values;
@@ -246,113 +198,16 @@ fn verify_checked_c_bindings(
     }
 }
 
-/// Resolve a manifest-declared package header before passing its spelling to Clang.
+/// Resolve a package-declared header before passing its spelling to Clang.
 ///
-/// Checked bindings keep the authored, package-relative header spelling in their public descriptor and lock identity.
-/// The verifier alone needs a concrete file location. Restricting this translation to a header declared under
-/// `[interop.c]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
-fn resolve_package_owned_c_binding_header(
-    manifest: Option<&ProjectManifest>,
-    binding: &CBindingDescriptor,
-) -> CBindingDescriptor {
-    let Some(manifest) = manifest else {
-        return binding.clone();
-    };
-    if Path::new(&binding.header).is_absolute() {
-        return binding.clone();
-    }
-    let declared = manifest.interop_c().is_some_and(|interop| {
-        interop.targets.iter().any(|target| {
-            target.headers.iter().any(|header| header == &binding.header)
-                || target
-                    .shims
-                    .iter()
-                    .flat_map(|shim| &shim.headers)
-                    .any(|header| header == &binding.header)
-        })
-    });
-    if !declared {
+/// Checked bindings keep the authored, package-relative header spelling in their public descriptor. The verifier alone
+/// needs a concrete file location. Restricting this translation to a header the package declares (the unit's
+/// `c_headers`) prevents an arbitrary relative binding path from becoming an ambient include-directory search.
+fn resolve_package_owned_c_binding_header(unit: &UnitDescription, binding: &CBindingDescriptor) -> CBindingDescriptor {
+    if Path::new(&binding.header).is_absolute() || !unit.c_headers.contains(&binding.header) {
         return binding.clone();
     }
     let mut resolved = binding.clone();
-    resolved.header = manifest
-        .project_root()
-        .join(&binding.header)
-        .to_string_lossy()
-        .into_owned();
+    resolved.header = unit.project_root.join(&binding.header).to_string_lossy().into_owned();
     resolved
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incan_frontend::ast::Span;
-    use incan_lang::lang::c_abi::LinkCapabilityId;
-    use incan_provider::test_support::parsed_module_for_test;
-
-    #[test]
-    fn package_declared_c_header_is_resolved_only_for_verification() -> Result<(), Box<dyn std::error::Error>> {
-        let manifest = ProjectManifest::from_str(
-            "[project]\nname = \"c_header_fixture\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
-            Path::new("/workspace/c_header_fixture/loaf.toml"),
-        )?;
-        let binding = CBindingDescriptor {
-            span: Span::new(0, 0),
-            class_name: "Bridge".to_string(),
-            header: "interop/include/bridge.h".to_string(),
-            system_library: "bridge".to_string(),
-            link_capability: LinkCapabilityId::SystemLibrary,
-            resources: Vec::new(),
-            symbols: Vec::new(),
-            enums: Vec::new(),
-            structs: Vec::new(),
-        };
-
-        let resolved = resolve_package_owned_c_binding_header(Some(&manifest), &binding);
-
-        assert_eq!(binding.header, "interop/include/bridge.h");
-        assert_eq!(resolved.header, "/workspace/c_header_fixture/interop/include/bridge.h");
-        Ok(())
-    }
-
-    #[test]
-    fn typecheck_modules_with_import_graph_accepts_valid_program() -> Result<(), Box<dyn std::error::Error>> {
-        let module = parsed_module_for_test(
-            r#"
-def main() -> None:
-    pass
-"#,
-        )?;
-
-        typecheck_modules_with_import_graph(
-            &[module],
-            None,
-            &Arc::new(ProviderPlan::default()),
-            #[cfg(feature = "rust_inspect")]
-            None,
-        )?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn typecheck_modules_with_import_graph_reports_errors() -> Result<(), Box<dyn std::error::Error>> {
-        let module = parsed_module_for_test(
-            r#"
-def main() -> None:
-    missing_symbol()
-"#,
-        )?;
-
-        let result = typecheck_modules_with_import_graph(
-            &[module],
-            None,
-            &Arc::new(ProviderPlan::default()),
-            #[cfg(feature = "rust_inspect")]
-            None,
-        );
-        assert!(result.is_err(), "expected unresolved symbol to fail typecheck");
-
-        Ok(())
-    }
 }

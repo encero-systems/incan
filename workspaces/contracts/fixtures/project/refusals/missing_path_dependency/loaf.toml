@@ -1,0 +1,9 @@
+[project]
+name = "missing_path_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+ghost = { path = "deps/ghost" }

@@ -1,0 +1,11 @@
+# behavior: a program whose nested module declares a private route handler returning a private json model beside an imported App builds and runs; the retired test asserted only how that module was emitted
+# expect-stdout:
+#   routes loaded
+
+import std.async
+import api::routes
+from std.web import App
+
+
+def main() -> None:
+    println("routes loaded")

@@ -19,15 +19,15 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
         .values()
         .chain(type_info.calls.inferred_call_result_types.values())
     {
-        super::library_calls::named_leaves(&project_type(semantic_type_from_resolved(ty), type_info), &mut names);
+        named_leaves(&project_type(semantic_type_from_resolved(ty), type_info), &mut names);
     }
     for binding in type_info.declarations.function_bindings.values() {
-        super::library_calls::named_leaves(
+        named_leaves(
             &project_type(semantic_type_from_resolved(&binding.return_type), type_info),
             &mut names,
         );
         for parameter in &binding.params {
-            super::library_calls::named_leaves(
+            named_leaves(
                 &project_type(semantic_type_from_resolved(&parameter.ty), type_info),
                 &mut names,
             );
@@ -44,7 +44,7 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
 
 /// Retain the public native members of SDK task carriers found in this module's checked types.
 /// Storage stays opaque; every call still requires the adapter to verify this contract against linked native metadata.
-pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
+pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
     collect(facts)
         .iter()
         .flat_map(|declaration| {
@@ -90,7 +90,7 @@ pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> boo
 
 /// Bind only a registry-owned SDK task receiver to its published native method signature.
 /// These contracts mirror task.rs; they grant no source field access or equal-spelled source/foreign method behavior.
-pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) -> Option<bir::StdlibDelegation> {
+pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) -> Option<bir::LoafCallable> {
     let (owner, template, parameters) = match receiver {
         IncanType::Named(owner)
             if surface_types::from_str(owner) == Some(surface_types::SurfaceTypeId::TaskJoinError) =>
@@ -137,17 +137,9 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         _ => return None,
     };
     path.push(name.into());
-    let target = CanonicalSymbolId {
-        namespace: SymbolNamespace::Member,
-        origin: SymbolOrigin::RustCrate(path),
-        declaration_name: name.into(),
-        kind: SemanticSourceTargetKind::RustItem,
-        scope_discriminant: None,
-        declaration_span: HirSourceSpan::new(0, 0),
-    };
-    Some(bir::StdlibDelegation {
+    Some(bir::LoafCallable {
         canonical,
-        target,
+        item: path.join("::"),
         parameters: vec![IncanType::Ref(Box::new(template))],
         return_type: result,
         type_parameters: parameters,
@@ -242,7 +234,9 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
 /// refusal.
 pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
     match ty {
-        IncanType::RustInteropPath(path) => project_path(&path, facts).unwrap_or(IncanType::RustInteropPath(path)),
+        IncanType::RustInteropPath(path) => project_path(&path, facts)
+            .or_else(|| super::rust_values::project(&path, facts))
+            .unwrap_or(IncanType::RustInteropPath(path)),
         IncanType::Generic { base, args } => IncanType::Generic {
             base,
             args: args.into_iter().map(|arg| project_type(arg, facts)).collect(),
@@ -279,4 +273,26 @@ pub(crate) fn project_resolved_path(path: &str, facts: &TypeCheckInfo) -> Option
     let parser = crate::typechecker::TypeChecker::new();
     let argument = parser.resolved_type_from_rust_display(arguments[0]);
     Some(crate::symbols::ResolvedType::Generic(name.to_owned(), vec![argument]))
+}
+
+/// Collect the nominal names a type mentions, through generic arguments, tuples and references.
+fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
+    match ty {
+        IncanType::Named(name) => {
+            names.insert(name.clone());
+        }
+        IncanType::Generic { base, args } => {
+            names.insert(base.clone());
+            for arg in args {
+                named_leaves(arg, names);
+            }
+        }
+        IncanType::Tuple(args) => {
+            for arg in args {
+                named_leaves(arg, names);
+            }
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => named_leaves(inner, names),
+        _ => {}
+    }
 }

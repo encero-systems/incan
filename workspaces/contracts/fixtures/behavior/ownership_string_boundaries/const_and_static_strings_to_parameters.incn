@@ -1,0 +1,35 @@
+# behavior: module consts and statics of str and int type, and a local bound to a str static, are passed to a str parameter and to a generic parameter, and each call sees the declared value
+# expect-stdout:
+#   [pre]
+#   [stat]
+#   <pre>
+#   <stat>
+#   <7>
+#   <3>
+#   [stat]
+#   <stat>
+
+const PREFIX: str = "pre"
+const MARKER: int = 7
+static GREETING: str = "stat"
+static COUNT: int = 3
+
+
+def label(text: str) -> str:
+    return f"[{text}]"
+
+
+def show[T with Display](value: T) -> str:
+    return f"<{value}>"
+
+
+def main() -> None:
+    println(label(PREFIX))
+    println(label(GREETING))
+    println(show(PREFIX))
+    println(show(GREETING))
+    println(show(MARKER))
+    println(show(COUNT))
+    g = GREETING
+    println(label(g))
+    println(show(g))

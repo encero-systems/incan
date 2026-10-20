@@ -1,0 +1,12 @@
+# behavior: debug formatting of a union prints the held member rather than a compiler-generated variant name
+# expect-stdout:
+#   7
+#   "text"
+
+def show(value: int | str) -> None:
+    println(f"{value:?}")
+
+
+def main() -> None:
+    show(7)
+    show("text")

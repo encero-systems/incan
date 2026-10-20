@@ -7,7 +7,4 @@ private = true
 [vocab]
 crate = "vocab_companion"
 
-[sdk]
-profile = "minimal"
-
 [dependencies]

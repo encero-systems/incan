@@ -368,7 +368,7 @@ pub(super) fn lower_function_body(
         .decorated_function_bindings_by_span
         .contains_key(&(decl_span.start, decl_span.end))
         && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
-    let (mut stmts, extern_delegation) = lower_declaration_statements(
+    let (stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &function.name)
             .or_else(|| extern_delegation(&function.decorators, &function.name, lowering_facts)),
@@ -377,7 +377,6 @@ pub(super) fn lower_function_body(
         hir_span(decl_span),
     );
     builder.retain_empty_collection_context(&stmts);
-    builder.retain_sdk_tuple_context(&mut stmts);
 
     if builder
         .locals

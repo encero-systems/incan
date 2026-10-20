@@ -98,7 +98,7 @@ fn published_nominal_name(name: &str) -> String {
 pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
     match ty {
         TypeRef::Named { name, origin } => origin.as_ref().map_or_else(
-            || resolved_named_type_from_manifest(name),
+            || ResolvedType::builtin_simple(name).unwrap_or_else(|| ResolvedType::Named(name.clone())),
             |origin| ResolvedType::Named(origin.binding_key()),
         ),
         TypeRef::Applied { name, args, origin } => {
@@ -107,19 +107,7 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
                 return ResolvedType::Generic(origin.binding_key(), resolved_args);
             }
             match collections::from_str(name.as_str()) {
-                Some(CollectionTypeId::FrozenList) => ResolvedType::FrozenList(Box::new(
-                    resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-                )),
-                Some(CollectionTypeId::FrozenSet) => ResolvedType::FrozenSet(Box::new(
-                    resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-                )),
-                Some(CollectionTypeId::FrozenDict) => ResolvedType::FrozenDict(
-                    Box::new(resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown)),
-                    Box::new(resolved_args.get(1).cloned().unwrap_or(ResolvedType::Unknown)),
-                ),
-                Some(collection_id) => {
-                    ResolvedType::Generic(collections::as_str(collection_id).to_string(), resolved_args)
-                }
+                Some(id) => ResolvedType::builtin_generic(id, resolved_args),
                 None => ResolvedType::Generic(name.clone(), resolved_args),
             }
         }
@@ -155,29 +143,6 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
                 .collect(),
         ),
     }
-}
-
-/// Resolve a manifest simple type name: every `i64` spelling is `int` and every `f64` spelling is `float`.
-fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
-    if let Some(id) = numerics::from_str(name) {
-        return ResolvedType::from_numeric_id(id);
-    }
-    if let Some(id) = stringlike::from_str(name) {
-        return match id {
-            StringLikeId::Str => ResolvedType::Str,
-            StringLikeId::Bytes => ResolvedType::Bytes,
-            StringLikeId::FrozenStr => ResolvedType::FrozenStr,
-            StringLikeId::FrozenBytes => ResolvedType::FrozenBytes,
-            StringLikeId::FString => ResolvedType::Str,
-        };
-    }
-    if let Some(id) = collections::from_str(name) {
-        return ResolvedType::Named(collections::as_str(id).to_string());
-    }
-    if name == conventions::UNIT_TYPE_NAME || name == conventions::NONE_TYPE_NAME {
-        return ResolvedType::Unit;
-    }
-    ResolvedType::Named(name.to_string())
 }
 
 /// Construct a legacy/local named type without claiming a foreign artifact origin.

@@ -1312,7 +1312,7 @@ pub enum ImplementationTraitBoundOriginExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NominalTypeOriginExport {
     /// Exact selected version, digest and active public feature projection of the declaring artifact.
-    pub provider: crate::provider::ProviderIdentity,
+    pub provider: crate::loaf_index::LoafIdentity,
     /// Declaring public type identity retained from that artifact's checked identity graph.
     pub canonical: CanonicalIdentityExport,
 }
@@ -1338,7 +1338,7 @@ impl TypeRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NativeUnionOwnerExport {
     ContainingArtifact,
-    SelectedArtifact(crate::provider::ProviderIdentity),
+    SelectedArtifact(crate::loaf_index::LoafIdentity),
 }
 
 /// Native representation captured from the producer's final emitted union definition.

@@ -745,9 +745,6 @@ fn invalid(message: &str) -> LibraryManifestError {
     LibraryManifestError::Invalid(message.to_string())
 }
 
-#[cfg(test)]
-mod tests;
-
 /// Use the existing validated transport contract; the semantic model deliberately does not implement serde.
 mod manifest_contract {
     use super::LibraryManifest;

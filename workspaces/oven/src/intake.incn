@@ -12,6 +12,25 @@ from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
 
 
+# The manifest's tables.
+const ROOT_TABLES: FrozenList[str] = ["project", "dependencies", "rust-dependencies", "build", "rust", "vocab", "tool", "interop"]
+
+# The keys of `[project]`.
+const PROJECT_KEYS: FrozenList[str] = [
+    "name",
+    "version",
+    "scripts",
+    "features",
+    "description",
+    "authors",
+    "license",
+    "license-files",
+    "readme",
+    "requires-incan",
+    "private",
+]
+
+
 pub model ManifestEvidence:
     """Physical source evidence, excluded from effective intent and unit identity."""
 
@@ -27,6 +46,14 @@ pub model LocalDependency:
 
     pub alias: str
     pub path: str
+    # Whether the edge stays inactive until a package feature selects `dep:<alias>`.
+    pub optional: bool = false
+    # Whether the edge selects the dependency's `default` feature.
+    pub default_features: bool = true
+    # The dependency's features the edge requests.
+    pub features: list[str] = []
+    # Whether the edge links a sibling Loaf's Rust crate (`loaf = "<name>"` beside `path`) rather than an Incan package.
+    pub rust_facet: bool = false
 
 
 @derive(Eq)
@@ -44,6 +71,18 @@ pub model RustInputRequest:
 
 
 @derive(Eq)
+pub model FeatureDeclaration:
+    """One `[project.features]` entry, compact and expanded forms normalized into the same edges."""
+
+    # Features of the same package the feature includes.
+    pub includes: list[str] = []
+    # Optional dependencies the feature activates (`dep:<alias>`).
+    pub optional_dependencies: list[str] = []
+    # Features the feature requests from an active dependency (`<alias>/<feature>`), by alias.
+    pub dependency_features: Dict[str, list[str]] = {}
+
+
+@derive(Eq)
 pub model ProjectIntent:
     """Supported authored fields, independent of comments and source locations."""
 
@@ -55,6 +94,14 @@ pub model ProjectIntent:
     pub target: Option[str]
     pub profile: Option[str]
     pub rust_edition: Option[str]
+    # The declared package features by name.
+    pub features: Dict[str, FeatureDeclaration] = {}
+    # The source root `[build] source-root` names, project-relative, when it names one.
+    pub source_root: Option[str] = None
+    # The contract model bundles `[tool.incan.metadata] model-bundles` names, project-relative.
+    pub contract_models: list[str] = []
+    # The C headers the `[interop.c]` targets declare, project-relative.
+    pub c_headers: list[str] = []
 
 
 pub model LocalProject:
@@ -167,11 +214,13 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     """Validate every supported table before projecting effective local intent."""
     parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
     root = table(parsed, manifest, [])?
-    allowed(root, ["project", "dependencies", "rust-dependencies", "build", "rust", "sdk", "vocab"], manifest, [])?
+    if "sdk" in root:
+        return Err(refusal(manifest, ["sdk"], IntakeErrorKind.Unsupported, "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"))
+    allowed(root, list(ROOT_TABLES), manifest, [])?
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
     project = table(root["project"], manifest, ["project"])?
-    allowed(project, ["name", "version", "scripts", "license", "private"], manifest, ["project"])?
+    allowed(project, list(PROJECT_KEYS), manifest, ["project"])?
     name = required(project, "name", manifest, ["project", "name"])?
     version = required(project, "version", manifest, ["project", "version"])?
     mut scripts: Dict[str, str] = {}
@@ -180,23 +229,27 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
         for key in sorted([key for key in values.keys()]):
             scripts[key] = required(values, key, manifest, ["project", "scripts", key])?
     dependencies, rust_inputs = parse_dependencies(root, manifest)?
+    features = parse_features(project, dependencies, manifest)?
     validate_facets(root, manifest)?
     mut target: Option[str] = None
     mut profile: Option[str] = None
     mut edition: Option[str] = None
+    mut source_root: Option[str] = None
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
         if "edition" in rust_facet:
             edition = Some(required(rust_facet, "edition", manifest, ["rust", "edition"])?)
     if "build" in root:
         build = table(root["build"], manifest, ["build"])?
-        allowed(build, ["target", "profile", "rust-edition"], manifest, ["build"])?
+        allowed(build, ["target", "profile", "rust-edition", "source-root"], manifest, ["build"])?
         if "target" in build:
             target = Some(required(build, "target", manifest, ["build", "target"])?)
         if "profile" in build:
             profile = Some(required(build, "profile", manifest, ["build", "profile"])?)
         if "rust-edition" in build:
             edition = Some(required(build, "rust-edition", manifest, ["build", "rust-edition"])?)
+        if "source-root" in build:
+            source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
     return Ok(
         ProjectIntent(
             name=name,
@@ -207,8 +260,164 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             target=target,
             profile=profile,
             rust_edition=edition,
+            features=features,
+            source_root=source_root,
+            contract_models=parse_contract_models(root, manifest)?,
+            c_headers=parse_c_headers(root, manifest)?,
         ),
     )
+
+
+def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """A TOML array of strings."""
+    entries = value.as_array().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    mut items: list[str] = []
+    for index in range(len(entries)):
+        items.append(text(entries[index], manifest, field + [str(index)])?)
+    return Ok(items)
+
+
+def flag(values: Dict[str, TomlValue], key: str, fallback: bool, manifest: str, field: list[str]) -> Result[bool, IntakeError]:
+    """An optional boolean field, `fallback` when absent."""
+    if key not in values:
+        return Ok(fallback)
+    return values[key].as_bool().map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))
+
+
+def parse_features(
+    project: Dict[str, TomlValue],
+    dependencies: list[LocalDependency],
+    manifest: str,
+) -> Result[Dict[str, FeatureDeclaration], IntakeError]:
+    """The `[project.features]` declarations, each checked against the package's features and dependencies."""
+    mut features: Dict[str, FeatureDeclaration] = {}
+    if "features" not in project:
+        return Ok(features)
+    values = table(project["features"], manifest, ["project", "features"])?
+    for name in sorted([key for key in values.keys()]):
+        field = ["project", "features", name]
+        if values[name].kind() == TomlKind.Array:
+            features[name] = compact_feature(values[name], manifest, field)?
+        else:
+            features[name] = expanded_feature(values[name], manifest, field)?
+    mut optional: list[str] = []
+    mut aliases: list[str] = []
+    for dependency in dependencies:
+        aliases.append(dependency.alias)
+        if dependency.optional:
+            optional.append(dependency.alias)
+    for name in sorted([key for key in features.keys()]):
+        field = ["project", "features", name]
+        declaration = features[name]
+        for included in declaration.includes:
+            if included not in features:
+                return Err(refusal(manifest, field, IntakeErrorKind.Invalid, f"includes `{included}`, which the package does not declare"))
+        for alias in declaration.optional_dependencies:
+            if alias not in optional:
+                return Err(refusal(manifest, field, IntakeErrorKind.Invalid, f"activates `dep:{alias}`, which is not an optional dependency"))
+        for alias in sorted([key for key in declaration.dependency_features.keys()]):
+            if alias not in aliases:
+                return Err(refusal(manifest, field, IntakeErrorKind.Invalid, f"requests features of `{alias}`, which is not a dependency"))
+    cycle = feature_cycle(features)
+    if cycle != "":
+        return Err(refusal(manifest, ["project", "features"], IntakeErrorKind.Cycle, f"features include each other: {cycle}"))
+    return Ok(features)
+
+
+def feature_cycle(features: Dict[str, FeatureDeclaration]) -> str:
+    """The first chain of `includes` that returns to where it started, as `a -> b -> a`; empty when there is none."""
+    for start in sorted([name for name in features.keys()]):
+        mut chain: list[str] = [start]
+        mut frontier: list[list[str]] = [chain]
+        while len(frontier) > 0:
+            path = frontier[len(frontier) - 1]
+            frontier = frontier[0:len(frontier) - 1]
+            last = path[len(path) - 1]
+            if last not in features:
+                continue
+            for included in features[last].includes:
+                if included == start:
+                    return " -> ".join(path + [included])
+                if included not in path:
+                    frontier.append(path + [included])
+    return ""
+
+
+def compact_feature(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:
+    """A compact feature: `name` includes a feature, `dep:alias` activates a dependency, `alias/name` requests one."""
+    mut declaration = FeatureDeclaration()
+    for entry in string_list(value, manifest, field)?:
+        if entry.startswith("dep:"):
+            declaration.optional_dependencies.append(entry[4:])
+        elif "/" in entry:
+            parts = entry.split("/")
+            if len(parts) != 2 or parts[0] == "" or parts[1] == "":
+                return Err(refusal(manifest, field, IntakeErrorKind.Invalid, f"`{entry}` is not `<dependency>/<feature>`"))
+            mut requested: list[str] = []
+            if parts[0] in declaration.dependency_features:
+                requested = declaration.dependency_features[parts[0]]
+            requested.append(parts[1])
+            declaration.dependency_features[parts[0]] = requested
+        else:
+            declaration.includes.append(entry)
+    return Ok(declaration)
+
+
+def expanded_feature(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:
+    """An expanded feature table naming each edge kind."""
+    entries = table(value, manifest, field)?
+    allowed(entries, ["includes", "optional-dependencies", "dependency-features"], manifest, field)?
+    mut declaration = FeatureDeclaration()
+    if "includes" in entries:
+        declaration.includes = string_list(entries["includes"], manifest, field + ["includes"])?
+    if "optional-dependencies" in entries:
+        declaration.optional_dependencies = string_list(entries["optional-dependencies"], manifest, field + ["optional-dependencies"])?
+    if "dependency-features" in entries:
+        requests = table(entries["dependency-features"], manifest, field + ["dependency-features"])?
+        for alias in sorted([key for key in requests.keys()]):
+            declaration.dependency_features[alias] = string_list(requests[alias], manifest, field + ["dependency-features", alias])?
+    return Ok(declaration)
+
+
+def parse_contract_models(root: Dict[str, TomlValue], manifest: str) -> Result[list[str], IntakeError]:
+    """The model bundles `[tool.incan.metadata] model-bundles` names; other tools' tables are theirs."""
+    if "tool" not in root:
+        return Ok([])
+    tool = table(root["tool"], manifest, ["tool"])?
+    if "incan" not in tool:
+        return Ok([])
+    incan = table(tool["incan"], manifest, ["tool", "incan"])?
+    allowed(incan, ["metadata"], manifest, ["tool", "incan"])?
+    if "metadata" not in incan:
+        return Ok([])
+    metadata = table(incan["metadata"], manifest, ["tool", "incan", "metadata"])?
+    allowed(metadata, ["model-bundles"], manifest, ["tool", "incan", "metadata"])?
+    if "model-bundles" not in metadata:
+        return Ok([])
+    return string_list(metadata["model-bundles"], manifest, ["tool", "incan", "metadata", "model-bundles"])
+
+
+def parse_c_headers(root: Dict[str, TomlValue], manifest: str) -> Result[list[str], IntakeError]:
+    """The headers every `[[interop.c.targets]]` entry declares, each once; the checker reads the rest of the table."""
+    if "interop" not in root:
+        return Ok([])
+    interop = table(root["interop"], manifest, ["interop"])?
+    allowed(interop, ["c"], manifest, ["interop"])?
+    if "c" not in interop:
+        return Ok([])
+    c = table(interop["c"], manifest, ["interop", "c"])?
+    if "targets" not in c:
+        return Ok([])
+    targets = c["targets"].as_array().map_err((error) => refusal(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
+    mut headers: list[str] = []
+    for index in range(len(targets)):
+        field = ["interop", "c", "targets", str(index)]
+        entry = table(targets[index], manifest, field)?
+        if "headers" in entry:
+            for header in string_list(entry["headers"], manifest, field + ["headers"])?:
+                if header not in headers:
+                    headers.append(header)
+    return Ok(headers)
 
 
 def parse_dependencies(
@@ -253,10 +462,25 @@ def parse_dependencies(
                 rust_inputs.append(rust_request(alias, value, manifest, group)?)
             else:
                 entry = table(value, manifest, [group, alias])?
+                if "standard" in entry:
+                    return Err(refusal(manifest, [group, alias, "standard"], IntakeErrorKind.Unsupported, "standard packages are ambient: a unit reaches every standard package it uses, and none is declared"))
                 if "path" in entry:
-                    allowed(entry, ["loaf", "path", "version"], manifest, [group, alias])?
-                    path = required(entry, "path", manifest, [group, alias, "path"])?
-                    dependencies.append(LocalDependency(alias=alias, path=path))
+                    field = [group, alias]
+                    allowed(entry, ["loaf", "path", "version", "optional", "default-features", "features"], manifest, field)?
+                    path = required(entry, "path", manifest, field + ["path"])?
+                    mut features: list[str] = []
+                    if "features" in entry:
+                        features = string_list(entry["features"], manifest, field + ["features"])?
+                    dependencies.append(
+                        LocalDependency(
+                            alias=alias,
+                            path=path,
+                            optional=flag(entry, "optional", false, manifest, field)?,
+                            default_features=flag(entry, "default-features", true, manifest, field)?,
+                            features=features,
+                            rust_facet="loaf" in entry,
+                        ),
+                    )
                 else:
                     rust_inputs.append(rust_request(alias, value, manifest, group)?)
     return Ok((dependencies, rust_inputs))
@@ -278,9 +502,6 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
             source = table(rust_facet["source"], manifest, ["rust", "source"])?
             allowed(source, ["root"], manifest, ["rust", "source"])?
             required(source, "root", manifest, ["rust", "source", "root"])?
-    if "sdk" in root:
-        sdk = table(root["sdk"], manifest, ["sdk"])?
-        allowed(sdk, ["profile", "components"], manifest, ["sdk"])?
     if "vocab" in root:
         vocab = table(root["vocab"], manifest, ["vocab"])?
         allowed(vocab, ["crate"], manifest, ["vocab"])?
@@ -422,7 +643,7 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
     )
 
 
-def load_project(root: Path) -> Result[LocalProject, IntakeError]:
+pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
     """Read one byte snapshot and validate existing conventional library or explicitly declared script paths."""
     manifest = root.joinpath("loaf.toml")
     raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
@@ -499,6 +720,8 @@ pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
     while index < len(roots):
         project = load_project(Path(roots[index]))?
         for dependency in project.intent.dependencies:
+            if dependency.rust_facet:
+                continue
             path = Path(project.root).joinpath(dependency.path)
             selected = path
                 .resolve()

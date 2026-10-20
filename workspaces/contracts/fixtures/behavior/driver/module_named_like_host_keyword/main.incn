@@ -1,0 +1,12 @@
+# behavior: modules named `async`, a soft keyword in Incan and a hard keyword in the host language, import and run at the top level and nested under a package directory
+# expect-stdout:
+#   launched
+#   nested launched
+
+from async import launch
+from api.async import nested_launch
+
+
+def main() -> None:
+    println(launch())
+    println(nested_launch())

@@ -1175,12 +1175,8 @@ impl TypeChecker {
         if module.is_empty() {
             return None;
         }
-        let identity = self.dependency_member_identity(&ImportPath::simple(module.to_vec()), name);
-        if identity.is_some() || self.checked_sdk_provider_owns_module(module) {
-            return identity.filter(|identity| identity.kind == SemanticSourceTargetKind::Trait);
-        }
-        self.stdlib_cache
-            .lookup_identity(module, name)
+        self.dependency_member_identity(&ImportPath::simple(module.to_vec()), name)
+            .or_else(|| self.loaf_member_identity(module, name))
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
     }
 
@@ -1317,7 +1313,7 @@ impl TypeChecker {
     }
 
     /// Return the declaration a supertrait name gives method lookup: its visible or semantic declaration, or, when
-    /// that is missing or a compiler stub without methods, the builtin trait's standard-library source declaration
+    /// that is missing or a compiler stub without methods, the builtin trait's standard package declaration
     /// once [`Self::load_builtin_supertrait_sources`] has loaded it. An adopter of `Ord` that imports only `Ord`
     /// reaches the `__ne__` default of its `Eq` supertrait this way (#1561).
     fn supertrait_info_for_methods(&self, name: &str) -> Option<TraitInfo> {
@@ -1325,12 +1321,10 @@ impl TypeChecker {
         if semantic.is_some_and(|info| !info.methods.is_empty()) {
             return semantic.cloned();
         }
-        stdlib::trait_method_module_segments(name)
-            .and_then(|segments| self.stdlib_cache.loaded_trait(&segments, name).cloned())
-            .or_else(|| semantic.cloned())
+        self.standard_traits.get(name).cloned().or_else(|| semantic.cloned())
     }
 
-    /// Load the standard-library source declaration of each builtin trait among `supertraits` and their own
+    /// Load the standard package declaration of each builtin trait among `supertraits` and their own
     /// supertraits, so [`Self::supertrait_info_for_methods`] can read it.
     fn load_builtin_supertrait_sources(&mut self, supertraits: &[(String, Vec<ResolvedType>)]) {
         let mut pending = supertraits.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
@@ -1339,9 +1333,7 @@ impl TypeChecker {
             if !seen.insert(name.clone()) {
                 continue;
             }
-            if let Some(segments) = stdlib::trait_method_module_segments(&name)
-                && let Some(info) = self.stdlib_cache.lookup_trait(&segments, &name)
-            {
+            if let Some(info) = self.standard_trait(&name) {
                 pending.extend(info.supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
             }
             if let Some(info) = self.lookup_semantic_trait_info(&name) {
@@ -1439,20 +1431,9 @@ impl TypeChecker {
         }
         let filtered = self.filter_supertrait_dominated_entries(entries);
         // A compiler-owned trait can resolve to an empty symbol-table stub, which shadows the real contract and leaves
-        // every derive-provided method unresolvable. Recover the signature from cached provider metadata first: that
-        // metadata is seeded from the shipped library manifests and is therefore present in an installed toolchain,
-        // whereas the stdlib source fallback below only exists in a source checkout.
+        // every derive-provided method unresolvable; the standard package's declaration of the trait carries it.
         if filtered.is_empty()
-            && let Some(info) = self
-                .transitive_stdlib_stub_traits
-                .get(adopted_trait)
-                .and_then(|full_trait| full_trait.methods.get(method))
-        {
-            return Some(info.clone());
-        }
-        if filtered.is_empty()
-            && let Some(segments) = stdlib::trait_method_module_segments(adopted_trait)
-            && let Some(full_trait) = self.stdlib_cache.lookup_trait(&segments, adopted_trait)
+            && let Some(full_trait) = self.standard_trait(adopted_trait)
             && let Some(info) = full_trait.methods.get(method)
         {
             return Some(info.clone());
@@ -1526,12 +1507,9 @@ impl TypeChecker {
                     .source_name
                     .as_deref()
                     .or_else(|| adoption.name.rsplit('.').next())?;
-                self.stdlib_cache.lookup_trait(module_path, source_name)
+                self.loaf_trait(module_path, source_name)
             })
-            .or_else(|| {
-                stdlib::trait_method_module_segments(&adoption.name)
-                    .and_then(|module_path| self.stdlib_cache.lookup_trait(&module_path, &adoption.name))
-            })?;
+            .or_else(|| self.standard_trait(&adoption.name))?;
         self.load_builtin_supertrait_sources(&root.supertraits);
         let instantiated = if adoption.type_args.is_empty() {
             root
@@ -2589,7 +2567,7 @@ impl TypeChecker {
             path.extend(nested.iter().cloned());
             path
         };
-        self.stdlib_cache.lookup_identity(&module_path, item_name)
+        self.loaf_member_identity(&module_path, item_name)
     }
 
     /// Name a symbol kind for a diagnostic that reports the wrong kind was referenced.
@@ -3659,15 +3637,13 @@ impl TypeChecker {
         result
     }
 
-    /// Return imported or stdlib Rust derive metadata for one checked trait identity, in declaration order.
+    /// Return the Rust derive metadata of one checked trait, from its source module or its Loaf, in declaration order.
     fn body_ir_trait_derive_paths(&mut self, module: &[String], trait_name: &str) -> Vec<String> {
         let key = format!("{}.{}", module.join("."), trait_name);
         if let Some(paths) = self.dependency_trait_rust_derive_paths.get(&key) {
             return paths.clone();
         }
-        self.stdlib_cache
-            .lookup_trait_meta(module, trait_name)
-            .map(|meta| meta.rust_derive_paths)
+        self.loaf_trait_rust_derive_paths(module, trait_name)
             .unwrap_or_default()
     }
 
@@ -6144,19 +6120,9 @@ impl TypeChecker {
             return None;
         };
         module_path.extend(nested.iter().cloned());
-        let identity = if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
-            self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
-                .ok()
-                .flatten()
-                .and_then(|resolved| resolved.canonical)
-        } else {
-            // A host capability lives in the compiler's own bundled `std.runtime` source rather than in a package
-            // dependency, so dependency resolution alone cannot see it. This is the same fallback
-            // `check_capability_requirement` uses, which keeps `@provider_operation(host.fs.read)` and
-            // `requires = [host.fs.read]` resolving through one story instead of two.
-            self.dependency_member_identity(&ImportPath::simple(module_path.clone()), name)
-                .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
-        };
+        let identity = self
+            .loaf_member_identity(&module_path, name)
+            .or_else(|| self.dependency_member_identity(&ImportPath::simple(module_path.clone()), name));
         match identity {
             Some(identity) if identity.kind == SemanticSourceTargetKind::Capability => Some(identity),
             Some(_) => {

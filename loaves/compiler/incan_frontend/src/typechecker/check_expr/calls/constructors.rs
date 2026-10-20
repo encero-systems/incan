@@ -419,7 +419,7 @@ impl TypeChecker {
                 _ => false,
             },
         };
-        if is_string && let Some(owner) = self.stdlib_cache.native_web_identity(SurfaceTypeId::Html) {
+        if is_string && let Some(owner) = self.surface_type_identity(SurfaceTypeId::Html) {
             self.type_info.record_body_ir_native_constructor(span, owner);
             self.type_info
                 .calls
@@ -493,7 +493,7 @@ impl TypeChecker {
             let name = surface_types::as_str(tid);
             self.errors
                 .push(errors::constructor_single_arg_required(name, args.len(), call_span));
-        } else if let Some(owner) = self.stdlib_cache.native_web_identity(tid) {
+        } else if let Some(owner) = self.surface_type_identity(tid) {
             self.type_info.record_body_ir_native_constructor(call_span, owner);
         }
 

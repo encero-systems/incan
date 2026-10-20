@@ -1,0 +1,23 @@
+# behavior: an extern function bound to a stdlib Rust module is callable from a source wrapper, and calling it with a failing assertion aborts the run
+# expect-stdout:
+#   before
+# expect-exit: 101
+
+rust.module("incan_std_testing")
+
+
+@rust.extern
+def fail_t(msg: str) -> None:
+    ...
+
+
+def assert_true(value: bool) -> None:
+    if not value:
+        fail_t("assertion failed: expected true")
+
+
+def main() -> None:
+    assert_true(true)
+    println("before")
+    assert_true(false)
+    println("after")

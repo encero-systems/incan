@@ -1,0 +1,19 @@
+# behavior: a generic list comprehension consumes a last-use source without Clone, while a reused source with Clone is copied and remains available
+# expect-stdout:
+#   3
+#   3
+#   3
+
+def copy_all[T](items: list[T]) -> list[T]:
+    return [item for item in items]
+
+
+def copy_and_keep[T with Clone](items: list[T]) -> list[T]:
+    copied = [item for item in items]
+    println(len(copied))
+    return items
+
+
+def main() -> None:
+    println(len(copy_all([1, 2, 3])))
+    println(len(copy_and_keep([1, 2, 3])))

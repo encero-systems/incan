@@ -1,0 +1,9 @@
+# behavior: hashed non membership operations remain refused
+# expect-stdout:
+
+"""Hashed non membership operations remain refused."""
+def main() -> None:
+  """Return without producing output."""
+  values = {1, 2}
+  for value in values:
+    pass

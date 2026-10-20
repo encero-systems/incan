@@ -1,0 +1,14 @@
+[project]
+name = "a_feature_selects_an_optional_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["extras"]
+extras = ["dep:extra"]
+
+[dependencies]
+extra = { path = "deps/extra", optional = true }
+unused = { path = "deps/unused", optional = true }

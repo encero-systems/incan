@@ -1,0 +1,13 @@
+# behavior: a `Callable` value from a dependency is passed back across the `pub::` boundary into the dependency's own higher-order function and applied to every element
+# expect-stdout:
+#   2
+#   3
+#   4
+
+from pub::callability import map_owned, plus_one
+
+
+def main() -> None:
+    mapped = map_owned([1, 2, 3], plus_one)
+    for item in mapped:
+        println(item)

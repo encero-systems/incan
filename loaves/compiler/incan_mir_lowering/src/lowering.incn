@@ -37,6 +37,7 @@ from pub::incan_mir_plan import (
     Parameter,
     Place,
     Plan,
+    PlanExport,
     StaticCell,
     PlanType,
     SizedNumeric,
@@ -71,7 +72,6 @@ from frozen_plan import (
 )
 from loop_exits import exits_to
 from trait_links import (
-    is_well_formed_module_implementation,
     is_well_formed_project_implementation,
     has_open_trait_arguments,
 )
@@ -137,7 +137,7 @@ from rust::incan_semantics_core::body_ir import (
     Statement as RustStatement,
     StatementKind as RustStatementKind,
     UnsafeAcknowledgment as RustUnsafeAcknowledgment,
-    StdlibDelegation as RustStdlibDelegation,
+    LoafCallable as RustLoafCallable,
     UnOp,
     PlaceElem,
     MethodTarget,
@@ -195,12 +195,7 @@ from string_conversion import lower_string_conversions, string_conversion_callee
 from string_conversion_contracts import validate_conversion_placement
 from enum_instances import specialize_enums
 from display_methods import display_functions
-from comparison_methods import (
-    comparison_functions,
-    source_equality_value,
-    attach_enum_comparisons,
-    standard_comparison_slot,
-)
+from comparison_methods import comparison_functions, source_equality_value, attach_enum_comparisons
 from frozen_equality import compare_frozen, borrow_frozen_argument, frozen_reference_type
 from decorator_caches import (
     DecoratorFrame,
@@ -216,7 +211,6 @@ from traits import (
     receiver_fills_slot,
     receiver_fills_source_slot,
     receiver_fills_retained_slot,
-    specialize_traits,
     validate_static_receiver,
 )
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
@@ -444,19 +438,6 @@ pub type BodyIrModule = rusttype RustBodyIrModule:
     """The frontend-owned canonical module, borrowed without conversion or duplication."""
 
 
-pub type BodyStatementKind = rusttype RustStatementKind:
-    """The real checked statement vocabulary used by borrowed boundary conformance tests."""
-
-
-pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
-    """Validate every retained declaration and body before consuming its facts."""
-    count = validate_declarations_and_bodies(module)?
-    for implementation in module.trait_implementations:
-        if not is_well_formed_module_implementation(module, implementation):
-            if has_open_trait_arguments(implementation):
-                return Err("unsupported Body IR open trait default type arguments")
-            return Err("invalid Body IR trait implementation identity")
-    return Ok(count)
 
 
 def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
@@ -505,29 +486,6 @@ def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
     return Ok(len(module.bodies))
 
 
-pub def count_continues(module: &BodyIrModule) -> Result[int, str]:
-    """
-    Match the retained statements after validating their owning bodies.
-
-    This boundary probe counts only top-level continue statements. It does not
-    construct a plan or infer executable coverage from the count.
-    """
-    _ = validate_module(module)?
-    mut count = 0
-    for body in module.bodies:
-        for statement in body.block.stmts:
-            match statement.kind:
-                RustStatementKind.Continue =>
-                    count += 1
-                _ => pass
-    return Ok(count)
-
-
-pub def is_continue(statement: &BodyStatementKind) -> bool:
-    """Read the real Body IR statement enum through a shared borrow."""
-    match statement:
-        BodyStatementKind.Continue => return true
-        _ => return false
 # =====================================================================================================================
 # Translating checked values
 # =====================================================================================================================
@@ -2945,7 +2903,7 @@ def lower_value_enum_ordinal(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Encode a source value enum through its retained raw getter and the SDK's proven scalar OrdinalKey implementation."""
-    match target.sdk_trait:
+    match target.loaf_trait:
         None => return Ok(false)
         Some(dispatch) =>
             if str(dispatch.native_item) != "incan_stdlib_data::collections::OrdinalKey::ordinal_bytes":
@@ -3004,7 +2962,7 @@ def lower_value_enum_ordinal_encoding(
 ) -> Result[bool, str]:
     """Retain legacy's source-module and ordered raw-value schema for an authenticated associated OrdinalKey call."""
     mut authenticated = false
-    for delegation in module.stdlib_delegations:
+    for callable in module.loaf_callables:
         if Some(delegation.canonical.clone()) == target.canonical:
             match delegation.rust_path():
                 Some(path) =>
@@ -3354,7 +3312,7 @@ def lower_method_call(
         None => pass
     # A source adopter resolves its checked slot through its own implementation or the published default. Its slot
     # cannot grant a native SDK trait implementation. SDK-owned receivers call their compiled crate methods.
-    for delegation in module.stdlib_delegations:
+    for callable in module.loaf_callables:
         if receiver_fills_source_slot(
             module,
             target,
@@ -3381,7 +3339,7 @@ def concrete_iterator_collect(
     span: SourceSpan,
 ) -> Result[MethodTarget, str]:
     """Resolve a builtin opaque-Iterator terminal only through its concrete SDK owner's unique retained default (#1698)."""
-    if len(arguments) != 1 or len(target.type_args) != 0 or target.sdk_trait != None or target.native_trait_delegation != None:
+    if len(arguments) != 1 or len(target.type_args) != 0 or target.loaf_trait != None or target.native_trait_delegation != None:
         return Err("unsupported Body IR opaque Iterator.collect call contract")
     mut owner = -1
     match argument_type(builder, arguments, 0, span)?:
@@ -3544,7 +3502,7 @@ def lower_sdk_element_method(
         Some(PlanType.Model(owner, _name)) =>
             if library_item(module.nominal_declarations[owner]) == "":
                 return Ok(false)
-            for delegation in module.stdlib_delegations:
+            for callable in module.loaf_callables:
                 if target.canonical == Some(delegation.canonical):
                     lower_library_method(module, builder, delegation, target, arguments, destination, span)?
                     return Ok(true)
@@ -3581,7 +3539,7 @@ def retain_sdk_factory_result(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Keep a selected SDK default's concrete result where its checked interface still uses a tuple iterator frame."""
-    if target.sdk_trait == None or body.canonical != target.canonical or not target.has_valid_native_trait_selection():
+    if target.loaf_trait == None or body.canonical != target.canonical or not target.has_valid_native_trait_selection():
         return Ok(None)
     match target.native_trait_delegation:
         None => return Ok(None)
@@ -3697,10 +3655,6 @@ def instantiated_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
-        if deferred_sdk_default(module, body):
-            builder.instances.append(
-                Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false),
-            )
     return Ok(body)
 
 
@@ -3770,29 +3724,6 @@ def sdk_forwarded_type_arguments(
     return Ok([candidate.clone()])
 
 
-def deferred_sdk_default(module: &BodyIrModule, body: &RustBody) -> bool:
-    """Generate a checked SDK default only when selected; implicit native comparison and display roots remain eager."""
-    match body.canonical:
-        None => return false
-        Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Method:
-                return false
-            match identity.origin:
-                SymbolOrigin.Package(library=library, module_path=_path) =>
-                    if not str(library).startswith("incan_stdlib_"):
-                        return false
-                _ => return false
-            if standard_comparison_slot(identity, str(identity.declaration_name)):
-                return false
-            for declaration in module.nominal_declarations:
-                if declaration.display_method == Some(identity.clone()):
-                    return false
-            for implementation in module.trait_implementations:
-                if implementation.method == identity and implementation.implementation == identity:
-                    return true
-    return false
-
-
 def method_ordinary_operands(
     module: &BodyIrModule,
     mut builder: Builder,
@@ -3847,7 +3778,7 @@ def lower_global_method(
                         builder.unions,
                         builder.intrinsics,
                     ):
-                        for delegation in module.stdlib_delegations:
+                        for callable in module.loaf_callables:
                             if Some(delegation.canonical) == target.canonical:
                                 lower_static_sdk_method(
                                     module,
@@ -3870,7 +3801,7 @@ def lower_global_method(
 def lower_static_sdk_method(
     module: &BodyIrModule,
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     read: &RustPlaceOperand,
     global: &RustGlobalPlace,
@@ -3881,7 +3812,7 @@ def lower_static_sdk_method(
     """Call a checked SDK method under the actual static guard after evaluating its bound ordinary arguments."""
     if len(read.place.projection) != 0 or len(arguments) != len(delegation.parameters):
         return Err("unsupported Body IR SDK static method argument arity or projected receiver")
-    if target.sdk_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
+    if target.loaf_trait != None or len(target.type_args) != 0 or len(delegation.native_type_arguments) != 0:
         return Err("unsupported Body IR SDK static method explicit trait or method binders")
     match target.binding:
         RustArgumentBinding.Resolved(arguments=bound, defaulted_slots=defaults) =>
@@ -4068,7 +3999,7 @@ def lower_static_method_body(
 def lower_library_method(
     module: &BodyIrModule,
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
@@ -4084,7 +4015,7 @@ def lower_library_method(
     An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
     The receiver closes owner placeholders, and the recorded native arguments select the exact compiled trait item.
     """
-    if len(target.type_args) != 0 and target.sdk_trait == None:
+    if len(target.type_args) != 0 and target.loaf_trait == None:
         return Err("unsupported Body IR type arguments on a stdlib method")
     if len(delegation.parameters) == 0 or len(arguments) == 0:
         return Err("unsupported Body IR stdlib method without a receiver")
@@ -4160,7 +4091,7 @@ def lower_library_method(
                 PlanType.Future(outputs) =>
                     if len(outputs) != 1:
                         return Err("unsupported Body IR SDK method future output arity")
-                    if target.sdk_trait != None:
+                    if target.loaf_trait != None:
                         return Err("unsupported Body IR SDK trait method future")
                     callee = CalleeKind.FutureMethod(path, type_arguments)
                     return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
@@ -4183,13 +4114,13 @@ def lower_library_method(
 def library_method_arguments(
     module: &BodyIrModule,
     builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     reference: Place,
     names: list[str],
 ) -> Result[list[RustType], str]:
     """Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders."""
-    match target.sdk_trait:
+    match target.loaf_trait:
         None => return library_receiver_arguments(module, builder, reference, names)
         Some(selected) =>
             if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
@@ -4220,7 +4151,7 @@ def library_method_arguments(
 
 def library_method_result(
     builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &MethodTarget,
     destination: &Option[RustPlace],
     names: list[str],
@@ -4228,7 +4159,7 @@ def library_method_result(
     span: SourceSpan,
 ) -> Result[PlanType, str]:
     """Use the frontend-retained concrete SDK factory result, with native metadata still checking the exact return carrier."""
-    if target.sdk_trait != None:
+    if target.loaf_trait != None:
         match destination:
             Some(place) => return Ok(place_type(builder.locals, scalar_place(builder, place, span)?))
             None => pass
@@ -4430,7 +4361,7 @@ def lower_named_target(
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>
             match program_body_index(module, target):
-                None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
+                None => return lower_loaf_call(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
                     if len(body.type_parameters) != 0:
@@ -4758,7 +4689,7 @@ def callable_argument(
 # =====================================================================================================================
 
 
-def lower_stdlib_delegation(
+def lower_loaf_call(
     module: &BodyIrModule,
     mut builder: Builder,
     target: &RustNamedCallableTarget,
@@ -4767,29 +4698,27 @@ def lower_stdlib_delegation(
     span: SourceSpan,
 ) -> Result[None, str]:
     """
-    Call the native item an imported stdlib function runs as.
+    Call the compiled item of a function a linked Loaf declares (DD-0007).
 
-    A forwarder the frontend proved transparent, whose only statement returns one Rust call with every parameter passed
-    through in order, calls that Rust function directly. Any other stdlib function calls the item its SDK crate
-    compiled. Either is the call the legacy route makes, selected by the checker's canonical identity and native path,
-    never by a spelling, and the driver checks its signature against the crate's metadata.
+    The callable is selected by the checker's canonical identity, never by a spelling, and its declaration record
+    supplies the signature the driver checks against the Loaf's metadata.
     """
     match target.direct_call_id:
-        Some(_identity) => return Err("Body IR imported delegation has a local call identity")
+        Some(_identity) => return Err("Body IR Loaf call has a local call identity")
         None => pass
-    for delegation in module.stdlib_delegations:
+    for callable in module.loaf_callables:
         match target.canonical:
-            None => return Err("unsupported Body IR unproven stdlib call target")
+            None => return Err("unsupported Body IR unproven Loaf call target")
             Some(identity) =>
-                if identity != delegation.canonical:
+                if identity != callable.canonical:
                     continue
-        return lower_delegated_call(builder, delegation, target, arguments, destination, span)
+        return lower_delegated_call(builder, callable, target, arguments, destination, span)
     return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}")
 
 
 def lower_delegated_call(
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     target: &RustNamedCallableTarget,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
@@ -4834,7 +4763,7 @@ def lower_delegated_call(
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
-    mut operands = library_call_operands(builder, delegation, target.binding, arguments, parameters, span, 0, true)?
+    operands = library_call_operands(builder, delegation, target.binding, arguments, parameters, span, 0, true)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -4843,18 +4772,7 @@ def lower_delegated_call(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib delegation native identity")
         Some(published_path) =>
-            path = testing_comparison_path(delegation, published_path)?
-            if path != published_path:
-                if len(parameters) != 3 or parameters[0] != parameters[1] or parameters[2] != PlanType.String or result != PlanType.Unit or len(
-                    type_arguments,
-                ) != 1:
-                    return Err("unsupported Body IR canonical testing comparison signature")
-                match target.binding:
-                    RustArgumentBinding.Resolved(arguments=_slots, defaulted_slots=defaults) =>
-                        for slot in defaults:
-                            if int(slot) == 2:
-                                operands[2] = read_place(owned_literal(builder, "", span), true, span)
-                    _ => pass
+            path = published_path
             match result:
                 PlanType.Future(outputs) =>
                     if len(outputs) != 1:
@@ -4868,27 +4786,6 @@ def lower_delegated_call(
                 external_call(builder, path, parameters, result, operands, output, span)
                 return Ok(None)
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
-
-
-def testing_comparison_path(delegation: &RustStdlibDelegation, published_path: str) -> Result[str, str]:
-    """Select language assertion semantics only from the standard package slot and its exact published native symbol."""
-    identity = delegation.canonical
-    if identity.kind != SemanticSourceTargetKind.Function:
-        return Ok(published_path)
-    match identity.origin:
-        SymbolOrigin.Package(library=library, module_path=path) =>
-            if library == "incan_stdlib_testing" and len(path) == 1 and path[0] == "testing":
-                if identity.declaration_name not in ["assert_eq", "assert_ne"]:
-                    return Ok(published_path)
-                expected = f"incan_stdlib_testing::testing::{encode_incan_symbol_identity(identity)}"
-                if published_path != expected:
-                    return Err("unsupported Body IR canonical testing comparison native identity")
-                if identity.declaration_name == "assert_eq":
-                    return Ok("incan_native_runtime::assert_equal")
-                if identity.declaration_name == "assert_ne":
-                    return Ok("incan_native_runtime::assert_unequal")
-        _ => pass
-    return Ok(published_path)
 
 
 def library_function_arguments(
@@ -4929,7 +4826,7 @@ def library_function_arguments(
 
 def library_call_operands(
     mut builder: Builder,
-    delegation: &RustStdlibDelegation,
+    delegation: &RustLoafCallable,
     binding: &RustArgumentBinding,
     arguments: &list[RustArgumentElement],
     types: list[PlanType],
@@ -6675,18 +6572,6 @@ def display_receiver(mut builder: Builder, value: &RustOperand, span: SourceSpan
     return display_operand(builder, value, span)
 
 
-pub def lower_program(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> Result[Plan, str]:
-    """Require an executable entry after all checked bodies have lowered; library callers keep the named refusal."""
-    match program_plan(modules, sources, files, entry)?:
-        Some(plan) => return Ok(plan)
-        None => return Err("unsupported Body IR project without selected main entrypoint")
-
-
 pub def program_plan(
     modules: &list[BodyIrModule],
     sources: list[str],
@@ -6694,6 +6579,29 @@ pub def program_plan(
     entry: int,
 ) -> Result[Option[Plan], str]:
     """Lower every checked body before returning a plan; None proves absent entry, while unsupported entry representations fail."""
+    return lowered_plan(modules, sources, files, entry, false)
+
+
+pub def library_plan(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+) -> Result[Plan, str]:
+    """Lower every checked body of a library Loaf; a library has no `main`, so the plan is always present."""
+    match lowered_plan(modules, sources, files, entry, true)?:
+        Some(plan) => return Ok(plan)
+        None => return Err("library lowering produced no plan")
+
+
+def lowered_plan(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    library: bool,
+) -> Result[Option[Plan], str]:
+    """Lower every checked body; an executable without `main` yields None, a library never needs one."""
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
@@ -6734,7 +6642,7 @@ pub def program_plan(
         for body in context.bodies:
             if body_module_identity(body)? != str(checked[index].module_id.path()):
                 continue
-            if len(body.type_parameters) != 0 or deferred_sdk_default(context, body):
+            if len(body.type_parameters) != 0:
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue
@@ -6781,7 +6689,10 @@ pub def program_plan(
         enums.append(declaration)
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
-    if not has_main:
+    mut exports: list[PlanExport] = []
+    if library:
+        exports = loaf_exports(context, emitted_frames)
+    if not library and not has_main:
         if declares_main:
             return Err("unsupported Body IR selected main representation")
         return Ok(None)
@@ -6794,9 +6705,62 @@ pub def program_plan(
                 externals=externals,
                 span=SourceSpan(file=files[entry], line=1, column=1),
                 statics=statics,
+                exports=exports,
             ),
         ),
     )
+
+
+def loaf_exports(context: &BodyIrModule, emitted: &list[RustBody]) -> list[PlanExport]:
+    """
+    Export every body and public type a Loaf compiles at its crate root, under the encoding of its canonical identity:
+    the item its consumers name (DD-0007).
+
+    A body emitted in several frames under one identity, such as a trait default per receiver, has no single item, so
+    none is exported for it. A generic body emits no item; its consumers instantiate its governed body.
+    """
+    mut exports: list[PlanExport] = []
+    mut ambiguous: list[str] = []
+    for body in emitted:
+        match body.canonical:
+            Some(identity) =>
+                if is_package_identity(identity):
+                    name = encode_incan_symbol_identity(identity)
+                    if exports_name(exports, name):
+                        ambiguous.append(name)
+                    else:
+                        exports.append(PlanExport(name=name, path=f"crate::{function_name(context, body)}"))
+            None => pass
+    for declaration in context.nominal_declarations:
+        if declaration.public and declaration.native_item == "" and is_package_identity(declaration.canonical):
+            exports.append(
+                PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
+            )
+    for declaration in context.enum_declarations:
+        if declaration.public and declaration.native_item == "" and is_package_identity(declaration.canonical):
+            exports.append(
+                PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
+            )
+    mut unique: list[PlanExport] = []
+    for export in exports:
+        if export.name not in ambiguous:
+            unique.append(export)
+    return unique
+
+
+def exports_name(exports: &list[PlanExport], name: str) -> bool:
+    """Whether an export already takes `name`."""
+    for export in exports:
+        if export.name == name:
+            return true
+    return false
+
+
+def is_package_identity(identity: &RustCanonicalSymbolId) -> bool:
+    """Whether a package declares `identity`, so a Loaf compiles it."""
+    match identity.origin:
+        SymbolOrigin.Package(library=_library, module_path=_path) => return true
+        _ => return false
 
 
 def retains_emitted_frame(frames: list[RustBody], candidate: &RustBody) -> bool:
@@ -6904,7 +6868,7 @@ pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files
     """
     Collect every body's first refusal rather than only the program's first, for the direct-route census.
 
-    The declaration context is prepared as `lower_program` prepares it, and a refusal there is the only one reported,
+    The declaration context is prepared as `program_plan` prepares it, and a refusal there is the only one reported,
     because no body lowers without that context. Each ordinary body then lowers independently, so a refusal in one body
     never hides another body's, and checked type-parameter instances follow once every body has been tried. Each
     refusal names the body it came from. The plan itself is discarded.
@@ -6925,7 +6889,7 @@ def body_refusals(
     entry: int,
 ) -> Result[list[str], str]:
     """
-    Prepare the declaration context exactly as `lower_program` does, refusing as it refuses, then lower each ordinary
+    Prepare the declaration context exactly as `program_plan` does, refusing as it refuses, then lower each ordinary
     body on its own and record the first refusal of every body that refuses.
     """
     _conversion_placement = validate_conversion_placement(modules, entry)?
@@ -6961,7 +6925,7 @@ def body_refusals(
                 Err(error) =>
                     refusals.append(f"{body.name}: {error}")
                     continue
-            if len(body.type_parameters) != 0 or deferred_sdk_default(context, body):
+            if len(body.type_parameters) != 0:
                 continue
             match lower_function(
                 context,
@@ -6991,95 +6955,6 @@ def body_refusals(
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
     return Ok(refusals)
-
-
-pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
-    """Validate declarations first, then lower ordinary bodies and each checked type-parameter instance used by them."""
-    _ = validate_module(module)?
-    traits = specialize_traits(module)?
-    closed_context = close_async_types(traits)?
-    nominals, nominal_instances = specialize_nominals_with_instances(closed_context)?
-    specialized = specialize_enums(nominals)?
-    return lower_concrete_module(specialized, source, file, nominal_instances)
-
-
-def lower_concrete_module(
-    module: &BodyIrModule,
-    source: str,
-    file: str,
-    nominal_instances: list[NominalInstance],
-) -> Result[Plan, str]:
-    """Lower ordinary bodies, closed trait defaults, and the worklist of checker-selected function instances."""
-    unions = collect_unions(module)
-    mut intrinsics = intrinsic_declarations(module, file)?
-    checked_functions, checked_runtime, checked_instances = lower_checked_deserialize(
-        module,
-        nominal_instances,
-        file,
-        intrinsics,
-    )?
-    conversion_functions, conversion_runtime = lower_string_conversions(module, file, intrinsics)?
-    mut models = lower_model_declarations(module, file, intrinsics, nominal_instances)?
-    mut enums = lower_enum_declarations(module, file, intrinsics)?
-    attach_enum_comparisons(module, enums, intrinsics)?
-    mut functions = checked_functions
-    functions.extend(conversion_functions)
-    mut externals = checked_runtime
-    merge_externals(externals, conversion_runtime)
-    mut instances = checked_instances
-    for body in module.bodies:
-        if len(body.type_parameters) != 0 or deferred_sdk_default(module, body):
-            continue
-        for retained in functions:
-            if retained.name == function_name(module, body):
-                return Err(f"unsupported Body IR overloaded function {body.name}")
-        function, runtime, pending, synthesized = lower_function(
-            module,
-            body,
-            unions,
-            source,
-            file,
-            intrinsics,
-            [],
-            DecoratorFrame.Normal,
-        )?
-        functions.append(function)
-        append_synthesized(functions, synthesized)?
-        if body.is_async and function_name(module, body) == "main":
-            entry_function, entry_constructor, entry_runtime = async_entry(function)
-            functions.append(entry_function)
-            functions.append(entry_constructor)
-            _ = merge_externals(externals, [entry_runtime])?
-        append_generator_constructor(functions, module, body, source, file, intrinsics)?
-        _ = merge_externals(externals, runtime)?
-        instances.extend(pending)
-    owners = [str(module.module_id.path())]
-    statics = lower_computed_statics(
-        module,
-        unions,
-        [source],
-        [file],
-        owners,
-        intrinsics,
-        functions,
-        externals,
-        instances,
-    )?
-    _ = lower_instances(module, instances, unions, [source], [file], owners, functions, externals, intrinsics)?
-    for declaration in intrinsics:
-        enums.append(declaration)
-    retain_factory_callable_storage(module, functions, models, externals)?
-    validate_futures(module, intrinsics)?
-    return Ok(
-        Plan(
-            enums=enums,
-            models=models,
-            functions=functions,
-            externals=externals,
-            span=SourceSpan(file=file, line=1, column=1),
-            statics=statics,
-        ),
-    )
 
 
 def append_generator_constructor(

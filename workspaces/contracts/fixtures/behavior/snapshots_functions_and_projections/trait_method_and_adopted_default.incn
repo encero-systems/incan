@@ -1,0 +1,38 @@
+# behavior: a trait method implemented by a class and a trait default method adopted unchanged both answer a call on the concrete receiver, and the implemented method also answers through a generic bound on the trait
+# expect-stdout:
+#   ready
+#   default
+#   ready
+#   bound
+
+trait Labeled:
+    def label(self) -> str
+
+
+class Item with Labeled:
+    value: str
+
+    def label(self) -> str:
+        return self.value
+
+
+trait Named:
+    def label(self) -> str:
+        return "default"
+
+
+class Plain with Named:
+    value: str
+
+
+def describe[T with Labeled](x: T) -> str:
+    return x.label()
+
+
+def main() -> None:
+    item: Item = Item(value="ready")
+    println(item.label())
+    plain: Plain = Plain(value="unused")
+    println(plain.label())
+    println(describe(item))
+    println(describe(Item(value="bound")))

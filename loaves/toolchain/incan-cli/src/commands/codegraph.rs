@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::{CliError, CliResult, ExitCode};
 use incan_codegraph::to_jsonl;
 use incan_driver::inspect::codegraph::{collect_codegraph_records, normalize_input_path};
-use incan_provider::FeatureSelection;
+use incan_driver::unit::UnitDescription;
 
 /// Output formats for `incan inspect codegraph`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,14 +27,12 @@ pub enum CodegraphInspectionFormat {
 /// Export the codegraph for one path.
 pub fn inspect_codegraph(
     path: &Path,
+    units: &[UnitDescription],
     format: CodegraphInspectionFormat,
     allow_errors: bool,
-    feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
 ) -> CliResult<ExitCode> {
     let normalized = normalize_input_path(path).map_err(CliError::from)?;
-    let records = collect_codegraph_records(&normalized, allow_errors, feature_selection, sdk_profile_override)
-        .map_err(CliError::from)?;
+    let records = collect_codegraph_records(&normalized, units, allow_errors).map_err(CliError::from)?;
     match format {
         CodegraphInspectionFormat::Jsonl => {
             let jsonl = to_jsonl(&records)

@@ -20,6 +20,21 @@ pub fn fail_t<T>(msg: String) -> T {
     incan_std_core::errors::__private::raise_runtime_misuse(&msg)
 }
 
+/// Run `block` and return the text of the panic it raises, or `None` when it returns.
+///
+/// A panic payload is a type-erased `Box<dyn Any + Send>` with no Incan type, so the payload is read here: a `String`
+/// or `&str` payload yields its text, any other payload an empty string.
+pub fn panic_text<F: FnOnce()>(block: F) -> Option<String> {
+    let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(block)).err()?;
+    let text = match payload.downcast_ref::<String>() {
+        Some(text) => text.clone(),
+        None => payload
+            .downcast_ref::<&str>()
+            .map_or_else(String::new, |text| (*text).to_string()),
+    };
+    Some(text)
+}
+
 /// Return the canonical runtime misuse message for a runner-only `std.testing` marker.
 pub fn testing_marker_runtime_misuse_message(marker: &str) -> String {
     format!("std.testing.{marker} is marker metadata for `incan test` and is not executable runtime logic")

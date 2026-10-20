@@ -43,8 +43,7 @@ impl<'a> Parser<'a> {
     ///
     /// ## Notes
     /// - For ID-carrying tokens (keywords/operators/punctuation), the IDs must match.
-    /// - For data-bearing tokens (identifiers/literals), the variant is compared and the
-    ///   payload value is ignored.
+    /// - For data-bearing tokens (identifiers/literals), the variant is compared and the payload value is ignored.
     fn check(&self, kind: &TokenKind) -> bool {
         match (kind, &self.peek().kind) {
             (TokenKind::Keyword(k1), TokenKind::Keyword(k2)) => k1 == k2,
@@ -84,13 +83,19 @@ impl<'a> Parser<'a> {
             return None;
         }
         let namespace = incan_lang::lang::keywords::activation(id)?;
-        Some(errors::soft_keyword_requires_import(name, namespace, self.current_span()))
+        Some(errors::soft_keyword_requires_import(
+            name,
+            namespace,
+            self.current_span(),
+        ))
     }
 
     /// Return the currently-active soft keyword id, if the current token is an active soft keyword spelling.
     fn current_active_soft_keyword(&self) -> Option<KeywordId> {
         match &self.peek().kind {
-            TokenKind::Keyword(id) if incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) => {
+            TokenKind::Keyword(id)
+                if incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) =>
+            {
                 Some(*id)
             }
             TokenKind::Ident(name) => {
@@ -107,7 +112,8 @@ impl<'a> Parser<'a> {
 
     /// Return `true` if keyword `id` is allowed in the requested parser surface.
     ///
-    /// Imported-library registrations are checked first so consumer-side vocab metadata can widen accepted surfaces for active soft keywords; builtin metadata is used as fallback.
+    /// Imported-library registrations are checked first so consumer-side vocab metadata can widen accepted surfaces for
+    /// active soft keywords; builtin metadata is used as fallback.
     fn keyword_supports_surface_usage(&self, id: KeywordId, usage: KeywordSurfaceKind) -> bool {
         let keyword_name = incan_lang::lang::keywords::as_str(id);
         if let Some(specs) = self.active_imported_keyword_specs.get(keyword_name)
@@ -367,7 +373,9 @@ impl<'a> Parser<'a> {
             || self.check_keyword(KeywordId::None)
             || self.check_keyword(KeywordId::Not)
             || self.check_keyword(KeywordId::SelfKw)
-            || self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression).is_some()
+            || self
+                .current_surface_keyword(KeywordSurfaceKind::PrefixExpression)
+                .is_some()
             || self.check_keyword(KeywordId::Match)
             || self.check_keyword(KeywordId::If)
             || self.check_keyword(KeywordId::Loop)
@@ -399,13 +407,13 @@ impl<'a> Parser<'a> {
         }
         docstring
     }
-
 }
 
-fn keyword_surface_supports_usage(
-    surface_kind: incan_vocab::KeywordSurfaceKind,
-    usage: KeywordSurfaceKind,
-) -> bool {
+/// Whether a vocabulary keyword declared with `surface_kind` may appear where the parser expects `usage`.
+///
+/// Control-flow and block-context keywords take statement arguments, function-declaration keywords act as declaration
+/// modifiers, and try-block keywords start a prefix expression; every other pairing is refused at the call site.
+fn keyword_surface_supports_usage(surface_kind: incan_vocab::KeywordSurfaceKind, usage: KeywordSurfaceKind) -> bool {
     matches!(
         (surface_kind, usage),
         (

@@ -549,50 +549,43 @@ impl TypeChecker {
         Some((name.clone(), info.path.clone()))
     }
 
-    /// The declaring identity of a callable reached through a module binding (`math.sqrt`), from its checked provider,
-    /// the module graph or the permitted source stdlib cache that resolved its signature.
+    /// The declaring identity of a callable reached through a module binding (`math.sqrt`), from the Loaf that owns
+    /// the module or from the program's own module graph.
     ///
-    /// An active checked provider owns both the signature and identity; an absent export cannot fall back to source.
-    /// Source-backed stdlib bindings use the stdlib cache, which the dependency-member walk does not consult. Both
-    /// `import std.math` + `math.sqrt(..)` and `from std.math import sqrt` + `sqrt(..)` record the same declaration.
+    /// Both `import std.math` + `math.sqrt(..)` and `from std.math import sqrt` + `sqrt(..)` record the same
+    /// declaration.
     fn imported_module_callable_identity(
         &mut self,
         module_path: &[String],
         member: &str,
     ) -> Option<incan_semantics_core::CanonicalSymbolId> {
-        if self.checked_sdk_provider_owns_module(module_path) {
-            return self.sdk_provider_member_identity(&ImportPath::simple(module_path.to_vec()), member);
+        if let Some((library, rest)) = self.loaf_module(module_path) {
+            return self
+                .resolve_pub_library_module_symbol_member(&library, &rest, member)
+                .ok()
+                .flatten()?
+                .canonical;
         }
         self.dependency_member_identity(&ImportPath::simple(module_path.to_vec()), member)
-            .or_else(|| self.stdlib_cache.lookup_identity(module_path, member))
     }
 
-    /// Resolve a function member from a stdlib or public-package module binding.
+    /// Resolve a function member from a Loaf or source module binding.
     fn resolve_imported_module_function_member(&mut self, module_path: &[String], member: &str) -> Option<SymbolKind> {
         self.resolve_imported_module_function_member_with_source(module_path, member)
             .map(|(kind, _)| kind)
     }
 
     /// Resolve an imported callable together with the authored module path used by lowering and codegraph facts.
-    /// Checked provider modules retain authority over missing exports instead of falling back to source declarations.
+    ///
+    /// A Loaf owns its public modules even when an export is missing: a member it does not publish is not answered
+    /// from anywhere else.
     fn resolve_imported_module_function_member_with_source(
         &mut self,
         module_path: &[String],
         member: &str,
     ) -> Option<(SymbolKind, Vec<String>)> {
-        // A checked provider owns its public module even when an export is missing. Never answer from source stubs
-        // or an unrelated source graph after its canonical dotted-key lookup refuses the member.
-        if self.checked_sdk_provider_owns_module(module_path) {
-            let kind = self.sdk_provider_member_symbol(&ImportPath::simple(module_path.to_vec()), member)?;
-            return matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
-                .then(|| (kind, module_path.to_vec()));
-        }
-        if let Some(kind) = self.stdlib_cache.lookup_function_symbol(module_path, member) {
-            return Some((kind, module_path.to_vec()));
-        }
-        if module_path.len() >= 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-            let (kind, source_module_path) =
-                self.lookup_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)?;
+        if let Some((library, rest)) = self.loaf_module(module_path) {
+            let (kind, source_module_path) = self.lookup_pub_library_module_symbol_member(&library, &rest, member)?;
             return matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
                 .then_some((kind, source_module_path));
         }
@@ -608,42 +601,20 @@ impl TypeChecker {
         Some((kind, source_module_path))
     }
 
-    /// Resolve a constant reached through an imported standard-library or checked public-package module.
+    /// Resolve a constant reached through an imported Loaf or source module.
     pub(in crate::typechecker) fn resolve_imported_module_constant_member(
         &mut self,
         module_path: &[String],
         member: &str,
     ) -> Option<(VariableInfo, Option<incan_semantics_core::CanonicalSymbolId>)> {
-        let provider_owned = self.checked_sdk_provider_owns_module(module_path);
-        if !provider_owned && let Some(info) = self.stdlib_cache.lookup_constant(module_path, member) {
-            let identity = self.stdlib_cache.lookup_identity(module_path, member);
-            return Some((info, identity));
-        }
-        if module_path.len() >= 2 && module_path.first().is_some_and(|seg| seg == "pub") {
+        let (kind, identity) = if let Some((library, rest)) = self.loaf_module(module_path) {
             let resolved = self
-                .resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], member)
+                .resolve_pub_library_module_symbol_member(&library, &rest, member)
                 .ok()
                 .flatten()?;
-            return match resolved.kind {
-                SymbolKind::Variable(info) => Some((info, resolved.canonical)),
-                SymbolKind::Static(info) => Some((
-                    VariableInfo {
-                        ty: info.ty,
-                        is_mutable: false,
-                        is_used: info.is_used,
-                    },
-                    resolved.canonical,
-                )),
-                _ => None,
-            };
-        }
-        let path = ImportPath::simple(module_path.to_vec());
-        let (kind, identity) = if provider_owned {
-            (
-                self.sdk_provider_member_symbol(&path, member)?,
-                self.sdk_provider_member_identity(&path, member),
-            )
+            (resolved.kind, resolved.canonical)
         } else {
+            let path = ImportPath::simple(module_path.to_vec());
             (
                 self.dependency_member_symbol_for_path(&path, member)?,
                 self.dependency_member_identity(&path, member),

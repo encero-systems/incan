@@ -120,8 +120,8 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
     let unknown = || PlanError::Invalid {
         function: path.into(),
         reason: match kind {
-            DefKind::Enum => "stdlib layout names no public enum",
-            _ => "stdlib layout names no public struct",
+            DefKind::Enum => "Loaf layout names no public enum",
+            _ => "Loaf layout names no public struct",
         }
         .into(),
     };
@@ -274,22 +274,44 @@ pub fn inferred_arguments(
 }
 
 /// Instantiate explicit plan arguments after checking their count against the resolved metadata declaration.
+///
+/// Trailing parameters the plan omits take the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s
+/// `A = Global`), instantiated over the arguments before them, as rustc does for a written path.
 pub fn arguments<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
     types: &[crate::plan::PlanType],
 ) -> Result<rustc_middle::ty::GenericArgsRef<'tcx>, PlanError> {
-    if tcx.generics_of(def).count() != types.len() {
+    let generics = tcx.generics_of(def);
+    if !arity_admits(tcx, def, types.len()) {
         return Err(PlanError::Invalid {
             function: tcx.def_path_str(def),
             reason: "generic argument count differs from metadata".into(),
         });
     }
-    let arguments = types
+    let mut arguments = types
         .iter()
         .map(|ty| crate::types::native_type(tcx, ty).map(Into::into))
         .collect::<Result<Vec<_>, _>>()?;
+    for index in types.len()..generics.count() {
+        let default = generics
+            .param_at(index, tcx)
+            .default_value(tcx)
+            .ok_or_else(|| PlanError::Invalid {
+                function: tcx.def_path_str(def),
+                reason: "omitted generic argument has no default".into(),
+            })?;
+        let preceding = tcx.mk_args(&arguments);
+        arguments.push(default.instantiate(tcx, preceding).skip_normalization());
+    }
     Ok(tcx.mk_args(&arguments))
+}
+
+/// Whether `written` arguments instantiate `def`: every parameter is written, or each omitted one has a default.
+pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
+    let generics = tcx.generics_of(def);
+    written <= generics.count()
+        && (written..generics.count()).all(|index| generics.param_at(index, tcx).default_value(tcx).is_some())
 }
 
 /// Refuse an instantiation whose type arguments do not satisfy the callee's where-clauses, before any MIR exists.

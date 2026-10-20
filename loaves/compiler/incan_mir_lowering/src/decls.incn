@@ -1,6 +1,6 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
-from rust::incan_semantics_core import SymbolOrigin, IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     NominalDeclaration,
@@ -339,39 +339,13 @@ def library_fields(
 
 
 pub def library_item(declaration: &NominalDeclaration) -> str:
-    """Name the compiled item that owns a stdlib layout, or nothing for any other layout."""
-    if declaration.native_item != "":
-        return str(declaration.native_item)
-    return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
+    """Name the compiled item that owns a layout a linked Loaf declares, or nothing for a layout declared here."""
+    return str(declaration.native_item)
 
 
 pub def library_enum_item(declaration: &RustEnumDeclaration) -> str:
-    """Name the compiled item that owns a stdlib enum, or nothing for any other enum."""
-    return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
-
-
-def library_path(origin: &SymbolOrigin, name: str) -> str:
-    """
-    Name a stdlib declaration's compiled item, `library::module::Name`, or nothing for any other origin.
-
-    SDK packages compile each stdlib module into the like-named module of their crate, and the native route links
-    those crates, so a stdlib type is named rather than declared. A dependency package's type is declared from its
-    published representation instead. Registered async runtime types name their runtime facet directly; their opaque
-    records expose no fields or constructors.
-    """
-    # Comparing in expression position keeps the `SymbolOrigin` import that the match patterns alone would not.
-    if origin == SymbolOrigin.Builtin:
-        return ""
-    match origin:
-        SymbolOrigin.Package(library=library, module_path=path) =>
-            if not str(library).startswith("incan_stdlib_") and str(library) != "incan_std_async":
-                return ""
-            mut segments = [str(library)]
-            for segment in path:
-                segments.append(str(segment))
-            segments.append(name)
-            return "::".join(segments)
-        _ => return ""
+    """Name the compiled item that owns an enum a linked Loaf declares, or nothing for an enum declared here."""
+    return str(declaration.native_item)
 
 
 def serde_field_names(declaration: &NominalDeclaration) -> list[str]:

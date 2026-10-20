@@ -1,8 +1,11 @@
 //! Rust boundary matching, Rust call validation, and coercion metadata recording.
 
+use std::collections::HashMap;
+
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::diagnostics::errors;
+use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
 use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
@@ -180,7 +183,7 @@ impl TypeChecker {
     /// only while validating an explicit call argument, never from [`Self::types_compatible`].
     fn prewarm_rust_boundary_type_identity_metadata(&self, ty: &ResolvedType) {
         self.prewarm_rust_type_identity_metadata_with(ty, &|checker, path| {
-            let _ = checker.rust_item_metadata_for_path_blocking(path);
+            let _ = checker.rust_item_metadata_for_path(path);
         });
     }
 
@@ -242,6 +245,48 @@ impl TypeChecker {
         } else {
             return_ty
         }
+    }
+
+    /// Bind each generic a callable parameter returns (`f: impl FnOnce() -> R`) to what the passed callable returns.
+    ///
+    /// Rust leaves a function generic such as `R` in `catch_unwind<F: FnOnce() -> R, R>` unbound in the signature. The
+    /// closure or function passed for the callable parameter fixes it, so the call's result names that type rather than
+    /// a placeholder no layout can carry.
+    fn rust_callable_return_bindings(
+        &self,
+        sig: &RustFunctionSig,
+        owner_path: &str,
+        bindings: &[RustCallArgBinding<'_>],
+    ) -> HashMap<String, ResolvedType> {
+        let mut bound = HashMap::new();
+        for binding in bindings {
+            let target = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                binding.param.type_display.as_str(),
+                owner_path,
+            );
+            let (ResolvedType::Function(_, target_ret), ResolvedType::Function(_, arg_ret)) = (&target, binding.arg_ty)
+            else {
+                continue;
+            };
+            let (ResolvedType::RustPath(name) | ResolvedType::TypeVar(name)) = target_ret.as_ref() else {
+                continue;
+            };
+            if sig.type_params.iter().any(|param| param == name.trim()) {
+                bound.insert(name.trim().to_string(), arg_ret.as_ref().clone());
+            }
+        }
+        bound
+    }
+
+    /// Substitute the Rust generics `bound` fixes into an inspected result type.
+    fn bind_rust_generics(ty: ResolvedType, bound: &HashMap<String, ResolvedType>) -> ResolvedType {
+        if bound.is_empty() {
+            return ty;
+        }
+        map_resolved_type_leaves(&ty, &|leaf| match leaf {
+            ResolvedType::RustPath(name) => bound.get(name.trim()).cloned(),
+            _ => None,
+        })
     }
 
     /// Substitute inspected Rust generic placeholders from a compatible expected result shape.
@@ -1021,6 +1066,7 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, owner_path, span);
         }
 
+        let callable_returns = self.rust_callable_return_bindings(sig, owner_path, &bindings);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let param = binding.param;
@@ -1046,6 +1092,7 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, owner_path, span);
+        let ret = Self::bind_rust_generics(ret, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -1089,6 +1136,7 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
+        let callable_returns = self.rust_callable_return_bindings(sig, path, &bindings);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let arg_ty = binding.arg_ty;
@@ -1097,6 +1145,7 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
+        let ret = Self::bind_rust_generics(ret, &callable_returns);
         let ret = expected_return_ty
             .map(|expected| Self::refine_unbound_rust_return_type_with_expected(&ret, expected))
             .unwrap_or(ret);
@@ -1116,30 +1165,6 @@ mod validate_rust_function_call_tests {
     use incan_lang::interop::{CoercionPolicy, RustFunctionSig, RustParam};
     use incan_lang::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
-
-    #[cfg(feature = "rust_inspect")]
-    fn scalar_udf_metadata(path: &str, definition_path: &str) -> incan_lang::interop::RustItemMetadata {
-        use incan_lang::interop::{RustItemKind, RustTypeInfo, RustVisibility};
-
-        incan_lang::interop::RustItemMetadata {
-            canonical_path: path.to_string(),
-            definition_path: Some(definition_path.to_string()),
-            visibility: RustVisibility::Public,
-            kind: RustItemKind::Type(RustTypeInfo {
-                type_params: Vec::new(),
-                type_param_defaults: Vec::new(),
-                mutable_reference_type_params: Vec::new(),
-                expanded_derive_traits: Vec::new(),
-                has_const_params: false,
-                alias_target: None,
-                metadata_completeness: Default::default(),
-                methods: Vec::new(),
-                implemented_traits: Vec::new(),
-                fields: Vec::new(),
-                variants: Vec::new(),
-            }),
-        }
-    }
 
     #[test]
     fn rust_identity_prewarm_skips_owner_relative_standard_wrappers() {
@@ -1597,63 +1622,6 @@ mod validate_rust_function_call_tests {
             "generic placeholder callbacks should keep satisfying generic Rust callable bounds, got {:?}",
             checker.errors
         );
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    #[test]
-    fn rust_function_call_matches_reexported_identity_inside_generic_wrapper() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let mut checker = TypeChecker::new();
-        let tmp = tempfile::tempdir()?;
-        std::fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"incan_test_rust_generic_identity\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        let manifest_dir = tmp.path().to_path_buf();
-        checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
-        checker.rust_inspect_cache.insert_test_item(
-            &manifest_dir,
-            scalar_udf_metadata("bridge::ScalarUDF", "bridge::udf::ScalarUDF"),
-        )?;
-        checker.rust_inspect_cache.insert_test_item(
-            &manifest_dir,
-            scalar_udf_metadata("bridge::udf::ScalarUDF", "bridge::udf::ScalarUDF"),
-        )?;
-
-        let span = Span::new(10, 20);
-        checker.symbols.define(Symbol {
-            name: "udf".to_string(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: ResolvedType::RustPath("rust::Arc<bridge::udf::ScalarUDF>".to_string()),
-                is_mutable: false,
-                is_used: false,
-            }),
-            span,
-            scope: 0,
-        });
-
-        let arg_expr = Spanned::new(Expr::Ident("udf".to_string()), span);
-        let args = [CallArg::Positional(arg_expr)];
-        let sig = RustFunctionSig {
-            receiver_contract: None,
-            type_params: Vec::new(),
-            params: vec![RustParam {
-                name: Some("udf".to_string()),
-                type_display: "Arc<bridge::ScalarUDF>".to_string(),
-            }],
-            return_type: "()".to_string(),
-            is_async: false,
-            is_unsafe: false,
-        };
-
-        let _ = checker.validate_rust_function_call("rust::bridge::consume_udf", &sig, &args, span);
-
-        assert!(
-            checker.errors.is_empty(),
-            "expected Rust re-export identity to match inside generic wrapper, errors={:?}",
-            checker.errors
-        );
-        Ok(())
     }
 
     #[test]
@@ -2165,81 +2133,6 @@ mod validate_rust_function_call_tests {
             "expected concrete borrowed Rust path boundary to typecheck, errors={:?}",
             checker.errors
         );
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    #[test]
-    fn rust_function_call_matches_reexported_borrowed_param_via_definition_path()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
-        let mut checker = TypeChecker::new();
-        let tmp = tempfile::tempdir()?;
-        std::fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"incan_test_rust_identity\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )?;
-        let manifest_dir = tmp.path().to_path_buf();
-        checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
-        checker.rust_inspect_cache.insert_test_item(
-            &manifest_dir,
-            RustItemMetadata {
-                canonical_path: "datafusion_substrait::substrait::proto::Plan".to_string(),
-                definition_path: Some("substrait::proto::Plan".to_string()),
-                visibility: RustVisibility::Public,
-                kind: RustItemKind::Type(RustTypeInfo {
-                    type_params: Vec::new(),
-                    type_param_defaults: Vec::new(),
-                    mutable_reference_type_params: Vec::new(),
-                    expanded_derive_traits: Vec::new(),
-                    has_const_params: false,
-                    alias_target: None,
-                    metadata_completeness: Default::default(),
-                    methods: vec![],
-                    implemented_traits: Vec::new(),
-                    fields: vec![],
-                    variants: vec![],
-                }),
-            },
-        )?;
-        let cached = checker
-            .rust_item_metadata_for_path("rust::datafusion_substrait::substrait::proto::Plan")
-            .ok_or_else(|| std::io::Error::other("expected cached metadata for rust::datafusion_substrait::..."))?;
-        assert_eq!(
-            cached.definition_path.as_deref(),
-            Some("substrait::proto::Plan"),
-            "expected cached metadata definition path to resolve through re-export"
-        );
-        let span = Span::new(10, 20);
-        checker.symbols.define(Symbol {
-            name: "plan".to_string(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: ResolvedType::RustPath("rust::datafusion_substrait::substrait::proto::Plan".to_string()),
-                is_mutable: false,
-                is_used: false,
-            }),
-            span,
-            scope: 0,
-        });
-        let arg_expr = Spanned::new(Expr::Ident("plan".to_string()), span);
-        let args = [CallArg::Positional(arg_expr)];
-        let sig = RustFunctionSig {
-            receiver_contract: None,
-            type_params: Vec::new(),
-            params: vec![RustParam {
-                name: Some("value".to_string()),
-                type_display: "&substrait::proto::Plan".to_string(),
-            }],
-            return_type: "()".to_string(),
-            is_async: false,
-            is_unsafe: false,
-        };
-        let _ = checker.validate_rust_function_call("rust::consume_plan", &sig, &args, span);
-        assert!(
-            checker.errors.is_empty(),
-            "expected re-exported borrowed Rust path boundary to typecheck, errors={:?}",
-            checker.errors
-        );
-        Ok(())
     }
 
     #[test]

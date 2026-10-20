@@ -37,7 +37,6 @@ hide:
 [Try Incan](tooling/tutorials/getting_started.md){ .md-button .md-button--primary }
 [GitHub](https://github.com/encero-systems/incan){ .md-button }
 [Read the Docs](start_here/index.md){ .md-button .inc-button--docs }
-[Duckborrowing →](contributing/explanation/duckborrowing.md){ .inc-hero__text-link }
 </div>
 
 <div class="inc-hero__quickstart" aria-label="First Incan project">
@@ -312,7 +311,6 @@ Incan is beta software. Run it, inspect the generated artifacts, and compare it 
 [Try Incan](tooling/tutorials/getting_started.md){ .md-button .md-button--primary }
 [GitHub](https://github.com/encero-systems/incan){ .md-button }
 [Read the Docs](start_here/index.md){ .md-button .inc-button--docs }
-[Duckborrowing →](contributing/explanation/duckborrowing.md){ .inc-hero__text-link }
 </div>
 
 </section>

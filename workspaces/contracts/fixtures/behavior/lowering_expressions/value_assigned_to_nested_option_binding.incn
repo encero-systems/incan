@@ -1,0 +1,25 @@
+# behavior: a value assigned to a nested Option binding is wrapped in each Option layer, in a declaration and a reassignment
+# expect-stdout:
+#   5
+#   0
+#   1
+#   6
+#   none
+
+def main() -> None:
+    a: Option[Option[int]] = 5
+    println(a.unwrap().unwrap())
+    mut b: Option[Option[list[int]]] = None
+    b = []
+    println(len(b.unwrap().unwrap()))
+    c: Option[Option[list[int]]] = [1]
+    println(len(c.unwrap().unwrap()))
+    mut inner: Option[Option[int]] = None
+    inner = 6
+    match inner:
+        Some(value) => println(value.unwrap_or(7))
+        None => println("none")
+    outer: Option[Option[int]] = None
+    match outer:
+        Some(value) => println(value.unwrap_or(7))
+        None => println("none")

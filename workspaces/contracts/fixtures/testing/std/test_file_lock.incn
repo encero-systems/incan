@@ -1,0 +1,16 @@
+# behavior: a test acquires an uncontended exclusive std.fs.locking lock
+# expect-stdout-contains:
+#   test_file_lock.incn::test_exclusive_lock_is_acquired PASSED
+
+"""A std.fs.locking lock under `incan test`."""
+
+from std.fs.locking import try_exclusive
+from std.testing import assert_true
+
+
+def test_exclusive_lock_is_acquired() -> None:
+    """An exclusive lock nobody else holds is acquired."""
+    match try_exclusive("contracts-file-lock"):
+        Ok(Some(_)) => assert_true(true)
+        Ok(None) => assert_true(false, "the lock must not be contended")
+        Err(error) => assert_true(false, error)

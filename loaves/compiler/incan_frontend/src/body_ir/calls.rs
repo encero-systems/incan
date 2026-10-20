@@ -1660,7 +1660,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     name: method,
                     intrinsic_carrier: None,
                     reflection: None,
-                    sdk_trait: None,
+                    loaf_trait: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -1764,7 +1764,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && self
                 .type_info
                 .resolved_identity(callee.span)
-                .is_some_and(|owner| super::library_nominals::sdk_identity(owner).is_some());
+                .is_some_and(super::is_loaf_identity);
         let bound = if sdk_factory {
             self.bind_sdk_factory_args(&format!("function `{name}`"), declaration.slots, args, scope, out)
         } else if factory {
@@ -1807,14 +1807,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .and_then(|identity| self.published_callable_returns.get(identity))
                 .filter(|ty| **ty != IncanType::Unknown)
                 .cloned()
-                .or_else(|| {
-                    if checked_return != IncanType::Unknown {
-                        return None;
-                    }
-                    let identity = declaration.canonical.as_ref()?;
-                    let mut cache = self.type_info.body_ir_stdlib_cache();
-                    super::library_calls::library_call(identity, &mut cache).map(|record| record.return_type)
-                })
                 .unwrap_or(checked_return)
         };
         let ty = if is_async {
@@ -2444,27 +2436,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        let mut target = bir::MethodTarget {
+        let target = bir::MethodTarget {
             native_trait_delegation: None,
             reflection: self.checked_reflection_operation(span),
             name: name.to_string(),
             intrinsic_carrier,
-            sdk_trait: self.type_info.resolved_identity(span).and_then(|identity| {
-                super::library_calls::trait_dispatch(
-                    identity,
-                    self.type_info.resolved_method_call(span).map(|call| &call.dispatch),
-                    Some(self.resolve_ty(recv.span)),
-                    &self.type_parameters,
-                    self.type_info,
-                )
-            }),
+            loaf_trait: None,
             // Checked provider and inferred targets precede retained source aliases and registry numeric helpers.
             canonical,
             type_args: resolved_type_args,
             binding,
         };
-        target.native_trait_delegation =
-            library_calls::selected_native_trait(self.type_info, span, &target).map(Box::new);
         self.push_call_temp(
             bir::Callee::Method(target),
             call_args,
@@ -2801,11 +2783,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
             .cloned();
         let Some(canonical) = canonical else {
-            if type_args.is_empty()
-                && let Some(retained) = self.lower_sdk_static_constructor(recv, name, args, span, scope, out)
-            {
-                return retained;
-            }
             return self.unsupported_operand(
                 format!("static member `{spelling}` without a resolved method declaration"),
                 scope,

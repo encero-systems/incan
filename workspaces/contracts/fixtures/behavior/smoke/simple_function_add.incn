@@ -1,0 +1,10 @@
+# behavior: a public int function taking two parameters returns their sum
+# expect-stdout:
+#   5
+
+pub def add(a: int, b: int) -> int:
+    return a + b
+
+
+def main() -> None:
+    println(add(2, 3))

@@ -1,0 +1,26 @@
+# behavior: modules `a`, `b`, `e` and `main` each declare a const SIZE, and `d` imports the SIZE that `c` declares; a function defaulting to SIZE in each of `a`, `b`, `d`, `e` and `main` takes the SIZE that its own module means when a call omits the argument, including a call through `e`'s symbol alias
+# expect-stdout:
+#   1
+#   2
+#   3
+#   9
+#   5
+
+from a import first
+from b import second
+from d import third
+from e import five
+
+const SIZE: int = 9
+
+
+def local(n: int = SIZE) -> int:
+    return n
+
+
+def main() -> None:
+    println(first())
+    println(second())
+    println(third())
+    println(local())
+    println(five())

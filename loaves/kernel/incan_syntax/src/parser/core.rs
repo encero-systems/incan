@@ -204,8 +204,12 @@ impl<'a> Parser<'a> {
         library_imported_dsl_surfaces: Option<&ImportedLibraryDslSurfaces>,
         source: &'a str,
     ) -> Self {
-        let mut parser =
-            Self::new_with_context(tokens, module_path, library_imported_vocab, library_imported_dsl_surfaces);
+        let mut parser = Self::new_with_context(
+            tokens,
+            module_path,
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+        );
         parser.source = Some(source);
         parser
     }
@@ -498,16 +502,13 @@ impl<'a> Parser<'a> {
                                 descriptor,
                             }),
                     );
-                self.active_embedded_fragment_descriptors.extend(
-                    surface
-                        .embedded_fragments
-                        .iter()
-                        .cloned()
-                        .map(|descriptor| ActiveEmbeddedFragmentDescriptor {
+                self.active_embedded_fragment_descriptors
+                    .extend(surface.embedded_fragments.iter().cloned().map(|descriptor| {
+                        ActiveEmbeddedFragmentDescriptor {
                             dependency_key: provider_key.to_string(),
                             descriptor,
-                        }),
-                );
+                        }
+                    }));
             }
         }
 
@@ -659,7 +660,9 @@ impl<'a> Parser<'a> {
 fn dsl_surface_applies_to_import_path(surface: &incan_vocab::DslSurface, import_path: &[String]) -> bool {
     match &surface.activation {
         incan_vocab::KeywordActivation::Always => true,
-        incan_vocab::KeywordActivation::OnImport { namespace } => import_path_activates_namespace(import_path, namespace),
+        incan_vocab::KeywordActivation::OnImport { namespace } => {
+            import_path_activates_namespace(import_path, namespace)
+        }
         _ => false,
     }
 }
@@ -671,7 +674,9 @@ fn registration_applies_to_import_path(
 ) -> bool {
     match &registration.activation {
         incan_vocab::KeywordActivation::Always => true,
-        incan_vocab::KeywordActivation::OnImport { namespace } => import_path_activates_namespace(import_path, namespace),
+        incan_vocab::KeywordActivation::OnImport { namespace } => {
+            import_path_activates_namespace(import_path, namespace)
+        }
         _ => false,
     }
 }

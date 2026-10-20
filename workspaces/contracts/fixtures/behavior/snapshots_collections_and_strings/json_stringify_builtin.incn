@@ -1,0 +1,19 @@
+# behavior: json_stringify evaluates its operand exactly once through both spellings, serializes None as null and keeps the full width of an int
+# expect-stdout:
+#   evaluated
+#   "line\né"
+#   evaluated
+#   "line\né"
+#   null
+#   9223372036854775807
+
+def next_value() -> str:
+    println("evaluated")
+    return "line\né"
+
+
+def main() -> None:
+    println(json_stringify(next_value()))
+    println(std.builtins.json_stringify(next_value()))
+    println(json_stringify(None))
+    println(json_stringify(9223372036854775807))

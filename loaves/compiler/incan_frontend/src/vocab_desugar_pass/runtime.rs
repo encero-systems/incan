@@ -8,7 +8,7 @@ use wasmtime::{Config, Engine, ExternType, Instance, Linker, Module, Store, Val,
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
 
-use crate::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use crate::loaf_index::LoafIndex;
 
 use super::VocabDesugarPassError;
 
@@ -98,11 +98,11 @@ impl WasmDesugarerRuntime {
     /// guest instance, fuel budget and ABI buffers; neither guest state nor desugared output is retained.
     pub fn desugar_node(
         &mut self,
-        library_manifest_index: &LibraryManifestIndex,
+        loaves: &LoafIndex,
         node: &incan_vocab::VocabSyntaxNode,
         module_path: Option<&str>,
     ) -> Result<incan_vocab::DesugarResponse, VocabDesugarPassError> {
-        let resolved = resolve_wasm_artifact_for_node(library_manifest_index, node)?;
+        let resolved = resolve_wasm_artifact_for_node(loaves, node)?;
         let _trace = tracing::trace_span!(target: "incan::invocation", "incan_frontend::vocab_desugar_node", input = %resolved.path.display(), artifact_digest = %resolved.expected_sha256).entered();
 
         let module = self.compiled_module(&resolved)?;
@@ -155,7 +155,7 @@ impl WasmDesugarerRuntime {
 /// Routing is keyed by `VocabKeywordMetadata.dependency_key`, then resolved through the loaded dependency manifest
 /// entry.
 fn resolve_wasm_artifact_for_node(
-    library_manifest_index: &LibraryManifestIndex,
+    loaves: &LoafIndex,
     node: &incan_vocab::VocabSyntaxNode,
 ) -> Result<ResolvedWasmArtifact, VocabDesugarPassError> {
     let (keyword, metadata) = match node {
@@ -187,19 +187,14 @@ fn resolve_wasm_artifact_for_node(
         });
     }
 
-    let Some(entry) = library_manifest_index.get(dependency_key) else {
+    let Some(entry) = loaves.entry(dependency_key) else {
         return Err(VocabDesugarPassError::Resolution {
             keyword: keyword.clone(),
             message: format!("unknown dependency key `{dependency_key}`"),
         });
     };
 
-    let LibraryManifestIndexEntry::Loaded { manifest, metadata } = entry else {
-        return Err(VocabDesugarPassError::Resolution {
-            keyword: keyword.clone(),
-            message: format!("dependency `{dependency_key}` is not in loaded state"),
-        });
-    };
+    let manifest = &entry.artifact.manifest;
     let Some(vocab) = manifest.vocab.as_ref() else {
         return Err(VocabDesugarPassError::Resolution {
             keyword: keyword.clone(),
@@ -214,7 +209,7 @@ fn resolve_wasm_artifact_for_node(
     };
 
     let artifact_path =
-        resolve_desugarer_artifact_path(&metadata.crate_root, &desugarer_artifact.relative_path, keyword)?;
+        resolve_desugarer_artifact_path(&entry.artifact.dir, &desugarer_artifact.relative_path, keyword)?;
     Ok(ResolvedWasmArtifact {
         path: artifact_path,
         expected_sha256: desugarer_artifact.sha256.clone(),

@@ -1,0 +1,11 @@
+# behavior: a match over int literal patterns with a wildcard arm returns from every arm
+# expect-accepted:
+
+def handle_option(x: int) -> int:
+    match x:
+        0 => 
+            return 0
+        1 => 
+            return 1
+        _ => 
+            return -1

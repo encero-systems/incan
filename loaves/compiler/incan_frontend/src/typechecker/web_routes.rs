@@ -150,9 +150,7 @@ impl TypeChecker {
     /// Return the function's `@route` decorator when it carries one.
     ///
     /// The decorator is recognized by what it resolves to, not by how it was imported: a stdlib function named
-    /// [`stdlib::STDLIB_WEB_ROUTE_DECORATOR`] that is `@rust.extern` and bound to
-    /// [`stdlib::STDLIB_WEB_MACROS_CRATE`]. That is the same test lowering applies before emitting the passthrough
-    /// attribute, so the checker and the emitter agree on which functions are route handlers.
+    /// [`stdlib::STDLIB_WEB_ROUTE_DECORATOR`] that the standard package owning its module declares `@rust.extern`.
     fn route_decorator<'a>(&mut self, decorators: &'a [Spanned<Decorator>]) -> Option<&'a Spanned<Decorator>> {
         decorators.iter().find(|decorator| {
             let resolved = resolve_decorator_path(&decorator.node, &self.symbols);
@@ -162,11 +160,8 @@ impl TypeChecker {
             if name != stdlib::STDLIB_WEB_ROUTE_DECORATOR || module.is_empty() {
                 return false;
             }
-            self.stdlib_cache
-                .lookup_function_meta(module, name)
-                .is_some_and(|meta| {
-                    meta.is_rust_extern && meta.rust_module_path.as_deref() == Some(stdlib::STDLIB_WEB_MACROS_CRATE)
-                })
+            module.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                && self.provider_declares_decorator_function(&resolved)
         })
     }
 

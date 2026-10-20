@@ -1,0 +1,12 @@
+# behavior: a mutable dict accepts inserts through indexing and lists its keys
+# expect-stdout-contains:
+#   one
+#   two
+
+def main() -> None:
+    mut data: Dict[str, int] = {}
+    data["one"] = 1
+    data["two"] = 2
+
+    for key in data.keys():
+        println(key)
