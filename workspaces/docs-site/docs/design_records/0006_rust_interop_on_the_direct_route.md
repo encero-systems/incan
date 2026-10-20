@@ -48,6 +48,10 @@ Rust function and associated-function inference uses the same structural unifier
 
 For metadata-selected safe synchronous free functions, the checker retains the public callee path, instantiated parameters, result, and native type arguments. Body IR projects that record into its named call and external callable declaration machinery, retaining reference passing modes in the parameter types. The driver preserves those external declarations when joining project modules. A nongeneric Rust free function therefore uses the same external signature verification and call emission as a linked Loaf function. An absent checked call record grants no foreign execution behavior.
 
+Inherent associated functions and methods retain the enclosing impl's native type parameters and self type from Rust metadata. Their native instantiation orders impl arguments before method arguments; it does not infer the impl's arity from the owner's type declaration. A value receiver becomes an explicit first parameter with the checked shared, mutable, or owned passing mode. Closed Rust signatures use the existing external callable records, selected by item identity and native arguments, and lower through the same instantiated external call machinery as linked Loaf functions. The adapter resolves the item and checks the complete instantiated native signature before MIR construction. Trait methods, async calls, unsafe calls, and signatures with unsupported carriers continue to require their own complete checked facts.
+
+Declared reference arguments retain the caller's place through ordinary argument binding; preparing a reference never copies its referent into a value snapshot. Mutable receiver signatures also require a mutable source binding. Opaque Rust item paths remain type identities, while their plan layout names use identifier-safe encoding.
+
 ## Non-goals
 
 - Field access, pattern matching on variants, or construction by fields of opaque Rust values.

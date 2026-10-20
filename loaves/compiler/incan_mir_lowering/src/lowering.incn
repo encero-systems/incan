@@ -4712,7 +4712,7 @@ def lower_loaf_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """
-    Call the compiled item of a function a linked Loaf declares (DD-0007).
+    Call a linked Loaf function (DD-0007) or a checker-selected Rust instantiation (DD-0006).
 
     The callable is selected by the checker's canonical identity, never by a spelling, and its declaration record
     supplies the signature the driver checks against the Loaf's metadata.
@@ -4726,6 +4726,11 @@ def lower_loaf_call(
             Some(identity) =>
                 if identity != callable.canonical:
                     continue
+                match identity.origin:
+                    SymbolOrigin.RustCrate(_path) =>
+                        if target.type_args != callable.native_type_arguments:
+                            continue
+                    _ => pass
         return lower_delegated_call(builder, callable, target, arguments, destination, span)
     return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}")
 
@@ -4748,6 +4753,11 @@ def lower_delegated_call(
     mut names: list[str] = []
     for name in delegation.type_parameters:
         names.append(str(name))
+    mut checked_rust = false
+    match delegation.canonical.origin:
+        SymbolOrigin.RustCrate(_path) =>
+            checked_rust = true
+        _ => pass
     mut closed = library_function_arguments(builder, target, names)?
     if len(closed) != len(names) and len(target.type_args) == 0 and builder.local_offset == 0:
         match target.receiver_type:
@@ -4760,7 +4770,7 @@ def lower_delegated_call(
                             None => pass
                     None => pass
             Some(_receiver) => pass
-    if len(closed) != len(names) or (len(names) == 0 and len(target.type_args) != 0):
+    if len(closed) != len(names) or (not checked_rust and len(names) == 0 and len(target.type_args) != 0):
         return Err("unsupported Body IR nonlocal function with type parameters")
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
@@ -4773,7 +4783,10 @@ def lower_delegated_call(
     _ = require_native_union_signature(returned, builder.intrinsics)?
     result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     mut type_arguments: list[PlanType] = []
-    for argument in closed:
+    mut native_arguments = closed
+    if checked_rust:
+        native_arguments = checked_type_arguments(builder, delegation.native_type_arguments)?
+    for argument in native_arguments:
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )

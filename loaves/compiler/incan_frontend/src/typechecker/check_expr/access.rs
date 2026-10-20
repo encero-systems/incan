@@ -140,6 +140,7 @@ struct RustPathMethodCall<'a> {
     /// The import binding the receiver expression names, when the receiver is a bare imported Rust item such as
     /// the `Mac` in `Mac.update(handle, data)`; `None` for value receivers.
     receiver_binding: Option<&'a str>,
+    receiver_expr: &'a Spanned<Expr>,
     type_args: &'a [Spanned<Type>],
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
@@ -2567,11 +2568,14 @@ impl TypeChecker {
         }
     }
 
-    /// Return the canonical Rust path for a receiver type.
+    /// Return the receiver's Rust item path, keeping instantiated arguments on the checked receiver type.
+    /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
     fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
-            ResolvedType::RustPath(path) => Some(path.clone()),
+            ResolvedType::RustPath(path) => {
+                Some(Self::rust_generic_base_and_args(path).map_or_else(|| path.clone(), |(base, _)| base.to_owned()))
+            }
             ResolvedType::Named(name) => self.rust_canonical_path_for_nominal_receiver(name, None),
             ResolvedType::Generic(name, args) => {
                 self.rust_canonical_path_for_nominal_receiver(name, Some(args.as_slice()))
@@ -3103,6 +3107,89 @@ impl TypeChecker {
         Self::specialize_rust_signature(sig, &substitutions, rust_path)
     }
 
+    /// Retain an inherent Rust callee using the impl's declared native binders, rather than the owner's arity.
+    /// Receiver references are explicit checked parameter types; no downstream consumer guesses a borrow from a name.
+    #[allow(clippy::too_many_arguments)]
+    fn retain_checked_rust_method(
+        &mut self,
+        method: &incan_lang::interop::RustMethodSig,
+        owner: &incan_lang::interop::RustTypeInfo,
+        path: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        receiver: Option<&ResolvedType>,
+        result: &ResolvedType,
+        span: Span,
+    ) {
+        if method.signature.is_async || method.signature.is_unsafe || owner.has_const_params {
+            return;
+        }
+        let native_parameters = method
+            .impl_type_params
+            .iter()
+            .chain(&method.signature.type_params)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut bindings = self.infer_rust_signature_bindings(
+            &method.signature,
+            path,
+            &native_parameters,
+            args,
+            arg_types,
+            Some(result),
+        );
+        if let (Some(receiver), Some(template)) = (receiver, method.impl_self_type.as_deref()) {
+            let template = self.resolved_type_from_rust_display(template);
+            self.infer_type_param_bindings(
+                &self.rust_inference_type(&template, &native_parameters),
+                &self.rust_inference_type(receiver, &[]),
+                &mut bindings,
+            );
+        }
+        let arguments = native_parameters
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                    .cloned()
+                    .or_else(|| {
+                        let index = owner.type_params.iter().position(|name| name == parameter)?;
+                        Some(self.resolved_type_from_rust_display(owner.type_param_defaults.get(index)?.as_deref()?))
+                    })
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(type_arguments) = arguments else {
+            return;
+        };
+        let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
+        if let Some(receiver) = receiver {
+            let display = method
+                .signature
+                .params
+                .first()
+                .map(|parameter| parameter.type_display.trim())
+                .unwrap_or("");
+            let ty = match Self::rust_display_borrow_kind(display) {
+                Some((true, _)) => ResolvedType::RefMut(Box::new(receiver.clone())),
+                Some((false, _)) => ResolvedType::Ref(Box::new(receiver.clone())),
+                None if display == "self" || display == "Self" => receiver.clone(),
+                None => return,
+            };
+            parameters.insert(0, CallableParam::positional(ty));
+        }
+        self.type_info.rust.checked_calls.insert(
+            (span.start, span.end),
+            crate::typechecker::type_info::RustCheckedCall {
+                path: format!("{path}::{}", method.name),
+                type_arguments,
+                parameters,
+                return_type: result.clone(),
+                has_receiver: receiver.is_some(),
+            },
+        );
+    }
+
     /// Resolve and validate a method call on a rust-inspect-backed path.
     ///
     /// Returns:
@@ -3114,6 +3201,7 @@ impl TypeChecker {
             method,
             receiver_metadata,
             receiver_binding,
+            receiver_expr,
             type_args,
             args,
             arg_types,
@@ -3150,6 +3238,7 @@ impl TypeChecker {
                     method,
                     receiver_metadata,
                     receiver_binding,
+                    receiver_expr,
                     type_args,
                     args,
                     arg_types,
@@ -3219,6 +3308,7 @@ impl TypeChecker {
                             method,
                             receiver_metadata,
                             receiver_binding,
+                            receiver_expr,
                             type_args,
                             args,
                             arg_types,
@@ -3242,6 +3332,15 @@ impl TypeChecker {
                     Some(IdentKind::TypeName | IdentKind::RustImport)
                 );
                 let specializes_receiver = receiver_is_type_name && !type_info.type_params.is_empty();
+                if !receiver_is_type_name
+                    && Self::rust_signature_has_receiver(&sig)
+                    && sig.params.first().is_some_and(|parameter| {
+                        Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
+                    })
+                {
+                    self.refuse_write_through_read_only_binding(receiver_expr, span);
+                    self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, receiver_expr);
+                }
                 let declared_type_params = if specializes_receiver {
                     type_info.type_params.as_slice()
                 } else {
@@ -3364,6 +3463,22 @@ impl TypeChecker {
                 } else {
                     sig.clone()
                 };
+                let effective_sig = if !receiver_is_type_name {
+                    self.type_info
+                        .expr_type(receiver_span)
+                        .and_then(|receiver| self.rust_owner_type_args(receiver, rust_path))
+                        .map(|arguments| {
+                            self.specialize_rust_owner_signature(
+                                &effective_sig,
+                                rust_path,
+                                &type_info.type_params,
+                                &arguments,
+                            )
+                        })
+                        .unwrap_or(effective_sig)
+                } else {
+                    effective_sig
+                };
                 if !resolved_type_args.is_empty() {
                     self.type_info
                         .calls
@@ -3399,10 +3514,26 @@ impl TypeChecker {
                 // path: `Box.new(v)` checked against `Box<T>` is a `Box<T>`, and the bare `std::boxed::Box` that
                 // the path-only substitution produced could never unify with the specialized expectation that
                 // drove the reconciliation in the first place.
-                Some(match contextual_receiver.as_ref() {
+                let result = match contextual_receiver.as_ref() {
                     Some(receiver) => Self::substitute_rust_self_type_with_resolved(ret, receiver),
                     None => Self::substitute_rust_self_type(ret, rust_path),
-                })
+                };
+                if let Some(selected) = type_info.methods.iter().find(|candidate| candidate.name == method) {
+                    let receiver = (!receiver_is_type_name && Self::rust_signature_has_receiver(&sig))
+                        .then(|| self.type_info.expr_type(receiver_span).cloned())
+                        .flatten();
+                    self.retain_checked_rust_method(
+                        selected,
+                        type_info,
+                        rust_path,
+                        args,
+                        arg_types,
+                        receiver.as_ref(),
+                        &result,
+                        span,
+                    );
+                }
+                Some(result)
             }
             RustItemKind::Unsupported { description } => {
                 self.errors.push(errors::rust_item_shape_not_supported(
@@ -3742,6 +3873,7 @@ impl TypeChecker {
             method,
             receiver_metadata: _,
             receiver_binding: _,
+            receiver_expr: _,
             type_args,
             args,
             arg_types,
@@ -6629,6 +6761,7 @@ impl TypeChecker {
                 method,
                 receiver_metadata: self.rust_metadata_for_receiver_expr(base).as_ref(),
                 receiver_binding: self.rust_import_binding_for_receiver_expr(base),
+                receiver_expr: base,
                 type_args,
                 args,
                 arg_types: &arg_types,
@@ -7314,6 +7447,7 @@ impl TypeChecker {
                             method: resolved_method,
                             receiver_metadata: None,
                             receiver_binding: None,
+                            receiver_expr: base,
                             type_args,
                             args,
                             arg_types: &arg_types,
@@ -7429,6 +7563,7 @@ impl TypeChecker {
                                 method: resolved_method,
                                 receiver_metadata: None,
                                 receiver_binding: None,
+                                receiver_expr: base,
                                 type_args,
                                 args,
                                 arg_types: &arg_types,

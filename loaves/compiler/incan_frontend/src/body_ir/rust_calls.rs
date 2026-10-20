@@ -1,17 +1,23 @@
 //! Checked Rust callees projected into the existing external callable and named-call machinery (DD-0006).
 
 use super::args::DeclaredSlot;
-use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span, parameter_types};
+use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span, nominal_carriers, parameter_types};
 
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
 /// The signature is already instantiated by checking; this boundary only projects its types into Body IR.
 pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
     let mut calls = Vec::new();
-    for call in facts.rust.checked_calls.values() {
+    let mut checked_calls = facts.rust.checked_calls.iter().collect::<Vec<_>>();
+    checked_calls.sort_by_key(|(span, _)| **span);
+    for (_, call) in checked_calls {
         let Some(canonical) = bir::rust_item_identity(&call.path) else {
             continue;
         };
-        let checked = |ty| parameter_types::checked_semantic_type(ty, facts);
+        let checked = |ty| {
+            let mut projected = parameter_types::checked_semantic_type(ty, facts);
+            nominal_carriers::retain_checked_type(&mut projected, ty, facts);
+            projected
+        };
         let declaration = bir::LoafCallable {
             canonical,
             item: call.path.clone(),
@@ -25,11 +31,6 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
             calls.push(declaration);
         }
     }
-    calls.sort_by(|left, right| {
-        left.item.cmp(&right.item).then_with(|| {
-            format!("{:?}", left.native_type_arguments).cmp(&format!("{:?}", right.native_type_arguments))
-        })
-    });
     calls
 }
 

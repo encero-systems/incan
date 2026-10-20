@@ -249,7 +249,11 @@ impl TypeChecker {
 
     /// Project only declared Rust parameters into the checker's ordinary structural inference representation.
     /// Opaque generic paths are opened here once; lowering receives the instantiated checked result.
-    fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
+    pub(in crate::typechecker::check_expr) fn rust_inference_type(
+        &self,
+        ty: &ResolvedType,
+        parameters: &[String],
+    ) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             let ResolvedType::RustPath(path) = leaf else {
                 return None;
@@ -1181,7 +1185,8 @@ impl TypeChecker {
         self.validate_rust_function_call_with_expected(path, sig, args, span, None)
     }
 
-    /// Validate a direct Rust function call while using an expected result type to bind return-only generics.
+    /// Validate a Rust function from its metadata, instantiate its parameters from inputs and expected output, and
+    /// retain the selected safe synchronous callee for Body IR when validation succeeds.
     pub(in crate::typechecker::check_expr) fn validate_rust_function_call_with_expected(
         &mut self,
         path: &str,

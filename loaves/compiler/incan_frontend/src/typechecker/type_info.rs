@@ -2019,6 +2019,7 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    checked_rust_call: Option<RustCheckedCall>,
     body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
     body_ir_string_slice_member: Option<CanonicalSymbolId>,
     inferred_constructor_type: Option<ResolvedType>,
@@ -3351,6 +3352,7 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            checked_rust_call: self.rust.checked_calls.remove(&key),
             body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
             body_ir_string_slice_member: self.calls.body_ir_string_slice_members.remove(&key),
             inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
@@ -3375,6 +3377,7 @@ impl TypeCheckInfo {
     /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = (span.start, span.end);
+        self.rust.checked_calls.remove(&key);
         self.calls.body_ir_reexport_calls.remove(&key);
         self.calls.body_ir_string_slice_members.remove(&key);
         self.calls.body_ir_constructor_types.remove(&key);
@@ -3404,6 +3407,7 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(&mut self.rust.checked_calls, key, facts.checked_rust_call);
         put(&mut self.calls.body_ir_reexport_calls, key, facts.body_ir_reexport_call);
         put(
             &mut self.calls.body_ir_string_slice_members,

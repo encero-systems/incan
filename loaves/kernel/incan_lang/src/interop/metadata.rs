@@ -509,6 +509,12 @@ pub struct RustReceiverContract {
 pub struct RustMethodSig {
     pub name: String,
     pub signature: RustFunctionSig,
+    /// The enclosing impl's type parameters in native argument order, before the method's own parameters.
+    #[serde(default)]
+    pub impl_type_params: Vec<String>,
+    /// The impl's self type with its declared parameters, used to infer arguments from a checked receiver.
+    #[serde(default)]
+    pub impl_self_type: Option<String>,
 }
 
 /// One trait implementation rust-inspect can associate with a concrete Rust type.

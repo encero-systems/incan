@@ -44,7 +44,7 @@ The compiler is a rustc driver (DD-0004). rustc's own crate metadata therefore d
 4. **Storage.**
    - **Layout:** a cache uses `.incnbody`'s layout. A version comes first, then a postcard index of each path's payload range, then one postcard payload per item.
    - **Reading:** a reader decodes the index once, and decodes an item only when checking asks for it.
-   - **Shape:** the metadata types serialize field by field (no skipped fields), so JSON and the binary cache use one shape.
+   - **Shape:** the metadata types serialize field by field (no skipped fields), so JSON and the binary cache use one shape. Layout version 2 includes each inherent method's impl type parameters and self type; version 1 caches must be regenerated.
 
 ## Consequences
 

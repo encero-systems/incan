@@ -217,15 +217,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return bir::Operand::Place(source);
         }
-        if source.fact == bir::OwnershipFact::Move
-            && source.place.projection.is_empty()
-            && let Some(local) = source.place.local_id()
+        self.retain_argument_borrow(&mut source, true);
+        bir::Operand::Place(source)
+    }
+
+    /// Retain one checked reference argument's owner and passing mode without copying or snapshotting the referent.
+    /// The caller selects shared versus exclusive from its declared parameter type, including for foreign receivers.
+    fn retain_argument_borrow(&mut self, read: &mut bir::PlaceOperand, mutable: bool) {
+        if read.fact == bir::OwnershipFact::Move
+            && read.place.projection.is_empty()
+            && let Some(local) = read.place.local_id()
         {
             self.moved_out.remove(&local);
         }
-        source.fact = bir::OwnershipFact::MutBorrow;
-        source.last_use = false;
-        bir::Operand::Place(source)
+        read.fact = if mutable {
+            bir::OwnershipFact::MutBorrow
+        } else {
+            bir::OwnershipFact::Borrow
+        };
+        read.last_use = false;
     }
 
     /// Retain the caller's owner when a checked method-chain input passes its shared receiver reference.
@@ -245,14 +255,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let bir::ArgumentElement::One(bir::Operand::Place(read)) = element else {
                 continue;
             };
-            if read.fact == bir::OwnershipFact::Move
-                && read.place.projection.is_empty()
-                && let Some(local) = read.place.local_id()
-            {
-                self.moved_out.remove(&local);
-            }
-            read.fact = bir::OwnershipFact::Borrow;
-            read.last_use = false;
+            self.retain_argument_borrow(read, false);
         }
     }
 
@@ -326,12 +329,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 Some(order) => order[position],
                 None => (position, &planned[position]),
             };
-            let mut operand = if mut_slots.get(*slot).copied().unwrap_or(false) {
+            let reference = match slot_types.get(*slot) {
+                Some(IncanType::Ref(_)) => Some(false),
+                Some(IncanType::RefMut(_)) => Some(true),
+                _ => None,
+            };
+            let mut operand = if reference.is_some() || mut_slots.get(*slot).copied().unwrap_or(false) {
                 self.lower_expr_to_operand(expr, scope, out)
             } else {
                 self.lower_boundary_value(expr, slot_types.get(*slot), scope, out)
             };
-            if mut_slots.get(*slot).copied().unwrap_or(false) {
+            if let Some(mutable) = reference {
+                if let bir::Operand::Place(read) = &mut operand {
+                    self.retain_argument_borrow(read, mutable);
+                }
+            } else if mut_slots.get(*slot).copied().unwrap_or(false) {
                 operand = self.borrow_for_mut_parameter(operand);
             } else {
                 operand = self.owned_parameter_operand(expr, operand);

@@ -336,7 +336,8 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
     }
 }
 
-/// A struct, enum or union: its type parameters and their defaults, public inherent methods, fields and variants.
+/// A struct, enum or union: type parameters and defaults, inherent methods with native impl binders and self types,
+/// public fields and variants. Method binders remain distinct from the owner's potentially defaulted parameters.
 fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
     let generics = tcx.generics_of(def);
     let parameters = generics
@@ -363,6 +364,22 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         .map(|item| RustMethodSig {
             name: tcx.item_name(item).to_string(),
             signature: signature(tcx, item, named),
+            impl_type_params: tcx
+                .generics_of(item)
+                .parent
+                .map(|parent| {
+                    tcx.generics_of(parent)
+                        .own_params
+                        .iter()
+                        .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
+                        .map(|parameter| parameter.name.to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            impl_self_type: tcx
+                .generics_of(item)
+                .parent
+                .map(|parent| display(tcx.type_of(parent).instantiate_identity().skip_normalization())),
         })
         .collect();
     let adt = tcx.adt_def(def);

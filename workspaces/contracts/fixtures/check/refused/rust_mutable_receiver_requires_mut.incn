@@ -1,0 +1,12 @@
+# behavior: a Rust mutable receiver method refuses an immutable source binding
+# expect-diagnostic: INCAN-T0001
+
+"""Rust mutable receiver metadata enforces source binding mutability."""
+
+from rust::std::io import Cursor
+
+
+def main() -> None:
+    """Refuse an exclusive borrow of an immutable cursor."""
+    value = Cursor.new(b"abcd")
+    value.set_position(2)

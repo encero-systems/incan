@@ -26,6 +26,7 @@ from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
 from nominal_instances import nominal_symbol, template_base
+from symbols import model_symbol
 from types import primitive_type
 from closures import function_pointer_type
 from layout_types import native_source_type as retained_type
@@ -43,7 +44,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
-                    return Ok(PlanType.Model(index, str(name)))
+                    return Ok(PlanType.Model(index, model_symbol(str(name))))
             source_name = rejected_nominal_name(declarations, str(name))
             return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)
@@ -72,7 +73,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                     str(base),
                     arguments,
                 ):
-                    return Ok(PlanType.Model(index, str(declaration.name)))
+                    return Ok(PlanType.Model(index, model_symbol(str(declaration.name))))
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(hashed_element(declarations, arguments[0])?))
             if base == "Dict" and len(arguments) == 2:
