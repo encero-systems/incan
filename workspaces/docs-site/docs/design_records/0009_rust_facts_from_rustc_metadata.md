@@ -34,7 +34,7 @@ The compiler is a rustc driver (DD-0004). rustc's own crate metadata therefore d
 
 ## Decision
 
-1. **One extractor.** `incan-rustc-driver` reads Rust facts from rustc's crate metadata in one rustc session. The session runs over a stub crate that links the crates in question. Each requested path resolves through public module children. Each item is described in the checker's existing metadata shape (`RustItemMetadata`).
+1. **One extractor.** `incan-rustc-driver` reads Rust facts from rustc's crate metadata in one rustc session. The session runs over a stub crate that links the crates in question. Each nonstandard root must have one explicit `--extern CRATE=RLIB` artifact in the unit's native closure; absent or conflicting artifacts refuse before extraction. Search directories locate only transitive dependencies, never choose the root artifact. Each requested path resolves through public module children. Each item is described in the checker's existing metadata shape (`RustItemMetadata`).
 2. **ABI caches are the primary source.**
    - **Contents:** an ABI cache holds the facts of every public item of one or more compiled Rust crates.
    - **Who writes them:** the same extractor, run as `incan-rustc-driver --rust-abi`, when a crate is compiled or a toolchain is installed.

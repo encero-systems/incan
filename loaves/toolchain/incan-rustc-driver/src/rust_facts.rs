@@ -61,17 +61,37 @@ pub struct RustcFacts {
 }
 
 impl incan_driver::session::RustFactsSource for RustcFacts {
+    /// Read uncovered paths from exactly the unit's declared native artifacts.
     fn facts(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
         let started = std::time::Instant::now();
-        let facts = extract(RustFactsRequest {
+        let (linked, unavailable): (BTreeSet<_>, BTreeSet<_>) = paths.iter().cloned().partition(|path| {
+            let root = path.split("::").next().unwrap_or(path);
+            matches!(root, "std" | "core" | "alloc") || self.externs.iter().any(|(name, _)| name == root)
+        });
+        let mut facts = extract(RustFactsRequest {
             sysroot: &self.sysroot,
             externs: &self.externs,
             search: &self.search,
             scope: RustFactsScope::Paths {
-                paths: paths.clone(),
+                paths: linked,
                 depth: 1,
             },
         })?;
+        // Keep missing-artifact refusals at the imported item, so they do not mask independent source diagnostics.
+        for path in unavailable {
+            let root = path.split("::").next().unwrap_or(&path);
+            let description =
+                format!("Rust facts require an explicit --extern {root}=RLIB in the unit's native closure");
+            facts.insert(
+                path.clone(),
+                RustItemMetadata {
+                    canonical_path: path,
+                    definition_path: None,
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Unsupported { description },
+                },
+            );
+        }
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
                 "rust facts: {} uncovered paths, {} items in {:?}",
@@ -86,9 +106,19 @@ impl incan_driver::session::RustFactsSource for RustcFacts {
 
 /// Describe what `request.scope` names, keyed by path.
 pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
-    let stub = request
-        .scope
-        .roots()
+    let roots = request.scope.roots();
+    for root in &roots {
+        let mut artifacts = request.externs.iter().filter(|(name, _)| name == root);
+        let Some((_, artifact)) = artifacts.next() else {
+            return Err(format!(
+                "Rust facts require an explicit --extern {root}=RLIB in the unit's native closure"
+            ));
+        };
+        if artifacts.any(|(_, other)| other != artifact) {
+            return Err(format!("Rust facts received conflicting --extern artifacts for {root}"));
+        }
+    }
+    let stub = roots
         .iter()
         .map(|root| format!("extern crate {root};\n"))
         .collect::<String>();
@@ -110,10 +140,10 @@ pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustIte
         args.push("--extern".to_owned());
         args.push(format!("{name}={}", path.display()));
     }
-    // The stub names each root crate by `extern crate`, which a search directory answers only as a crate path.
+    // Direct roots come only from --extern; directories locate their hash-qualified transitive dependencies.
     for directory in request.search {
         args.push("-L".to_owned());
-        args.push(directory.display().to_string());
+        args.push(format!("dependency={}", directory.display()));
     }
     let mut callbacks = FactsCallbacks {
         stub,
