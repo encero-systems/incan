@@ -5,6 +5,7 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
 
 - `driver`: the compiler, `incan-rustc-driver`.
 - `sysroot`: the pinned Rust toolchain the compiler was built against. The compiler verifies the match itself.
+- `rust_abi`: the ABI caches of the toolchain's Rust crates (`std`, `core`, `alloc`): the Rust facts checking reads.
 - `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and the standard packages' Rust crates.
 - `search`: the directories the dependencies of those crates live in.
 """
@@ -30,6 +31,7 @@ pub model Toolchain:
 
     pub driver: str
     pub sysroot: str
+    pub rust_abi: list[str]
     pub externs: list[NativeCrate]
     pub search: list[str]
 
@@ -60,6 +62,7 @@ def toolchain_of(document: JsonValue) -> Result[Toolchain, list[str]]:
         Toolchain(
             driver=text_field(document, "driver", [])?,
             sysroot=text_field(document, "sysroot", [])?,
+            rust_abi=strings(field(document, "rust_abi", [])?, ["rust_abi"])?,
             externs=externs,
             search=strings(field(document, "search", [])?, ["search"])?,
         ),

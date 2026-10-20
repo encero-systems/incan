@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
 use crate::error::{CliError, CliResult};
 use crate::modules::collect_modules_detailed_with_session;
-use crate::session::CompilationSession;
+use crate::session::{CompilationSession, RustFactsSetup};
 use crate::typecheck::typecheck_modules;
 use crate::unit::UnitDescription;
 
@@ -28,8 +28,8 @@ pub struct CheckOutput {
 }
 
 /// Check one unit, capturing the warnings it prints alongside its report.
-pub fn check_unit(unit: &UnitDescription) -> CliResult<CheckOutput> {
-    let (result, warnings) = crate::diagnostics::capture_warning_output(|| check_report(unit));
+pub fn check_unit(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<CheckOutput> {
+    let (result, warnings) = crate::diagnostics::capture_warning_output(|| check_report(unit, rust));
     match result {
         Ok(report) => Ok(CheckOutput {
             json: Some(serde_json::to_string_pretty(&report).map_err(|error| CliError::failure(error.to_string()))?),
@@ -83,24 +83,27 @@ impl DiagnosticReport {
 }
 
 /// Check one unit without rendering the result: its stable diagnostics, warnings included, and whether it passed.
-pub fn check_report(unit: &UnitDescription) -> CliResult<DiagnosticReport> {
+pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
-    let session = match CompilationSession::new(unit) {
+    let import_failure = |error: CliError| {
+        diagnostic_report_from_failure(CliDiagnosticFailure::single(
+            unit.source.to_string_lossy(),
+            "",
+            diagnostics::CompileError::new(error.to_string(), incan_frontend::ast::Span::default()),
+            diagnostics::DiagnosticPhase::Import,
+        ))
+    };
+    let mut session = match CompilationSession::new(unit).and_then(|session| session.with_rust_facts(rust)) {
         Ok(session) => session,
-        Err(error) => {
-            let failure = CliDiagnosticFailure::single(
-                unit.source.to_string_lossy(),
-                "",
-                diagnostics::CompileError::new(error.to_string(), incan_frontend::ast::Span::default()),
-                diagnostics::DiagnosticPhase::Import,
-            );
-            return Ok(diagnostic_report_from_failure(failure));
-        }
+        Err(error) => return Ok(import_failure(error)),
     };
     let modules = match collect_modules_detailed_with_session(unit.source.clone(), &session) {
         Ok(modules) => modules,
         Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
+    if let Err(error) = session.resolve_rust_facts(&modules) {
+        return Ok(import_failure(error));
+    }
     let typecheck = typecheck_modules(
         &modules,
         unit,

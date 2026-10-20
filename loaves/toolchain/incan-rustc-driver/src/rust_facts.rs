@@ -21,25 +21,72 @@ use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::Input;
 use rustc_span::FileName;
 
-/// What one extraction reads: the paths to describe and the crates and directories that resolve them.
+/// What one extraction reads: what to describe, and the crates and directories that resolve it.
 pub struct RustFactsRequest<'a> {
     pub sysroot: &'a Path,
     pub externs: &'a [(String, PathBuf)],
     pub search: &'a [PathBuf],
-    pub paths: BTreeSet<String>,
-    /// How many steps of signature-named types to describe beyond the requested paths.
-    pub depth: usize,
+    pub scope: RustFactsScope,
 }
 
-/// Describe the requested Rust paths and the types their signatures name, keyed by path.
+/// What one extraction describes.
+pub enum RustFactsScope {
+    /// The named paths, and the nominal types their signatures name `depth` steps out: the paths a unit imports that
+    /// no ABI cache covers.
+    Paths { paths: BTreeSet<String>, depth: usize },
+    /// Every public item of the named crates: their ABI cache.
+    Crates(BTreeSet<String>),
+}
+
+impl RustFactsScope {
+    /// The crates the extraction reads, which the stub names (`std`, `core` and `alloc` are always loaded).
+    fn roots(&self) -> BTreeSet<String> {
+        let names: Box<dyn Iterator<Item = &str>> = match self {
+            Self::Paths { paths, .. } => Box::new(paths.iter().filter_map(|path| path.split("::").next())),
+            Self::Crates(crates) => Box::new(crates.iter().map(String::as_str)),
+        };
+        names
+            .filter(|root| !matches!(*root, "std" | "core" | "alloc"))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// The compiler's rustc as a session's Rust facts source: the unit's own crates, read for the paths no ABI cache holds.
+#[derive(Debug)]
+pub struct RustcFacts {
+    pub sysroot: PathBuf,
+    pub externs: Vec<(String, PathBuf)>,
+    pub search: Vec<PathBuf>,
+}
+
+impl incan_driver::session::RustFactsSource for RustcFacts {
+    fn facts(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
+        let started = std::time::Instant::now();
+        let facts = extract(RustFactsRequest {
+            sysroot: &self.sysroot,
+            externs: &self.externs,
+            search: &self.search,
+            scope: RustFactsScope::Paths {
+                paths: paths.clone(),
+                depth: 1,
+            },
+        })?;
+        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+            eprintln!("rust facts: {} uncovered paths, {} items in {:?}", paths.len(), facts.len(), started.elapsed());
+        }
+        Ok(facts)
+    }
+}
+
+/// Describe what `request.scope` names, keyed by path.
 pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
-    let roots = request
-        .paths
+    let stub = request
+        .scope
+        .roots()
         .iter()
-        .filter_map(|path| path.split("::").next())
-        .filter(|root| !matches!(*root, "std" | "core" | "alloc"))
-        .collect::<BTreeSet<_>>();
-    let stub = roots.iter().map(|root| format!("extern crate {root};\n")).collect::<String>();
+        .map(|root| format!("extern crate {root};\n"))
+        .collect::<String>();
     let mut args = vec![
         "incan-rustc-driver".to_owned(),
         "--sysroot".to_owned(),
@@ -65,8 +112,7 @@ pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustIte
     }
     let mut callbacks = FactsCallbacks {
         stub,
-        paths: request.paths,
-        depth: request.depth,
+        scope: request.scope,
         facts: BTreeMap::new(),
     };
     rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks))
@@ -74,11 +120,10 @@ pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustIte
     Ok(callbacks.facts)
 }
 
-/// The stub crate session: install the stub source, describe the paths once the crates are loaded, then stop.
+/// The stub crate session: install the stub source, describe the scope once the crates are loaded, then stop.
 struct FactsCallbacks {
     stub: String,
-    paths: BTreeSet<String>,
-    depth: usize,
+    scope: RustFactsScope,
     facts: BTreeMap<String, RustItemMetadata>,
 }
 
@@ -91,28 +136,87 @@ impl rustc_driver::Callbacks for FactsCallbacks {
     }
 
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
-        let mut pending = self
-            .paths
-            .iter()
-            .filter_map(|path| resolve(tcx, path).map(|def| (path.clone(), def)))
-            .collect::<Vec<_>>();
-        for _ in 0..=self.depth {
-            let mut named = HashSet::new();
-            for (path, def) in std::mem::take(&mut pending) {
-                if self.facts.contains_key(&path) {
-                    continue;
-                }
-                let metadata = describe(tcx, def, &path, &mut named);
-                self.facts.insert(path, metadata);
-            }
-            pending = named
-                .into_iter()
-                .map(|def| (visible_path(tcx, def), def))
-                .filter(|(path, _)| !self.facts.contains_key(path))
-                .collect();
-        }
+        self.facts = match &self.scope {
+            RustFactsScope::Paths { paths, depth } => describe_paths(tcx, paths, *depth),
+            RustFactsScope::Crates(crates) => describe_crates(tcx, crates),
+        };
         rustc_driver::Compilation::Stop
     }
+}
+
+/// The named paths, then the nominal types their signatures name, `depth` steps out.
+fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BTreeMap<String, RustItemMetadata> {
+    let mut facts = BTreeMap::new();
+    let mut pending = paths
+        .iter()
+        .filter_map(|path| resolve(tcx, path).map(|def| (path.clone(), def)))
+        .collect::<Vec<_>>();
+    for _ in 0..=depth {
+        let mut named = HashSet::new();
+        for (path, def) in std::mem::take(&mut pending) {
+            if facts.contains_key(&path) {
+                continue;
+            }
+            let metadata = describe(tcx, def, &path, &mut named);
+            facts.insert(path, metadata);
+        }
+        pending = named
+            .into_iter()
+            .map(|def| (visible_path(tcx, def), def))
+            .filter(|(path, _)| !facts.contains_key(path))
+            .collect();
+    }
+    facts
+}
+
+/// Every public item of the named crates, under each public module path that reaches it.
+fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<String, RustItemMetadata> {
+    let mut facts = BTreeMap::new();
+    let mut named = HashSet::new();
+    for name in crates {
+        let Some(krate) = tcx.crates(()).iter().find(|krate| tcx.crate_name(**krate).as_str() == name) else {
+            continue;
+        };
+        for (path, def) in public_items(tcx, krate.as_def_id(), name) {
+            let metadata = describe(tcx, def, &path, &mut named);
+            facts.insert(path, metadata);
+        }
+    }
+    facts
+}
+
+/// The public items of one crate's module tree, each module walked once under the first path that reaches it.
+fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)> {
+    let mut items = Vec::new();
+    let mut walked = HashSet::new();
+    let mut pending = vec![(name.to_owned(), root)];
+    while let Some((path, module)) = pending.pop() {
+        if !walked.insert(module) {
+            continue;
+        }
+        for child in tcx.module_children(module).iter().filter(|child| child.vis.is_public()) {
+            let Some(def) = child.res.opt_def_id() else {
+                continue;
+            };
+            let child_path = format!("{path}::{}", child.ident.name);
+            match tcx.def_kind(def) {
+                DefKind::Mod => {
+                    items.push((child_path.clone(), def));
+                    pending.push((child_path, def));
+                }
+                DefKind::Struct
+                | DefKind::Enum
+                | DefKind::Union
+                | DefKind::TyAlias
+                | DefKind::Trait
+                | DefKind::Fn
+                | DefKind::Const { .. }
+                | DefKind::Static { .. } => items.push((child_path, def)),
+                _ => {}
+            }
+        }
+    }
+    items
 }
 
 /// Resolve a path through its crate's public module children; the last segment prefers a type, then a value.
