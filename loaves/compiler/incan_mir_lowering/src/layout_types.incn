@@ -33,6 +33,8 @@ pub def native_source_type(
         None => pass
     match ty:
         RustType.Ref(inner) =>
+            if is_native_str(inner):
+                return Ok(PlanType.StrRef)
             return shared_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
         RustType.RefMut(inner) =>
             match native_source_type(nominals, enums, unions, inner, intrinsics)?:
@@ -81,6 +83,13 @@ pub def native_source_type(
         RustType.Tuple(elements) => return layout_tuple_type(nominals, enums, unions, elements, intrinsics)
         _ => pass
     return model_type(nominals, ty)
+
+
+def is_native_str(ty: &RustType) -> bool:
+    """Recognize the checker's unsized Rust str referent before ordinary owned-text projection."""
+    match ty:
+        RustType.RustInteropPath(path) => return str(path) == "str"
+        _ => return false
 
 
 pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:

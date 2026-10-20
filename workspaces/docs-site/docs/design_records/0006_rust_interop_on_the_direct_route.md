@@ -52,6 +52,8 @@ Inherent associated functions and methods retain the enclosing impl's native typ
 
 Declared reference arguments retain the caller's place through ordinary argument binding; preparing a reference never copies its referent into a value snapshot. Mutable receiver signatures also require a mutable source binding. Opaque Rust item paths remain type identities, while their plan layout names use identifier-safe encoding.
 
+Native parameter facts distinguish Rust's unsized `str` referent from Incan's owned string carrier before generic substitution. A literal Rust `&str` parameter receives a text slice; a generic `&T` instantiated with Incan `str` receives a reference to its owned `String`. The plan borrows owned strings for `&String` and obtains a slice through `String.as_str()` for `&str`, preserving the owner across both calls.
+
 A free function reached through an imported Rust module uses that module's public child item metadata, then the same free-function inference and retained callee record as a directly imported function. A module binding's source spelling does not become an executable target.
 
 Public Rust constants retain their metadata-selected item path and checked carrier through Body IR and the plan. This includes a constant selected through an imported module. The adapter resolves the public constant, verifies its exact type, and leaves evaluation to rustc; the frontend never copies a guessed value into the program. Rust statics require a separate storage contract.

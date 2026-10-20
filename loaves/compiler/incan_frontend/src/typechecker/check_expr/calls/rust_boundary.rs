@@ -350,13 +350,28 @@ impl TypeChecker {
 
     /// Instantiate a checked Rust signature structurally so Incan argument identities survive the foreign boundary.
     /// Rendering an Incan model into a Rust display must not replace its retained declaration with a bare name.
-    fn instantiate_rust_signature_type(
+    pub(in crate::typechecker::check_expr) fn instantiate_rust_signature_type(
         &self,
         ty: &ResolvedType,
         parameters: &[String],
         bindings: &HashMap<String, ResolvedType>,
     ) -> ResolvedType {
         substitute_resolved_type(&self.rust_inference_type(ty, parameters), bindings)
+    }
+
+    /// Retain a literal native slice-text referent before generic substitution. A generic `&T` instantiated with
+    /// Incan `str` instead borrows its owned String carrier, so it must not be reclassified after inference.
+    pub(in crate::typechecker::check_expr) fn native_rust_parameter_type(
+        &self,
+        display: &str,
+        owner: &str,
+    ) -> ResolvedType {
+        let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(display, owner);
+        if matches!(&ty, ResolvedType::Ref(inner) if **inner == ResolvedType::Str) {
+            ResolvedType::Ref(Box::new(ResolvedType::RustPath("str".into())))
+        } else {
+            ty
+        }
     }
 
     /// Retain a declaration-ordered inference result for Body IR; conflicting constraints are source errors.
@@ -411,8 +426,7 @@ impl TypeChecker {
         };
         let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
         for (parameter, declared) in parameters.iter_mut().zip(&signature.params) {
-            let template =
-                self.resolved_rust_boundary_target_from_param_display_for_owner_path(&declared.type_display, path);
+            let template = self.native_rust_parameter_type(&declared.type_display, path);
             parameter.ty = self.instantiate_rust_signature_type(&template, &signature.type_params, bindings);
         }
         self.type_info.rust.checked_calls.insert(

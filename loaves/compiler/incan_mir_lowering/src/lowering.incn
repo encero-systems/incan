@@ -5043,6 +5043,8 @@ pub def call_argument_operand(
     """Share checked collection borrows, owned strings, callable objects, union injection, and numeric coercion across call slots."""
     match ty:
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
+        PlanType.StringRef => return borrow_text_operand(builder, value, span)
+        PlanType.StrRef => return borrow_str_operand(builder, value, span)
         _ => pass
     if owned_collection(ty):
         return value_operand(builder, value, span)
@@ -6432,6 +6434,17 @@ def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: Sou
     else:
         _ = value_operand(builder, value, span)?
     return Ok(None)
+
+
+def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Pass literal slice text directly or borrow owned text through String's own as_str method."""
+    match value:
+        RustOperand.Constant(RustConstant.Str(text)) => return Ok(text_literal(str(text), span))
+        _ => pass
+    reference = borrow_text_operand(builder, value, span)?
+    output = temporary(builder, PlanType.StrRef, span)
+    external_call(builder, "alloc::string::String::as_str", [PlanType.StringRef], PlanType.StrRef, [reference], output, span)
+    return Ok(read_place(output, false, span))
 
 
 def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:

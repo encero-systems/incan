@@ -3163,6 +3163,15 @@ impl TypeChecker {
             return;
         };
         let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
+        let ordinary = if Self::rust_signature_has_receiver(&method.signature) {
+            &method.signature.params[1..]
+        } else {
+            &method.signature.params
+        };
+        for (parameter, declared) in parameters.iter_mut().zip(ordinary) {
+            let template = self.native_rust_parameter_type(&declared.type_display, path);
+            parameter.ty = self.instantiate_rust_signature_type(&template, &native_parameters, &bindings);
+        }
         if let Some(receiver) = receiver {
             let display = method
                 .signature
