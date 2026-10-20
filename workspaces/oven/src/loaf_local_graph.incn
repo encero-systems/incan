@@ -6,6 +6,7 @@ from std.fs import Path
 from std.json import JsonValue
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource, RustRegistryRequest
 from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, SlotActivation, TargetConfiguration, activate_unit, target_matches, version_matches
+from intake import feature_declaration
 
 
 @derive(Eq)
@@ -92,8 +93,18 @@ pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
             else:
                 dependencies.append(declaration(alias, value, len(dependencies), group)?)
     mut features: Dict[str, list[str]] = {}
-    if let Some(selected) = document.get_optional[Dict[str, list[str]]]("project.features").map_err((e) => e.message())?:
-        features = selected
+    project = root["project"].as_table().map_err((e) => e.message())?
+    if "features" in project:
+        selected = project["features"].as_table().map_err((e) => e.message())?
+        for name in sorted([key for key in selected.keys()]):
+            declared = feature_declaration(selected[name], "loaf.toml", ["project", "features", name]).map_err((e) => e.message())?
+            mut entries = declared.includes
+            for alias in declared.optional_dependencies:
+                entries.append(f"dep:{alias}")
+            for alias in sorted([key for key in declared.dependency_features.keys()]):
+                for feature in declared.dependency_features[alias]:
+                    entries.append(f"{alias}/{feature}")
+            features[name] = entries
     return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=None))
 
 

@@ -7,7 +7,7 @@ from features import FeatureRequest
 from json_fields import field, strings
 from loaf_local_graph import LocalDemand, local_facets, unique
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, read_registry_units, target_configuration, build_dependencies, registry_features
+from rust_units import RustBuild, read_registry_units, target_configuration, build_dependencies, registry_features, rust_facet
 from toolchain import NativeCrate, Toolchain, load_toolchain
 from unit import UnitDescription, describe
 
@@ -40,6 +40,9 @@ pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> 
 
 def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
     """Activate the project's Rust edges once, compile their local units, and bind its direct aliases."""
+    declared = rust_facet(unit.project_root, false)?
+    if len(unit.rust_crates) == 0 and declared.kind == "":
+        return Ok(unit)
     rustc = Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
     configuration = target_configuration(rustc)?
     demand = LocalDemand(project=unit.project_root, domain=DependencyDomain.Target, features=unit.active_features, defaults=false)

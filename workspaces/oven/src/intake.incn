@@ -298,10 +298,7 @@ def parse_features(
     values = table(project["features"], manifest, ["project", "features"])?
     for name in sorted([key for key in values.keys()]):
         field = ["project", "features", name]
-        if values[name].kind() == TomlKind.Array:
-            features[name] = compact_feature(values[name], manifest, field)?
-        else:
-            features[name] = expanded_feature(values[name], manifest, field)?
+        features[name] = feature_declaration(values[name], manifest, field)?
     mut optional: list[str] = []
     mut aliases: list[str] = []
     for dependency in dependencies:
@@ -347,6 +344,13 @@ def feature_cycle(features: Dict[str, FeatureDeclaration]) -> str:
                 if included not in path:
                     frontier.append(path + [included])
     return ""
+
+
+pub def feature_declaration(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:
+    """Normalize either authored feature spelling at the manifest boundary, for both Incan and Rust activation."""
+    if value.kind() == TomlKind.Array:
+        return compact_feature(value, manifest, field)
+    return expanded_feature(value, manifest, field)
 
 
 def compact_feature(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:

@@ -5,8 +5,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static CLONES: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
+/// A tree node used by the shared borrowing fixture implementation.
 pub enum Item {
+    /// A named collection of child nodes.
     Table(BTreeMap<String, Item>),
+    /// One integer leaf.
     Integer(i64),
 }
 
