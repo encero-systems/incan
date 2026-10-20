@@ -348,7 +348,12 @@ fn validate_declarations(
                 validate_generic_adoptions(&newtype.traits, program, type_info)?;
                 continue;
             }
-            Declaration::Newtype(_) => "nonplain Newtype",
+            Declaration::Newtype(newtype) => {
+                return Err(format!(
+                    "unsupported source nonplain Newtype {} on the native route",
+                    newtype.name
+                ));
+            }
             Declaration::Alias(_) => continue,
             Declaration::Partial(_) => continue,
             // Type aliases have no runtime declaration; checked Body IR carries their resolved uses.
