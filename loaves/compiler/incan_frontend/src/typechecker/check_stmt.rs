@@ -1307,7 +1307,31 @@ impl TypeChecker {
         }
     }
 
-    /// Check a return statement against the active function context.
+    /// Admit the existing native usize-to-int boundary only for a retained Rust call, without widening ordinary
+    /// Incan numeric assignment compatibility or losing the Rust callee's exact native return signature.
+    fn native_usize_return(
+        &self,
+        expr: Option<&Spanned<Expr>>,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+    ) -> bool {
+        if *expected != ResolvedType::Int
+            || *actual != ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize)
+        {
+            return false;
+        }
+        let Some(mut expr) = expr else { return false };
+        while let Expr::Paren(inner) = &expr.node {
+            expr = inner;
+        }
+        self.type_info
+            .rust
+            .checked_calls
+            .get(&(expr.span.start, expr.span.end))
+            .is_some_and(|call| &call.return_type == actual)
+    }
+
+    /// Check a return statement against the active function context, including an authenticated native usize result.
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
         if matches!(self.current_yield_context, super::YieldContext::Generator { .. }) {
             if let Some(expr) = expr {
@@ -1327,6 +1351,7 @@ impl TypeChecker {
 
         if let Some(expected) = self.symbols.current_return_type()
             && !self.types_compatible(&return_ty, expected)
+            && !self.native_usize_return(expr, &return_ty, expected)
         {
             self.errors.push(errors::return_type_mismatch(
                 &expected.to_string(),

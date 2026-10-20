@@ -1136,6 +1136,12 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
                 }
                 Ok(Scalar::EnumMutRef(index))
             }
+            ty if scalar_referent(&ty) => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(function, "cannot mutably reborrow a shared scalar"));
+                }
+                Ok(Scalar::ScalarMutRef(vec![ty]))
+            }
             _ => Err(invalid(
                 function,
                 "mutable borrow requires a collection or nominal value",

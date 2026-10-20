@@ -2163,13 +2163,9 @@ impl TypeChecker {
 
     /// Resolve a Rust-origin associated function signature (must not take `self`) from cached metadata.
     pub fn rust_associated_function_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-        // Stable metadata-free contracts override a degraded rust-analyzer display. This particularly matters for
-        // sysroot APIs such as `Path::new<S: AsRef<OsStr> + ?Sized>(&S)`, where preserving the source borrow shape is
-        // required for generated Rust to compile even when the inspector inferred a concrete owned value.
-        if let Some(signature) = metadata_free_method_signature(rust_path, method) {
-            return Some(signature);
-        }
-        let sig = self.rust_method_signature(rust_path, method)?;
+        let sig = self
+            .rust_method_signature(rust_path, method)
+            .or_else(|| metadata_free_method_signature(rust_path, method))?;
         if Self::rust_signature_has_receiver(&sig) {
             return None;
         }

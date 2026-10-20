@@ -1594,6 +1594,10 @@ def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan
         forget_owned(builder, text.local)
         return Ok(read_place(text, true, span))
     result = boundary_operand(builder, operand, return_type, span)?
+    if return_type == PlanType.Int and operand_type(builder, result)? == PlanType.USize:
+        converted = temporary(builder, PlanType.Int, span)
+        external_call(builder, "incan_native_runtime::int_usize", [PlanType.USize], PlanType.Int, [result], converted, span)
+        return Ok(read_place(converted, false, span))
     track_rvalue_moves(builder, RvalueKind.Use(result))
     return Ok(result)
 
@@ -5045,6 +5049,8 @@ pub def call_argument_operand(
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         PlanType.StringRef => return borrow_text_operand(builder, value, span)
         PlanType.StrRef => return borrow_str_operand(builder, value, span)
+        PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
+        PlanType.ScalarMutRef(elements) => return borrow_scalar_operand(builder, value, elements, true, span)
         _ => pass
     if owned_collection(ty):
         return value_operand(builder, value, span)
@@ -6434,6 +6440,54 @@ def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: Sou
     else:
         _ = value_operand(builder, value, span)?
     return Ok(None)
+
+
+def borrow_scalar_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    elements: list[PlanType],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow checked scalar storage in place; only shared literal loans may materialize a new owner."""
+    if len(elements) != 1:
+        return Err("invalid Body IR scalar reference arity")
+    referent = elements[0]
+    mut owner = plan_place(0, span)
+    match value:
+        RustOperand.Place(read) =>
+            if mutable and read.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
+            owner = scalar_place(builder, read.place, span)?
+            actual = place_type(builder.locals, owner)
+            match actual:
+                PlanType.ScalarRef(inner) =>
+                    if mutable or inner != elements:
+                        return Err("unsupported Body IR scalar reborrow contract")
+                    return Ok(read_place(owner, false, span))
+                PlanType.ScalarMutRef(inner) =>
+                    if inner != elements:
+                        return Err("unsupported Body IR scalar reborrow referent")
+                    owner = Place(local=owner.local, projection=Projection.Deref(referent), span=span)
+                _ =>
+                    if actual != referent:
+                        return Err("unsupported Body IR scalar borrow of another type")
+        RustOperand.Constant(_constant) =>
+            if mutable:
+                return Err("unsupported Body IR mutable scalar constant borrow")
+            operand = scalar_operand(builder, value, span)?
+            if operand_type(builder, operand)? != referent:
+                return Err("unsupported Body IR scalar literal borrow of another type")
+            owner = temporary(builder, referent, span)
+            builder.emit(plan_assign(owner, RvalueKind.Use(operand), span))
+    mut reference = PlanType.ScalarRef(elements)
+    mut operation = RvalueKind.Borrow(owner)
+    if mutable:
+        reference = PlanType.ScalarMutRef(elements)
+        operation = RvalueKind.MutBorrow(owner)
+    output = temporary(builder, reference, span)
+    builder.emit(plan_assign(output, operation, span))
+    return Ok(read_place(output, mutable, span))
 
 
 def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:

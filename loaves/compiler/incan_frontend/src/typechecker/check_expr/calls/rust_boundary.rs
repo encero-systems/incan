@@ -365,19 +365,19 @@ impl TypeChecker {
         substitute_resolved_type(&self.rust_inference_type(ty, parameters), bindings)
     }
 
-    /// Retain a literal native slice-text referent before generic substitution. A generic `&T` instantiated with
-    /// Incan `str` instead borrows its owned String carrier, so it must not be reclassified after inference.
-    pub(in crate::typechecker::check_expr) fn native_rust_parameter_type(
+    /// Retain literal native slice-text referents before generic substitution in parameters and results. A generic `&T`
+    /// instantiated with Incan `str` instead borrows its owned String carrier, so it must not be reclassified after
+    /// inference.
+    pub(in crate::typechecker::check_expr) fn native_rust_signature_type(
         &self,
         display: &str,
         owner: &str,
     ) -> ResolvedType {
         let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(display, owner);
-        if matches!(&ty, ResolvedType::Ref(inner) if **inner == ResolvedType::Str) {
-            ResolvedType::Ref(Box::new(ResolvedType::RustPath("str".into())))
-        } else {
-            ty
-        }
+        map_resolved_type_leaves(&ty, &|leaf| {
+            matches!(leaf, ResolvedType::Ref(inner) if **inner == ResolvedType::Str)
+                .then(|| ResolvedType::Ref(Box::new(ResolvedType::RustPath("str".into()))))
+        })
     }
 
     /// Retain a declaration-ordered inference result for Body IR; conflicting constraints are source errors.
@@ -416,7 +416,6 @@ impl TypeChecker {
         path: &str,
         signature: &RustFunctionSig,
         bindings: &HashMap<String, ResolvedType>,
-        result: &ResolvedType,
         span: Span,
     ) {
         if signature.is_async || signature.is_unsafe {
@@ -432,16 +431,21 @@ impl TypeChecker {
         };
         let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
         for (parameter, declared) in parameters.iter_mut().zip(&signature.params) {
-            let template = self.native_rust_parameter_type(&declared.type_display, path);
+            let template = self.native_rust_signature_type(&declared.type_display, path);
             parameter.ty = self.instantiate_rust_signature_type(&template, &signature.type_params, bindings);
         }
+        let result = self.instantiate_rust_signature_type(
+            &self.native_rust_signature_type(&signature.return_type, path),
+            &signature.type_params,
+            bindings,
+        );
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
                 path: path.trim_start_matches("rust::").to_owned(),
                 type_arguments: arguments,
                 parameters,
-                return_type: result.clone(),
+                return_type: result,
                 has_receiver: false,
             },
         );
@@ -717,10 +721,7 @@ impl TypeChecker {
             {
                 return RustArgBoundaryMatch::Exact;
             }
-            if !is_mut
-                && Self::incan_boundary_type_display(arg_ty).is_none()
-                && self.types_compatible(arg_ty, &target_inner_ty)
-            {
+            if !is_mut && self.types_compatible(arg_ty, &target_inner_ty) {
                 return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: false });
             }
             if is_mut {
@@ -1267,7 +1268,7 @@ impl TypeChecker {
         let ret = self.instantiate_rust_signature_type(&ret, &sig.type_params, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         if self.errors.len() == errors_before {
-            self.retain_checked_rust_function(path, sig, &callable_returns, &ret, span);
+            self.retain_checked_rust_function(path, sig, &callable_returns, span);
         }
         ret
     }

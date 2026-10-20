@@ -1,0 +1,17 @@
+# behavior: an Incan int return converts a Rust usize result through the ordinary int conversion
+# expect-stdout:
+#   true
+
+"""Keep the native result exact until the declared Incan return boundary."""
+
+from rust::std::mem import size_of_val
+
+
+def size() -> int:
+    """Return one native size through an Incan integer signature."""
+    return size_of_val("leaf")
+
+
+def main() -> None:
+    """Compare the implicit return boundary with the explicit conversion."""
+    println(size() == int(size_of_val("leaf")))

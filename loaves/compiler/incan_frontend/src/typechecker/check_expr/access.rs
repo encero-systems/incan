@@ -2629,6 +2629,7 @@ impl TypeChecker {
                     type_info.methods.iter().any(|candidate| candidate.name == method)
                         || type_info.metadata_completeness.has_methods()
                 }
+                RustItemKind::Constant { .. } => false,
                 _ => true,
             };
             if is_authoritative {
@@ -3062,6 +3063,38 @@ impl TypeChecker {
         }
     }
 
+    /// Whether written owner arguments leave only defaulted type parameters, independently of impl method binders.
+    fn rust_owner_arity_admits(owner: &incan_lang::interop::RustTypeInfo, written: usize) -> bool {
+        written <= owner.type_params.len()
+            && (written..owner.type_params.len())
+                .all(|index| owner.type_param_defaults.get(index).is_some_and(Option::is_some))
+    }
+
+    /// Fill omitted owner parameters from metadata, substituting earlier arguments into each dependent default.
+    fn complete_rust_owner_arguments(
+        &self,
+        owner: &incan_lang::interop::RustTypeInfo,
+        arguments: &mut Vec<ResolvedType>,
+    ) -> bool {
+        if !Self::rust_owner_arity_admits(owner, arguments.len()) {
+            return false;
+        }
+        while arguments.len() < owner.type_params.len() {
+            let index = arguments.len();
+            let Some(default) = owner.type_param_defaults.get(index).and_then(Option::as_deref) else {
+                return false;
+            };
+            let displays = arguments
+                .iter()
+                .map(render_resolved_type_as_rust_arg)
+                .collect::<Vec<_>>();
+            let displays = displays.iter().map(String::as_str).collect::<Vec<_>>();
+            let default = Self::substitute_rust_display_params(default, &owner.type_params[..index], &displays);
+            arguments.push(self.resolved_type_from_rust_display(&default));
+        }
+        true
+    }
+
     /// Specialize one inspected associated-function signature with its receiver's concrete type arguments.
     fn specialize_rust_owner_signature(
         &self,
@@ -3162,6 +3195,9 @@ impl TypeChecker {
         let Some(type_arguments) = arguments else {
             return;
         };
+        for (parameter, argument) in native_parameters.iter().zip(&type_arguments) {
+            bindings.entry(parameter.clone()).or_insert_with(|| argument.clone());
+        }
         let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
         let ordinary = if Self::rust_signature_has_receiver(&method.signature) {
             &method.signature.params[1..]
@@ -3169,7 +3205,7 @@ impl TypeChecker {
             &method.signature.params
         };
         for (parameter, declared) in parameters.iter_mut().zip(ordinary) {
-            let template = self.native_rust_parameter_type(&declared.type_display, path);
+            let template = self.native_rust_signature_type(&declared.type_display, path);
             parameter.ty = self.instantiate_rust_signature_type(&template, &native_parameters, &bindings);
         }
         if let Some(receiver) = receiver {
@@ -3179,21 +3215,30 @@ impl TypeChecker {
                 .first()
                 .map(|parameter| parameter.type_display.trim())
                 .unwrap_or("");
+            let referent = match receiver {
+                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+                other => other,
+            };
             let ty = match Self::rust_display_borrow_kind(display) {
-                Some((true, _)) => ResolvedType::RefMut(Box::new(receiver.clone())),
-                Some((false, _)) => ResolvedType::Ref(Box::new(receiver.clone())),
+                Some((true, _)) => ResolvedType::RefMut(Box::new(referent.clone())),
+                Some((false, _)) => ResolvedType::Ref(Box::new(referent.clone())),
                 None if display == "self" || display == "Self" => receiver.clone(),
                 None => return,
             };
             parameters.insert(0, CallableParam::positional(ty));
         }
+        let native_result = self.instantiate_rust_signature_type(
+            &self.native_rust_signature_type(&method.signature.return_type, path),
+            &native_parameters,
+            &bindings,
+        );
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
                 path: format!("{path}::{}", method.name),
                 type_arguments,
                 parameters,
-                return_type: result.clone(),
+                return_type: native_result,
                 has_receiver: receiver.is_some(),
             },
         );
@@ -3276,13 +3321,13 @@ impl TypeChecker {
         };
         match &metadata.kind {
             RustItemKind::Type(type_info) => {
-                let Some(sig) = metadata_free_method_signature(rust_path, method).or_else(|| {
-                    type_info
-                        .methods
-                        .iter()
-                        .find(|candidate| candidate.name == method)
-                        .map(|candidate| candidate.signature.clone())
-                }) else {
+                let Some(sig) = type_info
+                    .methods
+                    .iter()
+                    .find(|candidate| candidate.name == method)
+                    .map(|candidate| candidate.signature.clone())
+                    .or_else(|| metadata_free_method_signature(rust_path, method))
+                else {
                     // `T.default()` is Rust's prelude-provided associated constructor. rust-inspect records
                     // inherent methods on `T`, not the `Default` trait member, but the call's result still has the
                     // concrete receiver type needed to resolve a following inherent call such as
@@ -3362,10 +3407,17 @@ impl TypeChecker {
                             .push(errors::rust_receiver_const_generics_not_supported(rust_path, span));
                         return Some(ResolvedType::Unknown);
                     }
-                    if !self.validate_rust_method_type_arg_arity(method, declared_type_params, type_args, span) {
+                    let defaults_admit =
+                        specializes_receiver && Self::rust_owner_arity_admits(type_info, type_args.len());
+                    if !defaults_admit
+                        && !self.validate_rust_method_type_arg_arity(method, declared_type_params, type_args, span)
+                    {
                         return Some(ResolvedType::Unknown);
                     }
                     resolved_type_args = type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+                    if specializes_receiver && !self.complete_rust_owner_arguments(type_info, &mut resolved_type_args) {
+                        return Some(ResolvedType::Unknown);
+                    }
                     self.type_info
                         .calls
                         .call_site_monomorph_type_args
@@ -3387,26 +3439,7 @@ impl TypeChecker {
                         return Some(ResolvedType::Unknown);
                     }
                     if let Some(mut contextual_args) = self.rust_owner_type_args(receiver, rust_path) {
-                        // A generic owner may carry defaulted trailing parameters the display never spells —
-                        // `Box<T, A = Global>` reads as `Box<T>`. Those are not arguments the context has to
-                        // supply: fill them from the recorded defaults so one inferred `T` still specializes the
-                        // owner instead of being discarded for not matching the declared arity.
-                        let declared = type_info.type_params.len();
-                        if contextual_args.len() < declared {
-                            let trailing_defaults = (contextual_args.len()..declared)
-                                .map(|index| {
-                                    type_info
-                                        .type_param_defaults
-                                        .get(index)
-                                        .and_then(|default| default.as_deref())
-                                        .map(|default| self.resolved_type_from_rust_display(default))
-                                })
-                                .collect::<Option<Vec<_>>>();
-                            if let Some(defaults) = trailing_defaults {
-                                contextual_args.extend(defaults);
-                            }
-                        }
-                        if contextual_args.len() == declared {
+                        if self.complete_rust_owner_arguments(type_info, &mut contextual_args) {
                             resolved_type_args = contextual_args;
                         }
                     }
