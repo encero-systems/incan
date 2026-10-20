@@ -5,7 +5,6 @@ license = "Apache-2.0"
 private = true
 
 [dependencies]
-incan_stdlib_core = { standard = true }
 byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }
 rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }

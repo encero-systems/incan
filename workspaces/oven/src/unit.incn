@@ -6,8 +6,8 @@ The compiler reads no manifest; it reads this. Its fields are the compiler's `in
 from std.fs import Path
 from std.json import JsonValue
 from features import FeatureRequest, resolve_features
-from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
-from intake import LocalProject, intake, load_project
+from home import dependency_artifact_dir, standard_artifact_dir, standard_packages
+from intake import LocalProject, intake
 
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
@@ -102,32 +102,13 @@ def source_root_of(project: LocalProject) -> str:
     return root.0
 
 
-def standard_loaves(package: str, declared: list[str], profile: str) -> Result[list[UnitLoaf], str]:
-    """The standard packages a unit of `package` reaches: every one, or for a standard package, the standard packages
-    it depends on (`declared`) and theirs."""
-    mut packages: Dict[str, StandardPackage] = {}
-    for found in standard_packages()?:
-        packages[found.name] = found
-    mut names: list[str] = []
-    if package in packages:
-        mut queue = declared
-        mut index = 0
-        while index < len(queue):
-            name = queue[index]
-            index += 1
-            if name in names:
-                continue
-            if name not in packages:
-                return Err(f"{package} depends on `{name}`, which is not a standard package")
-            names.append(name)
-            reached = load_project(Path(packages[name].root)).map_err((error) => error.message())?
-            for further in reached.intent.standard_dependencies:
-                queue.append(further)
-    else:
-        names = [name for name in packages.keys()]
+def standard_loaves(package: str, profile: str) -> Result[list[UnitLoaf], str]:
+    """The standard packages a unit of `package` reaches. They are ambient: every one is available, the unit's own
+    package excepted, and the unit links the ones it uses."""
     mut loaves: list[UnitLoaf] = []
-    for name in sorted(names):
-        loaves.append(UnitLoaf(key=name, name=name, dir=standard_artifact_dir(name, profile)?.0, standard=true))
+    for found in standard_packages()?:
+        if found.name != package:
+            loaves.append(UnitLoaf(key=found.name, name=found.name, dir=standard_artifact_dir(found.name, profile)?.0, standard=true))
     return Ok(loaves)
 
 
@@ -137,7 +118,7 @@ pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[
     if not entry.is_file():
         return Err(f"{entry.0}: no such source file")
     match project_root_of(entry):
-        None => return Ok(single_file_unit(entry, profile, standard_loaves("", [], profile)?))
+        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile)?))
         Some(found) =>
             graph = intake(found).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
@@ -158,9 +139,8 @@ pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[
                     key = edge.alias
                 directory = dependency_artifact_dir(root.0, dependency.intent.name, profile)
                 loaves.append(UnitLoaf(key=key, name=dependency.intent.name, dir=directory.0, standard=false))
-            for loaf in standard_loaves(own.intent.name, own.intent.standard_dependencies, profile)?:
-                if loaf.name != own.intent.name:
-                    loaves.append(loaf)
+            for loaf in standard_loaves(own.intent.name, profile)?:
+                loaves.append(loaf)
             return Ok(
                 UnitDescription(
                     source=entry.0,

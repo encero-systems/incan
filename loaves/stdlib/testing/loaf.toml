@@ -14,4 +14,4 @@ root = "rust"
 
 [dependencies]
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
-incan_stdlib_core = { loaf = "incan_stdlib_core", path = "../core", version = "0.6.0-dev.6", standard = true }
+incan_stdlib_core = { loaf = "incan_stdlib_core", path = "../core", version = "0.6.0-dev.6" }

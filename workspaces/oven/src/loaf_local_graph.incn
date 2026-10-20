@@ -61,9 +61,6 @@ pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
         table = root["dependencies"].as_table().map_err((e) => e.message())?
         for alias in sorted([key for key in table.keys()]):
             value = table[alias]
-            if value.kind() == TomlKind.Table and value.get_optional[bool]("standard").map_err((e) => e.message())? == Some(true) and value.get_optional[str]("loaf").map_err((e) => e.message())? == None:
-                # A standard dependency is an Incan edge; the Rust facet has no edge for it.
-                continue
             if value.kind() == TomlKind.Array:
                 for alternative in value.as_array().map_err((e) => e.message())?:
                     dependencies.append(declaration(alias, alternative, len(dependencies))?)

@@ -8,7 +8,7 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | --- | --- |
 | `main.incn` | The `incan` command line. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, a library or a standard package: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
-| `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, standard, Rust-facet and registry dependencies, its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
 | `features.incn` | Package feature resolution over the local graph (RFC 114): additive, unified across active edges, optional dependencies selected by features, cycles refused. |
 | `home.incn` | The home (`INCAN_HOME`) and the artifact layout of standard packages and path dependencies; the toolchain's standard packages. |
 | `loaf_index.incn`, `json_fields.incn`, `loaf_resolve.incn`, `loaf_facts.incn`, `semver_req.incn` | The incan.pub index: decoding pinned Loaf declarations, selecting versions, checking recorded feature closures. |

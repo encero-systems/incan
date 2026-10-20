@@ -8,4 +8,3 @@ private = true
 crate = "vocab_companion"
 
 [dependencies]
-incan_stdlib_core = { standard = true }

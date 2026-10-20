@@ -102,8 +102,6 @@ pub model ProjectIntent:
     pub contract_models: list[str] = []
     # The C headers the `[interop.c]` targets declare, project-relative.
     pub c_headers: list[str] = []
-    # The standard packages a standard package depends on, by package name.
-    pub standard_dependencies: list[str] = []
 
 
 pub model LocalProject:
@@ -217,7 +215,7 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
     root = table(parsed, manifest, [])?
     if "sdk" in root:
-        return Err(refusal(manifest, ["sdk"], IntakeErrorKind.Unsupported, "there is no SDK selection: every standard package is available to every program"))
+        return Err(refusal(manifest, ["sdk"], IntakeErrorKind.Unsupported, "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"))
     allowed(root, list(ROOT_TABLES), manifest, [])?
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
@@ -266,7 +264,6 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             source_root=source_root,
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
-            standard_dependencies=parse_standard_dependencies(root, manifest)?,
         ),
     )
 
@@ -423,26 +420,6 @@ def parse_c_headers(root: Dict[str, TomlValue], manifest: str) -> Result[list[st
     return Ok(headers)
 
 
-def parse_standard_dependencies(root: Dict[str, TomlValue], manifest: str) -> Result[list[str], IntakeError]:
-    """The standard packages `[dependencies]` names with `standard = true`, keyed by package name. A standard
-    package reaches only the standard packages it names; every other package reaches all of them."""
-    mut names: list[str] = []
-    if "dependencies" not in root:
-        return Ok(names)
-    values = table(root["dependencies"], manifest, ["dependencies"])?
-    for alias in sorted([key for key in values.keys()]):
-        if values[alias].kind() != TomlKind.Table:
-            continue
-        entry = table(values[alias], manifest, ["dependencies", alias])?
-        if "standard" not in entry:
-            continue
-        allowed(entry, ["standard", "loaf", "path", "version"], manifest, ["dependencies", alias])?
-        if not flag(entry, "standard", false, manifest, ["dependencies", alias])?:
-            return Err(refusal(manifest, ["dependencies", alias, "standard"], IntakeErrorKind.Invalid, "a standard dependency is declared with `standard = true`"))
-        names.append(alias)
-    return Ok(names)
-
-
 def parse_dependencies(
     root: Dict[str, TomlValue],
     manifest: str,
@@ -485,11 +462,11 @@ def parse_dependencies(
                 rust_inputs.append(rust_request(alias, value, manifest, group)?)
             else:
                 entry = table(value, manifest, [group, alias])?
-                if "standard" in entry and "path" not in entry:
-                    continue
+                if "standard" in entry:
+                    return Err(refusal(manifest, [group, alias, "standard"], IntakeErrorKind.Unsupported, "standard packages are ambient: a unit reaches every standard package it uses, and none is declared"))
                 if "path" in entry:
                     field = [group, alias]
-                    allowed(entry, ["loaf", "path", "version", "optional", "default-features", "features", "standard"], manifest, field)?
+                    allowed(entry, ["loaf", "path", "version", "optional", "default-features", "features"], manifest, field)?
                     path = required(entry, "path", manifest, field + ["path"])?
                     mut features: list[str] = []
                     if "features" in entry:
