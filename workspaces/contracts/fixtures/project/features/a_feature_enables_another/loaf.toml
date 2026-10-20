@@ -1,0 +1,11 @@
+[project]
+name = "a_feature_enables_another"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["full"]
+full = ["parsing"]
+parsing = []

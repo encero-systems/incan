@@ -1,0 +1,7 @@
+# behavior: std.async names used without their import are refused
+# expect-diagnostic: INCAN-P0001
+
+"""Invalid fixture: std.async import missing"""
+
+async def work() -> None:
+    await sleep(0.1)

@@ -1,0 +1,6 @@
+# behavior: the features the manifest's default list names are active and the others are not
+# expect-active-features:
+#   fast
+
+def main() -> None:
+    println("features")

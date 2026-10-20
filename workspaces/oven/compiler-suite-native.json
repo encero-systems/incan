@@ -28,7 +28,6 @@
       ],
       "project": "../../loaves/compiler/incan_frontend"
     },
-    
     {
       "domain": "target",
       "features": [
@@ -38,11 +37,6 @@
         "std_testing"
       ],
       "project": "../../loaves/compiler/incan_semantics_stdlib"
-    },
-    {
-      "project": "../../loaves/compiler/incan_test_support",
-      "domain": "target",
-      "features": []
     },
     {
       "domain": "target",
@@ -79,8 +73,6 @@
       ],
       "project": "../../loaves/kernel/incan_vocab"
     },
-    
-    
     {
       "domain": "target",
       "features": [],

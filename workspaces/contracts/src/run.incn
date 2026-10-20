@@ -1,0 +1,47 @@
+"""
+One `incan` invocation: the command line a family's case runs, in the case's project, with what it showed.
+"""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+
+
+pub model Outcome:
+    """What one invocation showed."""
+
+    pub stdout: str
+    pub stderr: str
+    # The exit code; `None` when the process ended without one (a signal).
+    pub code: Option[int]
+
+    def exit_text(self) -> str:
+        """The exit code as a report shows it."""
+        match self.code:
+            Some(code) => return str(code)
+            None => return "none (ended by a signal)"
+
+
+pub def invoke(incan: str, arguments: list[str], project: Path) -> Result[Outcome, str]:
+    """Run `incan` with `arguments` in `project` and collect its stdout, stderr and exit code."""
+    mut command = Command.new(incan)
+    command.current_dir(project.0)
+    for argument in arguments:
+        command.arg(argument)
+    match command.output():
+        Err(error) => return Err(f"cannot start `{incan}`: {error}")
+        Ok(output) =>
+            stdout = text(output.stdout, "stdout")?
+            stderr = text(output.stderr, "stderr")?
+            mut code: Option[int] = None
+            match output.status.code():
+                Some(value) => code = Some(int(value))
+                None => pass
+            return Ok(Outcome(stdout=stdout, stderr=stderr, code=code))
+
+
+def text(bytes: bytes, stream: str) -> Result[str, str]:
+    """A stream decoded as UTF-8; a stream that is not UTF-8 is a failure of the case, not something to repair."""
+    match RustString.from_utf8(bytes):
+        Ok(decoded) => return Ok(str(decoded))
+        Err(_) => return Err(f"the {stream} of the invocation is not UTF-8")

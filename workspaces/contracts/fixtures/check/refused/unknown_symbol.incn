@@ -1,0 +1,5 @@
+# behavior: a name that is never declared is refused
+# expect-diagnostic: INCAN-T0001
+
+def foo() -> int:
+    return undefined_variable

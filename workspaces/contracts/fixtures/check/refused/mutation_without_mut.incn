@@ -1,0 +1,6 @@
+# behavior: assigning to a binding not declared `mut` is refused
+# expect-diagnostic: INCAN-T0001
+
+def foo() -> Unit:
+    x = 1
+    x = 2

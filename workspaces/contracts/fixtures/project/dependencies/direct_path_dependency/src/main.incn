@@ -1,0 +1,11 @@
+# behavior: a path dependency is listed under the key the manifest declares it with
+# expect-dependencies:
+#   helper helper
+# expect-std-packages:
+#   incan_stdlib_core
+
+from pub::helper import helper_value
+
+
+def main() -> None:
+    println(helper_value())

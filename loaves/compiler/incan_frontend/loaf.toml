@@ -59,7 +59,6 @@ type = "lib"
 
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
-incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
 incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
 rust_inspect = { features = ["test_fixtures"] }
 tempfile = { optional = false }

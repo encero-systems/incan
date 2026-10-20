@@ -1,0 +1,157 @@
+"""
+The comparison: what a case's invocation showed against what its header declares. Each function returns the case's
+failures, one entry per broken expectation; an empty list means the case holds.
+"""
+
+from std.json import JsonValue, parse
+from header import Header, lines_of
+from run import Outcome
+
+
+pub def compare(family: str, header: Header, outcome: Outcome) -> list[str]:
+    """Every expectation of `header` that `outcome` breaks."""
+    if family == "project":
+        return described(header, outcome)
+    if len(header.diagnostics) > 0:
+        return refused(header, outcome)
+    if header.accepted:
+        return accepted(outcome)
+    return ran(header, outcome)
+
+
+def refused(header: Header, outcome: Outcome) -> list[str]:
+    """A check that fails with every declared code in its report."""
+    if outcome.code == Some(0):
+        return [f"expected the check to refuse the program with {', '.join(header.diagnostics)}; it passed"]
+    match report_codes(outcome):
+        Err(reason) => return [reason]
+        Ok(codes) =>
+            mut failures: list[str] = []
+            for code in header.diagnostics:
+                if code not in codes:
+                    failures.append(f"expected diagnostic {code}; the report has {listing(codes)}")
+            return failures
+
+
+def accepted(outcome: Outcome) -> list[str]:
+    """A check that passes, warnings allowed."""
+    if outcome.code == Some(0):
+        return []
+    match report_codes(outcome):
+        Err(reason) => return [f"expected the check to accept the program; it exited {outcome.exit_text()}", reason]
+        Ok(codes) => return [f"expected the check to accept the program; it was refused with {listing(codes)}"]
+
+
+def report_codes(outcome: Outcome) -> Result[list[str], str]:
+    """The diagnostic codes of a `check --format json` report."""
+    match parse(outcome.stdout):
+        Err(error) => return Err(f"the check printed no JSON report ({error.message()})")
+        Ok(report) =>
+            mut codes: list[str] = []
+            match report.get("diagnostics"):
+                None => return Err("the check report has no `diagnostics`")
+                Some(diagnostics) =>
+                    for diagnostic in diagnostics.as_array().unwrap_or([]):
+                        match diagnostic.get("code"):
+                            Some(code) => codes.append(code.as_str().unwrap_or("?"))
+                            None => codes.append("?")
+            return Ok(codes)
+
+
+def ran(header: Header, outcome: Outcome) -> list[str]:
+    """A run whose stdout, stderr and exit code show what the header declares."""
+    mut failures: list[str] = []
+    actual = lines_of(outcome.stdout)
+    if header.declares("expect-stdout"):
+        expected = header.items("expect-stdout")
+        if actual != expected:
+            failures.append(f"stdout differs\n{block('expected', expected)}\n{block('actual', actual)}")
+    for line in header.items("expect-stdout-contains"):
+        if line not in actual:
+            failures.append(f"stdout has no line `{line}`\n{block('actual', actual)}")
+    for failure in stderr_and_exit(header, outcome):
+        failures.append(failure)
+    return failures
+
+
+def stderr_and_exit(header: Header, outcome: Outcome) -> list[str]:
+    """The stderr substrings and the exit code every invocation is held to."""
+    mut failures: list[str] = []
+    for item in header.items("expect-stderr-contains"):
+        if item not in outcome.stderr:
+            failures.append(f"stderr does not contain `{item}`")
+    if outcome.code != Some(header.expected_exit()):
+        failures.append(f"expected exit {header.expected_exit()}; it exited {outcome.exit_text()}")
+    return failures
+
+
+def described(header: Header, outcome: Outcome) -> list[str]:
+    """A unit description whose dependencies, standard packages and active features are what the header declares."""
+    mut failures = stderr_and_exit(header, outcome)
+    if outcome.code != Some(0) or len(failures) > 0:
+        return failures
+    match parse(outcome.stdout):
+        Err(error) => return [f"describe-unit printed no JSON unit description ({error.message()})"]
+        Ok(unit) =>
+            mut dependencies: list[str] = []
+            mut standard: list[str] = []
+            for loaf in json_list(unit, "loaves"):
+                name = json_str(loaf, "name")
+                if json_bool(loaf, "standard"):
+                    standard.append(name)
+                else:
+                    dependencies.append(f"{json_str(loaf, 'key')} {name}")
+            if header.declares("expect-dependencies"):
+                expected = sorted(header.items("expect-dependencies"))
+                if sorted(dependencies) != expected:
+                    failures.append(f"dependencies differ\n{block('expected', expected)}\n{block('actual', sorted(dependencies))}")
+            for package in header.items("expect-std-packages"):
+                if package not in standard:
+                    failures.append(f"standard package `{package}` is missing; the unit has {listing(sorted(standard))}")
+            if header.declares("expect-active-features"):
+                expected = sorted(header.items("expect-active-features"))
+                features = sorted([json_text(item) for item in json_list(unit, "active_features")])
+                if features != expected:
+                    failures.append(f"active features differ\n{block('expected', expected)}\n{block('actual', features)}")
+    return failures
+
+
+def json_list(value: JsonValue, key: str) -> list[JsonValue]:
+    """The array under `key`; empty when it is missing or not an array."""
+    match value.get(key):
+        Some(item) => return item.as_array().unwrap_or([])
+        None => return []
+
+
+def json_str(value: JsonValue, key: str) -> str:
+    """The string under `key`; `?` when it is missing or not a string."""
+    match value.get(key):
+        Some(item) => return json_text(item)
+        None => return "?"
+
+
+def json_text(value: JsonValue) -> str:
+    """A JSON string's text; `?` for anything else."""
+    return value.as_str().unwrap_or("?")
+
+
+def json_bool(value: JsonValue, key: str) -> bool:
+    """The boolean under `key`; false when it is missing or not a boolean."""
+    match value.get(key):
+        Some(item) => return item.as_bool().unwrap_or(false)
+        None => return false
+
+
+def block(label: str, lines: list[str]) -> str:
+    """Lines as a report shows them: a label, then each line indented, `(nothing)` for none."""
+    if len(lines) == 0:
+        return f"  {label}: (nothing)"
+    body = "\n".join([f"    {line}" for line in lines])
+    return f"  {label}:\n{body}"
+
+
+def listing(items: list[str]) -> str:
+    """Items as a report names them, `nothing` for none."""
+    if len(items) == 0:
+        return "nothing"
+    return ", ".join(items)

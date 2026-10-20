@@ -26,7 +26,3 @@ serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 name = "incan_cli"
 type = "lib"
 edition = "2024"
-
-# The behavior roots run the behavior fixtures through the test harness.
-[envs.test.dependencies]
-incan_test_support = { loaf = "incan_test_support", path = "../../compiler/incan_test_support" }

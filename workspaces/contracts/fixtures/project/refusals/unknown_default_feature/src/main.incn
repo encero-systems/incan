@@ -1,0 +1,7 @@
+# behavior: a default feature the manifest does not declare refuses the unit, naming the feature
+# expect-exit: 1
+# expect-stderr-contains:
+#   missing
+
+def main() -> None:
+    println("unreachable")

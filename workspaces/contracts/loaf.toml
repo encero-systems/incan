@@ -1,0 +1,7 @@
+[project]
+name = "contracts"
+version = "0.1.0"
+description = "The contract test families and their table runner"
+
+[project.scripts]
+main = "src/main.incn"

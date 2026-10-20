@@ -776,9 +776,44 @@ mod tests {
     };
     use crate::{lexer, parser};
 
-    /// Shared with `loaves/toolchain/incan-cli/tests/integration_tests.rs` (GitHub #247 export + CLI fmt coverage).
-    const BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE: &str =
-        include_str!("../../incan_test_support/fixtures/block_docstring_public_type_like.incn");
+    /// Public type-like declarations whose block docstrings the export summary reads.
+    const BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE: &str = r##"pub model CliModelProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    pub id: int
+
+pub class CliClassProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    pub x: int
+
+pub enum CliEnumProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    V
+
+pub trait CliTraitProbe:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+    def meth(self) -> None: ...
+
+pub type CliNewtypeProbe = newtype int:
+    """
+    Line A documents the class API.
+    Line B keeps interior newlines after trim().
+    """
+
+    def zero(self) -> int:
+        return 0
+"##;
 
     fn make_spanned<T>(node: T) -> Spanned<T> {
         Spanned {

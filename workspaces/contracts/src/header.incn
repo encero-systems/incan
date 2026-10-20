@@ -1,0 +1,323 @@
+"""
+The fixture header: the unbroken run of `#` lines at the top of a fixture's program, and what it declares.
+
+The grammar is the behavior-fixture format (`fixtures/behavior/README.md`): directives are `# key: value`, block items
+are `#` and at least two spaces, a bare `#` is an empty block line or a separator. Every family reads the same grammar;
+which directives a family admits is the family's rule (`families.incn`).
+"""
+
+
+# The directives the header accepts.
+const DIRECTIVES: FrozenList[str] = [
+    "behavior",
+    "retires",
+    "expect-stdout",
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-exit",
+    "expect-diagnostic",
+    "expect-accepted",
+    "expect-dependencies",
+    "expect-std-packages",
+    "expect-active-features",
+    "pending",
+]
+
+# The directives whose lines follow them as an indented block.
+const BLOCKS: FrozenList[str] = [
+    "expect-stdout",
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-dependencies",
+    "expect-std-packages",
+    "expect-active-features",
+]
+
+# Blocks every item of which must be present, so an empty one checks nothing. `expect-dependencies:` and
+# `expect-active-features:` are exact: an empty block means none.
+const SUBSET_BLOCKS: FrozenList[str] = ["expect-stdout-contains", "expect-stderr-contains", "expect-std-packages"]
+
+# Blocks whose items are compared as a set, so an item listed twice checks nothing.
+const SET_BLOCKS: FrozenList[str] = [
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-dependencies",
+    "expect-std-packages",
+    "expect-active-features",
+]
+
+
+pub model Header:
+    """What a fixture declares about itself."""
+
+    # One line saying what the fixture proves (`# behavior:`).
+    pub behavior: str
+    # The retired tests this fixture is the twin of (`# retires:`).
+    pub retires: list[str]
+    # The block directives declared, in order, with the line each starts on and its items.
+    pub block_keys: list[str]
+    pub block_lines: dict[str, int]
+    pub block_items: dict[str, list[str]]
+    # The declared exit code (`# expect-exit:`), when one is declared.
+    pub exit_code: Option[int]
+    # Diagnostic codes the program must be refused with (`# expect-diagnostic:`).
+    pub diagnostics: list[str]
+    # Whether the program must check cleanly (`# expect-accepted:`).
+    pub accepted: bool
+    # Why the fixture does not hold yet (`# pending:`).
+    pub pending: Option[str]
+
+    def items(self, key: str) -> list[str]:
+        """The items of the block `key`; empty when it is not declared."""
+        if key in self.block_keys:
+            return self.block_items[key]
+        return []
+
+    def declares(self, key: str) -> bool:
+        """Whether the header declares the directive `key`."""
+        if key in self.block_keys:
+            return true
+        if key == "expect-exit":
+            match self.exit_code:
+                Some(_) => return true
+                None => return false
+        if key == "expect-diagnostic":
+            return len(self.diagnostics) > 0
+        if key == "expect-accepted":
+            return self.accepted
+        return false
+
+    def expected_exit(self) -> int:
+        """The exit code a run must end with: the declared one, or 0."""
+        match self.exit_code:
+            Some(code) => return code
+            None => return 0
+
+
+pub def parse_header(text: str) -> Result[Header, str]:
+    """Parse the header of a fixture's program, refusing anything the comparison could not honor."""
+    mut header = Header(
+        behavior="",
+        retires=[],
+        block_keys=[],
+        block_lines={},
+        block_items={},
+        exit_code=None,
+        diagnostics=[],
+        accepted=false,
+        pending=None,
+    )
+    mut open_block = ""
+    mut width = 0
+    mut ended = 0
+    mut ended_by_blank = false
+    mut number = 0
+    for line in lines_of(text):
+        number += 1
+        # ---- Past the header: a directive here would be silently dropped, so it is refused ----
+        if ended > 0:
+            late = late_directive(line)
+            if late != "":
+                return Err(late_reason(number, late, ended, ended_by_blank))
+            continue
+        if not line.startswith("#"):
+            ended = number
+            ended_by_blank = line.strip() == ""
+            continue
+        rest = line[1:]
+        # ---- Bare `#`: an empty block line inside a block, a separator outside one ----
+        if rest.strip() == "":
+            if open_block != "":
+                if rest != "":
+                    return Err(f"line {number}: inside the `{open_block}:` block, a line of only whitespace ends with whitespace, which a report cannot show; a bare `#` is the empty line")
+                header = push_item(header, open_block, number, "")?
+            continue
+        # ---- Block item: `#` and two or more spaces ----
+        indent = leading_spaces(rest)
+        if indent >= 2:
+            if open_block == "":
+                return Err(f"line {number}: an indented line outside a block directive")
+            if width == 0:
+                width = indent
+            mut take = width
+            if indent < width:
+                take = indent
+            header = push_item(header, open_block, number, rest[take:])?
+            continue
+        # ---- Directive: `# key: value` ----
+        mut directive = rest
+        if rest.startswith(" "):
+            directive = rest[1:]
+        if directive.startswith(" ") or directive.startswith("\t"):
+            return Err(f"line {number}: a directive is spelled `# key: value`, with one space between `#` and the key")
+        parts = directive.split(":")
+        if len(parts) < 2:
+            return Err(f"line {number}: `#{rest}` is neither a directive (`# key: value`) nor an indented block item; put prose in `behavior:`")
+        key = parts[0]
+        if key.strip() != key:
+            return Err(f"line {number}: `{key.strip()}:` has whitespace before the colon; a directive is spelled `# key: value`")
+        value = ":".join(parts[1:]).strip()
+        open_block = ""
+        width = 0
+        if key in BLOCKS:
+            open_block = key
+        header = directive_into(header, number, key, value)?
+    return finish(header)
+
+
+def directive_into(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
+    """Admit one directive, refusing a repeat or a malformed value."""
+    mut next = header
+    if key not in DIRECTIVES:
+        return Err(f"line {number}: unknown directive `{key}`; the header accepts {', '.join(list(DIRECTIVES))}")
+    if key == "behavior":
+        if next.behavior != "":
+            return Err(f"line {number}: `behavior:` is declared twice")
+        if value == "":
+            return Err(f"line {number}: `behavior:` must say what the fixture proves")
+        next.behavior = value
+        return Ok(next)
+    if key == "retires":
+        if value == "" or " " in value or "::" not in value:
+            return Err(f"line {number}: `retires:` must name a test as `<path>.rs::<fn>` with no whitespace, got `{value}`")
+        if value in next.retires:
+            return Err(f"line {number}: `retires: {value}` is declared twice")
+        next.retires.append(value)
+        return Ok(next)
+    if key in BLOCKS:
+        if value != "":
+            return Err(f"line {number}: `{key}:` takes its lines below it, indented by two spaces after `#`")
+        if next.declares(key):
+            return Err(f"line {number}: `{key}:` is declared twice")
+        next.block_keys.append(key)
+        next.block_lines[key] = number
+        next.block_items[key] = []
+        return Ok(next)
+    return scalar_directive(next, number, key, value)
+
+
+def scalar_directive(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
+    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted` and `pending`."""
+    mut next = header
+    if key == "expect-exit":
+        if next.declares(key):
+            return Err(f"line {number}: `expect-exit:` is declared twice")
+        if not is_exit_code(value):
+            return Err(f"line {number}: `expect-exit:` must be an exit code in 0..=255, got `{value}`")
+        next.exit_code = Some(int(value))
+        return Ok(next)
+    if key == "expect-diagnostic":
+        if value == "" or " " in value or "\t" in value:
+            return Err(f"line {number}: `expect-diagnostic:` must name one diagnostic code such as `INCAN-T0001`")
+        if value in next.diagnostics:
+            return Err(f"line {number}: `expect-diagnostic: {value}` is declared twice")
+        next.diagnostics.append(value)
+        return Ok(next)
+    if key == "expect-accepted":
+        if value != "":
+            return Err(f"line {number}: `expect-accepted:` takes no value")
+        if next.accepted:
+            return Err(f"line {number}: `expect-accepted:` is declared twice")
+        next.accepted = true
+        return Ok(next)
+    match next.pending:
+        Some(_) => return Err(f"line {number}: `pending:` is declared twice")
+        None => pass
+    if value == "":
+        return Err(f"line {number}: `pending:` must say what the fixture waits for")
+    next.pending = Some(value)
+    return Ok(next)
+
+
+def push_item(header: Header, key: str, number: int, item: str) -> Result[Header, str]:
+    """Append one item to the open block, refusing an item that ends with whitespace or a repeated set item."""
+    if item.endswith(" ") or item.endswith("\t"):
+        return Err(f"line {number}: the expected line `{item}` ends with whitespace, which a report cannot show; remove it")
+    mut items = header.items(key)
+    if key in SET_BLOCKS and item in items:
+        return Err(f"line {number}: `{key}:` lists `{item}` twice; one occurrence satisfies both")
+    items.append(item)
+    mut next = header
+    next.block_items[key] = items
+    return Ok(next)
+
+
+def finish(header: Header) -> Result[Header, str]:
+    """Apply the rules that span directives."""
+    if header.behavior == "":
+        return Err("the header has no `behavior:` line")
+    for key in header.block_keys:
+        items = header.block_items[key]
+        line = header.block_lines[key]
+        if len(items) == 0 and key in SUBSET_BLOCKS:
+            return Err(f"line {line}: `{key}:` lists nothing, so anything would satisfy it")
+        if key == "expect-stderr-contains" and "" in items:
+            return Err(f"line {line}: `expect-stderr-contains:` lists an empty substring, which checks nothing")
+    if header.declares("expect-stdout") and header.declares("expect-stdout-contains"):
+        return Err("`expect-stdout:` and `expect-stdout-contains:` cannot both be declared; pick one")
+    refused = len(header.diagnostics) > 0
+    run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares("expect-stderr-contains") or header.declares("expect-exit")
+    if refused and (run or header.accepted):
+        return Err("`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`")
+    if header.accepted and run:
+        return Err("`expect-accepted:` means the program is only checked; it cannot be declared beside a run expectation")
+    return Ok(header)
+
+
+pub def lines_of(text: str) -> list[str]:
+    """Split text into lines the way the comparison reads output: `\\n` ends a line, a trailing `\\r` is dropped, and a
+    final newline adds no empty line."""
+    mut lines: list[str] = []
+    for line in text.split("\n"):
+        if line.endswith("\r"):
+            lines.append(line[0:len(line) - 1])
+        else:
+            lines.append(line)
+    if len(lines) > 0 and lines[len(lines) - 1] == "":
+        lines = lines[0:len(lines) - 1]
+    return lines
+
+
+def leading_spaces(text: str) -> int:
+    """The number of spaces `text` starts with."""
+    mut count = 0
+    for index in range(len(text)):
+        if text[index] != " ":
+            return count
+        count += 1
+    return count
+
+
+def is_exit_code(value: str) -> bool:
+    """Whether `value` is a decimal exit code in 0..=255."""
+    if value == "" or len(value) > 3:
+        return false
+    for index in range(len(value)):
+        if value[index] not in "0123456789":
+            return false
+    return int(value) <= 255
+
+
+def late_directive(line: str) -> str:
+    """The directive a line past the header spells, or `""`: `#`, optional whitespace, a known key or any `expect-`
+    key, and a colon."""
+    if not line.startswith("#"):
+        return ""
+    rest = line[1:].strip()
+    parts = rest.split(":")
+    if len(parts) < 2:
+        return ""
+    key = parts[0]
+    if key == "behavior" or key == "retires" or key == "pending":
+        return key
+    if key.startswith("expect-") and len(key) > 7 and " " not in key:
+        return key
+    return ""
+
+
+def late_reason(number: int, key: str, ended: int, blank: bool) -> str:
+    """Why a directive past the header is refused, naming the line that ended the header."""
+    mut ended_by = f"the first line that is not a `#` comment ends the header (line {ended})"
+    if blank:
+        ended_by = f"a blank line ends the header (line {ended})"
+    return f"line {number}: `{key}:` after the header ended; {ended_by}, so keep every directive in the unbroken run of `#` lines at the top of the file"

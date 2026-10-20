@@ -31,7 +31,6 @@
       "project": "../../loaves/compiler/incan_frontend",
       "target": "x86_64-unknown-linux-gnu"
     },
-    
     {
       "domain": "target",
       "features": [
@@ -41,12 +40,6 @@
         "std_testing"
       ],
       "project": "../../loaves/compiler/incan_semantics_stdlib",
-      "target": "x86_64-unknown-linux-gnu"
-    },
-    {
-      "project": "../../loaves/compiler/incan_test_support",
-      "domain": "target",
-      "features": [],
       "target": "x86_64-unknown-linux-gnu"
     },
     {
@@ -90,8 +83,6 @@
       "project": "../../loaves/kernel/incan_vocab",
       "target": "x86_64-unknown-linux-gnu"
     },
-    
-    
     {
       "domain": "target",
       "features": [],
