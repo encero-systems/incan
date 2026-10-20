@@ -1,0 +1,12 @@
+# behavior: imported Rust free functions execute and return their declared result
+# expect-stdout:
+#   false
+
+"""Call a Rust free function with a concrete signature."""
+
+from rust::std::thread import panicking
+
+
+def main() -> None:
+    """Print the result of the selected Rust function."""
+    println(panicking())

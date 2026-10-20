@@ -1491,6 +1491,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(value) = self.lower_diverging_error_helper(callee, type_args, args, span, scope, out) {
             return value;
         }
+        if let Some(value) = self.lower_checked_rust_call(None, args, span, scope, out) {
+            return value;
+        }
         if let Some(value) = self.lower_testing_raises_call(callee, type_args, args, span, scope, out) {
             return value;
         }
@@ -2294,6 +2297,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(value) = self.lower_checked_rust_call(Some(recv), args, span, scope, out) {
+            return value;
+        }
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }

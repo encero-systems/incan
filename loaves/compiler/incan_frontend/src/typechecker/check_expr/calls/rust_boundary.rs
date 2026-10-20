@@ -373,6 +373,40 @@ impl TypeChecker {
         }
     }
 
+    /// Retain only a safe synchronous call whose Rust signature and native instantiation were fully selected.
+    /// The external call boundary later checks the retained signature against the exact linked Rust item.
+    fn retain_checked_rust_function(
+        &mut self,
+        path: &str,
+        signature: &RustFunctionSig,
+        bindings: &HashMap<String, ResolvedType>,
+        result: &ResolvedType,
+        span: Span,
+    ) {
+        if signature.is_async || signature.is_unsafe {
+            return;
+        }
+        let arguments = signature
+            .type_params
+            .iter()
+            .map(|parameter| bindings.get(parameter).cloned())
+            .collect::<Option<Vec<_>>>();
+        let Some(arguments) = arguments else {
+            return;
+        };
+        let parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
+        self.type_info.rust.checked_calls.insert(
+            (span.start, span.end),
+            crate::typechecker::type_info::RustCheckedCall {
+                path: path.trim_start_matches("rust::").to_owned(),
+                type_arguments: arguments,
+                parameters,
+                return_type: result.clone(),
+                has_receiver: false,
+            },
+        );
+    }
+
     /// Record an ownership conversion for borrowed Rust scalar-like returns that Incan exposes as owned values.
     pub(in crate::typechecker) fn record_rust_return_coercion_from_display(
         &mut self,
@@ -1156,6 +1190,7 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        let errors_before = self.errors.len();
         if sig.is_async {
             self.type_info
                 .rust
@@ -1189,6 +1224,9 @@ impl TypeChecker {
 
         let ret = self.resolved_rust_call_type_from_sig(&effective_sig, path, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
+        if self.errors.len() == errors_before {
+            self.retain_checked_rust_function(path, &effective_sig, &callable_returns, &ret, span);
+        }
         ret
     }
 }

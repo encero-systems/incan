@@ -46,6 +46,8 @@ Rust interop compiles on the direct route from checked facts alone, in three par
 
 Rust function and associated-function inference uses the same structural unifier as Incan functions. Only parameters declared by Rust facts are inference variables. Argument types and an expected result constrain those variables together; contradictory bindings are errors. Owner arguments include the defaults recorded on the Rust type. The checker substitutes the resulting arguments into the callable signature before recording parameter and result types, and retains inferred arguments in declaration order for Body IR. Inference does not make an unresolved Rust callee executable: retaining and lowering the callee remain separate requirements of the calls decision above.
 
+For metadata-selected safe synchronous free functions, the checker retains the public callee path, instantiated parameters, result, and native type arguments. Body IR projects that record into its named call and external callable declaration machinery, retaining reference passing modes in the parameter types. The driver preserves those external declarations when joining project modules. A nongeneric Rust free function therefore uses the same external signature verification and call emission as a linked Loaf function. An absent checked call record grants no foreign execution behavior.
+
 ## Non-goals
 
 - Field access, pattern matching on variants, or construction by fields of opaque Rust values.

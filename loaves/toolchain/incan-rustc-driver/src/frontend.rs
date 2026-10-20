@@ -200,7 +200,10 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program
     // calls the Loaf's compiled item. A governed body, one with type parameters, stays and is instantiated where it
     // is called.
-    let mut loaf_callables = Vec::new();
+    let mut loaf_callables = bodies
+        .iter()
+        .flat_map(|module| module.loaf_callables.iter().cloned())
+        .collect::<Vec<_>>();
     for module in bodies.iter_mut().take(loaf_modules) {
         for declaration in &mut module.nominal_declarations {
             if declaration.native_item.is_empty()

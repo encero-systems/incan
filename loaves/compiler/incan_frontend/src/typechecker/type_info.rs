@@ -940,6 +940,9 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
+    /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
+    pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
     /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
     /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
     pub(crate) body_ir_diverging_import_calls: HashMap<(usize, usize), Vec<String>>,
@@ -1035,6 +1038,21 @@ pub struct RustInteropArtifacts {
     /// this artifact so direct async Rust calls still realize to their output type without reintroducing import-time
     /// extraction or relying on stale symbol metadata.
     pub async_call_realizations: HashSet<(usize, usize)>,
+}
+
+/// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustCheckedCall {
+    /// Public item path of the selected free function or associated function.
+    pub path: String,
+    /// Native type arguments in the Rust declaration's order, including impl arguments for a method.
+    pub type_arguments: Vec<ResolvedType>,
+    /// Instantiated parameters; a method's receiver is first, including its reference mode.
+    pub parameters: Vec<CallableParam>,
+    /// The checked instantiated result type.
+    pub return_type: ResolvedType,
+    /// Whether the source receiver is a value passed in the first parameter slot.
+    pub has_receiver: bool,
 }
 
 /// Reference leaves selected for one generic argument of a mutable imported Rust type.

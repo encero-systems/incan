@@ -316,7 +316,7 @@ pub fn build_body_ir_module(
             &enum_declarations,
         ),
         enum_declarations,
-        loaf_callables: Vec::new(),
+        loaf_callables: rust_calls::declarations(type_info),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
@@ -1993,6 +1993,7 @@ mod calls;
 mod constructor_carriers;
 pub(crate) mod runtime_nominals;
 mod runtime_storage;
+mod rust_calls;
 mod rust_values;
 mod source_comparison;
 mod type_metadata;
