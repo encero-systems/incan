@@ -301,6 +301,7 @@ pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
         OperandKind.Literal(constant) =>
             match constant:
                 Constant.Numeric(_text, ty) => return Ok(ty)
+                Constant.RustItem(_path, ty) => return Ok(ty)
                 Constant.Int(_value) => return Ok(PlanType.Int)
                 Constant.Float(_value) => return Ok(PlanType.Float)
                 Constant.Bool(_value) => return Ok(PlanType.Bool)

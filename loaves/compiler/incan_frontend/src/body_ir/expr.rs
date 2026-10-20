@@ -373,6 +373,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
+        if let Some(path) = self
+            .type_info
+            .rust
+            .checked_constants
+            .get(&(expr.span.start, expr.span.end))
+        {
+            return self.push_assign_temp(
+                bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::RustItem(
+                    path.clone(),
+                    self.resolve_ty(expr.span),
+                ))),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
         // Checking can convert this value into a newtype where it is used. A conversion that only wraps the value in a
         // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR
         // form yet, so it refuses rather than handing a consumer the unconverted underlying value.

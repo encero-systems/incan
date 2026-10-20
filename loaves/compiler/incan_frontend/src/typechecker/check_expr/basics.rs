@@ -248,6 +248,10 @@ impl TypeChecker {
                             self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                         }
                         incan_lang::interop::RustItemKind::Constant { type_display } => {
+                            self.type_info
+                                .rust
+                                .checked_constants
+                                .insert((span.start, span.end), info.path.clone());
                             self.resolved_type_from_rust_display(type_display.as_str())
                         }
                         incan_lang::interop::RustItemKind::Unsupported { description } => {

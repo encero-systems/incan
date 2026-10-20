@@ -90,6 +90,21 @@ pub fn operand<'tcx>(
 /// Encode fixed-width scalar constants without changing their bit representation.
 fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir::Operand<'tcx>, PlanError> {
     Ok(match value {
+        Constant::RustItem(path, carrier) => {
+            let def = crate::callees::constant(tcx, path)?;
+            let actual = tcx.type_of(def).instantiate_identity().skip_normalization();
+            if actual != native_type(tcx, carrier)? {
+                return Err(PlanError::Invalid {
+                    function: path.clone(),
+                    reason: "Rust constant carrier differs from its checked type".into(),
+                });
+            }
+            mir::Operand::Constant(Box::new(mir::ConstOperand {
+                span,
+                user_ty: None,
+                const_: mir::Const::Unevaluated(mir::UnevaluatedConst::new(def, tcx.mk_args(&[])), actual),
+            }))
+        }
         Constant::Int(value) => mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span),
         Constant::Numeric(text, ty) => numeric_constant(tcx, text, ty, span)?,
         Constant::Float(value) => {

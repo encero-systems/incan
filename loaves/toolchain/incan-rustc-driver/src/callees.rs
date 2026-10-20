@@ -6,6 +6,11 @@ use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
+/// Resolve a retained public constant through module children; statics and associated values require other contracts.
+pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    library_item(tcx, path, DefKind::Const { is_type_const: false })
+}
+
 /// Resolve a planned source name, canonical external path, or explicit runtime operation to its exact function.
 /// Explicit plan arguments are checked separately.
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
@@ -110,8 +115,7 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
-/// Resolve a stdlib layout's crate item through public module children; a model layout names a struct and an enum
-/// layout names an enum, so `kind` is the item kind the plan declared.
+/// Resolve a retained item through public module children, selecting the exact item kind the plan declared.
 ///
 /// Each segment selects the public child of that name and the kind it must be: a module on the way, the declared
 /// kind at the end. A class with field defaults compiles a constructor function under its own name beside its struct,
@@ -121,6 +125,7 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
         function: path.into(),
         reason: match kind {
             DefKind::Enum => "Loaf layout names no public enum",
+            DefKind::Const { .. } => "Rust value names no public constant",
             _ => "Loaf layout names no public struct",
         }
         .into(),
@@ -134,6 +139,9 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
         .ok_or_else(unknown)?;
     let mut current = krate.as_def_id();
     while let Some(segment) = segments.next() {
+        if tcx.def_kind(current) != DefKind::Mod {
+            return Err(unknown());
+        }
         let wanted = if segments.peek().is_some() { DefKind::Mod } else { kind };
         current = tcx
             .module_children(current)

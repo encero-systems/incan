@@ -1820,6 +1820,8 @@ pub struct PlaceOperand {
 /// A literal constant operand value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Constant {
+    /// A metadata-selected public Rust constant, evaluated by rustc with its exact checked carrier.
+    RustItem(String, IncanType),
     /// A checked primitive type used as a value-level SDK marker; its represented type is retained without source-name
     /// inference.
     TypeToken(IncanType),
@@ -1987,6 +1989,7 @@ impl Constant {
     /// text, so a snapshot can never read a `bytes` constant as the `str` constant it is not.
     fn render_snapshot(&self) -> String {
         match self {
+            Self::RustItem(path, ty) => format!("const<rust::{path}: {ty}>"),
             Self::FrozenAggregate(ty, values) => format!("const<{ty}>({values:?})"),
             Self::TypeToken(ty) => format!("const<Type[{ty}]>"),
             Self::Int(v) => format!("const({v})"),

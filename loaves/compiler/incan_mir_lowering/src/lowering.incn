@@ -540,6 +540,9 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
         RustOperand.Place(read) => return place_read(builder, read.place, read.fact, span)
         RustOperand.Constant(constant) =>
             match constant:
+                RustConstant.RustItem(path, ty) =>
+                    carrier = native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?
+                    return Ok(literal(Constant.RustItem(str(path), carrier), span))
                 RustConstant.TypeToken(represented) => return type_token_literal(builder, represented, span)
                 RustConstant.FrozenAggregate(ty, elements) =>
                     layout = native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?
@@ -741,6 +744,7 @@ def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand
     """Turn a scalar literal into a plan constant; other literal kinds are refused by name."""
     match constant.clone():
         RustConstant.Int(number) => return Ok(literal(Constant.Int(number), span))
+        RustConstant.RustItem(_path, _ty) => return Err("Rust constant requires its checked carrier")
         RustConstant.Float(text) => return Ok(literal(Constant.Float(float(str(text))), span))
         RustConstant.Bool(flag) => return Ok(literal(Constant.Bool(flag), span))
         RustConstant.Unit => return Ok(literal(Constant.Unit, span))

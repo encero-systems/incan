@@ -796,6 +796,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
         }
         OperandKind::Move(value) => place(plan, function, value),
         OperandKind::Literal(value) => Ok(match value {
+            Constant::RustItem(_, ty) => scalar(ty),
             Constant::Int(_) => Scalar::Int,
             Constant::Numeric(_, ty) => scalar(ty),
             Constant::Float(_) => Scalar::Float,

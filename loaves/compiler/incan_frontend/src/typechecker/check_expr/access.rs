@@ -5634,7 +5634,20 @@ impl TypeChecker {
                         incan_lang::interop::RustModuleChildKind::Function => {
                             ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
                         }
-                        incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                        incan_lang::interop::RustModuleChildKind::Constant => {
+                            let selected = format!("{path}::{field}");
+                            let Some(metadata) = self.rust_item_metadata_for_path(&selected) else {
+                                return ResolvedType::Unknown;
+                            };
+                            let RustItemKind::Constant { type_display } = metadata.kind else {
+                                return ResolvedType::Unknown;
+                            };
+                            self.type_info
+                                .rust
+                                .checked_constants
+                                .insert((span.start, span.end), selected);
+                            self.resolved_type_from_rust_display(&type_display)
+                        }
                     };
                 }
                 // Module membership from rust-analyzer is authoritative.

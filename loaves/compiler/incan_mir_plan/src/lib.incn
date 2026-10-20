@@ -304,6 +304,7 @@ pub enum Constant:
     """A scalar literal or borrowed static text. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
 
     Numeric(str, PlanType)
+    RustItem(str, PlanType)
     Int(int)
     Float(float)
     Bool(bool)
