@@ -6,4 +6,5 @@ from rust::foreign_math import fabs
 
 
 def main() -> None:
+    """Call the registry dependency selected by the package's compact features."""
     println(fabs(-3.5))

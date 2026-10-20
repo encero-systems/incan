@@ -4,4 +4,5 @@
 #   no compiled registry unit of crates-io/libm satisfies 999
 
 def main() -> None:
+    """A program whose Rust dependency requires an unavailable version."""
     println("must not run")

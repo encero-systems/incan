@@ -6,4 +6,5 @@ from rust::counter import clones
 
 
 def main() -> None:
+    """Read the local Rust fixture's counter through its dependency alias."""
     println(clones())
