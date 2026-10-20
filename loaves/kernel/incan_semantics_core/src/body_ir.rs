@@ -1820,8 +1820,6 @@ pub struct PlaceOperand {
 /// A literal constant operand value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Constant {
-    /// A metadata-selected public Rust constant, evaluated by rustc with its exact checked carrier.
-    RustItem(String, IncanType),
     /// A checked primitive type used as a value-level SDK marker; its represented type is retained without source-name
     /// inference.
     TypeToken(IncanType),
@@ -1860,6 +1858,8 @@ pub enum Constant {
     None,
     /// A checked immutable sized-integer newtype value with its exact constructor and complete numeric payload.
     NumericNewtype(Box<NumericNewtypeConstant>),
+    /// A metadata-selected public Rust constant, evaluated by rustc with its exact checked carrier.
+    RustItem(String, IncanType),
 }
 
 /// Pure newtype data accepted by the declaring const checker, without a runtime call or module initialization.

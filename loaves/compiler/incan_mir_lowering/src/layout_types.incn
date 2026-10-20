@@ -39,6 +39,7 @@ pub def native_source_type(
         RustType.RefMut(inner) =>
             match native_source_type(nominals, enums, unions, inner, intrinsics)?:
                 PlanType.Model(index, name) => return Ok(PlanType.ModelMutRef(index, name))
+                PlanType.Int => return Ok(PlanType.ScalarMutRef([PlanType.Int]))
                 _ => return Err("unsupported Body IR mutable callable receiver outside a nominal layout")
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)

@@ -78,6 +78,7 @@ enum Scalar {
     String,
     StringRef,
     ScalarRef(Vec<Scalar>),
+    ScalarMutRef(Vec<Scalar>),
     StringMutRef,
     Decimal,
     FrozenStr,
@@ -186,6 +187,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::ScalarRef(elements) => Scalar::ScalarRef(elements.iter().map(scalar).collect()),
+        PlanType::ScalarMutRef(elements) => Scalar::ScalarMutRef(elements.iter().map(scalar).collect()),
         PlanType::Future(outputs) => Scalar::Future(outputs.iter().map(scalar).collect()),
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
@@ -668,7 +670,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref(field_type) => {
             let pointee = match ty {
-                Scalar::ScalarRef(elements) => {
+                Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) => {
                     let [inner] = elements.as_slice() else {
                         return Err(invalid(function, "unsupported scalar reference arity"));
                     };
@@ -810,6 +812,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
+        Scalar::ScalarMutRef(_) => true,
         Scalar::String
         | Scalar::StringArray(_)
         | Scalar::Model(_)
@@ -1222,7 +1225,8 @@ fn source_signature_type(ty: &Scalar) -> bool {
                     | Scalar::List(_, _)
                     | Scalar::Model(_)
                     | Scalar::Enum(_)
-            ) || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
+            ) || (matches!(element, Scalar::ScalarRef(_) | Scalar::ScalarMutRef(_)) && external_signature_type(element))
+                || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
                 || (matches!(element, Scalar::FunctionPointer(_)) && source_signature_type(element))
         });
     }
@@ -1265,7 +1269,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
 /// metadata checking erases, and the exclusive model and enum references a checked element reborrow returns.
 /// Concrete owned list iterators and their polling references cross only these native trait-call boundaries.
 fn external_signature_type(ty: &Scalar) -> bool {
-    if let Scalar::ScalarRef(elements) = ty {
+    if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
     }
     source_signature_type(ty)
@@ -2061,7 +2065,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             }
             validate_model_type(plan, output)?;
         }
-        PlanType::ScalarRef(elements) => {
+        PlanType::ScalarRef(elements) | PlanType::ScalarMutRef(elements) => {
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
@@ -2710,12 +2714,13 @@ fn library_argument_models(
     Ok(())
 }
 
-/// A free SDK alias has no retained lifetime binders, so borrowed argument components remain unadmitted.
-/// Function parameter eligibility alone is insufficient because its lifetime elision scope differs from an alias.
+/// Borrowed native type arguments require a retained ownership profile in addition to erased layout lifetimes.
+/// Function parameter eligibility alone does not authorize storing a loan inside a generic carrier.
 fn library_argument_is_borrowed(ty: &PlanType) -> bool {
     matches!(
         ty,
         PlanType::ScalarRef(..)
+            | PlanType::ScalarMutRef(..)
             | PlanType::FrozenCollectionRef(..)
             | PlanType::ModelRef(..)
             | PlanType::ModelMutRef(..)

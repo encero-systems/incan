@@ -10,7 +10,8 @@ use rustc_middle::ty::{Ty, TyCtxt};
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,
-        PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements)?,
+        PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements, false)?,
+        PlanType::ScalarMutRef(elements) => scalar_reference_type(tcx, elements, true)?,
         PlanType::Future(arguments) => {
             let [output] = arguments.as_slice() else {
                 return Err(PlanError::Unsupported {
@@ -174,14 +175,19 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
 
 /// Translate a preflight-validated single scalar referent, rejecting malformed arity before constructing its native
 /// reference.
-fn scalar_reference_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+fn scalar_reference_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType], mutable: bool) -> Result<Ty<'tcx>, PlanError> {
     let [inner] = elements else {
         return Err(PlanError::Unsupported {
             function: "scalar reference".into(),
             reason: "scalar reference requires exactly one referent".into(),
         });
     };
-    Ok(Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, native_type(tcx, inner)?))
+    let inner = native_type(tcx, inner)?;
+    Ok(if mutable {
+        Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, inner)
+    } else {
+        Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, inner)
+    })
 }
 
 /// Resolve the dependency-owned immutable wrapper and preserve its exact static storage arguments.

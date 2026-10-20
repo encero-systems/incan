@@ -60,9 +60,9 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     })
 }
 
-/// Build a shared scalar reference only after plan preflight validates its single referent; malformed arity stays an
-/// inferred error type.
-fn scalar_reference_ast(elements: &[PlanType], span: Span) -> ast::TyKind {
+/// Build an exact shared or mutable scalar reference after plan preflight validates its single referent; malformed
+/// arity stays an inferred error type.
+fn scalar_reference_ast(elements: &[PlanType], mutable: bool, span: Span) -> ast::TyKind {
     let [inner] = elements else {
         return ast::TyKind::Infer;
     };
@@ -70,7 +70,11 @@ fn scalar_reference_ast(elements: &[PlanType], span: Span) -> ast::TyKind {
         None,
         ast::MutTy {
             ty: ty(inner, span),
-            mutbl: ast::Mutability::Not,
+            mutbl: if mutable {
+                ast::Mutability::Mut
+            } else {
+                ast::Mutability::Not
+            },
         },
     )
 }
@@ -107,7 +111,8 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         return ty;
     }
     let kind = match kind {
-        PlanType::ScalarRef(elements) => scalar_reference_ast(elements, span),
+        PlanType::ScalarRef(elements) => scalar_reference_ast(elements, false, span),
+        PlanType::ScalarMutRef(elements) => scalar_reference_ast(elements, true, span),
         PlanType::Future(arguments) => {
             let name = arguments.first().map(crate::futures::alias_name).unwrap_or_default();
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
@@ -633,13 +638,7 @@ pub(crate) fn model_items(
     span: Span,
 ) -> Vec<Box<ast::Item>> {
     if !model.library_item.is_empty() {
-        return vec![library_alias(
-            &model.name,
-            &model.library_item,
-            model.public,
-            &model.library_type_arguments,
-            span,
-        )];
+        return vec![library_alias(&model.name, model.public, span)];
     }
     let mut declaration = self::model(model, span);
     for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
@@ -692,25 +691,10 @@ pub(crate) fn model_items(
     vec![module, alias]
 }
 
-/// Name a stdlib layout's or enum's compiled crate item under the plan's name, so MIR uses that crate's own ADT and
-/// nothing about its storage is declared here.
-fn library_alias(name: &str, library_item: &str, public: bool, arguments: &[PlanType], span: Span) -> Box<ast::Item> {
-    let mut segments = library_item.split("::");
-    let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
-    for segment in segments {
-        path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
-    }
-    if !arguments.is_empty()
-        && let Some(last) = path.segments.last_mut()
-    {
-        last.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-            span,
-            args: arguments
-                .iter()
-                .map(|argument| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(argument, span))))
-                .collect(),
-        })));
-    }
+/// Declare a native layout's alias shell. The adapter supplies its exact metadata type through `type_of`, including
+/// erased Rust lifetime arguments. Reconstructing its target in AST would create a second generic binding contract
+/// and require source lifetime binders that are deliberately absent from Body IR.
+fn library_alias(name: &str, public: bool, span: Span) -> Box<ast::Item> {
     let mut alias = item(
         ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
             defaultness: ast::Defaultness::Implicit,
@@ -720,7 +704,7 @@ fn library_alias(name: &str, library_item: &str, public: bool, arguments: &[Plan
             bounds: Vec::new(),
             ty: Some(Box::new(ast::Ty {
                 id: ast::DUMMY_NODE_ID,
-                kind: ast::TyKind::Path(None, path),
+                kind: ast::TyKind::Tup(ThinVec::new()),
                 span,
                 tokens: None,
             })),
@@ -1153,13 +1137,7 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
         return carrier_alias(value, span);
     }
     if !value.library_item.is_empty() {
-        return library_alias(
-            &value.name,
-            &value.library_item,
-            value.public,
-            &value.library_type_arguments,
-            span,
-        );
+        return library_alias(&value.name, value.public, span);
     }
     let variants = value
         .variants

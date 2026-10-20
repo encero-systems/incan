@@ -16,6 +16,24 @@ pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType>
     if let Some(checked) = checked_name(display.trim(), facts) {
         return Some(checked);
     }
+    if display.contains('<') {
+        let resolved = crate::typechecker::TypeChecker::new().resolved_type_from_rust_display(display);
+        if !matches!(resolved, crate::symbols::ResolvedType::RustPath(_)) {
+            return Some(super::runtime_nominals::project_type(
+                semantic_type_from_resolved(&resolved),
+                facts,
+            ));
+        }
+    }
+    if let Some((base, inner)) = display.trim().split_once('<')
+        && let Some(IncanType::Named(base)) = checked_name(base, facts)
+    {
+        let args = incan_lang::interop::split_top_level_rust_args(inner.strip_suffix('>')?)
+            .into_iter()
+            .map(|argument| argument_type(argument, facts))
+            .collect();
+        return Some(IncanType::Generic { base, args });
+    }
     let (identity, arguments) = rust_item(display, facts)?;
     let name = bir::native_opaque_name(&identity)?;
     if arguments.is_empty() {
@@ -50,6 +68,10 @@ fn rust_item<'a>(display: &'a str, facts: &TypeCheckInfo) -> Option<(CanonicalSy
     let path = facts.rust.item_public_paths.get(path).map_or(path, String::as_str);
     let identity = bir::rust_item_identity(path)?;
     bir::native_opaque_nominal(&identity, arguments.len())?;
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| !crate::typechecker::TypeChecker::rust_generic_arg_is_lifetime(argument))
+        .collect();
     Some((identity, arguments))
 }
 

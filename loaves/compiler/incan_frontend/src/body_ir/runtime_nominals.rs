@@ -238,12 +238,23 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
             .or_else(|| super::rust_values::project(&path, facts))
             .unwrap_or(IncanType::RustInteropPath(path)),
         IncanType::Generic { base, args } => IncanType::Generic {
-            base,
+            base: facts.rust.item_public_paths.get(&base).cloned().unwrap_or(base),
             args: args.into_iter().map(|arg| project_type(arg, facts)).collect(),
         },
         IncanType::Tuple(items) => IncanType::Tuple(items.into_iter().map(|item| project_type(item, facts)).collect()),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(project_type(*inner, facts))),
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(project_type(*inner, facts))),
+        IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(project_type(*inner, facts))),
+        IncanType::Function { params, return_type } => IncanType::Function {
+            params: params
+                .into_iter()
+                .map(|mut parameter| {
+                    parameter.ty = project_type(parameter.ty, facts);
+                    parameter
+                })
+                .collect(),
+            return_type: Box::new(project_type(*return_type, facts)),
+        },
         other => other,
     }
 }

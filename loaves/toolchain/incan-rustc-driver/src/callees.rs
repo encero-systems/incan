@@ -285,6 +285,7 @@ pub fn inferred_arguments(
 ///
 /// Trailing parameters the plan omits take the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s
 /// `A = Global`), instantiated over the arguments before them, as rustc does for a written path.
+/// Lifetime parameters receive erased regions and never consume a retained type argument; const parameters refuse.
 pub fn arguments<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
@@ -297,29 +298,51 @@ pub fn arguments<'tcx>(
             reason: "generic argument count differs from metadata".into(),
         });
     }
-    let mut arguments = types
-        .iter()
-        .map(|ty| crate::types::native_type(tcx, ty).map(Into::into))
-        .collect::<Result<Vec<_>, _>>()?;
-    for index in types.len()..generics.count() {
-        let default = generics
-            .param_at(index, tcx)
-            .default_value(tcx)
-            .ok_or_else(|| PlanError::Invalid {
-                function: tcx.def_path_str(def),
-                reason: "omitted generic argument has no default".into(),
-            })?;
-        let preceding = tcx.mk_args(&arguments);
-        arguments.push(default.instantiate(tcx, preceding).skip_normalization());
+    let mut types = types.iter();
+    let mut arguments = Vec::new();
+    for index in 0..generics.count() {
+        let parameter = generics.param_at(index, tcx);
+        let argument = match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => tcx.lifetimes.re_erased.into(),
+            rustc_middle::ty::GenericParamDefKind::Type { .. } => match types.next() {
+                Some(ty) => crate::types::native_type(tcx, ty)?.into(),
+                None => parameter
+                    .default_value(tcx)
+                    .ok_or_else(|| PlanError::Invalid {
+                        function: tcx.def_path_str(def),
+                        reason: "omitted generic argument has no default".into(),
+                    })?
+                    .instantiate(tcx, tcx.mk_args(&arguments))
+                    .skip_normalization(),
+            },
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => {
+                return Err(PlanError::Unsupported {
+                    function: tcx.def_path_str(def),
+                    reason: "native const arguments require a retained value contract".into(),
+                });
+            }
+        };
+        arguments.push(argument);
     }
     Ok(tcx.mk_args(&arguments))
 }
 
-/// Whether `written` arguments instantiate `def`: every parameter is written, or each omitted one has a default.
+/// Whether `written` type arguments instantiate `def`: lifetimes consume no slot, omitted types need defaults, and
+/// const arguments require a separate value contract.
 pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
     let generics = tcx.generics_of(def);
-    written <= generics.count()
-        && (written..generics.count()).all(|index| generics.param_at(index, tcx).default_value(tcx).is_some())
+    let mut supplied = 0;
+    for index in 0..generics.count() {
+        let parameter = generics.param_at(index, tcx);
+        match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => continue,
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => return false,
+            rustc_middle::ty::GenericParamDefKind::Type { .. } if supplied < written => supplied += 1,
+            rustc_middle::ty::GenericParamDefKind::Type { .. } if parameter.default_value(tcx).is_some() => {}
+            _ => return false,
+        }
+    }
+    supplied == written
 }
 
 /// Refuse an instantiation whose type arguments do not satisfy the callee's where-clauses, before any MIR exists.

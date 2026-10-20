@@ -262,6 +262,11 @@ impl TypeChecker {
                 return Some(ResolvedType::TypeVar(path.trim().to_owned()));
             }
             let (base, arguments) = Self::rust_generic_base_and_args(path)?;
+            if let Some(structural) = self.resolved_structural_rust_param_display(path, |checker, argument| {
+                checker.resolved_type_from_rust_display(argument)
+            }) {
+                return Some(self.rust_inference_type(&structural, parameters));
+            }
             let base = self
                 .type_info
                 .rust
@@ -272,6 +277,7 @@ impl TypeChecker {
                 base.to_owned(),
                 arguments
                     .into_iter()
+                    .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
                     .map(|argument| {
                         self.rust_inference_type(&self.resolved_type_from_rust_display(argument), parameters)
                     })

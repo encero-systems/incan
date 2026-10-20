@@ -28,16 +28,20 @@ pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &T
 }
 
 /// Classify declaration binders before SDK and builtin storage projection so a same-spelled parameter keeps its own
-/// category.
+/// category. Classify leaves exposed by structural Rust projection too, so a `Node<T>` display cannot close `T`
+/// as a nominal before the declaration's own binders are applied.
 pub(super) fn checked_parameter_type(
     ty: &crate::symbols::ResolvedType,
     facts: &TypeCheckInfo,
     parameters: &[String],
 ) -> IncanType {
     retain_checked_nominal_names(
-        super::runtime_nominals::project_type(
-            retain_parameter_type(semantic_type_from_resolved(ty), parameters),
-            facts,
+        retain_parameter_type(
+            super::runtime_nominals::project_type(
+                retain_parameter_type(semantic_type_from_resolved(ty), parameters),
+                facts,
+            ),
+            parameters,
         ),
         facts,
     )

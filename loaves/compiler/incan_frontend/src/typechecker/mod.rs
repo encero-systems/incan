@@ -1240,7 +1240,7 @@ impl TypeChecker {
     ///
     /// Rust metadata may qualify an inferred lifetime through the owner module (for example, `crate::'_`). Preserve
     /// real type arguments while eliding both plain and qualified lifetime placeholders before nominal comparison.
-    fn rust_generic_arg_is_lifetime(arg: &str) -> bool {
+    pub(crate) fn rust_generic_arg_is_lifetime(arg: &str) -> bool {
         let candidate = arg.trim().rsplit("::").next().unwrap_or(arg.trim());
         let Some(name) = candidate.strip_prefix('\'') else {
             return false;
@@ -2221,6 +2221,16 @@ impl TypeChecker {
         if rust_display_is_owned_string(normalized.as_str()) {
             return ResolvedType::Str;
         }
+        if let Some(inner) = display.strip_prefix('(').and_then(|inner| inner.strip_suffix(')'))
+            && inner.contains(',')
+        {
+            return ResolvedType::Tuple(
+                Self::split_top_level_generic_args(inner)
+                    .into_iter()
+                    .map(|element| self.resolved_type_from_rust_display(element))
+                    .collect(),
+            );
+        }
         match normalized.as_str() {
             "{unknown}" => ResolvedType::Unknown,
             "bool" => ResolvedType::Bool,
@@ -2242,7 +2252,7 @@ impl TypeChecker {
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
             _ if normalized.ends_with('>') => {
-                if let Some((base, args)) = Self::rust_generic_base_and_args(normalized.as_str()) {
+                if let Some((base, args)) = Self::rust_generic_base_and_args(display.as_str()) {
                     let tail = base.rsplit("::").next().unwrap_or(base);
                     match collection_type_id(tail) {
                         Some(CollectionTypeId::Option) => {
@@ -2279,7 +2289,7 @@ impl TypeChecker {
                         _ => {}
                     }
                     if let Some(structural) = self
-                        .resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+                        .resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
                             checker.resolved_type_from_rust_display(arg)
                         })
                     {
@@ -2289,7 +2299,7 @@ impl TypeChecker {
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
                 } else {
-                    ResolvedType::RustPath(normalized)
+                    ResolvedType::RustPath(display)
                 }
             }
             _ if !normalized.is_empty() => {
@@ -2359,12 +2369,12 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
-        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+        if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
             checker.resolved_param_type_from_rust_display(arg)
         }) {
             return structural;
         }
-        self.resolved_type_from_rust_display(normalized.as_str())
+        self.resolved_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust parameter display into a resolved type after expanding crate-relative paths for its owner.
@@ -2386,18 +2396,16 @@ impl TypeChecker {
     pub fn resolved_rust_boundary_target_from_param_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
-        let normalized = Self::compact_rust_display(&display);
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
         }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
-            let inner_normalized = Self::compact_rust_display(inner);
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
                 "[u8]" => ResolvedType::Bytes,
                 "String" | "std::string::String" | "alloc::string::String" => ResolvedType::RustPath(inner.to_string()),
                 "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" => ResolvedType::RustPath(inner.to_string()),
-                _ => self.resolved_type_from_rust_display(inner_normalized.as_str()),
+                _ => self.resolved_type_from_rust_display(inner),
             };
             return if is_mut {
                 ResolvedType::RefMut(Box::new(inner_ty))
@@ -2405,12 +2413,12 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
-        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+        if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
             checker.resolved_rust_boundary_target_from_param_display(arg)
         }) {
             return structural;
         }
-        self.resolved_param_type_from_rust_display(normalized.as_str())
+        self.resolved_param_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust boundary target after expanding crate-relative paths for its owner.
@@ -7065,6 +7073,11 @@ impl TypeChecker {
                 .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
             if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path) {
                 paths.entry(definition).or_insert_with(|| public.clone());
+            }
+            if self.lookup_symbol(&symbol.name).is_some_and(
+                |selected| matches!(&selected.kind, SymbolKind::RustItem(selected) if selected.path == info.path),
+            ) {
+                paths.insert(symbol.name.clone(), public.clone());
             }
             paths.insert(public.clone(), public);
         }

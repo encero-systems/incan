@@ -33,7 +33,8 @@ use crate::body_ir::{
 /// Version 20 appends the canonical diverging ValueError helper operation.
 /// Version 21 is the Loaf representation (DD-0007): Loaf callables replace standard-library delegations, enum
 /// declarations name their compiled item, and modules no longer carry re-exported names.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 21;
+/// Version 22 appends metadata-selected native Rust constants with their checked carrier types.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 22;
 
 /// Largest index this format admits, in bytes.
 ///

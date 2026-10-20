@@ -60,10 +60,14 @@ Public Rust constants retain their metadata-selected item path and checked carri
 
 Generic signature types substitute the checker's structured argument types before Body IR projection. This retains an Incan model's declaration identity across calls such as `swap` and `size_of_val`; a rendered Rust display of that model is not a replacement identity. A source-local declaration supplies its canonical carrier even when an inferred value never required a written type annotation.
 
+Rust lifetime arguments carry no layout and are erased before Body IR carrier construction. The adapter supplies erased regions for metadata lifetime parameters without consuming a type-argument slot. Native carrier aliases take their exact type from rustc metadata through the alias type query, using the same argument binding and defaults as calls. Their AST shells declare only the alias identity; they do not reconstruct a second foreign generic type or invent source lifetime binders. Rustc checks the actual borrowed values in MIR.
+
+Rust tuple elements retain shared and mutable scalar reference carriers explicitly. Mutable references cannot be copied. Nested callable signatures use the same carrier projection as ordinary parameters, and structural collection displays enter the same inference representation whether they come from Rust metadata or an Incan annotation. Executable representation version 22 appends the retained Rust constant form; version 21 payloads are refused before decoding and must be rebuilt.
+
 ## Non-goals
 
 - Field access, pattern matching on variants, or construction by fields of opaque Rust values.
-- Lifetime-generic Rust items and const-generic arguments.
+- Const-generic arguments.
 - Changing RFC 005's source surface.
 
 ## Revisit condition
