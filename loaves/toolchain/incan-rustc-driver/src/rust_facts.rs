@@ -80,8 +80,7 @@ impl incan_driver::session::RustFactsSource for RustcFacts {
         // Keep missing-artifact refusals at the imported item, so they do not mask independent source diagnostics.
         for path in unavailable {
             let root = path.split("::").next().unwrap_or(&path);
-            let description =
-                format!("Rust facts require an explicit --extern {root}=RLIB in the unit's native closure");
+            let description = format!("Rust facts require an exact `{root}` artifact in the unit's native closure");
             facts.insert(
                 path.clone(),
                 RustItemMetadata {
@@ -111,7 +110,7 @@ pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustIte
         let mut artifacts = request.externs.iter().filter(|(name, _)| name == root);
         let Some((_, artifact)) = artifacts.next() else {
             return Err(format!(
-                "Rust facts require an explicit --extern {root}=RLIB in the unit's native closure"
+                "Rust facts require an exact `{root}` artifact in the unit's native closure"
             ));
         };
         if artifacts.any(|(_, other)| other != artifact) {
@@ -210,14 +209,10 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
     let mut named = HashSet::new();
     let mut described = HashMap::new();
     for name in crates {
-        let Some(krate) = tcx
-            .crates(())
-            .iter()
-            .find(|krate| tcx.crate_name(**krate).as_str() == name)
-        else {
+        let Some(krate) = crate::native_crates::root(tcx, name) else {
             continue;
         };
-        for (path, def) in public_items(tcx, krate.as_def_id(), name) {
+        for (path, def) in public_items(tcx, krate, name) {
             let template = described
                 .entry(def)
                 .or_insert_with(|| describe(tcx, def, &path, &mut named));
@@ -276,11 +271,7 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
 fn resolve(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
     let mut segments = path.split("::").peekable();
     let root = segments.next()?;
-    let krate = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == root)?;
-    let mut current = krate.as_def_id();
+    let mut current = crate::native_crates::root(tcx, root)?;
     while let Some(segment) = segments.next() {
         let last = segments.peek().is_none();
         let children = tcx

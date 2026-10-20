@@ -1,0 +1,7 @@
+[project]
+name = "toml_value_borrowed_matching"
+version = "0.1.0"
+[project.scripts]
+main = "src/main.incn"
+[rust-dependencies]
+toml = "0.9"

@@ -132,12 +132,7 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
     };
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(unknown)?;
-    let krate = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == root)
-        .ok_or_else(unknown)?;
-    let mut current = krate.as_def_id();
+    let mut current = crate::native_crates::root(tcx, root).ok_or_else(unknown)?;
     while let Some(segment) = segments.next() {
         if tcx.def_kind(current) != DefKind::Mod {
             return Err(unknown());
@@ -166,12 +161,7 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
-    let krate = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == root)
-        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
-    let mut current = krate.as_def_id();
+    let mut current = crate::native_crates::root(tcx, root).ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     while let Some(segment) = segments.next() {
         let last = segments.peek().is_none();
         current = match tcx.def_kind(current) {

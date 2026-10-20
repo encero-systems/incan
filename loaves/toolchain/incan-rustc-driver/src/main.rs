@@ -37,6 +37,7 @@ mod futures;
 mod identity;
 mod library_exports;
 mod marker_traits;
+mod native_crates;
 mod plan;
 mod rust_facts;
 mod shared_callables;
@@ -56,7 +57,7 @@ use incan_driver::unit::UnitDescription;
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
                      text|json] [OPTIONS] | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]\n\
-                     OPTIONS: --extern CRATE=RLIB, --search DIR, --rust-abi CACHE, --rustc-arg ARG, --library";
+                     OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
 /// ABI cache of Rust crates (`--rust-abi`).
@@ -119,8 +120,8 @@ fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         },
         options => (DiagnosticOutputFormat::Text, options),
     };
-    let rust = frontend::dependencies(options)?.rust_facts(Path::new(sysroot));
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
+    let rust = frontend::dependencies(&unit, options)?.rust_facts(Path::new(sysroot));
     if let Err(error) = incan_cli::commands::check(&unit, &rust, format) {
         if !error.message.is_empty() {
             eprintln!("{}", error.message);

@@ -643,12 +643,11 @@ fn validate_generic_adoptions(
 pub(crate) struct Dependencies {
     pub(crate) externs: Vec<(String, PathBuf)>,
     pub(crate) directories: Vec<PathBuf>,
-    /// The ABI caches of the linked Rust crates (`--rust-abi`): the toolchain's standard crates and each compiled
-    /// unit's.
+    /// The ABI caches Oven names in the unit description: the toolchain's standard crates and each compiled unit's.
     pub(crate) rust_abi: Vec<PathBuf>,
     /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
     library: bool,
-    /// Arguments the Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
+    /// Arguments Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
 }
 
@@ -666,11 +665,24 @@ impl Dependencies {
     }
 }
 
-/// Parse declared native externs, search directories and rustc arguments; no ambient crate discovery is performed.
-pub(crate) fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
+/// Read exact artifacts from Oven's unit description and parse compilation options. Native inputs cannot be
+/// overridden by command-line flags, so checking, facts extraction, and compilation share one source.
+pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Result<Dependencies, String> {
+    let mut names = std::collections::BTreeSet::new();
     let mut externs = Vec::new();
-    let mut directories = Vec::new();
-    let mut rust_abi = Vec::new();
+    for native in &unit.externs {
+        if !names.insert(&native.name) {
+            return Err(format!("unit names more than one exact `{}` artifact", native.name));
+        }
+        if !native.path.is_file() {
+            return Err(format!(
+                "unit's `{}` artifact does not exist: {}",
+                native.name,
+                native.path.display()
+            ));
+        }
+        externs.push((native.name.clone(), native.path.clone()));
+    }
     let mut library = false;
     let mut rustc_args = Vec::new();
     let mut remaining = arguments.iter();
@@ -681,20 +693,14 @@ pub(crate) fn dependencies(arguments: &[String]) -> Result<Dependencies, String>
         }
         let value = remaining.next().ok_or_else(|| format!("missing value for {option}"))?;
         match option.as_str() {
-            "--extern" => {
-                let (name, path) = value.split_once('=').ok_or("--extern requires CRATE=RLIB")?;
-                externs.push((name.to_owned(), PathBuf::from(path)));
-            }
-            "--search" => directories.push(PathBuf::from(value)),
-            "--rust-abi" => rust_abi.push(PathBuf::from(value)),
             "--rustc-arg" => rustc_args.push(value.clone()),
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
     Ok(Dependencies {
         externs,
-        directories,
-        rust_abi,
+        directories: unit.search.clone(),
+        rust_abi: unit.rust_abi.clone(),
         library,
         rustc_args,
     })
@@ -705,10 +711,7 @@ pub(crate) fn dependencies(arguments: &[String]) -> Result<Dependencies, String>
 /// refusal classification instead of appearing as debug-form plan errors.
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
-        return Err(
-            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--rustc-arg ARG] [--library]"
-                .into(),
-        );
+        return Err("usage: --unit UNIT CRATE OUTPUT SYSROOT [--rustc-arg ARG] [--library]".into());
     }
 
     // ---- Checked source and Incan plan ----
@@ -717,7 +720,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
-    let dependencies = dependencies(&arguments[4..])?;
+    let dependencies = dependencies(&unit, &arguments[4..])?;
     let checked_library = dependencies.library;
     let rust = dependencies.rust_facts(Path::new(&arguments[3]));
     let parent = tracing::Span::current();

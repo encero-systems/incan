@@ -1,0 +1,7 @@
+# behavior: an unavailable Rust dependency version is refused before the program runs
+# expect-exit: 1
+# expect-stderr-contains:
+#   no compiled registry unit of crates-io/libm satisfies 999
+
+def main() -> None:
+    println("must not run")

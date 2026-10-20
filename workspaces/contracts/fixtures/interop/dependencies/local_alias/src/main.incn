@@ -1,0 +1,9 @@
+# behavior: a local Rust Loaf is callable through a dependency alias different from its package name
+# expect-stdout:
+#   0
+
+from rust::counter import clones
+
+
+def main() -> None:
+    println(clones())

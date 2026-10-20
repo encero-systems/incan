@@ -6,8 +6,10 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
 - `driver`: the compiler, `incan-rustc-driver`.
 - `sysroot`: the pinned Rust toolchain the compiler was built against. The compiler verifies the match itself.
 - `rust_abi`: the ABI caches of the toolchain's Rust crates (`std`, `core`, `alloc`): the Rust facts checking reads.
-- `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and the standard packages' Rust crates.
+- `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and its support crates. An explicit
+  manifest dependency takes precedence over a support crate's ambient alias.
 - `search`: the directories the dependencies of those crates live in.
+- `registry_units`: the prepared registry closure available to this toolchain during bootstrap.
 """
 
 from std.fs import Path
@@ -34,6 +36,7 @@ pub model Toolchain:
     pub rust_abi: list[str]
     pub externs: list[NativeCrate]
     pub search: list[str]
+    pub registry_units: str
 
 
 pub def load_toolchain() -> Result[Toolchain, str]:
@@ -65,5 +68,6 @@ def toolchain_of(document: JsonValue) -> Result[Toolchain, list[str]]:
             rust_abi=strings(field(document, "rust_abi", [])?, ["rust_abi"])?,
             externs=externs,
             search=strings(field(document, "search", [])?, ["search"])?,
+            registry_units=text_field(document, "registry_units", [])?,
         ),
     )
