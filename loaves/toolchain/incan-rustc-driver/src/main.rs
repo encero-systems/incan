@@ -38,6 +38,7 @@ mod identity;
 mod library_exports;
 mod marker_traits;
 mod plan;
+mod rust_facts;
 mod shared_callables;
 mod spans;
 mod statics;

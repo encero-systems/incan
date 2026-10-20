@@ -1,5 +1,6 @@
 //! Shared CLI-session source-to-Body-IR glue. All Body-IR-to-plan decisions belong to the Incan lowering Loaf.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -81,16 +82,17 @@ struct CheckedProgram {
 ///
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass.
-fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgram, String> {
+fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsInputs) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
-    let session = CompilationSession::new(unit).map_err(|error| error.to_string())?;
+    let mut session = CompilationSession::new(unit).map_err(|error| error.to_string())?;
     let modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
     } else {
         collect_modules_detailed_with_session(path.clone(), &session)
     }
     .map_err(|failure| failure.render_human())?;
+    add_rust_facts(&mut session, &modules, rust)?;
     let package_identity = unit.package.as_str();
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
@@ -240,6 +242,72 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
         own: loaf_modules + held_modules,
         manifest,
     })
+}
+
+/// The crates and sysroot a unit's Rust facts are read from: the unit's own native closure.
+struct RustFactsInputs {
+    sysroot: PathBuf,
+    externs: Vec<(String, PathBuf)>,
+    search: Vec<PathBuf>,
+}
+
+/// Read Rust facts for the unit's `rust::` imports from rustc's crate metadata (H9) and add them to the session.
+fn add_rust_facts(
+    session: &mut CompilationSession,
+    modules: &[incan_frontend::parsed_module::ParsedModule],
+    rust: &RustFactsInputs,
+) -> Result<(), String> {
+    let paths = imported_rust_paths(modules);
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let started = std::time::Instant::now();
+    let facts = crate::rust_facts::extract(crate::rust_facts::RustFactsRequest {
+        sysroot: &rust.sysroot,
+        externs: &rust.externs,
+        search: &rust.search,
+        paths,
+        depth: 1,
+    })?;
+    if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+        eprintln!("rust facts: {} items in {:?}", facts.len(), started.elapsed());
+        if let Some(directory) = std::env::var_os("INCAN_TRACE_RUST_FACTS_DIR") {
+            let path = PathBuf::from(directory).join("rust-facts.json");
+            let _ = std::fs::write(&path, serde_json::to_vec_pretty(&facts).unwrap_or_default());
+        }
+    }
+    session.add_rust_facts(facts);
+    Ok(())
+}
+
+/// The Rust paths a unit's modules import (`rust::…`), which its checking asks Rust facts for.
+fn imported_rust_paths(modules: &[incan_frontend::parsed_module::ParsedModule]) -> BTreeSet<String> {
+    use incan_frontend::ast::{Declaration, ImportKind};
+    let mut paths = BTreeSet::new();
+    for module in modules {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::RustCrate { crate_name, path, .. } => {
+                    paths.insert(std::iter::once(crate_name.clone()).chain(path.iter().cloned()).collect::<Vec<_>>().join("::"));
+                }
+                ImportKind::RustFrom {
+                    crate_name, path, items, ..
+                } => {
+                    for item in items {
+                        let segments = std::iter::once(crate_name.clone())
+                            .chain(path.iter().cloned())
+                            .chain(std::iter::once(item.name.clone()));
+                        paths.insert(segments.collect::<Vec<_>>().join("::"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    paths
 }
 
 /// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
@@ -644,10 +712,15 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let output = Path::new(&arguments[2]);
     let dependencies = dependencies(&arguments[4..])?;
     let checked_library = dependencies.library;
+    let rust = RustFactsInputs {
+        sysroot: PathBuf::from(&arguments[3]),
+        externs: dependencies.externs.clone(),
+        search: dependencies.directories.clone(),
+    };
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, checked_library)
+        checked_modules(&unit, checked_library, &rust)
     });
     let program = match checked {
         Ok(program) => program,

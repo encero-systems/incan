@@ -156,6 +156,12 @@ impl CompilationSession {
         &self.loaves
     }
 
+    /// Add Rust facts the compiler read from rustc's crate metadata for this unit; checking reads them through the
+    /// Loaf index, after the Loaves' own shipped ABI.
+    pub fn add_rust_facts(&mut self, facts: std::collections::BTreeMap<String, incan_lang::interop::RustItemMetadata>) {
+        Arc::make_mut(&mut self.loaves).add_rust_facts(facts);
+    }
+
     /// The standard package the program is, when it is one.
     pub fn own_standard_package(&self) -> Option<&'static StandardPackageNamespacePolicy> {
         self.own_standard_package

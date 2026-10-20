@@ -210,6 +210,8 @@ pub enum LoafIndexError {
 #[derive(Debug, Clone, Default)]
 pub struct LoafIndex {
     entries: BTreeMap<String, LoafEntry>,
+    /// Rust facts the compiler read from rustc's crate metadata for this compilation, keyed by path.
+    rust_facts: BTreeMap<String, RustItemMetadata>,
 }
 
 impl LoafIndex {
@@ -222,7 +224,15 @@ impl LoafIndex {
                 return Err(LoafIndexError::DuplicateKey { key });
             }
         }
-        Ok(Self { entries: indexed })
+        Ok(Self {
+            entries: indexed,
+            rust_facts: BTreeMap::new(),
+        })
+    }
+
+    /// Add Rust facts read from rustc's crate metadata; a Loaf's shipped ABI answers first.
+    pub fn add_rust_facts(&mut self, facts: BTreeMap<String, RustItemMetadata>) {
+        self.rust_facts.extend(facts);
     }
 
     /// The entry for one dependency, read from its artifact directory.
@@ -325,6 +335,7 @@ impl LoafIndex {
             .values()
             .filter_map(|entry| entry.artifact.manifest.rust_abi.as_ref())
             .find_map(|abi| abi.get(canonical_path).cloned())
+            .or_else(|| self.rust_facts.get(canonical_path).cloned())
     }
 
     /// Keyword registrations the indexed Loaves export, keyed by Loaf, for the consumer's parser.
