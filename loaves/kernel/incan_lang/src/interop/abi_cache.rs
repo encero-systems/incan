@@ -51,14 +51,28 @@ impl RustAbiCache {
     /// Read a cache's version and index, keeping its payload for on-demand decoding.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let malformed = || "malformed Rust ABI cache".to_owned();
-        let version = u32::from_le_bytes(bytes.get(0..4).ok_or_else(malformed)?.try_into().map_err(|_| malformed())?);
+        let version = u32::from_le_bytes(
+            bytes
+                .get(0..4)
+                .ok_or_else(malformed)?
+                .try_into()
+                .map_err(|_| malformed())?,
+        );
         if version != RUST_ABI_CACHE_VERSION {
             return Err(format!(
                 "Rust ABI cache version {version}; this compiler reads version {RUST_ABI_CACHE_VERSION}"
             ));
         }
-        let length = u64::from_le_bytes(bytes.get(4..12).ok_or_else(malformed)?.try_into().map_err(|_| malformed())?);
-        let end = 12usize.checked_add(usize::try_from(length).map_err(|_| malformed())?).ok_or_else(malformed)?;
+        let length = u64::from_le_bytes(
+            bytes
+                .get(4..12)
+                .ok_or_else(malformed)?
+                .try_into()
+                .map_err(|_| malformed())?,
+        );
+        let end = 12usize
+            .checked_add(usize::try_from(length).map_err(|_| malformed())?)
+            .ok_or_else(malformed)?;
         let entries: Vec<IndexEntry> =
             postcard::from_bytes(bytes.get(12..end).ok_or_else(malformed)?).map_err(|error| error.to_string())?;
         let payload = bytes.get(end..).ok_or_else(malformed)?.to_vec();

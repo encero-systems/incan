@@ -210,7 +210,8 @@ pub enum LoafIndexError {
 #[derive(Debug, Clone, Default)]
 pub struct LoafIndex {
     entries: BTreeMap<String, LoafEntry>,
-    /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled unit's.
+    /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
+    /// unit's.
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
     /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
     rust_facts: BTreeMap<String, RustItemMetadata>,

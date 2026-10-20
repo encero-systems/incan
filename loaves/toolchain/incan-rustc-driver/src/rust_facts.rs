@@ -10,9 +10,9 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use incan_lang::interop::{
-    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild, RustModuleChildKind,
-    RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo,
-    RustVisibility,
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild,
+    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape,
+    RustVariantInfo, RustVisibility,
 };
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -73,7 +73,12 @@ impl incan_driver::session::RustFactsSource for RustcFacts {
             },
         })?;
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
-            eprintln!("rust facts: {} uncovered paths, {} items in {:?}", paths.len(), facts.len(), started.elapsed());
+            eprintln!(
+                "rust facts: {} uncovered paths, {} items in {:?}",
+                paths.len(),
+                facts.len(),
+                started.elapsed()
+            );
         }
         Ok(facts)
     }
@@ -174,7 +179,11 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
     let mut facts = BTreeMap::new();
     let mut named = HashSet::new();
     for name in crates {
-        let Some(krate) = tcx.crates(()).iter().find(|krate| tcx.crate_name(**krate).as_str() == name) else {
+        let Some(krate) = tcx
+            .crates(())
+            .iter()
+            .find(|krate| tcx.crate_name(**krate).as_str() == name)
+        else {
             continue;
         };
         for (path, def) in public_items(tcx, krate.as_def_id(), name) {
@@ -242,7 +251,9 @@ fn resolve(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
                 .copied()
                 .min_by_key(|child| resolution_rank(tcx.def_kind(*child)))?
         } else {
-            children.into_iter().find(|child| tcx.def_kind(*child) == DefKind::Mod)?
+            children
+                .into_iter()
+                .find(|child| tcx.def_kind(*child) == DefKind::Mod)?
         };
     }
     Some(current)
@@ -307,7 +318,9 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         .iter()
         .map(|parameter| match parameter.kind {
             ty::GenericParamDefKind::Type { has_default: true, .. } => Some(display(
-                tcx.type_of(parameter.def_id).instantiate_identity().skip_normalization(),
+                tcx.type_of(parameter.def_id)
+                    .instantiate_identity()
+                    .skip_normalization(),
             )),
             _ => None,
         })
@@ -359,7 +372,11 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
 
 /// A function's signature: parameters with a method's receiver first, as written (`&self`, `&mut self`, `self`).
 fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFunctionSig {
-    let signature = tcx.fn_sig(def).instantiate_identity().skip_normalization().skip_binder();
+    let signature = tcx
+        .fn_sig(def)
+        .instantiate_identity()
+        .skip_normalization()
+        .skip_binder();
     let receiver = tcx.def_kind(def) == DefKind::AssocFn && tcx.associated_item(def).is_method();
     let params = signature
         .inputs()

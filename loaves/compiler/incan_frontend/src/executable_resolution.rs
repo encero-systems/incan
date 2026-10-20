@@ -273,7 +273,6 @@ fn resolve_from_catalog(
     Ok(resolved)
 }
 
-
 /// Retain the selected payload's original declaration kind and associated checked trait or enum context.
 fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclaration) {
     match declaration {

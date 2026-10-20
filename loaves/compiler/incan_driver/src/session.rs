@@ -176,12 +176,13 @@ impl CompilationSession {
         &self.loaves
     }
 
-    /// Read the Rust facts of the unit's crates from their ABI caches and ask the setup's source for any path they leave
-    /// uncovered.
+    /// Read the Rust facts of the unit's crates from their ABI caches and ask the setup's source for any path they
+    /// leave uncovered.
     pub fn with_rust_facts(mut self, setup: &RustFactsSetup) -> CliResult<Self> {
         for cache in &setup.caches {
-            let bytes = std::fs::read(cache)
-                .map_err(|error| CliError::failure(format!("cannot read the ABI cache {}: {error}", cache.display())))?;
+            let bytes = std::fs::read(cache).map_err(|error| {
+                CliError::failure(format!("cannot read the ABI cache {}: {error}", cache.display()))
+            })?;
             let decoded = incan_lang::interop::RustAbiCache::decode(&bytes)
                 .map_err(|error| CliError::failure(format!("{}: {error}", cache.display())))?;
             Arc::make_mut(&mut self.loaves).add_rust_abi_cache(Arc::new(decoded));
@@ -414,7 +415,10 @@ fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
                     paths.insert(segments.collect::<Vec<_>>().join("::"));
                 }
                 ImportKind::RustFrom {
-                    crate_name, path, items, ..
+                    crate_name,
+                    path,
+                    items,
+                    ..
                 } => {
                     for item in items {
                         let segments = std::iter::once(crate_name.clone())

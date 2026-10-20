@@ -93,7 +93,9 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
         collect_modules_detailed_with_session(path.clone(), &session)
     }
     .map_err(|failure| failure.render_human())?;
-    session.resolve_rust_facts(&modules).map_err(|error| error.to_string())?;
+    session
+        .resolve_rust_facts(&modules)
+        .map_err(|error| error.to_string())?;
     let package_identity = unit.package.as_str();
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
@@ -228,7 +230,10 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
     let held = rust_value_modules(incan_semantics_core::body_ir::held_rust_items(&bodies));
     let held_modules = held.len();
-    files.splice(loaf_modules..loaf_modules, held.iter().map(|module| module.module_id.path().to_owned()));
+    files.splice(
+        loaf_modules..loaf_modules,
+        held.iter().map(|module| module.module_id.path().to_owned()),
+    );
     sources.splice(loaf_modules..loaf_modules, held.iter().map(|_| String::new()));
     bodies.splice(loaf_modules..loaf_modules, held);
     let entry = entry + held_modules;
@@ -591,7 +596,8 @@ fn validate_generic_adoptions(
 pub(crate) struct Dependencies {
     pub(crate) externs: Vec<(String, PathBuf)>,
     pub(crate) directories: Vec<PathBuf>,
-    /// The ABI caches of the linked Rust crates (`--rust-abi`): the toolchain's standard crates and each compiled unit's.
+    /// The ABI caches of the linked Rust crates (`--rust-abi`): the toolchain's standard crates and each compiled
+    /// unit's.
     pub(crate) rust_abi: Vec<PathBuf>,
     /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
     library: bool,

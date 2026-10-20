@@ -181,7 +181,10 @@ impl TypeChecker {
             // A compiler-owned builtin trait carries no Loaf identity; its declaring module names it.
             _ => {
                 local_name == item
-                    && matches!(self.symbols.get(symbol).map(|found| &found.kind), Some(SymbolKind::Trait(_)))
+                    && matches!(
+                        self.symbols.get(symbol).map(|found| &found.kind),
+                        Some(SymbolKind::Trait(_))
+                    )
                     && incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
                         == Some(module.join(".").as_str())
             }

@@ -868,7 +868,9 @@ fn record_held_rust_items(ty: &IncanType, arities: &mut std::collections::BTreeM
         }
         IncanType::Tuple(items) => items.iter().for_each(|item| record_held_rust_items(item, arities)),
         IncanType::Function { params, return_type } => {
-            params.iter().for_each(|param| record_held_rust_items(&param.ty, arities));
+            params
+                .iter()
+                .for_each(|param| record_held_rust_items(&param.ty, arities));
             record_held_rust_items(return_type, arities);
         }
         IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => {
