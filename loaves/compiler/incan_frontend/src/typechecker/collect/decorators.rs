@@ -1807,14 +1807,6 @@ impl TypeChecker {
                 let DecoratorArg::Positional(expression) = argument else {
                     continue;
                 };
-                match self.classify_rust_derive_arg(&expression.node) {
-                    Some(derive) => {
-                        if !facts.rust_builtin_derives.contains(&derive) {
-                            facts.rust_builtin_derives.push(derive);
-                        }
-                    }
-                    None => facts.has_unclassified_rust_derive = true,
-                }
                 let path = match &expression.node {
                     Expr::Ident(name) => self.rust_import_path_for_local_name(name),
                     Expr::Literal(Literal::String(path)) if self.rust_derive_path_has_declared_crate(path) => {
@@ -1822,6 +1814,15 @@ impl TypeChecker {
                     }
                     _ => None,
                 };
+                match self.classify_rust_derive_arg(&expression.node) {
+                    Some(derive) => {
+                        if !facts.rust_builtin_derives.contains(&derive) {
+                            facts.rust_builtin_derives.push(derive);
+                        }
+                    }
+                    None if matches!(path.as_deref(), Some("serde::Serialize" | "serde::Deserialize")) => {}
+                    None => facts.has_unclassified_rust_derive = true,
+                }
                 if let Some(path) = path
                     && !paths.contains(&path)
                 {

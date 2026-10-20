@@ -3662,12 +3662,12 @@ impl TypeChecker {
         self.validate_derives(&model.decorators);
         self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
         let derives = self.extract_derive_names(&model.decorators);
-        // The model's adopted serde derives and its `@rust.derive(...)` builtins join its explicit selection.
+        // Adopted serde derives and checked Rust derives join the model's explicit selection.
         let mut declared = self.adopted_serde_derives(&model.traits);
-        if self.append_rust_builtin_derives(&model.name, &mut declared) {
+        if self.append_native_rust_derives(&model.name, &mut declared) {
             self.type_info
                 .declarations
-                .rust_builtin_derive_models
+                .rust_native_derive_types
                 .insert(model.name.clone());
         }
         let native_derives = self.native_derive_selection(&derives, declared);

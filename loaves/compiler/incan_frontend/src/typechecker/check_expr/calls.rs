@@ -37,6 +37,7 @@ mod builtins;
 mod constructors;
 mod generic_bounds;
 mod rust_boundary;
+mod rust_layouts;
 mod task_arguments;
 
 pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;
@@ -2320,10 +2321,18 @@ impl TypeChecker {
         }
 
         if !has_shape_error {
+            let retained = if omitted_fields {
+                None
+            } else {
+                self.retain_rust_construction(path, type_info, args, &selected_fields, span)
+            };
             self.type_info
                 .record_rust_named_field_constructor_fields(span, selected_fields);
             if omitted_fields {
                 self.type_info.record_rust_named_field_constructor_fills_defaults(span);
+            }
+            if let Some(result) = retained {
+                return result;
             }
         }
         ResolvedType::RustPath(path.to_string())

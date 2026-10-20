@@ -682,7 +682,7 @@ impl TypeChecker {
             // `rust::substrait::proto::Plan`) assigns a field through the same metadata that answers a read of it,
             // and the expected field type drives the value's boundary coercions exactly as a constructor argument
             // would.
-            ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field) {
+            ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field, field_assign.target_span) {
                 Some(expected_ty) => {
                     self.record_expr_type(field_assign.target_span, expected_ty.clone());
                     let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));

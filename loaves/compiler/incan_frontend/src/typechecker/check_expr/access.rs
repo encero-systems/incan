@@ -194,24 +194,34 @@ impl TypeChecker {
     /// type arguments, exactly as a field read does. A fast cache entry can carry only nominal metadata, so a missing
     /// field upgrades to complete semantic metadata before the checker rejects it. Field access and field assignment
     /// resolve through this one lookup, so a field that can be read can also be assigned.
-    pub(in crate::typechecker) fn rust_path_field_type(&self, path: &str, field: &str) -> Option<ResolvedType> {
+    pub(in crate::typechecker) fn rust_path_field_type(
+        &mut self,
+        path: &str,
+        field: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
         // Field reads pass the value's path straight to the metadata lookup, which owns the `rust::` and generic
         // normalization; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
-        let metadata = self.rust_item_metadata_for_path(path)?;
+        let mut metadata = self.rust_item_metadata_for_path(path)?;
+        if matches!(&metadata.kind, RustItemKind::Type(info) if Self::rust_field_for_source_name(&info.fields, field).is_none())
+        {
+            metadata = self.rust_item_metadata_for_complete_type(path)?;
+        }
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let rust_field = match Self::rust_field_for_source_name(&info.fields, field) {
-            Some(rust_field) => rust_field.clone(),
-            None => {
-                let complete = self.rust_item_metadata_for_complete_type(path)?;
-                let RustItemKind::Type(complete_info) = &complete.kind else {
-                    return None;
-                };
-                Self::rust_field_for_source_name(&complete_info.fields, field)?.clone()
-            }
-        };
-        Some(self.resolved_rust_field_type(path, &rust_field))
+        let rust_field = Self::rust_field_for_source_name(&info.fields, field)?;
+        self.retain_rust_layout(path, info);
+        self.type_info
+            .record_rust_field_access_name(span, rust_field.name.clone());
+        let base = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
+        if let Some(owner) = incan_semantics_core::body_ir::rust_item_identity(base) {
+            self.type_info.record_resolved_identity(
+                span,
+                Self::synthetic_member_identity(&owner, &rust_field.name, SemanticSourceTargetKind::Field),
+            );
+        }
+        Some(self.resolved_rust_field_type(path, rust_field))
     }
 
     /// Resolve a Rust field type from its display string against the owning Rust type.
@@ -221,7 +231,17 @@ impl TypeChecker {
     /// into another Rust boundary. The structural shape remains useful for broad semantic classification and older
     /// metadata entries whose display cannot be resolved.
     fn resolved_rust_field_type(&self, owner_path: &str, field: &RustFieldInfo) -> ResolvedType {
-        let display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
+        let mut display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
+        if let Some((base, arguments)) = Self::rust_generic_base_and_args(owner_path)
+            && let Some(metadata) = self.rust_item_metadata_for_path(base)
+            && let RustItemKind::Type(info) = &metadata.kind
+        {
+            let arguments = arguments
+                .into_iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .collect::<Vec<_>>();
+            display = Self::substitute_rust_display_params(&display, &info.type_params, &arguments);
+        }
         let resolved = self.resolved_type_from_rust_display(display.as_str());
         if matches!(resolved, ResolvedType::Unknown) {
             self.resolved_type_from_rust_shape(&field.type_shape)
@@ -2015,7 +2035,7 @@ impl TypeChecker {
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
-    fn synthetic_member_identity(
+    pub(in crate::typechecker::check_expr) fn synthetic_member_identity(
         owner: &CanonicalSymbolId,
         member: &str,
         kind: SemanticSourceTargetKind,
@@ -5707,16 +5727,10 @@ impl TypeChecker {
                     }
                     return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                 }
-                if let RustItemKind::Type(info) = &meta.kind
-                    && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
-                {
-                    self.type_info
-                        .record_rust_field_access_name(span, rust_field.name.clone());
-                    return self.resolved_rust_field_type(path, rust_field);
-                }
                 // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
                 // Stay permissive when no exact field surface is available.
-                ResolvedType::Unknown
+                self.rust_path_field_type(path, field, span)
+                    .unwrap_or(ResolvedType::Unknown)
             }
             RustItemKind::Unsupported { description } => {
                 self.errors

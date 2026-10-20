@@ -1503,6 +1503,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(value) = self.lower_diverging_error_helper(callee, type_args, args, span, scope, out) {
             return value;
         }
+        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
+            && incan_semantics_core::body_ir::native_nominal_item(owner)
+                .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
+        {
+            let name = owner.declaration_name.clone();
+            return self.lower_nominal_construction(&name, args, span, callee.span, scope, out);
+        }
         if let Some(value) = self.lower_checked_rust_call(None, args, span, scope, out) {
             return value;
         }

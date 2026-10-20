@@ -32,7 +32,7 @@ The checker represents a Rust type as a display string, with generic arguments r
 
 Rust interop compiles on the direct route from checked facts alone, in three parts.
 
-1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each argument an ordinary Body IR type. Each closed instantiation a program uses becomes one opaque plan declaration (no fields, no derives). The driver resolves the item through rustc (struct, enum or type alias), fills omitted defaulted type parameters from the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s `A = Global`), and treats `std`, `core` and `alloc` as always available. Field access on an opaque Rust value is refused.
+1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each argument an ordinary Body IR type. Each closed instantiation a program uses becomes one native plan declaration. Uninspected layouts remain opaque, with no fields or derives. A selected public struct layout retains its ordered fields and their canonical identities. The driver resolves the item through rustc (struct, enum or type alias), fills omitted defaulted type parameters from the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s `A = Global`), and treats `std`, `core` and `alloc` as always available.
 2. **Calls.** The checker records the resolved Rust callee of every Rust call site it admits: a free function, an inherent associated function or method, or a trait method with its trait, together with the receiver's borrow mode and the explicit type arguments the checker inferred. Body IR lowers that record to a Rust callee; the driver resolves it and keeps its exact signature check. A call the checker cannot fully resolve refuses at the call site; nothing is re-resolved from source spellings.
 3. **Traits.** `Display`, `Debug`, `Clone` and equality on a Rust value call that value's own Rust implementation through rustc trait resolution, the same way the runtime's generic display helper does for type parameters.
 
@@ -66,15 +66,21 @@ Rust lifetime arguments carry no layout and are erased before Body IR carrier co
 
 Rust tuple elements retain shared and mutable scalar reference carriers explicitly. Mutable references cannot be copied. Nested callable signatures use the same carrier projection as ordinary parameters, and structural collection displays enter the same inference representation whether they come from Rust metadata or an Incan annotation. Executable representation version 22 appends the retained Rust constant form; version 21 payloads are refused before decoding and must be rebuilt.
 
+## Native public layouts and derives
+
+Checking retains a selected public struct's exact field templates and identities. Named construction infers the native owner arguments from already checked field arguments and retains the ordinary constructor slot binding. Body IR uses the same aggregate and field-projection machinery as source nominals. The driver gathers native layouts into their own declaration modules and verifies complete field count, names, public visibility, and instantiated types against rustc before emitting MIR. Missing fields, private fields marked public, and mismatched types refuse; an empty opaque layout still grants no projection.
+
+Source models and newtypes retain supported `@rust.derive(...)` selections before admission. Builtin derives and canonical serde Serialize/Deserialize paths use the existing native derive machinery; automatic and explicit selections are deduplicated. An unknown macro expansion does not grant a native layout or implementation, and serde still requires its exact native dependency artifact.
+
 ## Non-goals
 
-- Field access, pattern matching on variants, or construction by fields of opaque Rust values.
+- Partial layouts containing hidden native fields, default-filled native field construction, and pattern matching on Rust variants.
 - Const-generic arguments.
 - Changing RFC 005's source surface.
 
 ## Revisit condition
 
-Revisit when a consumer needs field or variant access on Rust values, or when rustc's metadata can supply the callee record directly.
+Revisit when a consumer needs partial hidden-field layouts or variant access on Rust values, or when rustc's metadata can supply the callee record directly.
 
 ## Provenance
 

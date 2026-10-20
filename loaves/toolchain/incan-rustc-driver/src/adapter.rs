@@ -474,9 +474,9 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
     }
 }
 
-/// Check a stdlib layout against its crate's metadata at the plan's explicit type arguments, including their bounds.
-/// Fields keep their names and instantiated types in order. An opaque layout records no fields, so the plan never
-/// projects one.
+/// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
+/// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
+/// An opaque layout records no fields and grants no projection.
 fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
@@ -498,7 +498,10 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if declared.len() != model.fields.len() {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
-    for (field, planned) in declared.iter().zip(&model.fields) {
+    for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {
+        if model.field_public.get(slot) == Some(&true) && !field.vis.is_public() {
+            return Err(invalid("public native field is private in metadata"));
+        }
         if field.name.as_str() != planned.name
             || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
         {

@@ -940,6 +940,9 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Public native field layouts selected during checking. Hidden fields remain absent from metadata and the
+    /// adapter refuses incomplete layouts before any construction or projection is emitted.
+    pub checked_layouts: HashMap<String, RustCheckedLayout>,
     /// Public Rust constants selected from metadata, keyed by their complete value-expression span.
     pub checked_constants: HashMap<(usize, usize), String>,
     /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
@@ -1042,6 +1045,17 @@ pub struct RustInteropArtifacts {
     pub async_call_realizations: HashSet<(usize, usize)>,
 }
 
+/// A metadata-selected native struct layout, generic over its declaring type parameters.
+#[derive(Debug, Clone)]
+pub struct RustCheckedLayout {
+    /// Declared type binders; lifetime arguments carry no layout and are absent.
+    pub type_parameters: Vec<String>,
+    /// Ordered public field names and exact native type templates.
+    pub fields: Vec<CallableParam>,
+    /// Canonical field targets minted with the same owner as the retained layout.
+    pub field_identities: Vec<CanonicalSymbolId>,
+}
+
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustCheckedCall {
@@ -1099,10 +1113,9 @@ pub struct DeclarationArtifacts {
     ///
     /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
     pub class_adoption_derives: HashMap<String, Vec<String>>,
-    /// Source models whose `@rust.derive(...)` decorators name only Rust builtin derives, all of which
-    /// [`model_derives`](Self::model_derives) includes. A model naming any other derive macro is absent: that macro's
-    /// expansion is not part of its retained derives.
-    pub rust_builtin_derive_models: HashSet<String>,
+    /// Source types whose `@rust.derive(...)` decorators are completely covered by their retained native selections.
+    /// Builtins and the supported serde derives retain their canonical targets; arbitrary macro expansions are absent.
+    pub rust_native_derive_types: HashSet<String>,
     /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
     /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
