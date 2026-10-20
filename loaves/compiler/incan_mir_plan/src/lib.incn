@@ -588,6 +588,8 @@ pub model Plan:
     pub statics: list[StaticCell] = []
     # A library plan's public names, each re-exported at the crate root; an executable plan has none.
     pub exports: list[PlanExport] = []
+    # Collected test entry functions; the adapter registers these with rustc's native test harness.
+    pub tests: list[str] = []
 
 
 @derive(Clone, PartialEq)

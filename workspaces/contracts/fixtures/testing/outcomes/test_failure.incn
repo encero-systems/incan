@@ -1,0 +1,19 @@
+# behavior: a failing test reports FAILED, later tests still run, and the command exits unsuccessfully
+# expect-stdout-contains:
+#   test_failure.incn::test_fails FAILED
+#   test_failure.incn::test_later PASSED
+# expect-stderr-contains:
+#   deliberate failure
+# expect-exit: 1
+
+"""A failure cannot hide a later collected test."""
+
+
+def test_fails() -> None:
+    """Fail this test alone."""
+    assert false, "deliberate failure"
+
+
+def test_later() -> None:
+    """The runner must reach this test after the failure."""
+    assert true

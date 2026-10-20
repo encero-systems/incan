@@ -1,0 +1,15 @@
+# behavior: assertion helpers return both text and integer payloads from present Options in one test unit
+# expect-stdout-contains:
+#   test_option_payloads.incn::test_present_values PASSED
+
+"""The helpers' failure branches retain each distinct checked Rust instantiation."""
+
+from std.testing import assert_is_some
+
+
+def test_present_values() -> None:
+    """Each helper returns its own payload type."""
+    text = assert_is_some(Some("value"))
+    number = assert_is_some(Some(42))
+    assert text == "value"
+    assert number == 42

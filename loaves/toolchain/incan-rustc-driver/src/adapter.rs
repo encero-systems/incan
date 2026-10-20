@@ -5,6 +5,7 @@ use crate::identity::{self, IdentityError};
 use crate::plan::{Plan, PlanType};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
+use incan_driver::unit::UnitKind;
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -276,7 +277,14 @@ impl rustc_driver::Callbacks for Callbacks {
                     compiler.sess.dcx().fatal(message);
                 }
             };
-            krate.items.push(declarations::function(function, span));
+            let mut item = declarations::function(function, span);
+            if self.plan.tests.contains(&function.name) {
+                item.attrs.push(crate::test_unit::attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    span,
+                ));
+            }
+            krate.items.push(item);
         }
         krate
             .items
@@ -627,10 +635,10 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
-    library: bool,
+    kind: UnitKind,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
-    validation::validate(&plan, library)?;
+    validation::validate(&plan, kind != UnitKind::Program)?;
     let identity = identity::verify(sysroot)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
@@ -662,9 +670,12 @@ pub fn compile(
         plan.span.file.clone(),
     ];
     // A library unit is an rlib its dependents link; an executable keeps rustc's default binary crate type.
-    if library {
+    if kind == UnitKind::Library {
         args.push("--crate-type".into());
         args.push("lib".into());
+    }
+    if kind == UnitKind::Test {
+        args.push("--test".into());
     }
     for (name, path) in externs {
         args.push("--extern".into());

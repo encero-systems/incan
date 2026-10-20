@@ -35,14 +35,12 @@ pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, ch
     return run_compiler(toolchain, arguments)
 
 
-pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path, library: bool) -> Result[i32, str]:
-    """Compile the unit to `output`, a binary or a library's rlib. Returns the compiler's exit code."""
+pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
+    """Compile the described program, library or test unit to `output`. Returns the compiler's exit code."""
     compiled = crate_name(unit)
     path = write_unit(unit, compiled)?
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    mut arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
-    if library:
-        arguments.append("--library")
+    arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     return run_compiler(toolchain, arguments)
 
 

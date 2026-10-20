@@ -44,6 +44,7 @@ mod shared_callables;
 mod spans;
 mod statics;
 mod terminators;
+mod test_unit;
 mod types;
 mod union_debug;
 mod validation;

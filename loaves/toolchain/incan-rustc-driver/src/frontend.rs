@@ -7,13 +7,13 @@ use sha2::{Digest, Sha256};
 use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationSession, RustFactsSetup};
-use incan_driver::unit::UnitDescription;
+use incan_driver::unit::{UnitDescription, UnitKind};
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::LoafNativeClosure;
-use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
+use incan_mir_lowering::caller::incan::{program_refusals, unit_plan};
+use incan_semantics_core::SymbolOrigin;
 use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -70,6 +70,8 @@ struct CheckedProgram {
     own: usize,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
+    /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
+    tests: Vec<crate::test_unit::CollectedTest>,
 }
 
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
@@ -82,12 +84,13 @@ struct CheckedProgram {
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
 /// callables name their compiled items.
-fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup) -> Result<CheckedProgram, String> {
+fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
     let mut session = CompilationSession::new(unit)
         .and_then(|session| session.with_rust_facts(rust))
         .map_err(|error| error.to_string())?;
+    let library = unit.kind == UnitKind::Library;
     let modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
     } else {
@@ -97,6 +100,7 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     session
         .resolve_rust_facts(&modules)
         .map_err(|error| error.to_string())?;
+    let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
@@ -267,6 +271,7 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
         entry,
         own: loaf_modules + held_modules,
         manifest,
+        tests,
     })
 }
 
@@ -647,7 +652,7 @@ pub(crate) struct Dependencies {
     pub(crate) directories: Vec<PathBuf>,
     /// The ABI caches Oven names in the unit description: the toolchain's standard crates and each compiled unit's.
     pub(crate) rust_abi: Vec<PathBuf>,
-    /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
+    /// Compatibility for bootstrap invocations that select a library with `--library`.
     library: bool,
     /// Arguments Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
@@ -717,18 +722,24 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ---- Checked source and Incan plan ----
-    let unit = UnitDescription::read(Path::new(&arguments[0])).map_err(|error| error.message)?;
+    let mut unit = UnitDescription::read(Path::new(&arguments[0])).map_err(|error| error.message)?;
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let dependencies = dependencies(&unit, &arguments[4..])?;
-    let checked_library = dependencies.library;
+    if dependencies.library {
+        if unit.kind == UnitKind::Test {
+            return Err("a test unit cannot also be a library".into());
+        }
+        unit.kind = UnitKind::Library;
+    }
+    let kind = unit.kind;
     let rust = dependencies.rust_facts(Path::new(&arguments[3]));
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, checked_library, &rust)
+        checked_modules(&unit, &rust)
     });
     let program = match checked {
         Ok(program) => program,
@@ -750,16 +761,20 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let entry = program.entry.try_into()?;
-        if dependencies.library {
-            Some(library_plan(&program.modules, program.sources, program.files, entry)?)
-        } else {
-            program_plan(&program.modules, program.sources, program.files, entry)?
-        }
+        unit_plan(
+            &program.modules,
+            program.sources,
+            program.files,
+            entry,
+            kind.as_str().to_owned(),
+            program.tests.iter().map(|test| test.name.clone()).collect(),
+        )?
     };
     let Some(plan) = plan else {
         report_missing_entrypoint(&source_path)?;
         return Err(SourceFailure::MissingEntrypoint.into());
     };
+    let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
     // ---- Explicit native dependencies ----
     if let Some(root) = crate::marker_traits::native_root(&plan) {
@@ -803,9 +818,12 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         &dependencies.externs,
         &dependencies.directories,
         &dependencies.rustc_args,
-        dependencies.library,
+        kind,
     )
     .map_err(|error| error.to_string())?;
+    if kind == UnitKind::Test {
+        std::fs::write(output.with_extension("tests.json"), serde_json::to_vec(&tests)?)?;
+    }
 
     // ---- The Loaf beside a library unit's rlib (DD-0007) ----
     if let Some(manifest) = program.manifest {

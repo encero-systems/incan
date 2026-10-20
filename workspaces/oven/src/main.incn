@@ -3,6 +3,7 @@
 
     incan run PATH [UNIT OPTIONS] [-- ARGS...]
     incan check PATH [--format text|json] [UNIT OPTIONS]
+    incan test PATH [UNIT OPTIONS]
     incan describe-unit PATH [UNIT OPTIONS]
     incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
@@ -24,6 +25,7 @@ from rust_units import RustBuild, build_rust, read_registry_units
 from toolchain import load_toolchain
 from std.environ import get_or
 from formatting import format_paths
+from testing import run_tests
 
 
 pub model Options:
@@ -52,6 +54,9 @@ def main() -> None:
     if command == "check":
         check(rest)
         return
+    if command == "test":
+        test(rest)
+        return
     if command == "build":
         build(rest)
         return
@@ -66,7 +71,7 @@ def main() -> None:
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
+    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:
@@ -137,10 +142,24 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     unit = describe_native(Path(options.path), options.profile, options.request)?
     toolchain = load_toolchain()?
     binary = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(options.profile).joinpath("bin").joinpath(crate_name(unit))
-    compiled = compile_unit(unit, toolchain, binary, false)?
+    compiled = compile_unit(unit, toolchain, binary)?
     if compiled != 0:
         return Ok(compiled)
     return run_program(binary, passed)
+
+
+def test(arguments: list[str]) -> None:
+    """Compile one collected test unit and report each test's observed outcome."""
+    match parse_options(arguments):
+        Err(reason) => fail(f"incan test: {reason}\n{usage()}", 2)
+        Ok(options) => finish("test", tested(options))
+
+
+def tested(options: Options) -> Result[i32, str]:
+    """Describe a test unit with the same profile and feature options as an ordinary program."""
+    mut unit = describe(Path(options.path), options.profile, options.request)?
+    unit.kind = "test"
+    return run_tests(unit, load_toolchain()?)
 
 
 def check(arguments: list[str]) -> None:
