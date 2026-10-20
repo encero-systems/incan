@@ -46,7 +46,7 @@ Oven's decisions and the actions they lead to run in one program, so they share 
 
 Until a dev.8 toolchain builds itself, the frozen 0.6.0-dev.7 builder compiles Oven and the dev.8 compiler.
 
-During bootstrap, `incan.toolchain/1` names the prepared registry closure in `registry_units`. This is an explicit stand-in for incan.pub's baked Loaves until Oven fetches them. Oven selects a compatible compiled registry unit from this closure for each active manifest requirement, builds local Rust facets through its existing unit compiler, and writes exact `externs`, `search`, and `rust_abi` inputs into `incan.unit/1`. Checking and compilation consume these same fields; a search directory never substitutes for a named artifact. The bootstrap installer and single-unit compile helper are retained under `workspaces/oven/bootstrap/`.
+During bootstrap, `incan.toolchain/1` names the prepared registry closure in `registry_units`. This is an explicit stand-in for incan.pub's baked Loaves until Oven fetches them. Oven selects a compatible compiled registry unit from this closure for each active manifest requirement, builds local Rust facets through its existing unit compiler, and writes exact `externs`, `search`, and `rust_abi` inputs into `incan.unit/1`. Checking and compilation consume these same fields; a search directory never substitutes for a named artifact. Temporary bootstrap helpers stay outside the repository and retire with self-hosting.
 
 ## Consequences
 
