@@ -800,7 +800,8 @@ impl TypeChecker {
     /// Type-check an expression with an expected destination type when one is already known.
     ///
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
-    /// changes should use the hint. Calls record their `mut` arguments as [`Self::check_expr`] does.
+    /// changes should use the hint. `None` denotes unit when its destination is unit, and otherwise retains its
+    /// Option literal meaning. Calls record their `mut` arguments as [`Self::check_expr`] does.
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
         let errors_before = self.errors.len();
         self.refuse_mut_params_held_in(expr);
@@ -835,8 +836,7 @@ impl TypeChecker {
                 self.type_token_value_spans.pop();
                 ty
             }
-            // None constructs the Option its destination already proves. Retaining that type here also fixes
-            // an enclosing intrinsic constructor's payload type without downstream inference.
+            (Expr::Literal(Literal::None), Some(ResolvedType::Unit)) => ResolvedType::Unit,
             (Expr::Literal(Literal::None), Some(expected_ty)) if expected_ty.option_inner_type().is_some() => {
                 expected_ty.clone()
             }
