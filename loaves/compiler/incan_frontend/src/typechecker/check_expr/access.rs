@@ -3032,7 +3032,7 @@ impl TypeChecker {
     }
 
     /// Apply checked Rust type substitutions to one inspected signature.
-    fn specialize_rust_signature(
+    pub(in crate::typechecker::check_expr) fn specialize_rust_signature(
         sig: &RustFunctionSig,
         substitutions: &HashMap<&str, String>,
         receiver_display: &str,
@@ -3304,6 +3304,37 @@ impl TypeChecker {
                     }
                 }
                 if specializes_receiver && resolved_type_args.is_empty() {
+                    let inferred = self.infer_rust_signature_bindings(
+                        &sig,
+                        rust_path,
+                        &type_info.type_params,
+                        args,
+                        arg_types,
+                        expected_return_ty,
+                    );
+                    let arguments = type_info
+                        .type_params
+                        .iter()
+                        .enumerate()
+                        .map(|(index, parameter)| {
+                            inferred
+                                .get(parameter)
+                                .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                                .cloned()
+                                .or_else(|| {
+                                    type_info
+                                        .type_param_defaults
+                                        .get(index)
+                                        .and_then(|default| default.as_deref())
+                                        .map(|default| self.resolved_type_from_rust_display(default))
+                                })
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(arguments) = arguments {
+                        resolved_type_args = arguments;
+                    }
+                }
+                if specializes_receiver && resolved_type_args.is_empty() {
                     let open_type_params = Self::open_rust_owner_type_args(&sig, type_info);
                     if !open_type_params.is_empty() {
                         // Nothing at the call fixes the owner's parameters; whether a later reader does is the
@@ -3333,6 +3364,12 @@ impl TypeChecker {
                 } else {
                     sig.clone()
                 };
+                if !resolved_type_args.is_empty() {
+                    self.type_info
+                        .calls
+                        .call_site_monomorph_type_args
+                        .insert((span.start, span.end), resolved_type_args.clone());
+                }
                 if Self::rust_signature_has_receiver(&sig)
                     && sig.params[1..].iter().any(|param| {
                         let normalized = Self::compact_rust_display(&param.type_display);

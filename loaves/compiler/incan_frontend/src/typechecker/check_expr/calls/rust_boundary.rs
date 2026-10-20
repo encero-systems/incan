@@ -7,7 +7,7 @@ use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::diagnostics::errors;
 use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
-use crate::typechecker::helpers::collection_type_id;
+use crate::typechecker::helpers::{collection_type_id, render_resolved_type_as_rust_arg};
 use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig, RustParam, admitted_builtin_coercion};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -247,94 +247,129 @@ impl TypeChecker {
         }
     }
 
-    /// Bind each generic a callable parameter returns (`f: impl FnOnce() -> R`) to what the passed callable returns.
-    ///
-    /// Rust leaves a function generic such as `R` in `catch_unwind<F: FnOnce() -> R, R>` unbound in the signature. The
-    /// closure or function passed for the callable parameter fixes it, so the call's result names that type rather than
-    /// a placeholder no layout can carry.
-    fn rust_callable_return_bindings(
+    /// Project only declared Rust parameters into the checker's ordinary structural inference representation.
+    /// Opaque generic paths are opened here once; lowering receives the instantiated checked result.
+    fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
+        map_resolved_type_leaves(ty, &|leaf| {
+            let ResolvedType::RustPath(path) = leaf else {
+                return None;
+            };
+            if parameters.iter().any(|parameter| parameter == path.trim()) {
+                return Some(ResolvedType::TypeVar(path.trim().to_owned()));
+            }
+            let (base, arguments) = Self::rust_generic_base_and_args(path)?;
+            let base = self
+                .type_info
+                .rust
+                .item_public_paths
+                .get(base)
+                .map_or(base, String::as_str);
+            Some(ResolvedType::Generic(
+                base.to_owned(),
+                arguments
+                    .into_iter()
+                    .map(|argument| {
+                        self.rust_inference_type(&self.resolved_type_from_rust_display(argument), parameters)
+                    })
+                    .collect(),
+            ))
+        })
+    }
+
+    /// Infer declared function or impl arguments from bound inputs and the expected output, using the same
+    /// structural unifier as Incan functions. References describe passing mode and do not prevent an owned argument
+    /// from fixing the referent's type. An inconsistent binding remains unknown and cannot authorize a native call.
+    pub(in crate::typechecker::check_expr) fn infer_rust_signature_bindings(
         &self,
         sig: &RustFunctionSig,
         owner_path: &str,
-        bindings: &[RustCallArgBinding<'_>],
+        parameters: &[String],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        expected: Option<&ResolvedType>,
     ) -> HashMap<String, ResolvedType> {
         let mut bound = HashMap::new();
-        for binding in bindings {
+        let params = if Self::rust_signature_has_receiver(sig) {
+            &sig.params[1..]
+        } else {
+            &sig.params
+        };
+        for (index, (argument, actual)) in args.iter().zip(arg_types).enumerate() {
+            let parameter = match argument {
+                CallArg::Positional(_) => params.get(index),
+                CallArg::Named(name, _) => params.iter().find(|param| param.name.as_ref() == Some(&name.node)),
+                _ => None,
+            };
+            let Some(parameter) = parameter else {
+                continue;
+            };
             let target = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
-                binding.param.type_display.as_str(),
+                parameter.type_display.as_str(),
                 owner_path,
             );
-            let (ResolvedType::Function(_, target_ret), ResolvedType::Function(_, arg_ret)) = (&target, binding.arg_ty)
-            else {
-                continue;
+            let target = self.rust_inference_type(&target, parameters);
+            let actual = self.rust_inference_type(actual, parameters);
+            let (target, actual) = match (&target, &actual) {
+                (ResolvedType::Ref(_) | ResolvedType::RefMut(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
+                    (&target, &actual)
+                }
+                (ResolvedType::Ref(inner) | ResolvedType::RefMut(inner), _) => (inner.as_ref(), &actual),
+                _ => (&target, &actual),
             };
-            let (ResolvedType::RustPath(name) | ResolvedType::TypeVar(name)) = target_ret.as_ref() else {
-                continue;
-            };
-            if sig.type_params.iter().any(|param| param == name.trim()) {
-                bound.insert(name.trim().to_string(), arg_ret.as_ref().clone());
-            }
+            self.infer_type_param_bindings(target, actual, &mut bound);
+        }
+        if let Some(expected) = expected {
+            let result = self.resolved_rust_return_type_from_sig(sig, owner_path);
+            self.infer_type_param_bindings(
+                &self.rust_inference_type(&result, parameters),
+                &self.rust_inference_type(expected, parameters),
+                &mut bound,
+            );
         }
         bound
     }
 
-    /// Substitute the Rust generics `bound` fixes into an inspected result type.
-    fn bind_rust_generics(ty: ResolvedType, bound: &HashMap<String, ResolvedType>) -> ResolvedType {
-        if bound.is_empty() {
-            return ty;
-        }
-        map_resolved_type_leaves(&ty, &|leaf| match leaf {
-            ResolvedType::RustPath(name) => bound.get(name.trim()).cloned(),
-            _ => None,
-        })
+    /// Instantiate signature displays from inferred types before recording boundary and result facts.
+    fn specialize_inferred_rust_signature(
+        &self,
+        sig: &RustFunctionSig,
+        owner: &str,
+        bound: &HashMap<String, ResolvedType>,
+    ) -> RustFunctionSig {
+        let substitutions = bound
+            .iter()
+            .filter(|(_, ty)| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+            .map(|(name, ty)| (name.as_str(), render_resolved_type_as_rust_arg(ty)))
+            .collect();
+        Self::specialize_rust_signature(sig, &substitutions, owner)
     }
 
-    /// Substitute inspected Rust generic placeholders from a compatible expected result shape.
-    ///
-    /// Rust metadata names unbound function generics T, U, and similar. These are not Incan type variables, but an
-    /// expected result such as Result[Value, _] supplies an unambiguous binding for the matching return position.
-    fn refine_unbound_rust_return_type_with_expected(actual: &ResolvedType, expected: &ResolvedType) -> ResolvedType {
-        match actual {
-            ResolvedType::RustPath(path) if Self::rust_display_type_var_name(path.trim()).is_some() => expected.clone(),
-            ResolvedType::Ref(inner) => match expected {
-                ResolvedType::Ref(expected_inner) => ResolvedType::Ref(Box::new(
-                    Self::refine_unbound_rust_return_type_with_expected(inner, expected_inner),
-                )),
-                _ => actual.clone(),
-            },
-            ResolvedType::RefMut(inner) => match expected {
-                ResolvedType::RefMut(expected_inner) => ResolvedType::RefMut(Box::new(
-                    Self::refine_unbound_rust_return_type_with_expected(inner, expected_inner),
-                )),
-                _ => actual.clone(),
-            },
-            ResolvedType::Generic(name, args) => match expected {
-                ResolvedType::Generic(expected_name, expected_args)
-                    if name == expected_name && args.len() == expected_args.len() =>
-                {
-                    ResolvedType::Generic(
-                        name.clone(),
-                        args.iter()
-                            .zip(expected_args)
-                            .map(|(actual, expected)| {
-                                Self::refine_unbound_rust_return_type_with_expected(actual, expected)
-                            })
-                            .collect(),
-                    )
-                }
-                _ => actual.clone(),
-            },
-            ResolvedType::Tuple(items) => match expected {
-                ResolvedType::Tuple(expected_items) if items.len() == expected_items.len() => ResolvedType::Tuple(
-                    items
-                        .iter()
-                        .zip(expected_items)
-                        .map(|(actual, expected)| Self::refine_unbound_rust_return_type_with_expected(actual, expected))
-                        .collect(),
-                ),
-                _ => actual.clone(),
-            },
-            _ => actual.clone(),
+    /// Retain a declaration-ordered inference result for Body IR; conflicting constraints are source errors.
+    fn record_inferred_rust_arguments(
+        &mut self,
+        path: &str,
+        parameters: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        for parameter in parameters {
+            if bindings.get(parameter) == Some(&ResolvedType::Unknown) {
+                self.errors
+                    .push(errors::call_site_type_inference_unresolved(path, parameter, span));
+            }
+        }
+        if parameters.is_empty() {
+            return;
+        }
+        let arguments = parameters
+            .iter()
+            .map(|parameter| bindings.get(parameter).cloned())
+            .collect::<Option<Vec<_>>>();
+        if let Some(arguments) = arguments {
+            self.type_info
+                .calls
+                .call_site_monomorph_type_args
+                .insert((span.start, span.end), arguments);
         }
     }
 
@@ -1053,6 +1088,11 @@ impl TypeChecker {
                 .push(errors::async_call_without_await(callable_display, span));
         }
         let owner_path = Self::rust_method_owner_path(callable_display);
+        let callable_returns =
+            self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, None);
+        self.record_inferred_rust_arguments(callable_display, &sig.type_params, &callable_returns, span);
+        let effective_sig = self.specialize_inferred_rust_signature(sig, owner_path, &callable_returns);
+        let sig = &effective_sig;
         let params = if Self::rust_signature_has_receiver(sig) {
             &sig.params[1..]
         } else {
@@ -1066,7 +1106,6 @@ impl TypeChecker {
             return self.resolved_rust_call_type_from_sig(sig, owner_path, span);
         }
 
-        let callable_returns = self.rust_callable_return_bindings(sig, owner_path, &bindings);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let param = binding.param;
@@ -1092,7 +1131,6 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, owner_path, span);
-        let ret = Self::bind_rust_generics(ret, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -1131,12 +1169,17 @@ impl TypeChecker {
         let arg_types = self.check_call_arg_types_for_params(args, &expected_params);
         self.record_rust_call_site_params(span, &sig.params, path);
         let binding_errors_before = self.errors.len();
-        let bindings = self.bind_rust_call_args(path, &sig.params, args, &arg_types, span);
+        self.bind_rust_call_args(path, &sig.params, args, &arg_types, span);
         if self.errors.len() != binding_errors_before {
             return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
-        let callable_returns = self.rust_callable_return_bindings(sig, path, &bindings);
+        let callable_returns =
+            self.infer_rust_signature_bindings(sig, path, &sig.type_params, args, &arg_types, expected_return_ty);
+        self.record_inferred_rust_arguments(path, &sig.type_params, &callable_returns, span);
+        let effective_sig = self.specialize_inferred_rust_signature(sig, path, &callable_returns);
+        self.record_rust_call_site_params(span, &effective_sig.params, path);
+        let bindings = self.bind_rust_call_args(path, &effective_sig.params, args, &arg_types, span);
         for binding in bindings {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let arg_ty = binding.arg_ty;
@@ -1144,11 +1187,7 @@ impl TypeChecker {
             self.validate_rust_boundary_value(path, param.type_display.as_str(), arg_expr, arg_ty, false);
         }
 
-        let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
-        let ret = Self::bind_rust_generics(ret, &callable_returns);
-        let ret = expected_return_ty
-            .map(|expected| Self::refine_unbound_rust_return_type_with_expected(&ret, expected))
-            .unwrap_or(ret);
+        let ret = self.resolved_rust_call_type_from_sig(&effective_sig, path, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }

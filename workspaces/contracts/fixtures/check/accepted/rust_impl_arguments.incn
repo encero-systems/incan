@@ -1,0 +1,12 @@
+# behavior: a Rust associated function infers its owner's type parameters from its arguments
+# expect-accepted:
+
+"""Rust associated functions infer their owner's type parameters."""
+
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    """Require the inferred allocation to match its concrete Rust type."""
+    inferred = Rc.new(7)
+    value: Rc[int] = inferred

@@ -1,0 +1,12 @@
+# behavior: an inferred Rust function result rejects an incompatible annotation
+# expect-diagnostic: INCAN-T0001
+
+"""Rust generic inference preserves the argument's concrete type."""
+
+from rust::std::convert import identity
+
+
+def main() -> None:
+    """Refuse an integer result used as a string."""
+    inferred = identity(7)
+    value: str = inferred

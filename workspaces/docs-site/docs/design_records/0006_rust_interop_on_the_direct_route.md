@@ -42,6 +42,10 @@ Rust interop compiles on the direct route from checked facts alone, in three par
 - The checker's display-string Rust types remain for diagnostics; the structured form is built once at the Body IR boundary from checked facts, so no consumer parses a display.
 - The allowlisted native items become ordinary instances of part 1.
 
+## Checked call inference
+
+Rust function and associated-function inference uses the same structural unifier as Incan functions. Only parameters declared by Rust facts are inference variables. Argument types and an expected result constrain those variables together; contradictory bindings are errors. Owner arguments include the defaults recorded on the Rust type. The checker substitutes the resulting arguments into the callable signature before recording parameter and result types, and retains inferred arguments in declaration order for Body IR. Inference does not make an unresolved Rust callee executable: retaining and lowering the callee remain separate requirements of the calls decision above.
+
 ## Non-goals
 
 - Field access, pattern matching on variants, or construction by fields of opaque Rust values.
