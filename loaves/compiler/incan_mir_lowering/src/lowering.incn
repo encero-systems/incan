@@ -4001,7 +4001,8 @@ def lower_static_method_body(
     result = return_representation(body, declared_result)?
     if not numeric_carrier(result):
         match result:
-            (PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_)) => pass
+            # An owned model (a registry's new entry) moves out of the call; it borrows nothing from the storage.
+            (PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_) | PlanType.Model(_, _)) => pass
             _ => return Err("unsupported Body IR global method borrowed or unproven result")
     operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
     initialize_module_statics(builder, static_owner(builder.statics[slot]), span)

@@ -35,7 +35,7 @@ use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions as surface_functions;
 use incan_lang::lang::surface::types as surface_types;
-use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey};
+use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey, SymbolOrigin};
 
 /// One import that reaches a compiled Loaf: the Loaf's index key and the public module path inside its manifest.
 pub(in crate::typechecker) struct LoafImport {
@@ -165,6 +165,26 @@ impl TypeChecker {
         };
         if let Some(standard) = standard {
             self.type_info.registry.standard = Some(standard);
+        }
+    }
+
+    /// Whether `local_name` already binds the declaration `item` of the Loaf module `module` names (the builtin `Error`
+    /// trait, imported explicitly from `std.traits.error`): binding it again changes nothing, so it is no collision.
+    fn rebinds_same_declaration(&self, local_name: &str, module: &[String], item: &str) -> bool {
+        let Some(symbol) = self.symbols.lookup_local(local_name) else {
+            return false;
+        };
+        match self.symbols.identity_of(symbol) {
+            Some(existing) if !matches!(existing.origin, SymbolOrigin::Builtin) => {
+                self.loaf_member_identity(module, item).as_ref() == Some(existing)
+            }
+            // A compiler-owned builtin trait carries no Loaf identity; its declaring module names it.
+            _ => {
+                local_name == item
+                    && matches!(self.symbols.get(symbol).map(|found| &found.kind), Some(SymbolKind::Trait(_)))
+                    && incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
+                        == Some(module.join(".").as_str())
+            }
         }
     }
 
@@ -331,6 +351,11 @@ impl TypeChecker {
             }
             self.validate_root_namespace(&local_name, span);
             if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
+                let mut module = root.clone();
+                module.extend(path.iter().cloned());
+                if self.rebinds_same_declaration(&local_name, &module, &item.name) {
+                    continue;
+                }
                 self.errors.push(errors::pub_library_import_name_collision(
                     &local_name,
                     existing_kind,
