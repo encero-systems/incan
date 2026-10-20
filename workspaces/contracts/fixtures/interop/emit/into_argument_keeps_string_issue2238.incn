@@ -1,0 +1,18 @@
+# behavior: a string passed repeatedly to a generic Rust Into parameter stays usable afterwards (#2238)
+# pending: #2238 RustIoError construction leaves an unknown Body IR frame type
+# expect-stdout:
+#   custom message
+#   custom message
+#   custom message
+
+from rust::std::io import Error as RustIoError, ErrorKind
+
+
+def main() -> None:
+    """Reuse a binding across two ownership-taking interop calls."""
+    text = "custom message"
+    first = RustIoError.new(ErrorKind.Other, text)
+    second = RustIoError.new(ErrorKind.Other, text)
+    println(first.to_string())
+    println(second.to_string())
+    println(text)

@@ -1,0 +1,19 @@
+# behavior: a borrowed string returned by a Rust method becomes an owned Incan str at a return (#2235)
+# pending: #2235 PathBuf construction leaves an unknown Body IR frame type
+# expect-stdout:
+#   borrowed
+
+from rust::std::path import PathBuf
+
+
+def text() -> str:
+    """Return the text independently of the temporary path's lifetime."""
+    path: PathBuf = PathBuf.from("borrowed")
+    match path.to_str():
+        Some(value) => return value
+        None => return "missing"
+
+
+def main() -> None:
+    """Read the materialized return value after the path is gone."""
+    println(text())

@@ -1,0 +1,18 @@
+# behavior: a Rust type keeps its identity through two public module paths (#705)
+# pending: #705 the re-exported map's method lacks canonical Body IR identity
+# expect-stdout:
+#   true
+
+from rust::std::collections import HashMap as PublicMap
+from rust::std::collections::hash_map import HashMap as ModuleMap
+
+
+def empty(value: ModuleMap[str, int]) -> bool:
+    """Accept a map through its module's public path."""
+    return value.is_empty()
+
+
+def main() -> None:
+    """Pass the re-exported nominal type into the other path's position."""
+    value: PublicMap[str, int] = PublicMap.new()
+    println(empty(value))

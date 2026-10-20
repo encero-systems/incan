@@ -1,0 +1,20 @@
+# behavior: a borrowed Rust HashMap obtained from a method retains its get method (#2229)
+# pending: #2229 the map's generic result remains RustInteropPath V in Body IR
+# expect-stdout:
+#   7
+
+from rust::std::collections import HashMap
+
+
+def main() -> None:
+    """Read a nested map through the reference returned by get."""
+    mut inner: HashMap[str, int] = HashMap.new()
+    inner.insert("remaining", 7)
+    mut outer: HashMap[str, HashMap[str, int]] = HashMap.new()
+    outer.insert("attributes", inner)
+    match outer.get("attributes"):
+        None => println("no attributes")
+        Some(attributes) =>
+            match attributes.get("remaining"):
+                Some(value) => println(value)
+                None => println("missing")

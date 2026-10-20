@@ -1,0 +1,20 @@
+# behavior: Rust HashMap.get accepts a string literal key when called as an associated function on a borrowed map (#2229)
+# pending: #2229 the checker counts the receiver as an extra associated-call argument
+# expect-stdout:
+#   7
+
+from rust::std::collections import HashMap
+
+
+def main() -> None:
+    """Read the nested map through the associated-call spelling."""
+    mut inner: HashMap[str, int] = HashMap.new()
+    inner.insert("remaining", 7)
+    mut outer: HashMap[str, HashMap[str, int]] = HashMap.new()
+    outer.insert("attributes", inner)
+    match outer.get("attributes"):
+        None => println("no attributes")
+        Some(attributes) =>
+            match HashMap.get(attributes, "remaining"):
+                Some(value) => println(value)
+                None => println("missing")

@@ -1,0 +1,22 @@
+# behavior: assigning an imported Rust associated call directly to a model field keeps its target (#2223)
+# pending: #2223 Duration construction leaves an unknown Body IR frame type
+# expect-stdout:
+#   3
+#   4
+
+from rust::std::time import Duration
+
+
+model Timer:
+    """A mutable field populated by a Rust associated function."""
+    delay: Duration
+
+
+def main() -> None:
+    """Compare direct assignment with the equivalent local-binding form."""
+    mut timer = Timer(delay=Duration.from_secs(0))
+    timer.delay = Duration.from_secs(3)
+    println(timer.delay.as_secs())
+    replacement = Duration.from_secs(4)
+    timer.delay = replacement
+    println(timer.delay.as_secs())
