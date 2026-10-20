@@ -3535,6 +3535,19 @@ impl TypeChecker {
                 }
                 Some(result)
             }
+            RustItemKind::Module(_) => {
+                let path = format!("{rust_path}::{method}");
+                let selected = self.rust_item_metadata_for_path(&path)?;
+                let RustItemKind::Function(signature) = selected.kind else {
+                    return None;
+                };
+                if !type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(span));
+                    return Some(ResolvedType::Unknown);
+                }
+                Some(self.validate_rust_function_call_with_expected(&path, &signature, args, span, expected_return_ty))
+            }
             RustItemKind::Unsupported { description } => {
                 self.errors.push(errors::rust_item_shape_not_supported(
                     rust_path,
@@ -3555,7 +3568,7 @@ impl TypeChecker {
                     span,
                 }))
             }
-            // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
+            // Function, Trait, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => {
                 self.preserve_unresolved_rust_call_argument_returns(args);

@@ -52,6 +52,8 @@ Inherent associated functions and methods retain the enclosing impl's native typ
 
 Declared reference arguments retain the caller's place through ordinary argument binding; preparing a reference never copies its referent into a value snapshot. Mutable receiver signatures also require a mutable source binding. Opaque Rust item paths remain type identities, while their plan layout names use identifier-safe encoding.
 
+A free function reached through an imported Rust module uses that module's public child item metadata, then the same free-function inference and retained callee record as a directly imported function. A module binding's source spelling does not become an executable target.
+
 ## Non-goals
 
 - Field access, pattern matching on variants, or construction by fields of opaque Rust values.
