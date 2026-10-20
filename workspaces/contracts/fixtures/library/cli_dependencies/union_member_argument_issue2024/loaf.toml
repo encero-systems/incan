@@ -1,0 +1,9 @@
+[project]
+name = "union_member_argument_issue2024"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+expressions = { path = "deps/expressions" }

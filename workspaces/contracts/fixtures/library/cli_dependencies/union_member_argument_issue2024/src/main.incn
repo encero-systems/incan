@@ -1,0 +1,11 @@
+# behavior: a consumer passes a dependency's union member directly to the dependency's union parameter (#2024)
+# pending: #2024 the library dependency's compiled artifact is not prepared
+# expect-stdout:
+#   total
+
+from pub::expressions import assign, number
+
+
+def main() -> None:
+    """Use the union without importing its alias or member model."""
+    println(assign("total", number("amount")))
