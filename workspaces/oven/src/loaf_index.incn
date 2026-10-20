@@ -14,8 +14,7 @@ from rust_activation import (
 from std import toml
 from std.fs import Path
 from manifest_errors import IntakeError, IntakeErrorKind
-from plan import SelectionError
-from plan_json import array, boolean, field, strings, text_field
+from json_fields import array, boolean, field, strings, text_field
 from rust_source import (
     RustDependencyCatalog,
     RustDependencyDeclaration,
@@ -62,9 +61,9 @@ def invalid(loaf: str, line: int, path: list[str], detail: str) -> IntakeError:
     )
 
 
-def wire_error(loaf: str, line: int, error: SelectionError) -> IntakeError:
+def wire_error(loaf: str, line: int, fields: list[str]) -> IntakeError:
     """Preserve the structural decoder's exact field path."""
-    return invalid(loaf, line, error.fields, "invalid or missing index field")
+    return invalid(loaf, line, fields, "invalid or missing index field")
 
 
 def canonical_condition(condition: str) -> str:

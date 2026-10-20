@@ -12,9 +12,6 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
-[sdk]
-profile = "minimal"
-
 [dependencies]
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
-incan_stdlib_core = { loaf = "incan_stdlib_core", path = "../core", version = "0.6.0-dev.6" }
+incan_stdlib_core = { loaf = "incan_stdlib_core", path = "../core", version = "0.6.0-dev.6", standard = true }

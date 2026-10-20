@@ -1,0 +1,46 @@
+"""
+Strict JSON field readers. A refusal is the field path that failed: a missing field, or a value of another kind. Null,
+booleans and numbers are never coerced into one another or into text.
+"""
+
+from std.json import JsonValue
+
+
+pub def field(value: JsonValue, name: str, path: list[str]) -> Result[JsonValue, list[str]]:
+    """The required field `name` of an object."""
+    match value.get(name):
+        Some(item) => return Ok(item)
+        None => return Err(path + [name])
+
+
+pub def text_field(value: JsonValue, name: str, path: list[str]) -> Result[str, list[str]]:
+    """The required string field `name` of an object."""
+    item = field(value, name, path)?
+    match item.as_str():
+        Some(text) => return Ok(text)
+        None => return Err(path + [name])
+
+
+pub def array(value: JsonValue, path: list[str]) -> Result[list[JsonValue], list[str]]:
+    """A JSON array."""
+    match value.as_array():
+        Some(values) => return Ok(values)
+        None => return Err(path)
+
+
+pub def strings(value: JsonValue, path: list[str]) -> Result[list[str], list[str]]:
+    """A JSON array of strings; a non-string element is refused at its index."""
+    values = array(value, path)?
+    mut result: list[str] = []
+    for index in range(len(values)):
+        match values[index].as_str():
+            Some(item) => result.append(item)
+            None => return Err(path + [str(index)])
+    return Ok(result)
+
+
+pub def boolean(value: JsonValue, path: list[str]) -> Result[bool, list[str]]:
+    """A JSON boolean."""
+    match value.as_bool():
+        Some(flag) => return Ok(flag)
+        None => return Err(path)

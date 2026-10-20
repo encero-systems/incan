@@ -24,9 +24,9 @@ Until 0.6.0-dev.8 Oven had two halves. The Rust crates under `loaves/oven/` and 
 
 **There is one Oven, and it is the Incan project. No Rust crate makes an Oven decision.**
 
-### What the Oven owns
+### What Oven owns
 
-- Reading `loaf.toml`. The Oven is the only reader of a project manifest.
+- Reading `loaf.toml`. Oven is the only reader of a project manifest.
 - Resolving Loaves and writing the lock (`oven.lock`).
 - The Rust facet of every unit: the `crates-io/*` Loaves it links, their `cfg` and feature activation, and the `rustc` invocation of each Rust unit.
 - Unit orchestration: every Loaf a unit reaches is compiled before the unit (DD-0005), standard packages included (DD-0007).
@@ -36,21 +36,21 @@ Until 0.6.0-dev.8 Oven had two halves. The Rust crates under `loaves/oven/` and 
 
 ### What the compiler is
 
-The compiler is the Rust code the Oven calls. `incan-rustc-driver` compiles one unit, an Incan unit from source or a Rust unit, from the inputs the Oven passes. Checking and analysis take the same unit description. The unit description names the unit's source, kind, package identity and profile, its active features, the artifact directory of every Loaf it reaches, the Rust externs and search paths it links, and the manifest facts the checker reads: declared Rust crates, contract models and C interop declarations. The compiler reads no manifest, resolves nothing and keeps no store.
+The compiler is the Rust code Oven calls. `incan-rustc-driver` compiles one unit, an Incan unit from source or a Rust unit, from the inputs Oven passes. Checking and analysis take the same unit description. The unit description names the unit's source, kind, package identity and profile, its active features, the artifact directory of every Loaf it reaches, the Rust externs and search paths it links, and the manifest facts the checker reads: declared Rust crates, contract models and C interop declarations. The compiler reads no manifest, resolves nothing and keeps no store.
 
 ### One program, no exchange
 
-The Oven's decisions and the actions they lead to run in one program, so they share typed values rather than exchanging documents. The `incan.oven.*` wire schemas are removed. The unit description and the lock are the only formats that cross a boundary. A tool that runs outside the Oven, such as the language server, asks for the description of the unit owning a file with `incan describe-unit PATH`.
+Oven's decisions and the actions they lead to run in one program, so they share typed values rather than exchanging documents. The `incan.oven.*` wire schemas are removed. The unit description and the lock are the only formats that cross a boundary. A tool that runs outside Oven, such as the language server, asks for the description of the unit owning a file with `incan describe-unit PATH`.
 
 ### Bootstrap
 
-Until a dev.8 toolchain builds itself, the frozen 0.6.0-dev.7 builder compiles the Oven and the dev.8 compiler.
+Until a dev.8 toolchain builds itself, the frozen 0.6.0-dev.7 builder compiles Oven and the dev.8 compiler.
 
 ## Consequences
 
 - `oven_rustc`, `oven_store`, `oven_interop`, the `oven` command (`oven-cli`) and `incan_oven_facet` are removed. So are the driver's completed-output selection, native plan selection, bake and publication, and the project owner process.
 - The compiler's manifest model (`oven_model::manifest`) and its project discovery are replaced by the unit description.
-- The Oven's host functions (file observation, process execution, store writes) are written in Incan over the standard library and Rust interop (DD-0006).
+- Oven's host functions (file observation, process execution, store writes) are written in Incan over the standard library and Rust interop (DD-0006).
 
 ## Non-goals
 

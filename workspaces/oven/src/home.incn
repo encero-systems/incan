@@ -1,0 +1,71 @@
+"""
+Oven's home and the artifact layout: where every Loaf's artifacts live for a profile, and where the toolchain's
+standard packages come from.
+
+- The home is `INCAN_HOME`, else `.incan` under `HOME` (`USERPROFILE` on Windows).
+- A standard package's artifacts live in the home, under the toolchain that built them:
+  `<home>/toolchains/<toolchain>/loaves/<package>/<profile>`.
+- A path dependency's artifacts live in the target directory of the root project that reaches it, so one graph's
+  unified features build it once: `<root>/target/incan/loaves/<package>/<profile>`.
+- The standard packages are the packages of the toolchain's standard-library directory, `INCAN_STDLIB`: each of its
+  immediate subdirectories that holds a `loaf.toml`.
+"""
+
+from std.environ import get_or
+from std.fs import Path
+from intake import load_project
+
+
+# The toolchain this Oven belongs to; it names the home's toolchain directory.
+pub const TOOLCHAIN: str = "0.6.0-dev.8"
+
+
+pub model StandardPackage:
+    """One standard package of the toolchain."""
+
+    pub name: str
+    # The package's source directory.
+    pub root: str
+
+
+pub def home() -> Result[Path, str]:
+    """Oven's home directory."""
+    configured = get_or("INCAN_HOME", "")
+    if configured != "":
+        return Ok(Path(configured))
+    for name in ["HOME", "USERPROFILE"]:
+        user = get_or(name, "")
+        if user != "":
+            return Ok(Path(user).joinpath(".incan"))
+    return Err("no home directory: set INCAN_HOME, or HOME")
+
+
+pub def standard_artifact_dir(package: str, profile: str) -> Result[Path, str]:
+    """The artifact directory of the standard package `package` for `profile`."""
+    return Ok(home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("loaves").joinpath(package).joinpath(profile))
+
+
+pub def dependency_artifact_dir(root_project: str, package: str, profile: str) -> Path:
+    """The artifact directory of a path dependency `package`, reached from the project at `root_project`."""
+    return Path(root_project).joinpath("target").joinpath("incan").joinpath("loaves").joinpath(package).joinpath(profile)
+
+
+pub def standard_packages() -> Result[list[StandardPackage], str]:
+    """The toolchain's standard packages, in name order."""
+    root = get_or("INCAN_STDLIB", "")
+    if root == "":
+        return Err("no standard library: set INCAN_STDLIB to the toolchain's standard-library directory")
+    directory = Path(root)
+    mut packages: list[StandardPackage] = []
+    match directory.iterdir():
+        Err(error) => return Err(f"cannot read the standard library at {root}: {error.message()}")
+        Ok(entries) =>
+            for entry in entries:
+                if entry.joinpath("loaf.toml").is_file():
+                    match load_project(entry):
+                        Err(error) => return Err(error.message())
+                        Ok(project) => packages.append(StandardPackage(name=project.intent.name, root=project.root))
+    mut by_name: Dict[str, StandardPackage] = {}
+    for package in packages:
+        by_name[package.name] = package
+    return Ok([by_name[name] for name in sorted([name for name in by_name.keys()])])

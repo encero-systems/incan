@@ -1,0 +1,208 @@
+"""
+The unit description (`incan.unit/1`, DD-0008): everything the compiler knows about one unit, as Oven describes it.
+The compiler reads no manifest; it reads this. Its fields are the compiler's `incan_driver::unit::UnitDescription`.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from features import FeatureRequest, resolve_features
+from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
+from intake import LocalProject, intake, load_project
+
+
+pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
+
+
+pub model UnitLoaf:
+    """One Loaf a unit reaches."""
+
+    # The key the unit names it by: its dependency key, its package name when reached transitively, or a standard
+    # package's name.
+    pub key: str
+    pub name: str
+    # Its artifact directory for the unit's profile.
+    pub dir: str
+    pub standard: bool
+
+    def to_json(self) -> JsonValue:
+        """The Loaf as the description spells it."""
+        return JsonValue.object(
+            {
+                "key": JsonValue.string(self.key),
+                "name": JsonValue.string(self.name),
+                "dir": JsonValue.string(self.dir),
+                "standard": JsonValue.bool(self.standard),
+            },
+        )
+
+
+pub model UnitDescription:
+    """One unit: its source, its package and every Loaf it reaches."""
+
+    pub source: str
+    pub project_root: str
+    pub source_root: str
+    pub package: str
+    pub version: str
+    pub profile: str
+    pub declared_features: list[str]
+    pub active_features: list[str]
+    pub loaves: list[UnitLoaf]
+    pub rust_crates: list[str]
+    pub contract_models: list[str]
+    pub c_headers: list[str]
+
+    def to_json(self) -> JsonValue:
+        """The description as the compiler reads it."""
+        return JsonValue.object(
+            {
+                "schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA),
+                "source": JsonValue.string(self.source),
+                "project_root": JsonValue.string(self.project_root),
+                "source_root": JsonValue.string(self.source_root),
+                "package": JsonValue.string(self.package),
+                "version": JsonValue.string(self.version),
+                "profile": JsonValue.string(self.profile),
+                "declared_features": texts(self.declared_features),
+                "active_features": texts(self.active_features),
+                "loaves": JsonValue.array([loaf.to_json() for loaf in self.loaves]),
+                "rust_crates": texts(self.rust_crates),
+                "contract_models": texts(self.contract_models),
+                "c_headers": texts(self.c_headers),
+            },
+        )
+
+
+def texts(items: list[str]) -> JsonValue:
+    """A JSON array of strings."""
+    return JsonValue.array([JsonValue.string(item) for item in items])
+
+
+pub def project_root_of(source: Path) -> Option[Path]:
+    """The nearest directory at or above `source`'s directory that holds a `loaf.toml`."""
+    mut directory = source.parent()
+    while true:
+        if directory.joinpath("loaf.toml").is_file():
+            return Some(directory)
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 == "":
+            return None
+        directory = parent
+    return None
+
+
+def source_root_of(project: LocalProject) -> str:
+    """The project's source root: `[build] source-root`, else `src` when it exists, else the project root."""
+    root = Path(project.root)
+    match project.intent.source_root:
+        Some(declared) => return root.joinpath(declared).0
+        None => pass
+    if root.joinpath("src").is_dir():
+        return root.joinpath("src").0
+    return root.0
+
+
+def standard_loaves(package: str, declared: list[str], profile: str) -> Result[list[UnitLoaf], str]:
+    """The standard packages a unit of `package` reaches: every one, or for a standard package, the standard packages
+    it depends on (`declared`) and theirs."""
+    mut packages: Dict[str, StandardPackage] = {}
+    for found in standard_packages()?:
+        packages[found.name] = found
+    mut names: list[str] = []
+    if package in packages:
+        mut queue = declared
+        mut index = 0
+        while index < len(queue):
+            name = queue[index]
+            index += 1
+            if name in names:
+                continue
+            if name not in packages:
+                return Err(f"{package} depends on `{name}`, which is not a standard package")
+            names.append(name)
+            reached = load_project(Path(packages[name].root)).map_err((error) => error.message())?
+            for further in reached.intent.standard_dependencies:
+                queue.append(further)
+    else:
+        names = [name for name in packages.keys()]
+    mut loaves: list[UnitLoaf] = []
+    for name in sorted(names):
+        loaves.append(UnitLoaf(key=name, name=name, dir=standard_artifact_dir(name, profile)?.0, standard=true))
+    return Ok(loaves)
+
+
+pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
+    """Describe the unit whose entry source is `source`, for `profile` and the features `request` asks for."""
+    entry = source.absolute().map_err((error) => f"{source.0}: {error.message()}")?
+    if not entry.is_file():
+        return Err(f"{entry.0}: no such source file")
+    match project_root_of(entry):
+        None => return Ok(single_file_unit(entry, profile, standard_loaves("", [], profile)?))
+        Some(found) =>
+            graph = intake(found).map_err((error) => error.message())?
+            root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
+            active = resolve_features(graph, root.0, request)?
+            mut projects: Dict[str, LocalProject] = {}
+            for project in graph.projects:
+                projects[project.root] = project
+            own = projects[root.0]
+            mut loaves: list[UnitLoaf] = []
+            mut seen: list[str] = []
+            for edge in active.edges:
+                if edge.dependency_root in seen:
+                    continue
+                seen.append(edge.dependency_root)
+                dependency = projects[edge.dependency_root]
+                mut key = dependency.intent.name
+                if edge.requester_root == root.0:
+                    key = edge.alias
+                directory = dependency_artifact_dir(root.0, dependency.intent.name, profile)
+                loaves.append(UnitLoaf(key=key, name=dependency.intent.name, dir=directory.0, standard=false))
+            for loaf in standard_loaves(own.intent.name, own.intent.standard_dependencies, profile)?:
+                if loaf.name != own.intent.name:
+                    loaves.append(loaf)
+            return Ok(
+                UnitDescription(
+                    source=entry.0,
+                    project_root=root.0,
+                    source_root=source_root_of(own),
+                    package=own.intent.name,
+                    version=own.intent.version,
+                    profile=profile,
+                    declared_features=sorted([name for name in own.intent.features.keys()]),
+                    active_features=active.active[root.0],
+                    loaves=loaves,
+                    rust_crates=rust_crates_of(own),
+                    contract_models=own.intent.contract_models,
+                    c_headers=own.intent.c_headers,
+                ),
+            )
+
+
+def single_file_unit(entry: Path, profile: str, standard: list[UnitLoaf]) -> UnitDescription:
+    """A program outside any project: its directory is its project and source root, its stem its package."""
+    directory = entry.parent()
+    return UnitDescription(
+        source=entry.0,
+        project_root=directory.0,
+        source_root=directory.0,
+        package=entry.stem(),
+        version="0.0.0",
+        profile=profile,
+        declared_features=[],
+        active_features=[],
+        loaves=standard,
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+
+
+def rust_crates_of(project: LocalProject) -> list[str]:
+    """The Rust crates a package's `rust::` imports may name: its Rust dependencies and the sibling Loaves' crates its
+    Rust facet links."""
+    mut names = [request.alias for request in project.intent.rust_inputs]
+    for dependency in project.intent.dependencies:
+        if dependency.rust_facet and dependency.alias not in names:
+            names.append(dependency.alias)
+    return sorted(names)

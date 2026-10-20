@@ -1,0 +1,99 @@
+"""
+`incan`: the command line, which is Oven (DD-0008).
+
+    incan describe-unit PATH [--profile NAME] [--features A,B] [--no-default-features] [--all-features]
+    incan --version
+"""
+
+from rust::std::env import args
+from rust::std::io import Write, stderr
+from rust::std::process import exit
+from rust::std::string import String as RustString
+from std.fs import Path
+from features import FeatureRequest
+from home import TOOLCHAIN
+from unit import describe
+
+
+pub model Options:
+    """The options shared by the commands that describe a unit."""
+
+    pub path: str = ""
+    pub profile: str = "debug"
+    pub request: FeatureRequest = FeatureRequest()
+
+
+def main() -> None:
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) < 2:
+        fail(usage(), 2)
+    command = arguments[1]
+    rest = arguments[2:]
+    if command == "--version" or command == "version":
+        println(f"incan {TOOLCHAIN}")
+        return
+    if command == "describe-unit":
+        describe_unit(rest)
+        return
+    fail(f"incan: unknown command `{command}`\n{usage()}", 2)
+
+
+def usage() -> str:
+    """The command line's usage."""
+    return "usage: incan describe-unit PATH [--profile NAME] [--features A,B] [--no-default-features] [--all-features]"
+
+
+def fail(message: str, code: i32) -> None:
+    """Print `message` to stderr and exit with `code`."""
+    mut err = stderr()
+    _ = err.write_all(RustString.from(f"{message}\n").into_bytes())
+    exit(code)
+
+
+def parse_options(arguments: list[str]) -> Result[Options, str]:
+    """The unit options: one PATH and the profile and feature flags."""
+    mut options = Options()
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--profile" or argument == "--features":
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            value = arguments[index + 1]
+            if argument == "--profile":
+                options.profile = value
+            else:
+                for name in value.split(","):
+                    if name.strip() != "":
+                        options.request.features.append(name.strip())
+            index += 2
+            continue
+        if argument == "--no-default-features":
+            options.request.default_features = false
+        elif argument == "--all-features":
+            options.request.all_features = true
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        elif options.path != "":
+            return Err(f"one PATH is described at a time; `{argument}` is a second")
+        else:
+            options.path = argument
+        index += 1
+    if options.path == "":
+        return Err("a PATH is required")
+    return Ok(options)
+
+
+def describe_unit(arguments: list[str]) -> None:
+    """Print the unit description of the unit whose entry source is PATH."""
+    match parse_options(arguments):
+        Err(reason) => fail(f"incan describe-unit: {reason}\n{usage()}", 2)
+        Ok(options) =>
+            match describe(Path(options.path), options.profile, options.request):
+                Err(reason) => fail(f"incan describe-unit: {reason}", 1)
+                Ok(unit) =>
+                    match unit.to_json().to_pretty_json():
+                        Err(error) => fail(f"incan describe-unit: {error.message()}", 1)
+                        Ok(text) => println(text)

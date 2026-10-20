@@ -8,7 +8,7 @@ The contract families say what `incan` must do, each case as a program that carr
 | --- | --- | --- |
 | `behavior` | `incan run src/main.incn`, or `incan check src/main.incn --format json` when the header declares diagnostics | stdout, stderr, exit code; or the refusal's diagnostic codes |
 | `check` | `incan check src/main.incn --format json` | acceptance (`expect-accepted:`, warnings allowed) or the refusal's codes |
-| `library` | as `behavior`, for a project with path dependencies; the Oven bakes them | as `behavior` |
+| `library` | as `behavior`, for a project with path dependencies; Oven bakes them | as `behavior` |
 | `interop` | as `behavior`, for programs that import through `rust::` | as `behavior` |
 | `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
 | `project` | `incan describe-unit src/main.incn` | the unit description's dependencies, standard packages and active features, or the refusal's stderr and exit code |

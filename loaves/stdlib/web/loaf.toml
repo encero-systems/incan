@@ -12,11 +12,11 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
-[sdk]
-profile = "minimal"
-components = ["stdlib-data", "stdlib-async"]
-
 [dependencies]
+incan_stdlib_async = { standard = true }
+incan_stdlib_core = { standard = true }
+incan_stdlib_data = { standard = true }
+incan_stdlib_system = { standard = true }
 axum = { loaf = "crates-io/axum", version = "0.8", features = [], default-features = true }
 inventory = { loaf = "crates-io/inventory", version = "0.3", features = [], default-features = true }
 tokio = { loaf = "crates-io/tokio", version = "1", features = ["net", "rt-multi-thread"], default-features = true }

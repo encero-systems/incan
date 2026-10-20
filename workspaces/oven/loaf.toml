@@ -1,10 +1,9 @@
 [project]
-name = "oven_local_intake"
-version = "0.1.0"
+name = "oven"
+version = "0.6.0-dev.8"
 
 [project.scripts]
-core_engine = "src/plan_json_main.incn"
-acceptance = "src/acceptance.incn"
+main = "src/main.incn"
 
 [dependencies]
 toml = { loaf = "crates-io/toml", version = "0.9", default-features = true }

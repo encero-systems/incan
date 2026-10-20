@@ -3,11 +3,11 @@ The contract families: what each one runs and which expectations it admits.
 
 - `behavior`: a program runs and shows what it declares, or is refused at check time with the codes it declares.
 - `check`: a program is only checked: accepted cleanly (`expect-accepted:`) or refused with its codes.
-- `library`: a project consumes the libraries it carries as path dependencies; the Oven bakes them before the run.
+- `library`: a project consumes the libraries it carries as path dependencies; Oven bakes them before the run.
 - `interop`: a program reaches Rust through `rust::` imports and runs.
 - `testing`: `incan test` runs one test file and reports each test by outcome.
 - `project`: what `incan describe-unit` reports for a project: its dependencies, its standard packages and its
-  active features, or the refusal of a project the Oven cannot describe.
+  active features, or the refusal of a project Oven cannot describe.
 """
 
 from fixture import Fixture

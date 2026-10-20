@@ -1,6 +1,6 @@
-//! The unit description: what the compiler knows about one unit, as the Oven describes it (DD-0008).
+//! The unit description: what the compiler knows about one unit, as Oven describes it (DD-0008).
 //!
-//! The Oven reads a project's manifest once and describes each unit it compiles, checks or analyzes. The compiler reads
+//! Oven reads a project's manifest once and describes each unit it compiles, checks or analyzes. The compiler reads
 //! no manifest: everything a session needs about the project arrives here.
 
 use std::collections::BTreeSet;
@@ -61,7 +61,7 @@ pub struct UnitLoaf {
 }
 
 impl UnitDescription {
-    /// Read a unit description the Oven wrote.
+    /// Read a unit description Oven wrote.
     pub fn read(path: &Path) -> CliResult<Self> {
         let bytes = fs::read(path).map_err(|error| {
             CliError::failure(format!("cannot read the unit description {}: {error}", path.display()))
