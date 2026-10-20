@@ -53,7 +53,7 @@ def declaration(alias: str, value: TomlValue, index: int) -> Result[RustDependen
     ))
 
 
-def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
+pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
     """Build the existing activation catalog from converted Loaf declarations, including target alternatives."""
     root = document.as_table().map_err((e) => e.message())?
     mut dependencies: list[RustDependencyDeclaration] = []
@@ -61,6 +61,9 @@ def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
         table = root["dependencies"].as_table().map_err((e) => e.message())?
         for alias in sorted([key for key in table.keys()]):
             value = table[alias]
+            if value.kind() == TomlKind.Table and value.get_optional[bool]("standard").map_err((e) => e.message())? == Some(true) and value.get_optional[str]("loaf").map_err((e) => e.message())? == None:
+                # A standard dependency is an Incan edge; the Rust facet has no edge for it.
+                continue
             if value.kind() == TomlKind.Array:
                 for alternative in value.as_array().map_err((e) => e.message())?:
                     dependencies.append(declaration(alias, alternative, len(dependencies))?)
@@ -89,13 +92,16 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
     return result
 
 
-def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features: list[str], defaults: bool) -> Result[LocalDemand, str]:
+def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features: list[str], defaults: bool, substitutes: Dict[str, str] = {}) -> Result[LocalDemand, str]:
     """Resolve an explicitly declared local path, checking its version and procedural-macro domain before selection."""
     mut relative = ""
     match declaration.source:
         RustDependencySource.Path(path, _) => relative = path
         _ => return Err("local child requires a path declaration")
-    path = Path(parent.project).joinpath(relative).resolve().map_err((e) => e.message())?
+    mut located = Path(parent.project).joinpath(relative)
+    if declaration.package in substitutes:
+        located = Path(substitutes[declaration.package])
+    path = located.resolve().map_err((e) => f"{parent.project}: dependency `{declaration.alias}` at {located.0}: {e.message()}")?
     source = path.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((e) => e.message())?
     document = toml.parse(source).map_err((e) => e.message())?
     if document.get[str]("project.name").map_err((e) => e.message())? != declaration.package:
@@ -137,57 +143,144 @@ def predicates(document: TomlValue, configuration: TargetConfiguration, project:
     return Ok(selected)
 
 
+pub model ActiveEdge:
+    """One active dependency slot of a facet, with the features and defaults it selects."""
+
+    pub declaration: RustDependencyDeclaration
+    pub features: list[str]
+    pub defaults: bool
+
+
+pub model LocalEdge:
+    """One active path edge of a local facet: the alias its code names and the facet it reaches."""
+
+    pub alias: str
+    pub project: str
+    pub domain: DependencyDomain
+
+
+pub model LocalFacet:
+    """One local Loaf's Rust facet as the graph selects it: its features and its active edges."""
+
+    pub project: str
+    pub domain: DependencyDomain
+    pub features: list[str]
+    pub target_predicates: list[JsonValue]
+    # Active path edges to other local facets.
+    pub local: list[LocalEdge]
+    # Active registry edges, each as a root request of the resolver's grammar.
+    pub registry: list[JsonValue]
+    # The aliases of the active registry edges, in the order of `registry`.
+    pub registry_aliases: list[str]
+
+
+pub def local_facets(
+    root: LocalDemand,
+    configuration: TargetConfiguration,
+    root_environment: Option[TomlValue] = None,
+    substitutes: Dict[str, str] = {},
+) -> Result[list[LocalFacet], str]:
+    """Select one shared graph of local facets. A canonically resolved environment replaces only the root's slots, and
+    a substitute replaces the Loaf of its package name wherever the graph reaches it."""
+    mut demands: Dict[str, LocalDemand] = {}
+    demands = add(demands, root)
+    mut previous: Dict[str, LocalDemand] = {}
+    mut facets: list[LocalFacet] = []
+    while demands != previous:
+        previous = demands
+        facets = []
+        for identity in sorted([name for name in previous.keys()]):
+            demand = previous[identity]
+            mut environment: Option[TomlValue] = None
+            if identity == key(root):
+                environment = root_environment
+            facet, children = facet_of(demand, configuration, environment, substitutes)?
+            facets.append(facet)
+            for child_demand in children:
+                demands = add(demands, child_demand)
+    return Ok(facets)
+
+
+def activated(demand: LocalDemand, configuration: TargetConfiguration, environment: Option[TomlValue]) -> Result[Tuple[TomlValue, list[str], list[ActiveEdge]], str]:
+    """One facet's manifest, catalog, effective features and active edges with the features each requests."""
+    path = Path(demand.project).joinpath("loaf.toml")
+    source = path.read_text("utf-8", "strict").map_err((e) => e.message())?
+    document = toml.parse(source).map_err((e) => e.message())?
+    mut inputs = catalog(document)?
+    mut authority: Option[RustDependencyCatalog] = None
+    mut purpose = ActivationPurpose.Normal
+    if let Some(selected) = environment:
+        authority = Some(inputs)
+        inputs = catalog(selected)?
+        purpose = ActivationPurpose.Test
+    context = ActivationContext(host=configuration, target=configuration, purpose=purpose,
+        domain=demand.domain, requested_features=demand.features, default_features=demand.defaults, build_unit_present=false)
+    activation = activate_unit(inputs, context, demand.project, authority).map_err((e) => e.message())?
+    mut active: list[ActiveEdge] = []
+    for slot in activation.slots:
+        match slot.activation:
+            SlotActivation.Inactive(_) => pass
+            SlotActivation.Active(features, defaults, _) => active.append(ActiveEdge(declaration=inputs.dependencies[slot.index], features=features, defaults=defaults))
+    return Ok((document, activation.effective_features, active))
+
+
+def facet_of(demand: LocalDemand, configuration: TargetConfiguration, environment: Option[TomlValue], substitutes: Dict[str, str]) -> Result[Tuple[LocalFacet, list[LocalDemand]], str]:
+    """One demand's facet, with its effective features and active edges, and the local demands its path edges make."""
+    document, features, active = activated(demand, configuration, environment)?
+    mut local: list[LocalEdge] = []
+    mut children: list[LocalDemand] = []
+    mut registry: list[JsonValue] = []
+    mut aliases: list[str] = []
+    for active_edge in active:
+        edge = active_edge.declaration
+        edge_features = active_edge.features
+        defaults = active_edge.defaults
+        match edge.source:
+            RustDependencySource.Path(_, _) =>
+                selected = child(demand, edge, edge_features, defaults, substitutes)?
+                local.append(LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain))
+                children.append(selected)
+            RustDependencySource.Registry(_) =>
+                registry.append(request(edge, edge_features, defaults, edge.alias)?)
+                aliases.append(edge.alias)
+            _ => return Err(f"unsupported native local source for {edge.alias}")
+    facet = LocalFacet(
+        project=demand.project, domain=demand.domain, features=features,
+        target_predicates=predicates(document, configuration, demand.project)?,
+        local=local, registry=registry, registry_aliases=aliases,
+    )
+    return Ok((facet, children))
+
+
 pub def select(
     root: LocalDemand,
     configuration: TargetConfiguration,
     root_environment: Option[TomlValue] = None,
 ) -> Result[JsonValue, str]:
-    """Select one shared graph; a canonically resolved environment replaces only the root's dependency slots."""
-    mut demands: Dict[str, LocalDemand] = {}
-    demands = add(demands, root)
-    mut previous: Dict[str, LocalDemand] = {}
+    """The selected graph as the resolver's root grammar: facets, target roots and host roots."""
     mut facets: list[JsonValue] = []
     mut roots: list[JsonValue] = []
     mut host_roots: list[JsonValue] = []
-    while demands != previous:
-        previous = demands
-        facets = []
-        roots = []
-        host_roots = []
-        for identity in sorted([name for name in previous.keys()]):
-            demand = previous[identity]
-            path = Path(demand.project).joinpath("loaf.toml")
-            source = path.read_text("utf-8", "strict").map_err((e) => e.message())?
-            document = toml.parse(source).map_err((e) => e.message())?
-            mut inputs = catalog(document)?
-            mut authority: Option[RustDependencyCatalog] = None
-            mut purpose = ActivationPurpose.Normal
-            if identity == key(root):
-                if let Some(environment) = root_environment:
-                    authority = Some(inputs)
-                    inputs = catalog(environment)?
-                    purpose = ActivationPurpose.Test
-            context = ActivationContext(host=configuration, target=configuration, purpose=purpose,
-                domain=demand.domain, requested_features=demand.features, default_features=demand.defaults, build_unit_present=false)
-            activation = activate_unit(inputs, context, demand.project, authority).map_err((e) => e.message())?
-            facets.append(JsonValue.object({
-                "project": JsonValue.string(demand.project), "domain": JsonValue.string(demand.domain.value()),
-                "features": JsonValue.array([JsonValue.string(feature) for feature in activation.effective_features]),
-                "target": JsonValue.string(configuration.triple),
-                "target_predicates": JsonValue.array(predicates(document, configuration, demand.project)?),
-            }))
-            for slot in activation.slots:
-                match slot.activation:
-                    SlotActivation.Inactive(_) => pass
-                    SlotActivation.Active(features, defaults, _) =>
-                        edge = inputs.dependencies[slot.index]
-                        match edge.source:
-                            RustDependencySource.Path(_, _) => demands = add(demands, child(demand, edge, features, defaults)?)
-                            RustDependencySource.Registry(_) =>
-                                selected = request(edge, features, defaults, f"{len(roots) + len(host_roots)}-{edge.alias}")?
-                                if demand.domain == DependencyDomain.Host:
-                                    host_roots.append(selected)
-                                else:
-                                    roots.append(selected)
-                            _ => return Err(f"unsupported native local source for {edge.alias}")
+    for facet in local_facets(root, configuration, root_environment)?:
+        facets.append(JsonValue.object({
+            "project": JsonValue.string(facet.project), "domain": JsonValue.string(facet.domain.value()),
+            "features": JsonValue.array([JsonValue.string(feature) for feature in facet.features]),
+            "target": JsonValue.string(configuration.triple),
+            "target_predicates": JsonValue.array(facet.target_predicates),
+        }))
+        for index in range(len(facet.registry)):
+            name = f"{len(roots) + len(host_roots)}-{facet.registry_aliases[index]}"
+            selected = facet.registry[index]
+            renamed = JsonValue.object({
+                "name": JsonValue.string(name),
+                "loaf": selected.require("loaf").map_err((e) => e.message())?,
+                "req": selected.require("req").map_err((e) => e.message())?,
+                "features": selected.require("features").map_err((e) => e.message())?,
+                "default-features": selected.require("default-features").map_err((e) => e.message())?,
+                "optional": JsonValue.bool(false),
+            })
+            if facet.domain == DependencyDomain.Host:
+                host_roots.append(renamed)
+            else:
+                roots.append(renamed)
     return Ok(JsonValue.object({"facets": JsonValue.array(facets), "roots": JsonValue.array(roots), "host-roots": JsonValue.array(host_roots)}))
