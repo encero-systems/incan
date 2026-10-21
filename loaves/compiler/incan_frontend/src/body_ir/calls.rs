@@ -897,7 +897,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Refuse a supplied computation that would precede an observable omitted default. Canonically matched local
-    /// literal defaults and declaration-owned, statement-free copy constants have no source effect to reorder.
+    /// literal defaults and declaration-owned literal construction have no source effect to reorder.
     /// The checked local source or declaring frame supplies this evidence; absent or unproven defaults stay refused.
     fn construction_interleaves_default_effects(
         &self,
@@ -926,13 +926,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         && !(local_source.is_some() && self.field_default_is_literal(owner, prior))
                         && defaults
                             .and_then(|frame| frame.params.get(prior))
-                            .is_none_or(|parameter| {
-                                !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
-                                    || !matches!(&parameter.default,
-                                    bir::CallableParamDefault::Source(computation)
-                                        if computation.stmts.is_empty()
-                                            && matches!(computation.result, bir::Operand::Constant(_)))
-                            })
+                            .is_none_or(|parameter| !defaults::is_literal_default(&parameter.default))
                 })
         })
     }

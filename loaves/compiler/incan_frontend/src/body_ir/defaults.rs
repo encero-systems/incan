@@ -2,6 +2,58 @@
 
 use super::*;
 
+/// Prove that a declaration-owned default constructs only fresh literal data. This recognizes the same collection
+/// literals after library publication without consulting source syntax or allowing calls, parameter reads, or writes
+/// to existing storage to cross a supplied argument's observable evaluation.
+pub(super) fn is_literal_default(default: &bir::CallableParamDefault) -> bool {
+    let bir::CallableParamDefault::Source(computation) = default else {
+        return false;
+    };
+    let mut initialized = HashSet::new();
+    for statement in &computation.stmts {
+        let bir::StatementKind::Assign { place, rvalue } = &statement.kind else {
+            return false;
+        };
+        let bir::PlaceRoot::Local(local) = place.root else {
+            return false;
+        };
+        if !place.projection.is_empty() || initialized.contains(&local) || !literal_default_rvalue(rvalue, &initialized)
+        {
+            return false;
+        }
+        initialized.insert(local);
+    }
+    literal_default_operand(&computation.result, &initialized)
+}
+
+/// Admit builtin literal containers whose elements refer only to constants or preceding fresh literal temporaries.
+fn literal_default_rvalue(value: &bir::Rvalue, initialized: &HashSet<bir::LocalId>) -> bool {
+    match value {
+        bir::Rvalue::Use(operand) => literal_default_operand(operand, initialized),
+        bir::Rvalue::Aggregate(bir::AggregateKind::List | bir::AggregateKind::Set | bir::AggregateKind::Tuple, elements) => {
+            elements.iter().all(|element| {
+                matches!(element, bir::ArgumentElement::One(operand) if literal_default_operand(operand, initialized))
+            })
+        }
+        bir::Rvalue::Dict(entries) => entries.iter().all(|entry| {
+            matches!(entry, bir::DictEntry::Pair(key, value)
+                if literal_default_operand(key, initialized) && literal_default_operand(value, initialized))
+        }),
+        _ => false,
+    }
+}
+
+/// Accept immutable constant data and fresh whole temporaries, excluding parameter reads and projections.
+fn literal_default_operand(value: &bir::Operand, initialized: &HashSet<bir::LocalId>) -> bool {
+    match value {
+        bir::Operand::Constant(_) => true,
+        bir::Operand::Place(value) => {
+            value.place.projection.is_empty()
+                && matches!(value.place.root, bir::PlaceRoot::Local(local) if initialized.contains(&local))
+        }
+    }
+}
+
 /// Retain each admitted model or class's field defaults in a declaration-owned frame, evaluated only for omitted slots.
 pub(super) fn attach_nominal_field_defaults(
     program: &ast::Program,
