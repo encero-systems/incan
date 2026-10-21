@@ -950,6 +950,8 @@ pub struct RustInteropArtifacts {
     pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
     /// Native result item selected for each local binding, even when its source type projects to str or a collection.
     pub value_item_paths: HashMap<CanonicalSymbolId, String>,
+    /// Native carriers of Rust-derived local values before source reference and collection projection.
+    pub value_native_types: HashMap<CanonicalSymbolId, ResolvedType>,
     /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
     /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
     pub(crate) body_ir_diverging_import_calls: HashMap<(usize, usize), Vec<String>>,
@@ -1061,6 +1063,8 @@ pub struct RustCheckedLayout {
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustCheckedCall {
+    /// Flat, checked Deref/DerefMut callees evaluated on the receiver before written ordinary arguments.
+    pub receiver_adjustments: Vec<RustCheckedCall>,
     /// Public item path of the selected free function or associated function.
     pub path: String,
     /// Native type arguments in the Rust declaration's order, including impl arguments for a method.

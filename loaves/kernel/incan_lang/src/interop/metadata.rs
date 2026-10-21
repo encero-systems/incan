@@ -1537,6 +1537,8 @@ pub enum RustTraitAssoc {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustTraitInfo {
+    /// Whether rustc's Rust 2024 prelude imports this exact trait identity.
+    pub is_in_prelude: bool,
     /// Trait type binders after Self, in native declaration order.
     pub type_params: Vec<String>,
     pub items: Vec<RustTraitAssoc>,

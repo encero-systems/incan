@@ -146,6 +146,9 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
     }
+    if let crate::plan::CalleeKind::External(_) = &callee.kind {
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[])?.iter());
+    }
     Ok(mir::Operand::function_handle(
         tcx,
         callees::resolve(tcx, callee)?,

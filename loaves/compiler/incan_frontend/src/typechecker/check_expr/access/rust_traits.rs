@@ -27,9 +27,12 @@ impl TypeChecker {
         owner: &str,
     ) -> Option<String> {
         let display = self.rust_display_for_owner_path(display, owner);
-        let base = Self::rust_generic_base_and_args(&display).map_or(display.as_str(), |(base, _)| base);
-        let path = if base.contains("::") {
-            base.to_owned()
+        let display = Self::rust_display_without_lifetimes(&display);
+        let referent = Self::rust_display_borrow_kind(&display).map_or(display.as_str(), |(_, inner)| inner);
+        let base = Self::rust_generic_base_and_args(referent).map_or(referent, |(base, _)| base);
+        let native = incan_lang::interop::ancestral_rust_path(base);
+        let path = if native.contains("::") {
+            native
         } else {
             self.unique_imported_rust_item_path_for_display_tail(base)?
         };
@@ -64,21 +67,60 @@ impl TypeChecker {
 
     /// Preserve native result provenance through a new local or alias without changing its source type or storage.
     pub(in crate::typechecker) fn retain_rust_value_binding(&mut self, name: &str, expression: &Spanned<Expr>) {
-        let Some(path) = self.rust_value_item_path(expression) else {
-            return;
-        };
+        let path = self.rust_value_item_path(expression);
+        let native = self.rust_native_value_type(expression);
         let Some(symbol) = self.symbols.lookup(name) else {
             return;
         };
         let Some(identity) = self.symbols.identity_of(symbol) else {
             return;
         };
-        self.type_info.rust.value_item_paths.insert(identity.clone(), path);
+        if let Some(path) = path {
+            self.type_info.rust.value_item_paths.insert(identity.clone(), path);
+        }
+        if let Some(native) = native {
+            self.type_info.rust.value_native_types.insert(identity.clone(), native);
+        }
+    }
+
+    /// Recover the exact native carrier of a selected Rust call or its local alias for generic inference.
+    pub(in crate::typechecker::check_expr) fn rust_native_value_type(
+        &self,
+        expression: &Spanned<Expr>,
+    ) -> Option<ResolvedType> {
+        if let Some(conversion) = self
+            .type_info
+            .rust
+            .return_coercions
+            .get(&(expression.span.start, expression.span.end))
+        {
+            return Some(conversion.target_type.clone());
+        }
+        if let Expr::Paren(inner) = &expression.node {
+            return self.rust_native_value_type(inner);
+        }
+        if let Expr::Ident(name) = &expression.node {
+            let symbol = self.symbols.lookup(name)?;
+            return self
+                .type_info
+                .rust
+                .value_native_types
+                .get(self.symbols.identity_of(symbol)?)
+                .cloned();
+        }
+        Some(
+            self.type_info
+                .rust
+                .checked_calls
+                .get(&(expression.span.start, expression.span.end))?
+                .return_type
+                .clone(),
+        )
     }
 
     /// Compare canonical native carriers for trait selection. The source compatibility relation deliberately admits
     /// opaque Rust paths, so it cannot distinguish competing trait instantiations such as From<char> and From<String>.
-    fn rust_trait_carriers_match(&self, left: &ResolvedType, right: &ResolvedType) -> bool {
+    pub(super) fn rust_trait_carriers_match(&self, left: &ResolvedType, right: &ResolvedType) -> bool {
         let normalize = |ty| {
             let ty = self.rust_inference_type(ty, &[]);
             map_resolved_type_leaves(&ty, &|leaf| {
@@ -94,6 +136,91 @@ impl TypeChecker {
         normalize(left) == normalize(right)
     }
 
+    /// Bind one impl's declared Self template to a concrete native owner before inspecting its members or projections.
+    pub(super) fn rust_impl_self_bindings(
+        &self,
+        implementation: &RustImplementedTrait,
+        owner: &ResolvedType,
+    ) -> Option<HashMap<String, ResolvedType>> {
+        let template = self.rust_inference_type(
+            &self.native_rust_signature_type(&implementation.self_type, ""),
+            &implementation.type_params,
+        );
+        let actual = self.rust_inference_type(owner, &[]);
+        let mut bindings = HashMap::new();
+        self.infer_type_param_bindings(&template, &actual, &mut bindings);
+        if let Some((base, arguments)) = Self::rust_generic_base_and_args(&implementation.self_type)
+            && let Some(metadata) = self.rust_item_metadata_for_path(base)
+            && let RustItemKind::Type(info) = metadata.kind
+        {
+            for (index, argument) in arguments
+                .iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .enumerate()
+            {
+                if implementation.type_params.iter().any(|name| name == argument)
+                    && !bindings.contains_key(*argument)
+                    && let Some(default) = info.type_param_defaults.get(index).and_then(Option::as_deref)
+                {
+                    bindings.insert((*argument).to_owned(), self.native_rust_signature_type(default, base));
+                }
+            }
+        }
+        let closed = substitute_resolved_type(&template, &bindings);
+        self.rust_trait_carriers_match(&closed, &actual).then_some(bindings)
+    }
+
+    /// Close omitted native owner defaults once, before matching either impl members or associated type templates.
+    pub(super) fn rust_closed_owner(&self, ty: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+        let mut owner = match ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner.clone(),
+            other => other.clone(),
+        };
+        if let Some(mut arguments) = self.rust_owner_type_args(&owner, path)
+            && self.complete_rust_owner_arguments(info, &mut arguments)
+        {
+            let arguments = arguments
+                .iter()
+                .map(render_resolved_type_as_rust_arg)
+                .collect::<Vec<_>>()
+                .join(", ");
+            owner = self.resolved_type_from_rust_display(&format!("{path}<{arguments}>"));
+        }
+        owner
+    }
+
+    /// Keep metadata-defaulted owners in the same shortest form rustc displays at constructors, so opaque layouts
+    /// have one argument arity across explicit trait adjustments and ordinary inherent calls.
+    pub(super) fn rust_storage_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+        let Some(mut arguments) = self.rust_owner_type_args(owner, path) else {
+            return owner.clone();
+        };
+        while let Some(index) = arguments.len().checked_sub(1) {
+            let Some(default) = info.type_param_defaults.get(index).and_then(Option::as_deref) else {
+                break;
+            };
+            let displays = arguments[..index]
+                .iter()
+                .map(render_resolved_type_as_rust_arg)
+                .collect::<Vec<_>>();
+            let displays = displays.iter().map(String::as_str).collect::<Vec<_>>();
+            let default = Self::substitute_rust_display_params(default, &info.type_params[..index], &displays);
+            if !self.rust_trait_carriers_match(&arguments[index], &self.native_rust_signature_type(&default, path)) {
+                break;
+            }
+            arguments.pop();
+        }
+        if arguments.is_empty() {
+            return self.resolved_type_from_rust_display(path);
+        }
+        let arguments = arguments
+            .iter()
+            .map(render_resolved_type_as_rust_arg)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.resolved_type_from_rust_display(&format!("{path}<{arguments}>"))
+    }
+
     /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
     /// Impl predicates remain native obligations: this selects an exact trait reference, and the adapter verifies
     /// that rustc can satisfy it before emitting MIR. Competing equally ranked trait references remain ambiguous.
@@ -102,11 +229,20 @@ impl TypeChecker {
         implementation: &RustImplementedTrait,
         call: &RustPathMethodCall<'_>,
         owner: &ResolvedType,
+        info: &RustTypeInfo,
     ) -> Option<TraitCandidate> {
         let metadata = self.rust_item_metadata_for_path(&implementation.path)?;
         let RustItemKind::Trait(trait_info) = metadata.kind else {
             return None;
         };
+        if !trait_info.is_in_prelude
+            && !self.type_info.rust.trait_imports.values().any(|import| {
+                import.trait_path == implementation.path
+                    || import.definition_path.as_deref() == Some(implementation.path.as_str())
+            })
+        {
+            return None;
+        }
         let original = trait_info.items.iter().find_map(|item| match item {
             RustTraitAssoc::Function { name, signature } if name == call.method => Some(signature),
             _ => None,
@@ -116,27 +252,18 @@ impl TypeChecker {
         }
         let mut variables = implementation.type_params.clone();
         variables.extend(original.type_params.iter().cloned());
-        let template = self.rust_inference_type(
-            &self.resolved_type_from_rust_display(&implementation.self_type),
-            &variables,
-        );
-        let actual = self.rust_inference_type(owner, &[]);
-        let mut bindings = HashMap::new();
-        self.infer_type_param_bindings(&template, &actual, &mut bindings);
-        let closed_self = substitute_resolved_type(&template, &bindings);
-        if !self.rust_trait_carriers_match(&closed_self, &actual) {
-            return None;
-        }
+        let mut bindings = self.rust_impl_self_bindings(implementation, owner)?;
         let substitutions = trait_info
             .type_params
             .iter()
             .zip(&implementation.type_arguments)
             .map(|(name, argument)| (name.as_str(), argument.clone()))
             .collect();
-        let owner_display = if *owner == ResolvedType::Str {
+        let storage = self.rust_storage_owner(owner, info, call.rust_path);
+        let owner_display = if storage == ResolvedType::Str {
             call.rust_path.to_owned()
         } else {
-            render_resolved_type_as_rust_arg(owner)
+            render_resolved_type_as_rust_arg(&storage)
         };
         let signature = Self::specialize_rust_signature(original, &substitutions, &owner_display);
         let inferred = self.infer_rust_signature_bindings(
@@ -160,7 +287,8 @@ impl TypeChecker {
             .iter()
             .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
             .collect();
-        let signature = Self::specialize_rust_signature(&signature, &displays, &owner_display);
+        let signature =
+            self.rust_signature_projections(Self::specialize_rust_signature(&signature, &displays, &owner_display));
         let ordinary = if Self::rust_signature_has_receiver(&signature) {
             &signature.params[1..]
         } else {
@@ -186,7 +314,7 @@ impl TypeChecker {
                 return None;
             }
         }
-        let mut arguments = vec![owner.clone()];
+        let mut arguments = vec![storage.clone()];
         for display in &implementation.type_arguments {
             let template = self.native_rust_signature_type(display, call.rust_path);
             arguments.push(self.instantiate_rust_signature_type(&template, &variables, &bindings));
@@ -205,7 +333,7 @@ impl TypeChecker {
             path: format!("{}::{}", metadata.canonical_path, call.method),
             signature,
             arguments,
-            self_type: owner.clone(),
+            self_type: storage,
             borrow_cost,
         })
     }
@@ -225,24 +353,11 @@ impl TypeChecker {
         } else {
             self.resolved_type_from_rust_display(call.rust_path)
         };
-        let mut owner = match owner {
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner,
-            other => other,
-        };
-        if let Some(mut arguments) = self.rust_owner_type_args(&owner, call.rust_path)
-            && self.complete_rust_owner_arguments(info, &mut arguments)
-        {
-            let arguments = arguments
-                .iter()
-                .map(render_resolved_type_as_rust_arg)
-                .collect::<Vec<_>>()
-                .join(", ");
-            owner = self.resolved_type_from_rust_display(&format!("{}<{arguments}>", call.rust_path));
-        }
+        let owner = self.rust_closed_owner(&owner, info, call.rust_path);
         let mut candidates = info
             .implemented_traits
             .iter()
-            .filter_map(|implementation| self.retained_trait_candidate(implementation, &call, &owner))
+            .filter_map(|implementation| self.retained_trait_candidate(implementation, &call, &owner, info))
             .collect::<Vec<_>>();
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
@@ -314,17 +429,15 @@ impl TypeChecker {
             parameter.ty = self.native_rust_signature_type(&declared.type_display, call.rust_path);
         }
         if has_receiver {
-            let display = &selected.signature.params.first()?.type_display;
-            let ty = match Self::rust_display_borrow_kind(display) {
-                Some((true, _)) => ResolvedType::RefMut(Box::new(selected.self_type)),
-                Some((false, _)) => ResolvedType::Ref(Box::new(selected.self_type)),
-                None => selected.self_type,
-            };
-            parameters.insert(0, CallableParam::positional(ty));
+            parameters.insert(
+                0,
+                Self::checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?,
+            );
         }
         self.type_info.rust.checked_calls.insert(
             (call.span.start, call.span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                receiver_adjustments: Vec::new(),
                 path: selected.path,
                 type_arguments: selected.arguments,
                 parameters,

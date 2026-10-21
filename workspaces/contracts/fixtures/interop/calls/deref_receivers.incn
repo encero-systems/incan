@@ -1,0 +1,17 @@
+# behavior: Rust Rc and RefCell guards preserve shared and mutable dereference receivers
+# expect-stdout:
+#   0
+#   2
+
+from rust::std::cell import RefCell
+from rust::std::io import Cursor
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    """Read and update a cursor through native dereference adjustments."""
+    handle = Rc.new(RefCell.new(Cursor.new(b"abcd")))
+    mut cursor = handle.borrow_mut()
+    println(cursor.position())
+    cursor.set_position(2)
+    println(cursor.position())

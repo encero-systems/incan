@@ -32,7 +32,7 @@ struct CallArgumentValidationContext<'a> {
 
 impl TypeChecker {
     /// Return the expression carried by a call argument.
-    pub(in crate::typechecker::check_expr::calls) fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
+    pub(in crate::typechecker::check_expr) fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
         match arg {
             CallArg::Positional(e)
             | CallArg::Named(_, e)

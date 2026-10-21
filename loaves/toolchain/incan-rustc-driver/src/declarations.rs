@@ -118,6 +118,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
         }
         PlanType::String => ast::TyKind::Path(None, standard_path(&["string", "String"], span)),
+        PlanType::NativeStr => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
         PlanType::CallableArguments(inputs) => ast::TyKind::Tup(inputs.iter().map(|input| ty(input, span)).collect()),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements

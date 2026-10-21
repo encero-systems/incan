@@ -66,6 +66,7 @@ mod receiver_change;
 mod reserved_names;
 mod trait_bound_relations;
 mod type_info;
+pub(crate) use type_info::RustCheckedCall;
 mod union_member_identity;
 mod validate_rust_module;
 mod web_routes;
