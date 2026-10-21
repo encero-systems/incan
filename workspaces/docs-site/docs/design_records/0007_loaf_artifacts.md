@@ -48,6 +48,8 @@ The `.incnbody` carries a declaration record for every public callable beside th
 
 The manifest's native union table records each locally compiled union's checked semantic carrier, public native item, and payloads in physical variant order. Nominal payloads retain canonical declaration identities. A consumer reads this representation from the selected Loaf and uses those variant slots for construction, narrowing, and tests; it never derives a replacement wrapper or payload order from its local import spellings. Conflicting native owners for the same semantic carrier are refused.
 
+A public model or class with type parameters is published as one native ADT with its declared binders and authored field order. Concrete layouts in its provider and consumers alias instantiations of that ADT. A private zero-sized marker retains type parameters that have no authored field; construction supplies that marker, metadata validation checks it, and Debug output includes only authored fields under the source declaration name.
+
 Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
 
 ### The standard library

@@ -34,6 +34,7 @@ mod field_metadata;
 mod frontend;
 mod frozen_values;
 mod futures;
+mod generic_layouts;
 mod identity;
 mod library_exports;
 mod marker_traits;

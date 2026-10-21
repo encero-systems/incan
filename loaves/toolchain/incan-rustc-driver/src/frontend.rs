@@ -948,7 +948,9 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     for item in library_items {
         let root = item.split("::").next().unwrap_or_default();
         // The standard library's own crates are always linked, as for external calls below.
-        if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
+        if !matches!(root, "std" | "core" | "alloc" | "crate")
+            && !dependencies.externs.iter().any(|(name, _)| name == root)
+        {
             return Err(format!("unsupported Body IR native dependency `{root}` for Loaf layout `{item}`").into());
         }
     }

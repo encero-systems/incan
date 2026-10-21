@@ -372,10 +372,19 @@ pub fn rvalue<'tcx>(
                     reason: "model construction requires an ADT destination".into(),
                 });
             };
-            let operands = elements
+            let mut operands = elements
                 .iter()
                 .map(|value| operand(tcx, sources, value))
                 .collect::<Result<Vec<_>, _>>()?;
+            if matches!(value, RvalueKind::Model(..))
+                && let Some(marker) = crate::generic_layouts::marker_type(tcx, *definition, args, operands.len())
+            {
+                operands.push(mir::Operand::Constant(Box::new(mir::ConstOperand {
+                    span: rustc_span::DUMMY_SP,
+                    user_ty: None,
+                    const_: mir::Const::Val(mir::ConstValue::ZeroSized, marker),
+                })));
+            }
             mir::Rvalue::Aggregate(
                 Box::new(mir::AggregateKind::Adt(
                     definition.did(),

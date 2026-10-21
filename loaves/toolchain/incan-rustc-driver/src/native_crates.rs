@@ -5,7 +5,11 @@ use rustc_middle::ty::TyCtxt;
 
 /// Find an explicitly imported alias before considering a unique canonical crate name. Renamed dependencies and
 /// multiple versions must retain rustc's binding rather than selecting the first crate with a matching package name.
+/// The reserved `crate` root identifies local HIR definitions rather than an external dependency.
 pub(crate) fn root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
+    if name == "crate" {
+        return Some(rustc_hir::def_id::LOCAL_CRATE.as_def_id());
+    }
     for item in tcx.hir_crate_items(()).free_items() {
         let local = item.owner_id.def_id;
         if tcx.opt_item_name(local).is_some_and(|symbol| symbol.as_str() == name)

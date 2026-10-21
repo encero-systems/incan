@@ -26,7 +26,7 @@ from iterator_methods import iterator_methods
 from callable_methods import callable_methods
 from marker_traits import checked_marker_traits
 from nominal_instances import NominalInstance
-from library_model_arguments import library_model_arguments
+from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
 
@@ -92,6 +92,7 @@ pub def lower_model_declarations(
     file: str,
     intrinsics: list[EnumDeclaration] = [],
     nominal_instances: list[NominalInstance] = [],
+    publish_generics: bool = false,
 ) -> Result[list[ModelDeclaration], str]:
     """
     Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
@@ -105,7 +106,9 @@ pub def lower_model_declarations(
     comparisons = comparison_functions(module, intrinsics)?
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
-        item = library_item(declaration)
+        mut item = library_item(declaration)
+        if publish_generics and item == "" and len(declaration.type_parameters) != 0:
+            item = local_generic_item(declaration, nominal_instances)?
         mut library_arguments: list[PlanType] = []
         mut checked_deserialize = ""
         mut string_conversion_root = ""

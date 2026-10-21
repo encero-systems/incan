@@ -278,6 +278,17 @@ impl rustc_driver::Callbacks for Callbacks {
                 .items
                 .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
         }
+        for model in &self.plan.generic_models {
+            let span = match sources.span(&model.span) {
+                Ok(span) => span,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
+            krate.items.extend(crate::generic_layouts::items(
+                model,
+                &compiler.sess.psess.attr_id_generator,
+                span,
+            ));
+        }
         for model in &self.plan.models {
             let span = match sources.span(&model.span) {
                 Ok(span) => span,
@@ -402,7 +413,7 @@ impl rustc_driver::Callbacks for Callbacks {
             }
         }
         // `std` is already declared by the prelude injection; a second `extern crate std;` would collide with it.
-        for root in roots.into_iter().filter(|root| *root != "std") {
+        for root in roots.into_iter().filter(|root| !matches!(*root, "std" | "crate")) {
             krate
                 .items
                 .push(declarations::external_crate(root, krate.spans.inner_span));
@@ -534,7 +545,9 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     }
     let adt = tcx.adt_def(def);
     let declared = &adt.non_enum_variant().fields;
-    if declared.len() != model.fields.len() {
+    if declared.len() != model.fields.len()
+        && crate::generic_layouts::marker_type(tcx, adt, arguments, model.fields.len()).is_none()
+    {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
     for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {

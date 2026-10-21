@@ -604,6 +604,39 @@ pub model Plan:
     pub exports: list[PlanExport] = []
     # Collected test entry functions; the adapter registers these with rustc's native test harness.
     pub tests: list[str] = []
+    # A library publishes each generic ADT once; concrete layouts alias its instantiations.
+    pub generic_models: list[GenericModelDeclaration] = []
+
+
+@derive(Clone, PartialEq)
+pub enum GenericLayoutType:
+    """A generic ADT field's checked type, with declared parameters preserved until rustc instantiates the ADT."""
+
+    Parameter(str)
+    Concrete(PlanType)
+    Applied(str, list[GenericLayoutType])
+    Tuple(list[GenericLayoutType])
+
+
+@derive(Clone, PartialEq)
+pub model GenericLayoutField:
+    """One source field in a generic ADT, in declaration order and with its checked visibility."""
+
+    pub name: str
+    pub ty: GenericLayoutType
+    pub public: bool
+
+
+@derive(Clone, PartialEq)
+pub model GenericModelDeclaration:
+    """A provider-owned generic ADT whose parameters, fields, and derive authority come from its checked declaration."""
+
+    pub name: str
+    pub source_name: str
+    pub parameters: list[str]
+    pub fields: list[GenericLayoutField]
+    pub derives: list[str]
+    pub span: SourceSpan
 
 
 @derive(Clone, PartialEq)

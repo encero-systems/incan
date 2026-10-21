@@ -238,29 +238,24 @@ pub def lower_union_declaration(
     A source-owned union derives only Clone and prints the held member through Debug. An admitted SDK alias uses its
     owner's existing implementations; emitting another Debug implementation for that foreign enum would be illegal.
     """
-    mut members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
+    mut members: list[PlanType] = []
     mut native_item = ""
-    mut name = union_name(members)?
-    mut derives = ["Clone"]
+    mut name = ""
     for declaration in module.native_union_declarations:
         if declaration.ty != ty.clone():
             continue
         if native_item != "" and native_item != str(declaration.rust_item):
             return Err("unsupported Body IR conflicting published native union owners")
-        mut ordered: list[PlanType] = []
-        for member in declaration.members:
-            ordered.append(
-                retained_source_type(module.nominal_declarations, module.enum_declarations, [], member, intrinsics)?,
-            )
-        if len(ordered) != len(members):
-            return Err("unsupported Body IR admitted union payload mismatch")
-        for member in ordered:
-            if member not in members:
-                return Err("unsupported Body IR admitted union payload mismatch")
+        ordered = published_union_members(module, declaration, intrinsics)?
+        if native_item != "" and members != ordered:
+            return Err("unsupported Body IR conflicting published union payload order")
         members = ordered
         native_item = str(declaration.rust_item)
         segments = native_item.split("::")
         name = segments[len(segments) - 1]
+    if native_item == "":
+        members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
+        name = union_name(members)?
     mut variants: list[EnumVariant] = []
     for index in range(len(members)):
         variants.append(EnumVariant(name=f"V{index}", fields=[members[index]]))
@@ -270,13 +265,34 @@ pub def lower_union_declaration(
             name=name,
             public=true,
             variants=variants,
-            derives=derives,
+            derives=["Clone"],
             library_item=native_item,
             span=SourceSpan(file=file, line=1, column=1),
             source_type=str(ty),
             member_debug=native_item == "",
         ),
     )
+
+
+def published_union_members(
+    module: &BodyIrModule,
+    declaration: &NativeUnionDeclaration,
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[PlanType], str]:
+    """Validate published payloads against checked semantic members without sorting them or hashing a local name."""
+    mut ordered: list[PlanType] = []
+    for member in declaration.members:
+        ordered.append(retained_source_type(module.nominal_declarations, module.enum_declarations, [], member, intrinsics)?)
+    match declaration.ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if str(base) != "Union" or len(arguments) != len(ordered):
+                return Err("unsupported Body IR admitted union payload mismatch")
+            for argument in arguments:
+                member = retained_source_type(module.nominal_declarations, module.enum_declarations, [], argument, intrinsics)?
+                if member not in ordered:
+                    return Err("unsupported Body IR admitted union payload mismatch")
+        _ => return Err("invalid Body IR published union carrier")
+    return Ok(ordered)
 
 
 def retained_union(
