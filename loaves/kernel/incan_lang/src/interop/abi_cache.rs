@@ -99,6 +99,18 @@ impl RustAbiCache {
         self.index.contains_key(path)
     }
 
+    /// Whether this complete public-item cache covers a crate's namespace.
+    ///
+    /// Crate roots themselves need not have an item payload. Their public descendants identify coverage; an empty
+    /// crate has no public facts to answer and may be extracted again without duplicating an item's authority.
+    pub fn covers_crate(&self, name: &str) -> bool {
+        let prefix = format!("{name}::");
+        self.index
+            .range(prefix.clone()..)
+            .next()
+            .is_some_and(|(path, _)| path.starts_with(&prefix))
+    }
+
     /// How many items the cache holds.
     pub fn len(&self) -> usize {
         self.index.len()
