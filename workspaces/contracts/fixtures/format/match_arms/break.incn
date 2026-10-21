@@ -1,0 +1,12 @@
+# behavior: A break match arm still uses accepted inline syntax.
+# expect-formatted:
+#   def main() -> None:
+#       for value in range(3):
+#           match value:
+#               _ => break
+
+def main() -> None:
+    for value in range(3):
+        match value:
+            _ =>
+                break

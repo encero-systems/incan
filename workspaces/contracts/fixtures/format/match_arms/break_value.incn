@@ -1,0 +1,12 @@
+# behavior: A break with a value remains inline inside a loop expression.
+# expect-formatted:
+#   def value() -> int:
+#       return loop:
+#           match 0:
+#               _ => break 1
+
+def value() -> int:
+    return loop:
+        match 0:
+            _ =>
+                break 1

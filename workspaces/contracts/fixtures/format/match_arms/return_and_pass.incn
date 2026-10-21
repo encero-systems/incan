@@ -1,0 +1,15 @@
+# behavior: Return and pass arms retain their accepted inline forms.
+# expect-formatted:
+#   def main() -> None:
+#       for value in range(3):
+#           match value:
+#               0 => return
+#               _ => pass
+
+def main() -> None:
+    for value in range(3):
+        match value:
+            0 =>
+                return
+            _ =>
+                pass
