@@ -1,5 +1,5 @@
 # behavior: int parses the string returned by a Rust value's to_string method (#2230)
-# pending: #2230 NonZeroI64 construction leaves an unknown Body IR frame type
+# pending: #2230 NonZeroI64.new has no admitted callable signature
 # expect-stdout:
 #   42
 

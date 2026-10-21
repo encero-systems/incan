@@ -1646,10 +1646,6 @@ def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan
         forget_owned(builder, text.local)
         return Ok(read_place(text, true, span))
     result = boundary_operand(builder, operand, return_type, span)?
-    if return_type == PlanType.Int and operand_type(builder, result)? == PlanType.USize:
-        converted = temporary(builder, PlanType.Int, span)
-        external_call(builder, "incan_native_runtime::int_usize", [PlanType.USize], PlanType.Int, [result], converted, span)
-        return Ok(read_place(converted, false, span))
     track_rvalue_moves(builder, RvalueKind.Use(result))
     return Ok(result)
 

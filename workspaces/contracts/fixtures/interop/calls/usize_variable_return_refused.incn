@@ -1,0 +1,19 @@
+# behavior: a native usize variable needs an explicit conversion at an Incan int return boundary
+# expect-stderr-contains:
+#   Return type mismatch: expected 'Int', found 'usize'
+# expect-exit: 1
+
+"""A retained native call grants no implicit conversion to a later variable read."""
+
+from rust::std::mem import size_of_val
+
+
+def size() -> int:
+    """Refuse an ordinary usize value at a narrowing return boundary."""
+    value = size_of_val("leaf")
+    return value
+
+
+def main() -> None:
+    """Request the source function whose return contract must refuse."""
+    println(size())

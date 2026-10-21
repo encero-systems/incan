@@ -128,59 +128,6 @@ impl RustItemMetadata {
     }
 }
 
-/// Borrow shape for a metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeMethodArgBorrowPolicy {
-    Shared,
-    Mutable,
-    /// Preserve string literals as `&str` and adapt owned Incan strings with `.as_str()`.
-    StringAsStr,
-}
-
-/// Receiver class used by metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeReceiverClass {
-    IoValue,
-    EncodingInstance,
-    TokenizerInstance,
-    ExternalAssociated,
-}
-
-/// Argument class used by metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeArgClass {
-    StringBuffer,
-    ByteBuffer,
-    Any,
-}
-
-/// Borrow compatibility rule for one metadata-free Rust method surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodBorrowRule {
-    pub methods: &'static [&'static str],
-    pub receiver: MetadataFreeReceiverClass,
-    pub arg: MetadataFreeArgClass,
-    pub policy: MetadataFreeMethodArgBorrowPolicy,
-}
-
-/// One parameter in a metadata-free Rust method signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodParamRule {
-    pub name: Option<&'static str>,
-    pub type_display: &'static str,
-}
-
-/// Complete callable signature for one metadata-free Rust method surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodSignatureRule {
-    pub receiver_path: &'static str,
-    pub method: &'static str,
-    pub params: &'static [MetadataFreeMethodParamRule],
-    pub return_type: &'static str,
-    pub is_async: bool,
-    pub is_unsafe: bool,
-}
-
 /// One parameter in a registry-backed Rust free-function signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RustFunctionParamRule {
@@ -197,78 +144,6 @@ pub struct RustFunctionSignatureRule {
     pub is_async: bool,
     pub is_unsafe: bool,
 }
-
-/// Metadata-free external method borrow policies used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &[
-    MetadataFreeMethodBorrowRule {
-        methods: &["read_to_string"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::StringBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["read", "read_to_end", "read_exact", "read_buf", "read_buf_exact"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["write"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["write_all"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::Any,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["for_label", "encode", "decode"],
-        receiver: MetadataFreeReceiverClass::EncodingInstance,
-        arg: MetadataFreeArgClass::Any,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["encode"],
-        receiver: MetadataFreeReceiverClass::TokenizerInstance,
-        arg: MetadataFreeArgClass::StringBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::StringAsStr,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["decode"],
-        receiver: MetadataFreeReceiverClass::ExternalAssociated,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-];
-
-/// Metadata-free external method signatures used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRule] = &[
-    MetadataFreeMethodSignatureRule {
-        receiver_path: "encoding_rs::Encoding",
-        method: "for_label",
-        params: &[MetadataFreeMethodParamRule {
-            name: Some("label"),
-            type_display: "&[u8]",
-        }],
-        return_type: "Option<&'static encoding_rs::Encoding>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    MetadataFreeMethodSignatureRule {
-        receiver_path: "std::path::Path",
-        method: "new",
-        params: &[MetadataFreeMethodParamRule {
-            name: Some("path"),
-            type_display: "&impl AsRef<std::ffi::OsStr>",
-        }],
-        return_type: "&std::path::Path",
-        is_async: false,
-        is_unsafe: false,
-    },
-];
 
 /// Authoritative signatures for compiler-owned runtime helpers whose source typing must be cache-independent.
 pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
@@ -397,31 +272,6 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] =
         is_unsafe: false,
     },
 ];
-
-/// Return conservative callable metadata for Rust surfaces the stdlib must compile against even when rust-inspect
-/// cannot recover full crate metadata in generated smoke projects.
-#[must_use]
-pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-    let rule = METADATA_FREE_METHOD_SIGNATURE_RULES
-        .iter()
-        .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
-    Some(RustFunctionSig {
-        receiver_contract: None,
-        bounds: Vec::new(),
-        type_params: Vec::new(),
-        params: rule
-            .params
-            .iter()
-            .map(|param| RustParam {
-                name: param.name.map(str::to_string),
-                type_display: param.type_display.to_string(),
-            })
-            .collect(),
-        return_type: rule.return_type.to_string(),
-        is_async: rule.is_async,
-        is_unsafe: rule.is_unsafe,
-    })
-}
 
 /// Return conservative callable metadata for Rust free functions whose signatures are stable but unavailable through
 /// rust-inspect's Cargo-workspace view.
@@ -1852,20 +1702,6 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
             assert!(!signature.is_unsafe, "{path}");
         }
         assert!(compiler_owned_function_signature("demo::str_slice_byte_range").is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn metadata_free_method_signature_preserves_path_new_borrow_shape() -> Result<(), String> {
-        let signature = metadata_free_method_signature("std::path::Path", "new")
-            .ok_or_else(|| "std::path::Path::new should have a metadata-free signature".to_string())?;
-
-        assert_eq!(signature.return_type, "&std::path::Path");
-        assert_eq!(signature.params.len(), 1);
-        assert_eq!(signature.params[0].name.as_deref(), Some("path"));
-        assert_eq!(signature.params[0].type_display, "&impl AsRef<std::ffi::OsStr>");
-        assert!(!signature.is_async);
-        assert!(!signature.is_unsafe);
         Ok(())
     }
 

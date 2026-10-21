@@ -24,7 +24,7 @@ use crate::typechecker::type_info::{
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
     RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustTraitAssoc,
-    RustTraitInfo, RustVisibility, metadata_free_method_signature,
+    RustTraitInfo, RustVisibility,
 };
 use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods;
@@ -63,12 +63,6 @@ const HASH_DUNDER: &str = "__hash__";
 
 /// The hook `obj[start:end:step]` calls on a user type, which `Sliceable[T]` declares.
 const SLICE_HOOK: &str = "__getslice__";
-
-/// Rust's prelude-provided associated constructor name.
-///
-/// rust-inspect records inherent methods only, so this is the one associated call whose result type must be preserved
-/// before a following inspected inherent call can be resolved.
-const RUST_DEFAULT_ASSOCIATED_METHOD: &str = "default";
 
 /// One `Enum.Variant(...)` construction resolved against the destination type it is being built for.
 ///
@@ -3444,11 +3438,11 @@ impl TypeChecker {
         Some(CallableParam::positional(ty))
     }
 
-    /// Resolve and validate a method call on a rust-inspect-backed path.
+    /// Resolve and validate a method call from admitted rustc facts, diagnosing absent signatures by item name.
     ///
     /// Returns:
-    /// - `None` when rust-inspect data is unavailable (caller should preserve permissive fallback behavior)
-    /// - `Some(ty)` when metadata exists and the call was resolved (or diagnosed as invalid)
+    /// - `None` when no supported callable item kind is selected
+    /// - `Some(ty)` when the call was resolved or diagnosed as invalid
     fn resolve_rust_path_method_call(&mut self, call: RustPathMethodCall<'_>) -> Option<ResolvedType> {
         let RustPathMethodCall {
             rust_path,
@@ -3486,24 +3480,6 @@ impl TypeChecker {
                     span,
                 }));
             }
-            if let Some(ret) = self.validate_metadata_free_rust_method_call(
-                RustPathMethodCall {
-                    rust_path,
-                    method,
-                    receiver_metadata,
-                    receiver_binding,
-                    receiver_expr,
-                    type_args,
-                    args,
-                    arg_types,
-                    receiver_span,
-                    expected_return_ty,
-                    span,
-                },
-                preserves_lookup_arg_shape,
-            ) {
-                return Some(ret);
-            }
             // A trait-qualified call passes its receiver as the first argument, and only the trait method's
             // declared receiver says how that argument is passed. Without a signature the mode is unknowable;
             // refusing here keeps the emitter from assuming `&self` and handing rustc a mismatched borrow (#1375).
@@ -3517,7 +3493,7 @@ impl TypeChecker {
                 self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
             }
             self.preserve_unresolved_rust_call_argument_returns(args);
-            return None;
+            return Some(self.refuse_missing_rust_method_signature(rust_path, method, span));
         };
         let receiver_is_type = matches!(
             self.type_info.ident_kind(receiver_span),
@@ -3581,17 +3557,7 @@ impl TypeChecker {
                             && (receiver_is_type || Self::rust_signature_has_receiver(&candidate.signature))
                     })
                     .map(|candidate| candidate.signature.clone())
-                    .or_else(|| metadata_free_method_signature(rust_path, method))
                 else {
-                    // `T.default()` is Rust's prelude-provided associated constructor. rust-inspect records
-                    // inherent methods on `T`, not the `Default` trait member, but the call's result still has the
-                    // concrete receiver type needed to resolve a following inherent call such as
-                    // `CentralPanel.default().show(...)`. Keep validation permissive; the native compiler remains
-                    // authoritative for whether this Rust type implements `Default`.
-                    if method == RUST_DEFAULT_ASSOCIATED_METHOD && type_args.is_empty() && args.is_empty() {
-                        self.type_info.record_call_site_callable_params_exact(span, &[]);
-                        return Some(ResolvedType::RustPath(rust_path.to_string()));
-                    }
                     let claimed_import = self
                         .record_rust_extension_trait_import_for_call(&metadata, method, span)
                         .or_else(|| self.record_unique_rust_trait_import_for_method_call(method, span));
@@ -3611,30 +3577,11 @@ impl TypeChecker {
                             span,
                         }));
                     }
-                    if let Some(ret) = self.validate_metadata_free_rust_method_call(
-                        RustPathMethodCall {
-                            rust_path,
-                            method,
-                            receiver_metadata,
-                            receiver_binding,
-                            receiver_expr,
-                            type_args,
-                            args,
-                            arg_types,
-                            receiver_span,
-                            expected_return_ty,
-                            span,
-                        },
-                        preserves_lookup_arg_shape,
-                    ) {
-                        return Some(ret);
-                    }
-                    // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
                     if claimed_import.is_none() {
                         self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
                     }
                     self.preserve_unresolved_rust_call_argument_returns(args);
-                    return Some(ResolvedType::Unknown);
+                    return Some(self.refuse_missing_rust_method_signature(rust_path, method, span));
                 };
                 let receiver_is_type_name = matches!(
                     self.type_info.ident_kind(receiver_span),
@@ -4086,59 +4033,13 @@ impl TypeChecker {
         }
     }
 
-    /// Validate one metadata-free Rust method compatibility rule through the ordinary Rust-boundary path.
-    fn validate_metadata_free_rust_method_call(
-        &mut self,
-        call: RustPathMethodCall<'_>,
-        preserves_lookup_arg_shape: bool,
-    ) -> Option<ResolvedType> {
-        let RustPathMethodCall {
-            rust_path,
-            method,
-            receiver_metadata: _,
-            receiver_binding: _,
-            receiver_expr: _,
-            type_args,
-            args,
-            arg_types,
-            receiver_span: _,
-            expected_return_ty: _,
+    /// Refuse a method by its requested public path when admitted facts contain no callable signature.
+    fn refuse_missing_rust_method_signature(&mut self, rust_path: &str, method: &str, span: Span) -> ResolvedType {
+        self.errors.push(CompileError::type_error(
+            format!("Rust method `rust::{rust_path}::{method}` has no admitted callable signature"),
             span,
-        } = call;
-        let sig: RustFunctionSig = metadata_free_method_signature(rust_path, method)?;
-        if !self.validate_rust_method_type_arg_arity(method, &sig.type_params, type_args, span) {
-            return Some(ResolvedType::Unknown);
-        }
-        let resolved_type_args = type_args
-            .iter()
-            .map(|arg| self.resolve_type_checked(arg))
-            .collect::<Vec<_>>();
-        if !resolved_type_args.is_empty() {
-            self.type_info
-                .calls
-                .call_site_monomorph_type_args
-                .insert((span.start, span.end), resolved_type_args.clone());
-        }
-        let effective_sig = if resolved_type_args.is_empty() {
-            sig.clone()
-        } else {
-            self.specialize_rust_method_signature(&sig, rust_path, resolved_type_args.as_slice())
-        };
-        let callable_display = format!("rust::{rust_path}.{method}");
-        let error_count = self.errors.len();
-        let ret = self.validate_rust_method_call(
-            callable_display.as_str(),
-            &effective_sig,
-            args,
-            arg_types,
-            preserves_lookup_arg_shape,
-            span,
-        );
-        if self.errors.len() > error_count {
-            Some(ResolvedType::Unknown)
-        } else {
-            Some(Self::substitute_rust_self_type(ret, rust_path))
-        }
+        ));
+        ResolvedType::Unknown
     }
 
     /// Record the imported Rust extension trait needed for a method call when metadata proves a unique match.
@@ -5888,13 +5789,13 @@ impl TypeChecker {
         None
     }
 
-    /// Resolve a Rust field or associated item using the admitted metadata, retaining the no-metadata fallback.
+    /// Resolve a Rust field or associated item only from admitted metadata; missing facts grant no signature.
     fn check_rust_path_field(&mut self, path: &str, field: &str, span: Span) -> ResolvedType {
         let Some(meta) = self.rust_item_metadata_for_path(path) else {
-            if let Some(sig) = metadata_free_method_signature(path, field) {
-                return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
-            }
-            // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
+            self.errors.push(CompileError::type_error(
+                format!("Rust item `rust::{path}::{field}` has no admitted metadata"),
+                span,
+            ));
             return ResolvedType::Unknown;
         };
         match &meta.kind {
