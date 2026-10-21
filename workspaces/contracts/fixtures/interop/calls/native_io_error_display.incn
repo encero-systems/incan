@@ -1,0 +1,18 @@
+# behavior: an owned native I/O error formats like its own to_string method and remains usable
+# expect-stdout:
+#   true
+#   true
+
+from rust::std::io import Cursor, Read
+
+
+def main() -> None:
+    """Display a native I/O error twice without consuming its owned value."""
+    mut cursor = Cursor.new(b"")
+    mut buffer = b"ab"
+    match cursor.read_exact(buffer):
+        Ok(_) => println("read")
+        Err(err) =>
+            expected = err.to_string()
+            println(f"{err}" == expected)
+            println(f"{err}" == expected)

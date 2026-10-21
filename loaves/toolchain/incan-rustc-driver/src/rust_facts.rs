@@ -192,6 +192,10 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
                 continue;
             }
             let metadata = describe(tcx, def, &path, &mut named);
+            for (constructor_path, constructor) in enum_constructors(tcx, def, &path) {
+                let metadata = describe(tcx, constructor, &constructor_path, &mut named);
+                facts.entry(constructor_path).or_insert(metadata);
+            }
             facts.insert(path, metadata);
         }
         pending = named
@@ -279,6 +283,7 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
                 continue;
             };
             let child_path = format!("{path}::{}", child.ident.name);
+            items.extend(enum_constructors(tcx, def, &child_path));
             match tcx.def_kind(def) {
                 DefKind::Mod => {
                     items.push((child_path.clone(), def));
@@ -299,6 +304,22 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
     items
 }
 
+/// Expose the exact public tuple and unit constructors with an enum in either a full ABI or fallback extraction.
+/// Both paths use the same visibility and non-exhaustive-construction boundary as executable callee resolution.
+fn enum_constructors(tcx: TyCtxt<'_>, owner: DefId, path: &str) -> Vec<(String, DefId)> {
+    if tcx.def_kind(owner) != DefKind::Enum {
+        return Vec::new();
+    }
+    tcx.adt_def(owner)
+        .variants()
+        .iter()
+        .filter_map(|variant| {
+            crate::callees::enum_constructor(tcx, owner, variant.name.as_str())
+                .map(|constructor| (format!("{path}::{}", variant.name), constructor))
+        })
+        .collect()
+}
+
 /// Resolve a path through its crate's public module children; the last segment prefers a type, then a value.
 fn resolve(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
     let mut segments = path.split("::").peekable();
@@ -306,6 +327,11 @@ fn resolve(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
     let mut current = crate::native_crates::root(tcx, root)?;
     while let Some(segment) = segments.next() {
         let last = segments.peek().is_none();
+        if tcx.def_kind(current) == DefKind::Enum {
+            return last
+                .then(|| crate::callees::enum_constructor(tcx, current, segment))
+                .flatten();
+        }
         let children = tcx
             .module_children(current)
             .iter()
@@ -354,10 +380,14 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
             alias_target: Some(display(tcx.type_of(def).instantiate_identity().skip_normalization())),
             ..RustTypeInfo::default()
         }),
-        DefKind::Fn => RustItemKind::Function(signature(tcx, def, named)),
-        DefKind::Const { .. } | DefKind::Static { .. } => RustItemKind::Constant {
-            type_display: display(tcx.type_of(def).instantiate_identity().skip_normalization()),
-        },
+        DefKind::Fn | DefKind::Ctor(_, rustc_hir::def::CtorKind::Fn) => {
+            RustItemKind::Function(signature(tcx, def, named))
+        }
+        DefKind::Const { .. } | DefKind::Static { .. } | DefKind::Ctor(_, rustc_hir::def::CtorKind::Const) => {
+            RustItemKind::Constant {
+                type_display: display(tcx.type_of(def).instantiate_identity().skip_normalization()),
+            }
+        }
         DefKind::Trait => RustItemKind::Trait(trait_info(tcx, def, named)),
         DefKind::Mod => RustItemKind::Module(module_info(tcx, def)),
         other => RustItemKind::Unsupported {
@@ -455,7 +485,8 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
     }
 }
 
-/// A function's signature: parameters with a method's receiver first, as written (`&self`, `&mut self`, `self`).
+/// Extract the exact signature of a function or tuple-variant constructor. A method retains its written receiver;
+/// a constructor inherits the enum's type parameters so ordinary call inference can close its payload and result.
 fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFunctionSig {
     let signature = tcx
         .fn_sig(def)
@@ -481,10 +512,14 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
         })
         .collect();
     note_named(signature.output(), named);
-    let type_params = tcx
-        .generics_of(def)
-        .own_params
-        .iter()
+    let generics = tcx.generics_of(def);
+    let first = if matches!(tcx.def_kind(def), DefKind::Ctor(..)) {
+        0
+    } else {
+        generics.parent_count
+    };
+    let type_params = (first..generics.count())
+        .map(|index| generics.param_at(index, tcx))
         .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
         .map(|parameter| parameter.name.to_string())
         .collect();
@@ -495,7 +530,7 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
         type_params,
         params,
         return_type: display(signature.output()),
-        is_async: tcx.asyncness(def).is_async(),
+        is_async: !matches!(tcx.def_kind(def), DefKind::Ctor(..)) && tcx.asyncness(def).is_async(),
         is_unsafe: signature.safety().is_unsafe(),
     }
 }
@@ -580,55 +615,76 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
     implementations
         .into_iter()
         .filter_map(|implementation| {
-            if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive {
-                return None;
-            }
             if (owner == tcx.types.str_ || matches!(owner.kind(), ty::Slice(_)))
                 && !concrete_impl_may_apply(tcx, implementation, owner)
             {
                 return None;
             }
-            let reference = tcx
-                .impl_trait_ref(implementation)
-                .instantiate_identity()
-                .skip_normalization();
-            if tcx
-                .generics_of(implementation)
-                .own_params
-                .iter()
-                .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Const { .. }))
-            {
-                return None;
-            }
-            let associated_type_bindings = tcx
-                .associated_item_def_ids(implementation)
-                .iter()
-                .copied()
-                .filter(|item| tcx.def_kind(*item) == DefKind::AssocTy)
-                .filter_map(|item| {
-                    Some(RustAssociatedTypeBinding {
-                        name: tcx.opt_item_name(item)?.to_string(),
-                        value_path: display(tcx.type_of(item).instantiate_identity().skip_normalization()),
-                    })
-                })
-                .collect();
-            named.insert(reference.def_id);
-            Some(RustImplementedTrait {
-                path: visible_path(tcx, reference.def_id),
-                mutable_reference: matches!(reference.self_ty().kind(), ty::Ref(_, _, ty::Mutability::Mut)),
-                self_type: display(reference.self_ty()),
-                type_params: tcx
-                    .generics_of(implementation)
-                    .own_params
-                    .iter()
-                    .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
-                    .map(|parameter| parameter.name.to_string())
-                    .collect(),
-                type_arguments: reference.args.types().skip(1).map(display).collect(),
-                bounds: trait_bounds(tcx, implementation),
-                associated_type_bindings,
+            trait_impl_template(tcx, implementation, named)
+        })
+        .collect()
+}
+
+/// Extract one positive implementation once for both owner and trait ABIs. Const binders remain unsupported;
+/// associated definitions and complete retained trait predicates keep their native declaration identities.
+fn trait_impl_template(
+    tcx: TyCtxt<'_>,
+    implementation: DefId,
+    named: &mut HashSet<DefId>,
+) -> Option<RustImplementedTrait> {
+    if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive
+        || tcx
+            .generics_of(implementation)
+            .own_params
+            .iter()
+            .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Const { .. }))
+    {
+        return None;
+    }
+    let reference = tcx
+        .impl_trait_ref(implementation)
+        .instantiate_identity()
+        .skip_normalization();
+    let associated_type_bindings = tcx
+        .associated_item_def_ids(implementation)
+        .iter()
+        .copied()
+        .filter(|item| tcx.def_kind(*item) == DefKind::AssocTy)
+        .filter_map(|item| {
+            Some(RustAssociatedTypeBinding {
+                name: tcx.opt_item_name(item)?.to_string(),
+                value_path: display(tcx.type_of(item).instantiate_identity().skip_normalization()),
             })
         })
+        .collect();
+    named.insert(reference.def_id);
+    Some(RustImplementedTrait {
+        path: visible_path(tcx, reference.def_id),
+        mutable_reference: matches!(reference.self_ty().kind(), ty::Ref(_, _, ty::Mutability::Mut)),
+        self_type: display(reference.self_ty()),
+        type_params: tcx
+            .generics_of(implementation)
+            .own_params
+            .iter()
+            .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
+            .map(|parameter| parameter.name.to_string())
+            .collect(),
+        type_arguments: reference.args.types().skip(1).map(display).collect(),
+        bounds: trait_bounds(tcx, implementation),
+        associated_type_bindings,
+    })
+}
+
+/// Include a trait's implementation templates independently of any cached implementor. An unconstrained Self
+/// asks rustc for every relevant bucket; native predicates still decide each closed instantiation's applicability.
+fn trait_implementations(tcx: TyCtxt<'_>, owner: DefId, named: &mut HashSet<DefId>) -> Vec<RustImplementedTrait> {
+    let mut implementations = Vec::new();
+    let self_type = Ty::new_param(tcx, 0, rustc_span::Symbol::intern("Self"));
+    tcx.for_each_relevant_impl(owner, self_type, |implementation| implementations.push(implementation));
+    implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
+    implementations
+        .into_iter()
+        .filter_map(|implementation| trait_impl_template(tcx, implementation, named))
         .collect()
 }
 
@@ -691,6 +747,7 @@ fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
 /// A trait's associated functions and their signatures.
 fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTraitInfo {
     RustTraitInfo {
+        implementations: trait_implementations(tcx, def, named),
         is_in_prelude: resolve(tcx, "std::prelude::rust_2024").is_some_and(|prelude| {
             tcx.module_children(prelude)
                 .iter()

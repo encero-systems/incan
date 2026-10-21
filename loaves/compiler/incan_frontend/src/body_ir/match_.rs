@@ -93,7 +93,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
             let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
             let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
-            let pattern = self.lower_match_pattern(
+            let mut pattern = self.lower_match_pattern(
                 &arm.node.pattern,
                 &scrutinee_ty,
                 &scrutinee_place,
@@ -103,6 +103,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &mut saved_bindings,
             );
             self.in_place_pattern = enclosing_in_place;
+            if arm.node.guard.is_none() {
+                self.retain_temporary_native_payload_move(&scrutinee_place, &mut pattern);
+            }
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
             // ----
@@ -163,6 +166,47 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary. No source
+    /// binding can reuse that carrier, and a successful arm has no other payload to preserve. Named carriers,
+    /// borrowed payloads, nested patterns and guarded arms keep their existing ownership facts.
+    fn retain_temporary_native_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
+        if !source.projection.is_empty() {
+            return;
+        }
+        let Some(local) = source.local_id().and_then(|local| self.locals.get(local.index())) else {
+            return;
+        };
+        if local.origin != bir::LocalOrigin::Temporary
+            || !matches!(&local.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::Option | CollectionTypeId::Result)))
+        {
+            return;
+        }
+        let fields = match pattern {
+            bir::Pattern::Result { fields, .. } => fields,
+            bir::Pattern::Enum { name, fields, .. } if name == "Option" => fields,
+            _ => return,
+        };
+        let [bir::Pattern::Var(binding)] = fields.as_mut_slice() else {
+            return;
+        };
+        let Some(payload) = self.locals.get(binding.local.index()) else {
+            return;
+        };
+        let native = match &payload.ty {
+            IncanType::Named(name) | IncanType::Generic { base: name, .. } => bir::rust_item_identity(name).is_some(),
+            _ => false,
+        };
+        if native
+            && matches!(
+                binding.fact,
+                bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone | bir::OwnershipFact::Move
+            )
+        {
+            binding.fact = bir::OwnershipFact::Move;
+            self.native_enum_payload_bindings.insert(binding.local);
+        }
     }
 
     /// Return whether the `match`, `if let` or `while let` over the scrutinee at `span` matches it in place.

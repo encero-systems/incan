@@ -1,0 +1,15 @@
+# behavior: native unit enum variants retain their constant identities and compare through their own implementation
+# expect-stdout:
+#   true
+#   true
+
+from rust::std::io import ErrorKind
+
+
+def main() -> None:
+    """Materialize native unit values and compare their actual enum identities."""
+    first = ErrorKind.WouldBlock
+    same = ErrorKind.WouldBlock
+    different = ErrorKind.Other
+    println(first == same)
+    println(first != different)

@@ -139,7 +139,7 @@ def compare_places(
                     mut count = 5
                     if required == "PartialEq":
                         count = 1
-                    if required not in builder.nominals[owner].derives and len(builder.comparison_functions[owner]) < count:
+                    if library_item(builder.nominals[owner]) == "" and required not in builder.nominals[owner].derives and len(builder.comparison_functions[owner]) < count:
                         return Err(f"unsupported Body IR model comparison without derived {required}")
                 _ => return Err("unsupported Body IR model comparison carrier")
             arguments = [borrow_model(builder, first, ty, span)?, borrow_model(builder, second, ty, span)?]

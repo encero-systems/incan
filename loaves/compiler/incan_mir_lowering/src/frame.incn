@@ -57,6 +57,7 @@ pub model Builder:
     `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
     `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
     `function_pointer_locals` lists the return slot, function-typed parameters, and explicitly annotated locals whose callables are stored as reified function pointers; other callable locals keep their inferred function-item type.
+    `reference_values` lists logical reference values whose slots hold the reference itself, independently of source receiver storage that borrows an owned value.
     `name` is the plan symbol of the function being built, which prefixes the functions its closures synthesize; `synthesized` collects those lifted bodies and constructors for the enclosing plan.
     `step_element` is the element type of the generator expression whose lifted step this frame builds, or None in every other frame; a step's yield returns its one accepted element instead of suspending.
     `iteration_locals` lists the frame slots Body IR polls with a builtin `IterNext`, so an iterator's materialization is recognized by its slot rather than by its read.
@@ -134,6 +135,8 @@ pub model Builder:
     pub initializing_decorator: Option[RustCanonicalSymbolId] = None
     pub cached_decorator: int = -1
     pub callable_name_dynamic_profile: bool = false
+    # Slots whose checked value is itself a reference, rather than an owned source value stored behind a receiver borrow.
+    pub reference_values: list[int] = []
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

@@ -1,0 +1,9 @@
+[project]
+name = "extension_trait_on_cached_cursor"
+version = "0.1.0"
+
+[dependencies]
+byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
+
+[project.scripts]
+main = "src/main.incn"

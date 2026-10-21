@@ -1,0 +1,13 @@
+# behavior: a native option payload keeps its borrowed path component carrier through string conversion
+# expect-stdout:
+#   file.txt
+
+from rust::std::path import Path
+
+
+def main() -> None:
+    """Read a borrowed native path component without moving its unsized referent."""
+    path = Path.new("folder/file.txt")
+    match path.file_name():
+        Some(name) => println(name.to_string_lossy().into_owned())
+        None => println("missing")

@@ -1,0 +1,17 @@
+# behavior: a source result retains the canonical native type of its owned success payload
+# expect-stdout:
+#   2
+
+from rust::std::time import Duration
+
+
+def elapsed() -> Result[Duration, str]:
+    """Return a native duration through a source-declared result boundary."""
+    return Ok(Duration.new(2u64, 0u32))
+
+
+def main() -> None:
+    """Use the returned payload through its native method identity."""
+    match elapsed():
+        Ok(value) => println(int(value.as_secs()))
+        Err(_) => println(-1)
