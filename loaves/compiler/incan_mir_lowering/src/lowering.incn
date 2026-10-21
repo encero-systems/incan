@@ -282,7 +282,7 @@ from tuples import (
     carrier_element,
     owned_carrier,
 )
-from text_plan import format_parts, clone_text, owned_literal, owned_slice_text
+from text_plan import format_parts, clone_text, owned_literal, owned_slice_text, owned_borrowed_text
 from options import (
     intrinsic_declarations,
     retain_body_carriers,
@@ -5765,7 +5765,7 @@ def serialize_scalar_json(
             if not is_element_place(builder, read.place)?:
                 place = scalar_place(builder, read.place, span)?
                 ty = place_type(builder.locals, place)
-                if ty == PlanType.String:
+                if ty in [PlanType.String, PlanType.StringRef, PlanType.StrRef]:
                     return serialize_json_text(builder, value, result, span)
                 if is_list(ty):
                     return serialize_json_list(builder, value, ty, result, span)
@@ -5816,17 +5816,20 @@ def serialize_json_text(
     result: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Borrow string text before any value-read ownership transformation can move its source."""
+    """Borrow string text into serde's generic boundary, avoiding recursion through runtime's serialize_string wrapper."""
     operand = borrow_text_operand(builder, value, span)?
-    external_call(
-        builder,
-        "incan_native_runtime::serialize_string",
-        [PlanType.StringRef],
-        PlanType.String,
-        [operand],
-        result,
-        span,
+    path = "incan_native_runtime::serialize_model"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[PlanType.String],
+            parameters=[PlanType.StringRef],
+            return_type=PlanType.String,
+            span=span,
+        ),
     )
+    terminate_call(builder, CalleeKind.Instantiated(path, [PlanType.String]), [operand], result, span)
+    builder.owned.append(result.local)
     return Ok(None)
 
 
@@ -5952,7 +5955,9 @@ def lower_text_scalar_conversion(
                         _ => pass
                 RustOperand.Place(read) =>
                     place = scalar_place(builder, read.place, span)?
-                    text_input = place_type(builder.locals, place) in [PlanType.String, PlanType.FrozenStr]
+                    text_input = place_type(builder.locals, place) in [
+                        PlanType.String, PlanType.StringRef, PlanType.StrRef, PlanType.FrozenStr,
+                    ]
             if not text_input:
                 return Ok(false)
             text = display_operand(builder, value, span)?
@@ -6261,13 +6266,18 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                         match place_type(builder.locals, place):
                             PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
                             PlanType.Enum(owner, _name) => return debug_enum_operand(builder, place, owner, span)
+                            PlanType.StringRef => return debug_plan_operand(builder, read_place(place, false, span), span)
+                            PlanType.StrRef => return debug_plan_operand(builder, read_place(place, false, span), span)
                             _ => pass
                     Some(_global) => pass
         _ => pass
     operand = value_operand(builder, value, span)?
     ty = operand_type(builder, operand)?
-    if has_sized_numeric(ty) or ty == PlanType.Int or ty == PlanType.Float or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String or is_owned_list(
-        ty,
+    if (
+        has_sized_numeric(ty)
+        or ty in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit,
+                  PlanType.String, PlanType.StringRef, PlanType.StrRef]
+        or is_owned_list(ty)
     ):
         return debug_plan_operand(builder, operand, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
@@ -6407,6 +6417,8 @@ pub def display_plan_value(
         return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
+    if ty == PlanType.StringRef:
+        return Ok(owned_borrowed_text(builder, operand, span))
     if ty == PlanType.StrRef:
         return Ok(owned_slice_text(builder, operand, span))
     if has_sized_numeric(ty):
@@ -6496,7 +6508,10 @@ def clone_display_place(
     """
     place = scalar_place(builder, value, span)?
     ty = place_type(builder.locals, place)
-    if ty in [PlanType.Decimal, PlanType.FrozenStr] or numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
+    if (
+        ty in [PlanType.Decimal, PlanType.FrozenStr, PlanType.StringRef, PlanType.StrRef, PlanType.Bool, PlanType.Unit]
+        or numeric_carrier(ty)
+    ):
         return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
     if place_type(builder.locals, place) != PlanType.String:
         return Err("unsupported Body IR nonscalar display borrow")
