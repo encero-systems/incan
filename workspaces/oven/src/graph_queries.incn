@@ -59,17 +59,26 @@ pub def display(value: JsonValue) -> str:
     return "::".join(segments)
 
 
-def location(value: JsonValue) -> str:
+def location(value: JsonValue, root: str) -> str:
     """A source anchor remains separate from the durable declaration identity."""
     source = nested(value, "span")
-    file = text(source, "file")
+    mut file = text(source, "file")
+    if file.startswith(f"{root}/"):
+        file = file[len(root) + 1:]
     line = nested(source, "start_line").to_json().unwrap_or("0")
     if file == "":
         return "<unknown>:0"
     return f"{file}:{line}"
 
 
-pub def query(records: list[JsonValue], kind: str, term: str) -> list[str]:
+def matches(record: JsonValue, term: str) -> bool:
+    """Accept a complete compiler identity, a qualified name, or an exact final name component."""
+    label = display(record)
+    parts = label.split("::")
+    return term == label or term == parts[len(parts) - 1] or term == text(record, "id") or term == text(record, "raw_id") or term == identity(record)
+
+
+pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list[str]:
     """Select definitions and traverse only compiler-proven references, callers, callees or module imports."""
     mut selected: list[str] = []
     mut identities: list[str] = []
@@ -84,12 +93,16 @@ pub def query(records: list[JsonValue], kind: str, term: str) -> list[str]:
             if term in text(record, "name") or term in identifier:
                 modules.append(identifier)
         if record_kind == "declaration":
-            if term in display(record) or term == identifier:
+            if matches(record, term):
                 selected.append(identifier)
                 proved = identity(record)
                 if proved != "":
                     identities.append(proved)
     mut hits: list[str] = []
+    if kind != "defs" and len(selected) > 1:
+        for identifier in selected:
+            record = by_id[identifier]
+            hits.append(f"declaration {display(record)} {location(record, root)}")
     for record in records:
         record_kind = text(record, "record")
         if kind == "defs" and record_kind != "declaration":
@@ -104,7 +117,7 @@ pub def query(records: list[JsonValue], kind: str, term: str) -> list[str]:
         target = text(record, "target_id")
         owner = text(record, "owner_id")
         proved = identity(record)
-        targets = target in selected or (proved != "" and (proved in identities or term in display(record)))
+        targets = target in selected or (proved != "" and (proved in identities or matches(record, term)))
         mut hit = false
         mut label = display(record)
         if kind == "defs":
@@ -118,7 +131,7 @@ pub def query(records: list[JsonValue], kind: str, term: str) -> list[str]:
                         for target in targets:
                             match target.as_str():
                                 Some(name) =>
-                                    line = f"import {name} {location(record)}"
+                                    line = f"import {name} {location(record, root)}"
                                     if line not in hits:
                                         hits.append(line)
                                 None => pass
@@ -139,7 +152,7 @@ pub def query(records: list[JsonValue], kind: str, term: str) -> list[str]:
             elif label == "":
                 label = text(record, "callee")
         if hit:
-            line = f"{record_kind} {label} {location(record)}"
+            line = f"{record_kind} {label} {location(record, root)}"
             if line not in hits:
                 hits.append(line)
     return sorted(hits)

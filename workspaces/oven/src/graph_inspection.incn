@@ -22,23 +22,28 @@ pub model GraphOptions:
     pub format: str = "jsonl"
     pub query: str = ""
     pub term: str = ""
+    pub limit: int = 20
     pub substitutes: Dict[str, str] = {}
 
 
 def options(arguments: list[str]) -> Result[GraphOptions, str]:
     """Validate the full invocation before any build or cache operation."""
     if len(arguments) == 0 or arguments[0] != "codegraph":
-        return Err("usage: incan inspect codegraph PATH [--format json|jsonl] [--query defs|refs|callers|callees|imports TERM]")
+        return Err("usage: incan inspect codegraph PATH [--format json|jsonl] [--query defs|refs|callers|callees|imports TERM] [--limit N]")
     mut result = GraphOptions()
     mut index = 1
     while index < len(arguments):
         value = arguments[index]
-        if value in ["--format", "--query", "--substitute"]:
+        if value in ["--format", "--query", "--substitute", "--limit"]:
             if index + 1 >= len(arguments):
                 return Err(f"{value} needs a value")
             item = arguments[index + 1]
             if value == "--format":
                 result.format = item
+            elif value == "--limit":
+                result.limit = parse(item).map_err((_) => "--limit needs a nonnegative integer")?.expect_int().map_err((_) => "--limit needs a nonnegative integer")?
+                if result.limit < 0:
+                    return Err("--limit needs a nonnegative integer")
             elif value == "--substitute":
                 parts = item.split("=")
                 if len(parts) != 2 or parts[0] == "" or parts[1] == "":
@@ -100,7 +105,7 @@ def response(paths: list[Path], root: str, selected: GraphOptions) -> Result[str
     """Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records."""
     if len(paths) == 0:
         return Err("no units selected for graph inspection")
-    inputs = ["incan.codegraph.presentation/1", root, selected.format, selected.query, selected.term] + [path.0 for path in paths]
+    inputs = ["incan.codegraph.presentation/2", root, selected.format, selected.query, selected.term, str(selected.limit)] + [path.0 for path in paths]
     digest = fingerprint(inputs)?
     cached = paths[0].parent().joinpath(f"{digest}.answer")
     if cached.is_file():
@@ -108,7 +113,11 @@ def response(paths: list[Path], root: str, selected: GraphOptions) -> Result[str
     mut rendered = ""
     if selected.query != "":
         records = read_records(query_paths(paths, selected.query)?, root)?
-        rendered = "\n".join(query(records, selected.query, selected.term))
+        hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
+        mut lines = hits[:selected.limit]
+        if len(hits) > selected.limit:
+            lines.append(f"… {len(hits) - selected.limit} more")
+        rendered = "\n".join(lines)
     else:
         # An exported snapshot is query-ready: the one-time projection belongs to cold export, not a later query.
         _ = query_paths(paths, "defs")?
@@ -119,6 +128,25 @@ def response(paths: list[Path], root: str, selected: GraphOptions) -> Result[str
             rendered = "\n".join([record.to_json().map_err((error) => error.message())? for record in records])
     publish(cached, rendered)?
     return Ok(rendered)
+
+
+def anchor_root(path: Path) -> Path:
+    """Prefer repository-relative source anchors, falling back to the nearest owning project for standalone Loaves."""
+    mut directory = path
+    if directory.is_file():
+        directory = directory.parent()
+    mut project = directory
+    mut found = false
+    while true:
+        if directory.joinpath(".git").is_file() or directory.joinpath(".git").is_dir():
+            return directory
+        if not found and directory.joinpath("loaf.toml").is_file():
+            project = directory
+            found = true
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 in [".", ""]:
+            return project
+        directory = parent
 
 
 def inspect_incan(source: Path, toolchain: Toolchain) -> Result[Path, str]:

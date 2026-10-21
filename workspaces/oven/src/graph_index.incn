@@ -19,7 +19,7 @@ pub def query_paths(paths: list[Path], kind: str) -> Result[list[Path], str]:
     """Reuse or build a compact unit projection so new queries avoid decoding signatures and complete source spans."""
     mut result: list[Path] = []
     for path in paths:
-        nodes = Path(f"{path.0}.queries-v2.nodes")
+        nodes = Path(f"{path.0}.queries-v3.nodes")
         if not nodes.is_file():
             build_index(path)?
         result.append(nodes)
@@ -31,7 +31,7 @@ pub def query_paths(paths: list[Path], kind: str) -> Result[list[Path], str]:
         elif kind == "imports":
             edge = "import"
         if edge != "":
-            result.append(Path(f"{path.0}.queries-v2.{edge}"))
+            result.append(Path(f"{path.0}.queries-v3.{edge}"))
     return Ok(result)
 
 
@@ -43,6 +43,7 @@ def compact(record: JsonValue) -> Result[str, str]:
     for name in ["id", "target_id", "owner_id", "module_id"]:
         fields[name] = JsonValue.string(key(text(record, name)))
     fields["label"] = JsonValue.string(display(record))
+    fields["raw_id"] = JsonValue.string(text(record, "id"))
     fields["stable_key"] = JsonValue.string(key(identity(record)))
     if text(record, "record") == "import":
         mut targets: list[str] = []
@@ -93,6 +94,6 @@ def build_index(path: Path) -> Result[None, str]:
             imports.append(entry)
     groups: Dict[str, list[str]] = {"nodes": nodes, "reference": references, "call": calls, "import": imports}
     for group in ["reference", "call", "import", "nodes"]:
-        output = Path(f"{path.0}.queries-v2.{group}")
+        output = Path(f"{path.0}.queries-v3.{group}")
         publish(output, "\n".join(groups[group]) + "\n")?
     return Ok(None)
