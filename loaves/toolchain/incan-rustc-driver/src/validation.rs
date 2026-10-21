@@ -2420,6 +2420,9 @@ fn generic_field_type(ty: &GenericLayoutType, parameters: &BTreeSet<&str>) -> bo
         GenericLayoutType::Parameter(name) => parameters.contains(name.as_str()),
         GenericLayoutType::Concrete(ty) => source_signature_type(&scalar(ty)),
         GenericLayoutType::Tuple(elements) => elements.iter().all(|element| generic_field_type(element, parameters)),
+        GenericLayoutType::FunctionPointer(signature) => {
+            !signature.is_empty() && signature.iter().all(|element| generic_field_type(element, parameters))
+        }
         GenericLayoutType::Applied(name, arguments) => {
             name.split("::").enumerate().all(|(index, segment)| {
                 (index == 0 && matches!(segment, "crate" | "core" | "std" | "alloc")) || identifier(segment)

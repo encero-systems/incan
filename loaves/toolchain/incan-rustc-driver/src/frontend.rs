@@ -408,14 +408,17 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
     Ok(layouts.into_values().collect())
 }
 
-/// Select a linked native carrier or concrete compiled Loaf layout; source layouts with owner parameters stay governed.
-/// A generic source declaration has no single compiled concrete item; its checked fields specialize with its consumer.
+/// Select a native carrier or provider-owned Loaf layout. Generic models and classes publish one parameterized ADT;
+/// generic enum and newtype declarations keep their governed source storage until their native templates are supported.
 fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
     incan_semantics_core::body_ir::native_nominal_item(identity).or_else(|| {
-        parameters
-            .is_empty()
-            .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
-            .flatten()
+        (parameters.is_empty()
+            || matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+            ))
+        .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
+        .flatten()
     })
 }
 

@@ -6817,7 +6817,7 @@ def lowered_plan(
         intrinsics,
     )?
     conversion_functions, conversion_runtime = lower_string_conversions(context, files[entry], intrinsics)?
-    mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, library)?
+    mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, kind == "library")?
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
     mut functions = checked_functions

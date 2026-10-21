@@ -132,7 +132,9 @@ fn parameters_of(model: &GenericModelDeclaration, bound: Option<&[&str]>, span: 
 fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
     match ty {
         GenericLayoutType::Parameter(name) => name == parameter,
-        GenericLayoutType::Applied(_, arguments) | GenericLayoutType::Tuple(arguments) => {
+        GenericLayoutType::Applied(_, arguments)
+        | GenericLayoutType::Tuple(arguments)
+        | GenericLayoutType::FunctionPointer(arguments) => {
             arguments.iter().any(|argument| uses_parameter(argument, parameter))
         }
         GenericLayoutType::Concrete(_) => false,
@@ -150,6 +152,19 @@ fn layout_type(layout: &GenericLayoutType, span: Span) -> Box<ast::Ty> {
             span,
             tokens: None,
         }),
+        GenericLayoutType::FunctionPointer(signature) => {
+            let Some((result, parameters)) = signature.split_last() else {
+                unreachable!("preflight rejects empty generic function-pointer signatures");
+            };
+            crate::ast_build::function_pointer(
+                parameters
+                    .iter()
+                    .map(|parameter| layout_type(parameter, span))
+                    .collect(),
+                layout_type(result, span),
+                span,
+            )
+        }
         GenericLayoutType::Applied(name, arguments) => {
             let mut segments = name.split("::");
             let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));

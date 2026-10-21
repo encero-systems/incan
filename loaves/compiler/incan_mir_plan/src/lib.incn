@@ -610,12 +610,13 @@ pub model Plan:
 
 @derive(Clone, PartialEq)
 pub enum GenericLayoutType:
-    """A generic ADT field's checked type, with declared parameters preserved until rustc instantiates the ADT."""
+    """A generic ADT field's checked type; function-pointer signatures retain inputs followed by one result entry."""
 
     Parameter(str)
     Concrete(PlanType)
     Applied(str, list[GenericLayoutType])
     Tuple(list[GenericLayoutType])
+    FunctionPointer(list[GenericLayoutType])
 
 
 @derive(Clone, PartialEq)
