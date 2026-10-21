@@ -1,0 +1,17 @@
+# behavior: a frozen text encoder accepts a computed borrowed native encoding label
+# expect-stdout:
+#   3
+
+from rust::std::string import String as RustString
+
+const TEXT: FrozenStr = "abc"
+
+
+def encode(value: FrozenStr, encoding: &RustString) -> bytes:
+    """Exercise a computed label at the builtin codec boundary."""
+    return value.encode(str(encoding.as_str()))
+
+
+def main() -> None:
+    """Execute the encoder with a borrowed native label."""
+    println(len(encode(TEXT, "utf-8")))

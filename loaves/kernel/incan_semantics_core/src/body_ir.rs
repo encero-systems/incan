@@ -4263,6 +4263,10 @@ pub enum HelperOp {
     CallableName,
     /// Invoke the canonical core ValueError primitive without a result; consumers must terminate the normal edge.
     RaiseValueError,
+    /// Test a builtin codec's encoding label before evaluating later policy or receiver expressions.
+    TextCodecEncodingValid,
+    /// Test a builtin decoder's error policy after its encoding guard and before its receiver.
+    TextCodecErrorsValid,
 }
 
 impl HelperOp {
@@ -4304,6 +4308,8 @@ impl HelperOp {
             Self::NewtypeSumExtract => "newtype_sum_extract",
             Self::CallableName => "callable_name",
             Self::RaiseValueError => "raise_value_error",
+            Self::TextCodecEncodingValid => "text_codec_encoding_valid",
+            Self::TextCodecErrorsValid => "text_codec_errors_valid",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",

@@ -266,6 +266,7 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.FrozenStr => return Ok(ListLeaf.FrozenStr)
         PlanType.FrozenBytes => return Ok(ListLeaf.FrozenBytes)
         PlanType.U8 => return Ok(ListLeaf.U8)
+        PlanType.USize => return Ok(ListLeaf.USize)
         PlanType.Unit => return Ok(ListLeaf.Unit)
         PlanType.Decimal => return Ok(ListLeaf.Decimal)
         PlanType.Tuple(elements) => return Ok(ListLeaf.Tuple(elements))

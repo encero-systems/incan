@@ -92,6 +92,8 @@ Refused (`INCAN-T0001`): an index or slice part that is not an `int`, and an ass
 
 Each method takes its arguments by position; `encoding` may also be passed by name: `s.encode(encoding="utf-8")`. Refused (`INCAN-T0001`): any other named argument, and an unpacked argument, on a `str` or `FrozenStr` receiver.
 
+`encode` evaluates and validates its encoding label before evaluating the receiver. An invalid run-time label raises `ValueError` without evaluating the receiver.
+
 ```incan
 def main() -> None:
     text = "a,b"
@@ -132,6 +134,8 @@ def main() -> None:
 | `decode(encoding: str = "utf-8", errors: str = "strict") -> Result[str, ValidationError]` | `Ok` of the bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`, except that a run-time label naming another codec returns `Err` with `code` `unknown-encoding`. `errors` is `"strict"`, which returns `Err` with `code` `invalid-utf8` at the first malformed sequence (the message names its byte offset), or `"replace"`, which substitutes U+FFFD for each malformed sequence and always returns `Ok`; any other literal policy is refused (`INCAN-T0001`), and any other run-time policy returns `Err` with `code` `unknown-errors-policy`. |
 
 `encoding` and `errors` may be passed by position or by name.
+
+`decode` evaluates and validates the encoding label first, then the error policy, then the receiver, regardless of the written order of named arguments. Each expression runs once. A rejected encoding skips the policy and receiver; a rejected policy skips the receiver. These rules also apply to `FrozenBytes`.
 
 ## F-strings
 
