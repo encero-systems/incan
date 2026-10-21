@@ -252,6 +252,15 @@ impl TypeChecker {
         }
         if explicit_arity_ok && self.errors.len() == errors_before_call {
             self.retain_body_ir_parameter_requirements(&resolved_params, args, callee_identity.as_ref());
+            let templates =
+                self.contextual_parameter_templates(&resolved_params, callee_identity.as_ref(), &info.params);
+            for ((expression, expected), (_, template)) in Self::arguments_with_parameter_types(&resolved_params, args)
+                .into_iter()
+                .zip(Self::arguments_with_parameter_types(&templates, args))
+            {
+                self.retain_contextual_literal_type(expression, expected, callee_identity.as_ref(), Some(template));
+            }
+            self.retain_declared_nominal_result(call_span, &info.return_type, &type_bindings, callee_identity.as_ref());
         }
         substitute_resolved_type(&info.return_type, &type_bindings)
     }
@@ -1110,6 +1119,30 @@ impl TypeChecker {
             }
         }
 
+        if self.errors.len() == errors_before_call {
+            let templates = self.contextual_parameter_templates(
+                &resolved_params,
+                method_info.identity.as_ref(),
+                &method_info.params,
+            );
+            for ((expression, expected), (_, template)) in Self::arguments_with_parameter_types(&resolved_params, args)
+                .into_iter()
+                .zip(Self::arguments_with_parameter_types(&templates, args))
+            {
+                self.retain_contextual_literal_type(
+                    expression,
+                    expected,
+                    method_info.identity.as_ref(),
+                    Some(template),
+                );
+            }
+            self.retain_declared_nominal_result(
+                call_site_span,
+                &method_info.return_type,
+                &type_bindings,
+                method_info.identity.as_ref(),
+            );
+        }
         substitute_resolved_type(&return_type, &type_bindings)
     }
 

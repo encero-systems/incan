@@ -62,6 +62,22 @@ impl TypeChecker {
         }
     }
 
+    /// Project an original destination template to the storage kind already selected for a literal. Type-parameter
+    /// positions remain explicit so contextual nominal retention cannot re-own a caller's substituted arguments.
+    pub(in crate::typechecker::check_expr) fn literal_storage_template<'ty>(
+        &self,
+        literal: &ResolvedType,
+        template: &'ty ResolvedType,
+    ) -> Option<&'ty ResolvedType> {
+        let is_kind = |ty: &ResolvedType| {
+            (Self::list_element_type(literal).is_some() && Self::list_element_type(ty).is_some())
+                || (Self::dict_entry_types(literal).is_some() && Self::dict_entry_types(ty).is_some())
+                || Self::tuple_element_types(literal)
+                    .is_some_and(|items| Self::tuple_element_types(ty).is_some_and(|other| items.len() == other.len()))
+        };
+        self.collection_literal_destination(template, &is_kind)
+    }
+
     /// Refuse a collection literal whose own elements leave part of its type open (`[]`, `[None]`, `(None, 1)`, `{}`)
     /// at a destination holding two or more types of its kind, such as `list[int] | list[str]` (#1832).
     ///

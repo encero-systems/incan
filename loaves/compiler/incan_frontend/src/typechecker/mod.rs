@@ -470,6 +470,16 @@ struct AnnotationOwner {
     declared_type_params: Vec<String>,
 }
 
+/// A callable's original type templates, retained before imports, receiver arguments, or partial application specialize
+/// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
+struct DeclarationCallableTypes {
+    /// Parameter templates in declaration order, including their source binding labels.
+    params: Vec<CallableParam>,
+    /// Original return template before call-site substitution.
+    return_type: ResolvedType,
+}
+
+/// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -695,6 +705,11 @@ pub struct TypeChecker {
     /// spelling and span would invent a second declaration. This cache preserves the symbol table's authoritative
     /// answer across the dependency boundary.
     pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
+    /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
+    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations.
+    declaration_nominal_scopes: HashMap<CanonicalSymbolId, std::collections::BTreeMap<String, CanonicalSymbolId>>,
+    /// Original callable signatures before receiver or trait arguments replace their declaration-owned binders.
+    declaration_callables: HashMap<CanonicalSymbolId, DeclarationCallableTypes>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
     ///
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
@@ -948,6 +963,8 @@ impl TypeChecker {
             dependency_direct_member_symbols: HashMap::new(),
             dependency_direct_member_type_aliases: HashMap::new(),
             dependency_direct_member_identities: HashMap::new(),
+            declaration_nominal_scopes: HashMap::new(),
+            declaration_callables: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             body_ir_dependency_pub_reexports: HashMap::new(),
             dependency_module_path_segments: HashMap::new(),
@@ -7367,6 +7384,11 @@ impl TypeChecker {
         }
         let carriers = identities
             .values()
+            .chain(
+                self.declaration_nominal_scopes
+                    .values()
+                    .flat_map(|scope| scope.values()),
+            )
             .filter_map(|identity| {
                 incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (key, identity.clone()))
             })
@@ -7778,6 +7800,12 @@ impl TypeChecker {
                 direct_projections.insert(name, projection.clone());
             }
         }
+        let scope = self.checked_nominal_type_identities();
+        for (name, kind) in &direct_symbols {
+            if let Some(identity) = direct_identities.get(name) {
+                self.retain_declaration_nominal_scope(identity, kind, &scope);
+            }
+        }
         for declaration in &module_ast.declarations {
             let Declaration::TypeAlias(alias) = &declaration.node else {
                 continue;
@@ -7814,6 +7842,51 @@ impl TypeChecker {
             .insert(module_name.to_string(), direct_identities);
         self.dependency_direct_member_partial_projections
             .insert(module_name.to_string(), direct_projections);
+    }
+
+    /// Retain a declaration and its own methods' lexical nominal bindings before imports or trait adoption copy them.
+    /// A facade cannot replace the original scope, and inherited methods keep their declaring module's scope.
+    fn retain_declaration_nominal_scope(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        kind: &SymbolKind,
+        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ) {
+        let scope = self
+            .declaration_nominal_scopes
+            .entry(identity.clone())
+            .or_insert_with(|| scope.clone())
+            .clone();
+        if let SymbolKind::Function(function) = kind {
+            self.declaration_callables
+                .entry(identity.clone())
+                .or_insert_with(|| DeclarationCallableTypes {
+                    params: function.params.clone(),
+                    return_type: function.return_type.clone(),
+                });
+        }
+        let methods = match kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => &info.methods,
+            SymbolKind::Type(TypeInfo::Class(info)) => &info.methods,
+            SymbolKind::Type(TypeInfo::Newtype(info)) => &info.methods,
+            SymbolKind::Type(TypeInfo::Enum(info)) => &info.methods,
+            SymbolKind::Trait(info) => &info.methods,
+            _ => return,
+        };
+        for method in methods.values() {
+            let Some(member) = &method.identity else { continue };
+            if member.origin == identity.origin {
+                self.declaration_nominal_scopes
+                    .entry(member.clone())
+                    .or_insert_with(|| scope.clone());
+                self.declaration_callables
+                    .entry(member.clone())
+                    .or_insert_with(|| DeclarationCallableTypes {
+                        params: method.params.clone(),
+                        return_type: method.return_type.clone(),
+                    });
+            }
+        }
     }
 
     /// Cache exact provider traits referenced by dependency-owned type adoptions.
