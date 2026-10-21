@@ -3,14 +3,15 @@
 from std.fs import Path
 from std.json import JsonValue, parse
 from features import FeatureRequest
-from graph_cache import fingerprint, publish
+from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, publish, read_graph
 from graph_dependencies import prepare_graph, unit_natives, unit_loaves
 from graph_incan import inspect_incan
-from graph_queries import query, text
+from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
+from graph_queries import query, query_group, text
 from graph_rust import inspect_rust
-from graph_index import query_paths
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
+from rust_units import rust_facet
 
 
 pub model GraphOptions:
@@ -73,7 +74,7 @@ pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
     selected = options(arguments)?
     path = Path(selected.path).resolve().map_err((error) => error.message())?
     toolchain = load_toolchain()?
-    mut paths: list[Path] = []
+    mut paths: list[GraphUnit] = []
     mut source = path
     if path.is_dir() and not path.joinpath("src").joinpath("lib.rs").is_file():
         for name in ["lib.incn", "main.incn"]:
@@ -93,33 +94,36 @@ pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
                     return Err(f"{selected.path}: no owning loaf.toml")
                 root = parent
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain)?
-    rendered = response(paths, path.0, selected)?
+    rendered = response(paths, path.0, selected, toolchain)?
     if rendered != "":
         println(rendered)
     return Ok(0)
 
 
-def response(paths: list[Path], root: str, selected: GraphOptions) -> Result[str, str]:
+def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchain: Toolchain) -> Result[str, str]:
     """Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records."""
     if len(paths) == 0:
         return Err("no units selected for graph inspection")
-    inputs = ["incan.codegraph.presentation/4", root, selected.format, selected.query, selected.term, str(selected.limit)] + [path.0 for path in paths]
+    mut owner = Path(root)
+    if owner.is_file():
+        owner = owner.parent()
+    mut inputs = ["incan.codegraph.presentation/6", root, selected.format, selected.query, selected.term, str(selected.limit)]
+    for unit in paths:
+        inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, compiler_digest(owner, unit.path.0)?]
     digest = fingerprint(inputs)?
-    cached = paths[0].parent().joinpath(f"{digest}.answer")
+    cached = Path(f"{cache_file(owner, digest)?.0}.answer")
     if cached.is_file():
         return cached.read_text("utf-8", "strict").map_err((error) => error.message())
     mut rendered = ""
     if selected.query != "":
-        records = read_records(query_paths(paths, selected.query)?, root)?
+        records = read_records(paths, root, toolchain, query_group(selected.query))?
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
             lines.append(f"… {len(hits) - selected.limit} more")
         rendered = "\n".join(lines)
     else:
-        # An exported snapshot is query-ready: the one-time projection belongs to cold export, not a later query.
-        _ = query_paths(paths, "defs")?
-        records = read_records(paths, root)?
+        records = read_records(paths, root, toolchain, "")?
         if selected.format == "json":
             rendered = JsonValue.array(records).to_json().map_err((error) => error.message())?
         else:
@@ -147,38 +151,49 @@ def anchor_root(path: Path) -> Path:
         directory = parent
 
 
-def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, str]) -> Result[list[Path], str]:
+def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, str]) -> Result[list[GraphUnit], str]:
     """Inspect the source closure through checked interfaces, without building an Incan library."""
     match project_root_of(source):
-        None => return Ok([inspect_incan(source, toolchain)?])
+        None => return Ok([GraphUnit(path=inspect_incan(source, toolchain)?, root=source.parent())])
         Some(root) =>
             prepared = prepare_graph(root, "debug", FeatureRequest(), substitutes, toolchain)?
-            mut paths = prepared.paths
+            mut paths = prepared.paths + registry_graphs(registry_artifacts(prepared.facets, prepared.request)?)
             if source.name() == "lib.incn":
-                return Ok(paths)
+                standard = standard_graphs(root, "debug", toolchain, paths, rust_facet(root.0, false)?.package)?
+                return Ok(paths + standard)
             for facet in prepared.facets:
                 if facet.project == root.0 and facet.domain.value() == "target":
-                    paths.append(inspect_incan(source, toolchain, unit_natives(facet, prepared.built, prepared.request)?, prepared.interfaces, facet.features, false, unit_loaves(facet, prepared.interfaces)?)?)
-                    return Ok(paths)
+                    paths.append(GraphUnit(path=inspect_incan(source, toolchain, unit_natives(facet, prepared.built, prepared.request)?, prepared.interfaces, facet.features, false, unit_loaves(facet, prepared.interfaces)?)?, root=root))
+                    standard = standard_graphs(root, "debug", toolchain, paths, rust_facet(root.0, false)?.package)?
+                    return Ok(paths + standard)
             return Err("inspection selected no source unit")
 
 
-def read_records(paths: list[Path], root: str) -> Result[list[JsonValue], str]:
+def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group: str) -> Result[list[JsonValue], str]:
     """Merge unit documents deterministically, retaining one header and one instance of each identified fact."""
     mut records: list[JsonValue] = []
     mut seen: Dict[str, bool] = {}
     mut header: Dict[str, JsonValue] = {}
     mut languages: list[str] = []
     mut contexts: list[JsonValue] = []
-    for path in paths:
-        document = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    for unit in paths:
+        document = read_graph(unit, toolchain.driver, group)?
         for line in document.split("\n"):
             if line.strip() == "":
                 continue
-            record = parse(line).map_err((error) => f"{path.0}: {error.message()}")?
+            record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
             mut key = text(record, "id")
             if text(record, "record") == "header":
-                header = record.expect_object().map_err((error) => error.message())?
+                package = record.get("package")
+                if unit.package != "" and package is None:
+                    return Err(f"{unit.path.0}: graph has no Loaf identity")
+                if let Some(value) = package:
+                    if unit.package != "" and text(value, "name") != unit.package:
+                        return Err(f"{unit.path.0}: graph names a different Loaf")
+                    if unit.version != "" and text(value, "version") != unit.version:
+                        return Err(f"{unit.path.0}: graph has a different Loaf version")
+                if len(header) == 0 or unit.root.0 == root or root.startswith(f"{unit.root.0}/"):
+                    header = record.expect_object().map_err((error) => error.message())?
                 for language in record.require("languages").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?:
                     name = language.expect_str().map_err((error) => error.message())?
                     if name not in languages:

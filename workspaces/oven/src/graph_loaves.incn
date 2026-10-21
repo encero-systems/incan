@@ -1,0 +1,80 @@
+"""Read published standard and registry Loaf graphs; legacy source-backed packages have one cached export."""
+
+from std.fs import Path
+from std.json import parse
+from graph_cache import GraphUnit, read_graph
+from graph_dependencies import unit_natives
+from graph_incan import inspect_incan
+from home import standard_artifact_dir, standard_packages
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from rust_activation import DependencyDomain
+from rust_units import RustBuild, read_registry_units, registry_features, target_configuration
+from toolchain import Toolchain, rust_compiler
+from std.toml import TomlValue
+from graph_queries import text
+
+
+pub def standard_graphs(owner: Path, profile: str, toolchain: Toolchain, units: list[GraphUnit], exclude: str = "") -> Result[list[GraphUnit], str]:
+    """Follow compiler-proven package origins into standard Loaves, without treating ambient availability as a dependency."""
+    mut graphs: list[GraphUnit] = []
+    mut available: Dict[str, str] = {}
+    for package in standard_packages()?:
+        available[package.name] = package.root
+    mut seen = [exclude] + [unit.package for unit in units if unit.package in available]
+    mut queue = units
+    while len(queue) > 0:
+        current = queue.pop()
+        for line in read_graph(current, toolchain.driver, "origins")?.split("\n"):
+            if line == "":
+                continue
+            origin = parse(line).map_err((error) => error.message())?
+            name = text(origin, "library")
+            if text(origin, "kind") != "package" or name not in available or name in seen:
+                continue
+            seen.append(name)
+            unit = standard_graph(owner, profile, toolchain, name, available[name])?
+            graphs.append(unit)
+            queue.append(unit)
+    return Ok(graphs)
+
+
+def standard_graph(owner: Path, profile: str, toolchain: Toolchain, package: str, source_root: str) -> Result[GraphUnit, str]:
+    """Read a published standard graph, or cache a legacy source export entirely under the requesting project."""
+    graph = standard_artifact_dir(package, profile)?.joinpath(f"{package}.incngraph")
+    if graph.is_file():
+        return Ok(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
+    rustc = rust_compiler(toolchain)
+    demand = LocalDemand(project=source_root, domain=DependencyDomain.Target, features=[], defaults=true)
+    facets = local_facets(demand, target_configuration(rustc)?, None, {}, true)?
+    request = RustBuild(project=owner.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?)
+    for facet in facets:
+        if facet.project != source_root or facet.domain != DependencyDomain.Target:
+            continue
+        source = Path(source_root).joinpath("src").joinpath("lib.incn")
+        legacy = inspect_incan(source, toolchain, unit_natives(facet, {}, request)?, {}, facet.features, false, [], Some(owner))?
+        return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package))
+    return Err(f"no standard graph source selected for {package}")
+
+
+pub def registry_artifacts(facets: list[LocalFacet], request: RustBuild) -> Result[Dict[str, str], str]:
+    """Select each exact registry artifact once through the ordinary prepared-unit registry."""
+    mut artifacts: Dict[str, str] = {}
+    for facet in facets:
+        for selected in facet.registry:
+            loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+            requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+            artifact = request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?
+            artifacts[artifact] = loaf
+    return Ok(artifacts)
+
+
+pub def registry_graphs(artifacts: Dict[str, str]) -> list[GraphUnit]:
+    """Read graphs supplied by registry Loaves; older source-free registry artifacts remain external references."""
+    mut graphs: list[GraphUnit] = []
+    for artifact in sorted([key for key in artifacts.keys()]):
+        loaf = artifacts[artifact]
+        parts = loaf.split("/")
+        graph = Path(artifact).parent().joinpath(f"{parts[len(parts) - 1]}.incngraph")
+        if graph.is_file():
+            graphs.append(GraphUnit(path=graph, root=Path(f"@{loaf}")))
+    return graphs

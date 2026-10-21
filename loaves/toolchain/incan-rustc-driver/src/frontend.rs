@@ -72,6 +72,8 @@ struct CheckedProgram {
     own: usize,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
+    /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
+    graph: Vec<u8>,
     /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
     tests: Vec<crate::test_unit::CollectedTest>,
 }
@@ -149,7 +151,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
 
     // ---- The program's own modules ----
     let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
-    for module in modules {
+    for module in &modules {
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
@@ -167,9 +169,21 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         );
         validate_retained_storage(&module.ast, &body_ir)?;
         bodies.push(body_ir);
-        sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
+    let graph = if library {
+        let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
+            unit,
+            &session,
+            &modules,
+            &analysis,
+            &bodies[loaf_modules..],
+        );
+        incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?
+    } else {
+        Vec::new()
+    };
+    sources.extend(modules.into_iter().map(|module| module.source));
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
     entry_module.string_conversion_contract = string_conversion_contract;
     complete_dependency_context(
@@ -180,6 +194,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
             entry,
             own: loaf_modules,
             manifest,
+            graph,
             tests,
         },
         session.loaves(),
@@ -1054,8 +1069,14 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             externs: dependencies.externs.clone(),
             search: dependencies.directories.clone(),
         };
-        write_loaf(directory, manifest, &program.modules[program.own..], &closure)
-            .map_err(|error| error.to_string())?;
+        write_loaf(
+            directory,
+            manifest,
+            &program.modules[program.own..],
+            &closure,
+            &program.graph,
+        )
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

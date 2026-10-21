@@ -5,13 +5,15 @@ from std import toml
 from std.json import JsonValue, parse
 from std.toml import TomlValue
 from features import FeatureRequest
-from graph_cache import cache_file, compiler_digest, fingerprint, publish, tree_inputs
+from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, publish, tree_inputs
 from graph_incan import inspect_incan, interface_directory
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, BuiltUnit, compile_library, ordered, read_registry_units, registry_features, rust_facet, target_configuration
+from rust_units import RustBuild, BuiltUnit, compile_library, identity, ordered, read_registry_units, registry_features, rust_facet, target_configuration
 from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitLoaf
+from home import dependency_artifact_dir
+from graph_queries import nested, text
 
 
 pub model GraphDependencies:
@@ -20,7 +22,7 @@ pub model GraphDependencies:
     pub facets: list[LocalFacet]
     pub request: RustBuild
     pub built: Dict[str, BuiltUnit]
-    pub paths: list[Path]
+    pub paths: list[GraphUnit]
     pub interfaces: Dict[str, Path]
 
 
@@ -51,7 +53,7 @@ def native_units(root: Path, facets: list[LocalFacet], request: RustBuild, toolc
     """Cache native dependency preparation by source closure and exact supplied artifacts; never emit Incan code."""
     receipt = root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile).joinpath("units.json")
     previous = libraries(receipt)?
-    mut inputs = ["incan.graph.native/1", compiler_digest(root, toolchain.driver)?, toolchain.sysroot, compiler_digest(root, toolchain.registry_units)?]
+    mut inputs = ["incan.graph.native/2", compiler_digest(root, toolchain.driver)?, toolchain.sysroot, compiler_digest(root, toolchain.registry_units)?]
     for facet in facets:
         inputs = inputs + [str(facet.features), facet.domain.value()] + tree_inputs(Path(facet.project))?
         for selected in facet.registry:
@@ -76,10 +78,10 @@ def native_units(root: Path, facets: list[LocalFacet], request: RustBuild, toolc
 
 
 pub def prepare_graph(root: Path, profile: str, features: FeatureRequest, substitutes: Dict[str, str], toolchain: Toolchain, ancestors: list[str] = []) -> Result[GraphDependencies, str]:
-    """Check Incan from source and prepare Rust libraries in dependency order, without compiling any Incan unit.
+    """Read published dependency graphs and check remaining Incan source without compiling any Incan unit.
 
     A Rust consumer of Incan requires an existing native library from its last successful build or installed
-    toolchain. That library supplies only rustc metadata: the Incan source graph always comes from current checking.
+    toolchain. That library supplies rustc metadata; a bootstrap Rust graph never substitutes for authored Incan facts.
     """
     if root.0 in ancestors:
         return Err(f"cyclic codegraph source selection: {root.0}")
@@ -88,7 +90,7 @@ pub def prepare_graph(root: Path, profile: str, features: FeatureRequest, substi
     facets = ordered(local_facets(demand, target_configuration(rustc)?, None, substitutes, true)?)?
     request = RustBuild(project=root.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?, features=features.features, default_features=features.default_features, substitutes=substitutes)
     built = native_units(root, facets, request, toolchain)?
-    checked_paths, interfaces = checked_units(facets, built, request, toolchain)?
+    checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0)?
     mut paths = checked_paths
     manifest = root.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
     document = toml.parse(manifest).map_err((error) => error.message())?
@@ -122,6 +124,13 @@ def build_native_units(root: Path, facets: list[LocalFacet], request: RustBuild,
         own = facet.project == root.0 and facet.domain == DependencyDomain.Target
         if own and len(declared.binaries) == 0:
             continue
+        if not own and declared.crate_name in previous:
+            published = previous[declared.crate_name]
+            expected = f"{declared.crate_name}-{identity(facet, request.profile)}"
+            if Path(published.directory).name() == expected:
+                built[key] = published
+                search.append(published.directory)
+                continue
         for edge in facet.local:
             if f"{edge.project}@{edge.domain.value()}" not in built:
                 return Err(f"Rust inspection of {declared.package} needs an existing native library for {edge.alias}; checking Incan produces no native artifact")
@@ -162,16 +171,51 @@ pub def unit_loaves(facet: LocalFacet, interfaces: Dict[str, Path]) -> Result[li
     return Ok(loaves)
 
 
-def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request: RustBuild, toolchain: Toolchain) -> Result[Tuple[list[Path], Dict[str, Path]], str]:
-    """Check every authored Incan library after its dependencies and retain the interfaces its consumers need."""
-    mut paths: list[Path] = []
+def compiled_directory(project: str, package: str, request: RustBuild, built: Dict[str, BuiltUnit], key: str, features: list[str], version: str) -> Result[Option[Path], str]:
+    """An Incan dependency's published graph is admitted only beside its Incan manifest, never from bootstrap-emitted Rust."""
+    mut candidates = [dependency_artifact_dir(request.project, package, request.profile), dependency_artifact_dir(project, package, request.profile)]
+    if key in built:
+        candidates.append(Path(built[key].directory))
+    for directory in candidates:
+        if directory.joinpath(f"{package}.incnlib").is_file() and directory.joinpath(f"{package}.incngraph").is_file():
+            for name in [f"lib{package.replace('-', '_')}.rlib", f"{package}.incnbody", f"{package}.native.json"]:
+                if not directory.joinpath(name).is_file():
+                    return Err(f"{package}: incomplete compiled Loaf beside its graph")
+            source = directory.joinpath(f"{package}.incnlib").read_text("utf-8", "strict").map_err((error) => error.message())?
+            manifest = parse(source).map_err((error) => error.message())?
+            if text(manifest, "name") != package or text(manifest, "version") != version:
+                return Err(f"{package}: compiled Loaf identity differs from the selected dependency")
+            provider = nested(nested(manifest, "contract_metadata"), "provider")
+            mut active: list[str] = []
+            if let Some(value) = provider.get("active_features"):
+                for item in value.expect_array().map_err((error) => error.message())?:
+                    active.append(item.expect_str().map_err((error) => error.message())?)
+            if sorted(active) != sorted(features):
+                return Err(f"{package}: compiled Loaf graph has a different feature projection")
+            return Ok(Some(directory))
+    return Ok(None)
+
+
+def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request: RustBuild, toolchain: Toolchain, inspect_root: bool) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
+    """Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces."""
+    mut paths: list[GraphUnit] = []
     mut interfaces: Dict[str, Path] = {}
     for facet in facets:
+        declared = rust_facet(facet.project, false)?
+        package = declared.package
+        own = inspect_root and facet.project == request.project and facet.domain == DependencyDomain.Target
+        if not own:
+            match compiled_directory(facet.project, package, request, built, f"{facet.project}@{facet.domain.value()}", facet.features, declared.version)?:
+                Some(directory) =>
+                    interfaces[package] = directory
+                    paths.append(GraphUnit(path=directory.joinpath(f"{package}.incngraph"), root=Path(facet.project), package=package, version=declared.version))
+                    continue
+                None => pass
         source = Path(facet.project).joinpath("src").joinpath("lib.incn")
         if not source.is_file():
             continue
         natives = unit_natives(facet, built, request)?
         path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, unit_loaves(facet, interfaces)?)?
-        interfaces[rust_facet(facet.project, false)?.package] = interface_directory(path)
-        paths.append(path)
+        interfaces[package] = interface_directory(path)
+        paths.append(GraphUnit(path=path, root=Path(facet.project), package=package, version=declared.version))
     return Ok((paths, interfaces))

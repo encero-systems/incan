@@ -3,6 +3,17 @@
 from std.json import JsonValue
 
 
+pub def query_group(kind: str) -> str:
+    """Read declaration/module identities and only the indexed edge group needed by this query."""
+    if kind == "refs":
+        return "nodes,reference"
+    if kind in ["callers", "callees"]:
+        return "nodes,call"
+    if kind == "imports":
+        return "nodes,import"
+    return "nodes"
+
+
 pub def text(value: JsonValue, key: str) -> str:
     """Read an optional presentation field; absence never becomes a proved relationship."""
     match value.get(key):
@@ -97,6 +108,22 @@ def matches(record: JsonValue, term: str) -> bool:
     return term == label or term == parts[len(parts) - 1] or term == text(record, "id") or term == text(record, "raw_id") or term == identity(record)
 
 
+def import_labels(record: JsonValue) -> list[str]:
+    """Display checked import bindings, falling back to the recorded module path when no item identity is proved."""
+    mut labels: list[str] = []
+    match nested(record, "bindings").as_array():
+        Some(bindings) =>
+            for binding in bindings:
+                if identity(binding) != "":
+                    label = display(binding)
+                    if label not in labels:
+                        labels.append(label)
+        None => pass
+    if len(labels) == 0:
+        labels.append(text(record, "path"))
+    return labels
+
+
 pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list[str]:
     """Select definitions and traverse only compiler-proven references, callers, callees or module imports."""
     mut selected: list[str] = []
@@ -150,17 +177,11 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
             hit = record_kind == "import" and text(record, "module_id") in modules
             label = text(record, "path")
             if hit:
-                match nested(record, "import_targets").as_array():
-                    Some(targets) =>
-                        for target in targets:
-                            match target.as_str():
-                                Some(name) =>
-                                    line = f"import {name} {location(record, root)}"
-                                    if line not in hits:
-                                        hits.append(line)
-                                None => pass
-                        continue
-                    None => pass
+                for name in import_labels(record):
+                    line = f"import {name} {location(record, root)}"
+                    if line not in hits:
+                        hits.append(line)
+                continue
         elif kind == "refs":
             hit = record_kind == "reference" and targets
         elif kind == "callers":

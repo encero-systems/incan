@@ -4,7 +4,7 @@
 #   src/main.incn --query callers helper
 #   src/main.incn --query callees main
 #   src/main.incn --query refs helper
-#   src/main.incn --query imports main
+#   src/main.incn --query imports main --limit 1000
 #   src/main.incn --query defs checked_helper
 #   src/main.incn --query callers checked_helper
 #   src/main.incn --query defs contextual_helper

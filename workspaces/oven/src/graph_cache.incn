@@ -6,9 +6,39 @@ from unit_freshness import file_digest
 from std.hash import sha256
 from std.encoding.hex import hexlify
 from rust::std::process import id
+from rust::std::process import Command
+from rust::std::string import String as RustString
 from rust::std::fs import rename
 from rust::std::fs import metadata
 from rust::std::time import UNIX_EPOCH
+
+
+pub model GraphUnit:
+    """One portable graph and the source root under which this consumer presents its Loaf-relative anchors."""
+
+    pub path: Path
+    pub root: Path
+    pub package: str = ""
+    pub version: str = ""
+
+
+pub def read_graph(unit: GraphUnit, driver: str, group: str) -> Result[str, str]:
+    """Decode indexed binary records for query output; only the storage reader runs, without checking or code generation."""
+    mut command = Command.new(driver)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    for argument in ["--read-codegraph", unit.path.0, unit.root.0, group]:
+        command.arg(argument)
+    result = command.output().map_err((error) => str(error))?
+    if not result.status.success():
+        return Err(output_text(result.stderr)?)
+    return output_text(result.stdout)
+
+
+def output_text(content: bytes) -> Result[str, str]:
+    """Graph query output is a UTF-8 protocol; invalid bytes refuse instead of silently replacing characters."""
+    match RustString.from_utf8(content):
+        Ok(value) => return Ok(str(value))
+        Err(_) => return Err("graph reader returned non-UTF-8 output")
 
 
 pub def fingerprint(inputs: list[str]) -> Result[str, str]:
@@ -54,12 +84,20 @@ pub def cache_file(project: Path, digest: str) -> Result[Path, str]:
     """Select a unit's immutable graph entry; only successful exports publish this path."""
     directory = project.joinpath("target").joinpath("incan").joinpath("codegraph")
     directory.mkdir(true, true).map_err((error) => error.message())?
-    return Ok(directory.joinpath(f"{digest}.jsonl"))
+    return Ok(directory.joinpath(f"{digest}.incngraph"))
 
 
 pub def publish(path: Path, text: str) -> Result[None, str]:
     """Publish a completed document by atomic rename, allowing concurrent readers to see only complete graphs."""
     temporary = Path(f"{path.0}.{id()}.tmp")
     temporary.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    rename(temporary.0, path.0).map_err((error) => str(error))?
+    return Ok(None)
+
+
+pub def publish_binary(path: Path, content: bytes) -> Result[None, str]:
+    """Publish a complete binary graph by atomic rename; graph cache files never contain JSON."""
+    temporary = Path(f"{path.0}.{id()}.tmp")
+    temporary.write_bytes(content).map_err((error) => error.message())?
     rename(temporary.0, path.0).map_err((error) => str(error))?
     return Ok(None)

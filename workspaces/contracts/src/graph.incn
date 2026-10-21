@@ -87,6 +87,8 @@ def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     invalid = invoke(incan, ["inspect", "codegraph", "."], project)?
     if invalid.code == Some(0):
         failures.append("broken source reused a checked cached graph")
+    source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    check_published_graph(incan, project)?
     return Ok(failures)
 
 
@@ -95,6 +97,12 @@ def check_identity_queries(incan: str, project: Path, document: str) -> Result[N
     records = parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
     declarations = [record for record in records if string_field(record, "record") == "declaration"]
     for declaration in declarations:
+        match declaration.get("span"):
+            Some(span) =>
+                if not string_field(span, "file").startswith(f"{project.0}/"):
+                    continue
+            None =>
+                continue
         name = string_field(declaration, "name")
         if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
             continue
@@ -105,6 +113,43 @@ def check_identity_queries(incan: str, project: Path, document: str) -> Result[N
         full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
         if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
             return Err(f"full declaration ID and short name select different callers: {name}")
+    return Ok(None)
+
+
+def check_published_graph(incan: str, project: Path) -> Result[None, str]:
+    """An explicitly built provider ships a portable binary graph; consumers read it despite unbuilt source edits."""
+    provider = project.joinpath("deps").joinpath("checked")
+    source = provider.joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    built = invoke(incan, ["build", source.0], project)?
+    if built.code != Some(0):
+        return Err(f"provider build failed: {built.stderr}")
+    graph = provider.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked").joinpath("debug").joinpath("graph_checked.incngraph")
+    data = graph.read_bytes().map_err((error) => error.message())?
+    if data[:4] != b"\x01\x00\x00\x00":
+        return Err("compiled Loaf has no version-one binary graph")
+    needle = project.0.encode("utf-8")
+    for offset in range(len(data) - len(needle) + 1):
+        if data[offset:offset + len(needle)] == needle:
+            return Err("compiled Loaf graph contains a physical project root")
+    arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
+    original = invoke(incan, arguments, project)?
+    before = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source.write_text("invalid dependency source {", "utf-8", "strict", None).map_err((error) => error.message())?
+    published = invoke(incan, arguments, project)?
+    if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
+        return Err(f"published dependency graph was rechecked from source: {published.stderr}")
+    source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    graph.write_bytes(b"\x7f\x00\x00\x00").map_err((error) => error.message())?
+    corrupt = invoke(incan, arguments, project)?
+    if corrupt.code == Some(0):
+        return Err("a corrupt published graph was silently replaced or reused")
+    graph.unlink().map_err((error) => error.message())?
+    legacy = invoke(incan, arguments, project)?
+    repeated = invoke(incan, arguments, project)?
+    if legacy.code != Some(0) or legacy.stdout != original.stdout or legacy.stdout != repeated.stdout or legacy.code != repeated.code:
+        return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
     return Ok(None)
 
 

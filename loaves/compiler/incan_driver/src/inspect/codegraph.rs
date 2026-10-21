@@ -127,6 +127,34 @@ pub fn collect_codegraph_records_with_rust(
     Ok(collect_codegraph_with_interface(path, units, allow_errors, rust)?.0)
 }
 
+/// Project a compiled library's graph from the exact checking pass and Body IR used by compilation. This boundary
+/// performs no collection, type checking or Body IR construction, and records only the owning unit's authored modules.
+pub fn collect_checked_unit_codegraph(
+    unit: &UnitDescription,
+    session: &CompilationSession,
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+    bodies: &[incan_semantics_core::body_ir::BodyIrModule],
+) -> Vec<CodegraphRecord> {
+    let package = CodegraphPackage {
+        name: Some(unit.package.clone()),
+        version: Some(unit.version.clone()),
+        root_path: Some(path_string(&unit.project_root)),
+    };
+    let mut builder = CodegraphBuilder::new(&unit.source, Some(package), false);
+    builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
+    builder.set_semantic_snapshots(analysis.semantic_snapshots().clone());
+    builder.set_lowered_declaration_facts(bodies.iter().flat_map(body_declaration_facts).collect());
+    builder.set_registry_metadata(checked_registry_metadata_by_path(analysis, modules, &unit.package));
+    builder.set_capabilities(checked_capabilities_by_path(analysis, modules));
+    builder.set_c_abi_artifacts(checked_c_abi_by_path(analysis, modules));
+    builder.seed_canonical_target_ids(modules);
+    for module in modules {
+        builder.collect_parsed_module(module, Vec::new());
+    }
+    builder.finish()
+}
+
 /// Export checked facts and, for a library entry, its checked interface from one analysis pass. The interface has
 /// no executable or native artifact claim and is intended only for checking downstream inspection units.
 pub fn collect_codegraph_with_interface(
@@ -2521,8 +2549,6 @@ fn lowered_declaration_facts(
     type_info: &incan_frontend::typechecker::TypeCheckInfo,
     session: &CompilationSession,
 ) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
-    use incan_semantics_core::semantic_digest::{body_docstring, body_without_docstring, semantic_digest};
-
     let Ok(provider_operations) = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())
     else {
         return BTreeMap::new();
@@ -2535,6 +2561,15 @@ fn lowered_declaration_facts(
     };
     let body_ir =
         incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
+    body_declaration_facts(&body_ir)
+}
+
+/// Read source-level signatures and semantic/documentation digests from frozen Body IR, without reconstructing it.
+fn body_declaration_facts(
+    body_ir: &incan_semantics_core::body_ir::BodyIrModule,
+) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
+    use incan_semantics_core::semantic_digest::{body_docstring, body_without_docstring, semantic_digest};
+
     body_ir
         .bodies
         .iter()

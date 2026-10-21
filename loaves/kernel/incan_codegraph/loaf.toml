@@ -1,4 +1,7 @@
 [dependencies]
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 

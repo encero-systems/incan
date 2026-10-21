@@ -78,7 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--check") => check(&args[1..]),
         Some("--fmt") => format(&args[1..]),
         Some("--codegraph") => codegraph::incan(&args[1..]),
+        Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
+        Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),
         _ => Err(USAGE.into()),
     }

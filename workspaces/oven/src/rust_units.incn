@@ -7,7 +7,8 @@ under the root project's target directory, named by the unit's identity: its pro
 Registry units come compiled: their rlibs by root name and the directories their dependencies live in.
 """
 
-from rust::std::process import Command
+from rust::std::process import Command, id
+from rust::std::fs import rename
 from rust::std::string import String as RustString
 from std import toml
 from std.toml import TomlValue
@@ -20,6 +21,7 @@ from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, 
 from semver_req import compare_version_order, parse_version
 from json_fields import field, strings
 from graph_cache import publish
+from toolchain import load_toolchain
 
 
 @derive(Eq)
@@ -420,7 +422,11 @@ pub def compile_library(
     mut arguments = library_arguments(declared)
     arguments = arguments + ["--out-dir", directory.0, "-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
     arguments = arguments + linking(facet, request, built, search)?
-    invoke_rustc(request.rustc, arguments, package_environment(facet.project, declared, declared.crate_name), false, declared.crate_name)?
+    toolchain = load_toolchain()?
+    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
+    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
+    invoke_rustc(toolchain.driver, graph_arguments, package_environment(facet.project, declared, declared.crate_name), false, declared.crate_name)?
+    rename(pending.0, directory.joinpath(f"{declared.package}.incngraph").0).map_err((error) => str(error))?
     for candidate in directory.iterdir().map_err((error) => error.message())?:
         name = candidate.name()
         if name.startswith(f"lib{declared.crate_name}-{unit}.") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
