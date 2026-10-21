@@ -128,14 +128,15 @@ fn parameters_of(model: &GenericModelDeclaration, bound: Option<&[&str]>, span: 
     }
 }
 
-/// Whether an authored field carries a binder; concrete field carriers contain no open parameters.
+/// Whether a field requires its binder's Clone or Debug implementation. Function pointers implement both traits
+/// independently of their input and output types, and the compiler-private marker never imposes either bound.
 fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
     match ty {
         GenericLayoutType::Parameter(name) => name == parameter,
         GenericLayoutType::Applied(_, arguments) | GenericLayoutType::Tuple(arguments) => {
             arguments.iter().any(|argument| uses_parameter(argument, parameter))
         }
-        GenericLayoutType::Concrete(_) => false,
+        GenericLayoutType::Concrete(_) | GenericLayoutType::FunctionPointer(_) => false,
     }
 }
 
@@ -150,6 +151,21 @@ fn layout_type(layout: &GenericLayoutType, span: Span) -> Box<ast::Ty> {
             span,
             tokens: None,
         }),
+        GenericLayoutType::FunctionPointer(signature) => {
+            let Some((result, parameters)) = signature.split_last() else {
+                unreachable!("preflight rejects empty generic function-pointer signatures");
+            };
+            Box::new(ast::Ty {
+                id: ast::DUMMY_NODE_ID,
+                kind: declarations::function_pointer_signature_ast(
+                    parameters.iter().map(|parameter| layout_type(parameter, span)),
+                    layout_type(result, span),
+                    span,
+                ),
+                span,
+                tokens: None,
+            })
+        }
         GenericLayoutType::Applied(name, arguments) => {
             let mut segments = name.split("::");
             let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));

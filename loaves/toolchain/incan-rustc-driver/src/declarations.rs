@@ -506,11 +506,23 @@ fn function_pointer_ast(signature: &[PlanType], span: Span) -> ast::TyKind {
     let Some((result, parameters)) = signature.split_last() else {
         unreachable!("preflight rejects empty function-pointer signatures");
     };
+    function_pointer_signature_ast(
+        parameters.iter().map(|parameter| ty(parameter, span)),
+        ty(result, span),
+        span,
+    )
+}
+
+/// Declare one ordinary native function-pointer signature for concrete or binder-preserving field types.
+pub(crate) fn function_pointer_signature_ast(
+    parameters: impl Iterator<Item = Box<ast::Ty>>,
+    result: Box<ast::Ty>,
+    span: Span,
+) -> ast::TyKind {
     let inputs = parameters
-        .iter()
-        .map(|parameter| ast::Param {
+        .map(|ty| ast::Param {
             attrs: ThinVec::new(),
-            ty: ty(parameter, span),
+            ty,
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
                 kind: ast::PatKind::Wild,
@@ -528,7 +540,7 @@ fn function_pointer_ast(signature: &[PlanType], span: Span) -> ast::TyKind {
         generic_params: ThinVec::new(),
         decl: Box::new(ast::FnDecl {
             inputs,
-            output: ast::FnRetTy::Ty(ty(result, span)),
+            output: ast::FnRetTy::Ty(result),
         }),
         decl_span: span,
     }))

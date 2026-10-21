@@ -18,10 +18,10 @@ pub model NominalInstance:
 
 
 pub def template_base(declaration: &NominalDeclaration) -> str:
-    """The base a generic nominal's uses spell: a Rust item's path (its opaque name, DD-0006), else its declared name."""
+    """Match checked nominal uses by their retained carrier key; native owners retain their public Rust path."""
     match declaration.canonical.origin:
         SymbolOrigin.RustCrate(path) => return "::".join(path)
-        _ => return str(declaration.canonical.declaration_name)
+        _ => return declaration.carrier_name()
 
 
 pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:

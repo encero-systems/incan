@@ -7,6 +7,7 @@ use crate::typechecker::RustCheckedCall;
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
 /// The signature is already instantiated by checking. Source-local declarations supply the canonical carrier for an
 /// inferred model argument even when no annotation introduced that name into the checker's type-position map.
+/// Native SDK calls have no compiled Incan declaration frame.
 pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclaration]) -> Vec<bir::LoafCallable> {
     let mut identities = parameter_types::retained_type_identities(facts);
     for declaration in locals {
@@ -50,6 +51,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
             projected
         };
         let declaration = bir::LoafCallable {
+            declaration_frame: None,
             canonical,
             item: call.path.clone(),
             parameters: call.parameters.iter().map(|parameter| checked(&parameter.ty)).collect(),
