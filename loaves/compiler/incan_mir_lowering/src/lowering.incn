@@ -209,6 +209,7 @@ from decorator_caches import (
 )
 from traits import (
     is_default_body,
+    receiver_method_identity,
     method_index,
     owner_method_index,
     receiver_fills_slot,
@@ -3357,6 +3358,8 @@ def lower_method_call(
         return Ok(None)
     if lower_value_enum_ordinal(module, builder, target, arguments, destination, span)?:
         return Ok(None)
+    if lower_compiled_implementation(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
     if retained_iterator_default(module, builder, target, arguments, span):
         return lower_retained_method_call(module, builder, target, arguments, destination, span)
     if lower_selected_library_method(module, builder, target, arguments, destination, span)?:
@@ -3411,6 +3414,32 @@ def lower_method_call(
                     return lower_library_method(module, builder, callable, target, arguments, destination, span)
             None => pass
     return lower_retained_method_call(module, builder, target, arguments, destination, span)
+
+
+def lower_compiled_implementation(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Call a checked adopter's compiled member through its declaration record, using the same slot selection as local bodies."""
+    selected = receiver_method_identity(
+        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
+    )?
+    if selected == target.canonical:
+        return Ok(false)
+    for callable in module.loaf_callables:
+        if selected != Some(callable.canonical):
+            continue
+        mut implementation = target.clone()
+        implementation.canonical = selected
+        implementation.native_trait_delegation = None
+        implementation.loaf_trait = None
+        lower_library_method(module, builder, callable, implementation, arguments, destination, span)?
+        return Ok(true)
+    return Ok(false)
 
 
 def concrete_iterator_collect(

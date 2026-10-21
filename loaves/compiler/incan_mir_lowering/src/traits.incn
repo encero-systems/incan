@@ -312,16 +312,27 @@ pub def method_index(
     return owner_method_index(module, target, owner, intrinsics)
 
 
-pub def owner_method_index(
+pub def receiver_method_identity(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Result[Option[CanonicalSymbolId], str]:
+    """Read the checked implementation for a concrete receiver; other receiver kinds keep their ordinary call path."""
+    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+        Err(_error) => return Ok(None)
+        Ok(owner) => return Ok(Some(owner_method_identity(module, target, owner)?))
+
+
+def owner_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,
     owner: PlanType,
-    intrinsics: list[EnumDeclaration],
-) -> Result[int, str]:
-    """
-    Select one checked implementation for a known receiver; several trait instantiations need an explicit call-site selection.
-    A missing executable body stays refused by its selected method name; the name never selects an implementation.
-    """
+) -> Result[CanonicalSymbolId, str]:
+    """Select the retained implementation once for both compiled Loaf calls and locally instantiated method bodies."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
@@ -350,6 +361,20 @@ pub def owner_method_index(
         Some(implementation) =>
             canonical = Some(implementation.implementation.clone())
         None => pass
+    match canonical:
+        Some(identity) => return Ok(identity.clone())
+        None => return Err("unsupported Body IR unproven Method")
+
+
+pub def owner_method_index(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    owner: PlanType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[int, str]:
+    """Find the selected body's exact receiver frame; a compiled Loaf implementation uses its callable record instead."""
+    identity = owner_identity(module, owner)?
+    canonical = Some(owner_method_identity(module, target, owner)?)
     mut selected_index = -1
     for index in range(len(module.bodies)):
         body = module.bodies[index]
