@@ -140,6 +140,10 @@ impl TypeChecker {
         self.type_info.rust.checked_layouts.insert(
             path.to_owned(),
             RustCheckedLayout {
+                is_copy: self.derive_support(
+                    &ResolvedType::RustPath(path.into()),
+                    incan_lang::lang::derives::DeriveId::Copy,
+                ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
                 type_parameters: info.type_params.clone(),
                 fields,
                 field_identities,

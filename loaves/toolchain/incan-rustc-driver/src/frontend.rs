@@ -401,7 +401,7 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
             if !matches!(
                 declaration.canonical.origin,
                 incan_semantics_core::SymbolOrigin::RustCrate(_)
-            ) || declaration.fields.is_empty()
+            ) || (declaration.fields.is_empty() && declaration.derives.is_empty())
             {
                 module.nominal_declarations.push(declaration);
                 continue;

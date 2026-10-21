@@ -43,6 +43,9 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
                 .map(|field| super::parameter_types::checked_parameter_type(&field.ty, facts, &layout.type_parameters))
                 .collect();
             declaration.field_public = vec![true; declaration.fields.len()];
+            if layout.is_copy {
+                declaration.derives.push("Copy".into());
+            }
             Some(declaration)
         })
         .collect()

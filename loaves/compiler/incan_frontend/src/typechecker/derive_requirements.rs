@@ -32,7 +32,6 @@ use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceDeriveSupport, SurfaceTypeId};
-use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
 use incan_semantics_core::CanonicalSymbolId;
@@ -260,10 +259,12 @@ impl TypeChecker {
         }
     }
 
-    /// Admit native Clone only from a complete metadata record's unconditional implementation. Conditional templates
-    /// and absent facts remain unknown; a type name or the presence of a similarly named method is never proof.
+    /// Admit native Clone and Copy only from a complete metadata record's unconditional implementation. Conditional
+    /// templates and absent facts remain unknown; a type name or the presence of a similarly named method is never
+    /// proof.
     fn native_derive_support(&self, ty: &ResolvedType, derive: DeriveId) -> DeriveSupport {
-        if derive != DeriveId::Clone {
+        let paths = derives::rust_ownership_trait_paths(derive);
+        if paths.is_empty() {
             return DeriveSupport::Unknown;
         }
         let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
@@ -272,7 +273,7 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
             return DeriveSupport::Unknown;
         };
-        let proven = builtin_traits::rust_paths(TraitId::Clone).iter().any(|path| {
+        let proven = paths.iter().any(|path| {
             let definition = self.rust_definition_for_path(path);
             Self::rust_type_metadata_implements_trait(&metadata, path, definition.as_deref())
         });

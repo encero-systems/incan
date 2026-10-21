@@ -2025,9 +2025,9 @@ impl TypeChecker {
         crate::symbols::canonical_builtin_member_identity(owner, member)
     }
 
-    /// Copy a shared native function-pointer reference through the builtin Clone contract. Capturing callable values
-    /// and exclusive references do not acquire pointer-copy semantics from an arrow-shaped source type.
-    fn clone_function_reference(
+    /// Copy a referenced scalar or shared function pointer through the builtin Clone contract. Capturing callable
+    /// values and exclusive function references do not acquire pointer-copy semantics from their source type.
+    fn clone_reference_value(
         &mut self,
         receiver: &ResolvedType,
         method: &str,
@@ -2035,10 +2035,20 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> Option<ResolvedType> {
-        let ResolvedType::Ref(inner) = receiver else {
+        let (ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)) = receiver else {
             return None;
         };
-        if !matches!(inner.as_ref(), ResolvedType::Function(_, _)) || method != trait_bounds::rust::CLONE_METHOD {
+        let scalar = matches!(
+            inner.as_ref(),
+            ResolvedType::Int
+                | ResolvedType::Float
+                | ResolvedType::Numeric(_)
+                | ResolvedType::Bool
+                | ResolvedType::Unit
+        );
+        let pointer =
+            matches!(receiver, ResolvedType::Ref(_)) && matches!(inner.as_ref(), ResolvedType::Function(_, _));
+        if !(scalar || pointer) || method != trait_bounds::rust::CLONE_METHOD {
             return None;
         }
         if !self.validate_rust_method_type_arg_arity(method, &[], type_args, span) {
@@ -2046,7 +2056,7 @@ impl TypeChecker {
         }
         if !args.is_empty() {
             self.errors
-                .push(errors::builtin_arity("function reference clone", 0, args.len(), span));
+                .push(errors::builtin_arity("reference clone", 0, args.len(), span));
             return Some(ResolvedType::Unknown);
         }
         self.type_info.record_resolved_identity(
@@ -3392,6 +3402,20 @@ impl TypeChecker {
         }
         if method.signature.is_async {
             native_result = ResolvedType::Generic("Awaitable".into(), vec![native_result]);
+        }
+        if receiver.is_some()
+            && owner.type_params.is_empty()
+            && owner.variants.is_empty()
+            && parameters
+                .first()
+                .is_some_and(|parameter| !matches!(parameter.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+            && self.derive_support(&ResolvedType::RustPath(path.into()), DeriveId::Copy) == DeriveSupport::Supported
+        {
+            self.retain_rust_layout(path, owner);
+            self.type_info
+                .rust
+                .copy_receivers
+                .insert((span.start, span.end), path.into());
         }
         let result_item_path = self.rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path);
         self.type_info.rust.checked_calls.insert(
@@ -5855,6 +5879,7 @@ impl TypeChecker {
                                 .insert((span.start, span.end), metadata.canonical_path);
                             return self.resolved_type_from_rust_display(&type_display);
                         }
+                        self.retain_rust_variant_construction(path, field, &[], &params, span);
                         return ResolvedType::RustPath(path.to_string());
                     }
                     return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
@@ -7520,7 +7545,7 @@ impl TypeChecker {
             }
         }
 
-        if let Some(ret) = self.clone_function_reference(&base_ty, method, type_args, args, span) {
+        if let Some(ret) = self.clone_reference_value(&base_ty, method, type_args, args, span) {
             return ret;
         }
         if let Some(ret) =

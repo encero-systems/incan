@@ -436,7 +436,8 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Check the parameter-local convention and all nodes in one function.
+/// Check the parameter-local convention and all nodes in one function. Exact shared scalar inputs borrow caller
+/// storage; return types keep their separate lifetime and representation gate.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
     span(&function.span)?;
     if std::iter::once(&function.return_type)
@@ -473,6 +474,10 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             || matches!(
                 scalar(&parameter.ty),
                 Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
+            )
+            || matches!(
+                scalar(&parameter.ty),
+                Scalar::ScalarRef(ref elements) if matches!(elements.as_slice(), [inner] if scalar_referent(inner))
             ))
             || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
         {
@@ -798,6 +803,16 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(plan, function, value)?;
+            if let Scalar::Model(index) = ty
+                && plan
+                    .models
+                    .get(usize::try_from(index).map_err(|_| invalid(function, "invalid Copy model index"))?)
+                    .is_some_and(|model| {
+                        !model.library_item.is_empty() && model.derives.iter().any(|derive| derive == "Copy")
+                    })
+            {
+                return Ok(ty);
+            }
             if matches!(ty, Scalar::Enum(index) if enum_declaration(plan, index).is_none_or(|value| !value.derives.iter().any(|name| name == "Copy")))
             {
                 return Err(invalid(function, "non-Copy enum cannot be copied"));
@@ -2477,11 +2492,11 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     for declaration in &plan.models {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
-        // A stdlib layout's derives belong to the crate that compiled it; the plan records none of its own.
+        // A native Copy capability is verified against the linked type; no derives are synthesized on its alias.
         let derives_valid = if declaration.library_item.is_empty() {
             valid_nominal_derives(&declaration.derives, tuple)
         } else {
-            declaration.derives.is_empty()
+            declaration.derives.is_empty() || declaration.derives == ["Copy"]
         };
         if !identifier(&declaration.name)
             || !names.insert(declaration.name.clone())

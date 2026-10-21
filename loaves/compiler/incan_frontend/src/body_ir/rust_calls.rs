@@ -201,10 +201,19 @@ impl BodyBuilder<'_, '_> {
                 ..DeclaredSlot::from_checked_param(parameter)
             })
             .collect();
-        let (operands, binding) = match self.bind_declared_args(&call.path, Some(slots), &arguments, scope, out) {
+        let (mut operands, binding) = match self.bind_declared_args(&call.path, Some(slots), &arguments, scope, out) {
             Ok(bound) => bound,
             Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
         };
+        if self.type_info.rust.copy_receivers.contains_key(&(span.start, span.end))
+            && let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = operands.first_mut()
+        {
+            read.fact = bir::OwnershipFact::Copy;
+            read.last_use = false;
+            if let Some(local) = read.place.local_id() {
+                self.moved_out.remove(&local);
+            }
+        }
         self.emit_checked_rust_call(&call, operands, binding, span, scope, out)
     }
 

@@ -142,8 +142,10 @@ pub def lower_model_declarations(
             fields = library_fields(module, declaration, file, intrinsics)
             if len(fields) != len(declaration.fields):
                 field_public = []
-            # The SDK crate already derives and implements everything its layout carries.
+            # Native Copy is a checked capability, verified again against rustc rather than derived on this alias.
             derives = []
+            if "Copy" in declaration.derives:
+                derives.append("Copy")
         else:
             # Only a plain newtype takes a propagated serde derive; another reached nominal keeps its own derives.
             if len(declaration.fields) == 1 and str(declaration.fields[0]) == "0":

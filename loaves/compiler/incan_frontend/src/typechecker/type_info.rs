@@ -947,6 +947,9 @@ pub struct RustInteropArtifacts {
     /// Declaration-order native type binders and checked defaults. Body IR completes opaque owner arguments from
     /// these facts so an omitted default and its explicit spelling never create different storage arities.
     pub owner_parameters: HashMap<String, Vec<(String, Option<ResolvedType>)>>,
+    /// Native by-value receiver calls whose nongeneric owner has an unconditional metadata-selected Copy
+    /// implementation. The adapter verifies that capability against the exact linked native layout.
+    pub copy_receivers: HashMap<(usize, usize), String>,
     /// Public native field layouts selected during checking. Hidden fields remain absent from metadata and the
     /// adapter refuses incomplete layouts before any construction or projection is emitted.
     pub checked_layouts: HashMap<String, RustCheckedLayout>,
@@ -1076,6 +1079,8 @@ pub struct RustInteropArtifacts {
 /// A metadata-selected native struct layout, generic over its declaring type parameters.
 #[derive(Debug, Clone)]
 pub struct RustCheckedLayout {
+    /// An unconditional native Copy implementation retained with the owner, independent of which module uses it.
+    pub is_copy: bool,
     /// Declared type binders; lifetime arguments carry no layout and are absent.
     pub type_parameters: Vec<String>,
     /// Ordered public field names and exact native type templates.

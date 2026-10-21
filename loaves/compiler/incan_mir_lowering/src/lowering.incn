@@ -251,7 +251,7 @@ from model_values import (
 )
 from enum_values import serialize_enum_operand
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
-from enum_display import display_enum_operand, native_enum_text
+from enum_display import display_enum_operand, native_enum_text, native_enum_owner
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import (
     value_variant,
@@ -891,7 +891,7 @@ def native_enum_equality(
     right: Place,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Use a published enum's retained PartialEq or a native Option/Result implementation so payloads participate in equality."""
+    """Borrow native enums and Option/Result for their Rust equality implementation; published source enums retain their checked derives."""
     if operator != BinOp.Eq and operator != BinOp.Ne:
         return Ok(None)
     ty = place_type(builder.locals, left)
@@ -906,17 +906,18 @@ def native_enum_equality(
         _ => return Ok(None)
     if owner < 0:
         return Ok(None)
+    native = native_enum_owner(builder, owner)
     if owner < len(builder.enums):
         declaration = builder.enums[owner]
         if library_enum_item(declaration) == "":
             return Ok(None)
-        if "PartialEq" not in declaration.derives:
+        if not native and "PartialEq" not in declaration.derives:
             return Err("unsupported Body IR SDK enum comparison without retained PartialEq")
         mut payload = false
         for variant in declaration.variants:
             if len(variant.fields) != 0:
                 payload = true
-        if not payload:
+        if not payload and not native:
             return Ok(None)
     else:
         index = owner - len(builder.enums)
@@ -927,11 +928,13 @@ def native_enum_equality(
         borrowed = temporary(builder, reference, span)
         builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
         operands.append(read_place(borrowed, false, span))
-    path = "core::cmp::PartialEq::eq"
+    mut path = "core::cmp::PartialEq::eq"
+    if native and operator == BinOp.Ne:
+        path = "core::cmp::PartialEq::ne"
     builder.externals.append(ExternalFunction(path=path, type_arguments=[ty, ty], parameters=[reference, reference], return_type=PlanType.Bool, span=span))
     output = temporary(builder, PlanType.Bool, span)
     terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
-    if operator == BinOp.Ne:
+    if operator == BinOp.Ne and not native:
         negated = temporary(builder, PlanType.Bool, span)
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
