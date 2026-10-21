@@ -1,0 +1,7 @@
+"""Source vocabulary backed by exported Rust derive macro facts."""
+rust.module("serde")
+
+
+pub trait Serialize:
+    """Select serde's derive without predicting its expansion."""
+    pass

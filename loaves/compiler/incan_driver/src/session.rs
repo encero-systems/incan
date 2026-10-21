@@ -424,12 +424,41 @@ impl CompilationSession {
     }
 }
 
-/// The Rust paths a unit's modules import (`rust::…`), whose facts its checking reads.
+/// The Rust paths a unit imports, including potential derive exports named by traits in a `rust.module` facade.
+/// Missing exports supply no derive permission; checking still requires an inspected derive macro item.
 fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
-    use incan_frontend::ast::{Declaration, ImportKind};
+    use incan_frontend::ast::{Declaration, DecoratorArg, Expr, ImportKind, Literal};
     let mut paths = BTreeSet::new();
     for module in modules {
+        if let Some(rust_module) = &module.ast.rust_module_path {
+            for declaration in &module.ast.declarations {
+                if let Declaration::Trait(trait_) = &declaration.node {
+                    paths.insert(format!("{}::{}", rust_module.node, trait_.name));
+                }
+            }
+        }
         for declaration in &module.ast.declarations {
+            let decorators = match &declaration.node {
+                Declaration::Model(value) => value.decorators.as_slice(),
+                Declaration::Class(value) => value.decorators.as_slice(),
+                Declaration::Newtype(value) => value.decorators.as_slice(),
+                Declaration::Enum(value) => value.decorators.as_slice(),
+                Declaration::Trait(value) => value.decorators.as_slice(),
+                _ => &[],
+            };
+            for decorator in decorators {
+                if decorator.node.path.segments != ["rust", "derive"] {
+                    continue;
+                }
+                for argument in &decorator.node.args {
+                    if let DecoratorArg::Positional(expression) = argument
+                        && let Expr::Literal(Literal::String(path)) = &expression.node
+                        && path.contains("::")
+                    {
+                        paths.insert(path.clone());
+                    }
+                }
+            }
             let Declaration::Import(import) = &declaration.node else {
                 continue;
             };

@@ -533,6 +533,7 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
         &model.decorators,
         type_info.declarations.body_ir_model_derives.get(&model.name),
         type_info.declarations.rust_native_derive_types.contains(&model.name),
+        type_info,
     ) && has_direct_replacement_model_shape(model, Some(type_info))
 }
 
@@ -546,6 +547,7 @@ fn has_checked_native_derives(
     decorators: &[ast::Spanned<ast::Decorator>],
     selection: Option<&Vec<String>>,
     rust_derives: bool,
+    type_info: &TypeCheckInfo,
 ) -> bool {
     let Some(names) = selection else {
         return false;
@@ -557,23 +559,24 @@ fn has_checked_native_derives(
                 && derive.type_args.is_empty()
                 && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"])))
     }) && names.iter().all(|name| {
-        matches!(
-            name.as_str(),
-            "Debug"
-                | "Clone"
-                | "Copy"
-                | "Eq"
-                | "PartialEq"
-                | "Hash"
-                | "Ord"
-                | "PartialOrd"
-                | "Default"
-                | "Display"
-                | "FieldInfo"
-                | "IncanClass"
-                | "serde::Serialize"
-                | "serde::Deserialize"
-        )
+        type_info.derivations.native_macro_paths.contains(name)
+            || matches!(
+                name.as_str(),
+                "Debug"
+                    | "Clone"
+                    | "Copy"
+                    | "Eq"
+                    | "PartialEq"
+                    | "Hash"
+                    | "Ord"
+                    | "PartialOrd"
+                    | "Default"
+                    | "Display"
+                    | "FieldInfo"
+                    | "IncanClass"
+                    | "serde::Serialize"
+                    | "serde::Deserialize"
+            )
     })
 }
 
@@ -750,13 +753,13 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 /// method partials require additional representation facts and remain outside this profile. Bare and module-qualified
 /// JSON protocol derives use the checker's canonical serde selections, as on models.
 pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
-    let selections = newtype_derives::checked_newtype_derives(newtype, type_info);
+    let selections = type_info.declarations.body_ir_newtype_derives.get(&newtype.name);
     let Some(facts) = type_info.declarations.newtype_construction.get(&newtype.name) else {
         return false;
     };
     if (!facts.constraints.is_empty() || facts.checked_constructor.is_some())
         && selections
-            .iter()
+            .into_iter()
             .flatten()
             .chain(facts.automatic_derives.iter())
             .any(|selection| selection == "serde::Deserialize")
@@ -767,8 +770,9 @@ pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_in
     !newtype.is_rusttype
         && has_checked_native_derives(
             &newtype.decorators,
-            selections.as_ref(),
+            selections,
             type_info.declarations.rust_native_derive_types.contains(&newtype.name),
+            type_info,
         )
         && newtype.rebindings.iter().all(|rebinding| {
             matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
@@ -805,7 +809,8 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
     has_checked_native_derives(
         &class.decorators,
         type_info.declarations.class_derives.get(&class.name),
-        false,
+        type_info.declarations.rust_native_derive_types.contains(&class.name),
+        type_info,
     ) && (class.extends.is_none()
         || type_info
             .declarations
@@ -880,6 +885,7 @@ pub fn has_direct_native_enum_derives(value: &ast::EnumDecl, type_info: &TypeChe
         .is_some_and(|names| {
             names.iter().all(|name| {
                 (name == "Display" && value.value_type.is_none())
+                    || type_info.derivations.native_macro_paths.contains(name)
                     || matches!(
                         name.as_str(),
                         "Debug"
@@ -2021,7 +2027,6 @@ mod match_;
 mod checked_json;
 mod newtype_string_conversion;
 pub use newtype_string_conversion::compilation_string_conversion_contract;
-mod newtype_derives;
 
 mod newtype_constraints;
 mod newtype_field_ingress;

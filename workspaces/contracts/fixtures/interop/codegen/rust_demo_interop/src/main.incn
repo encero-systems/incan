@@ -1,4 +1,4 @@
-# behavior: the Rust interop contracts the retired codegen tests described through synthetic metadata hold over a real in-fixture crate: boxed variant payloads from every argument shape, a borrowed handle, owner-specialized and named-field constructors, a tuple-struct constructor, an owned mutable parameter, projected mutable tuple leaves and their unprojected control, two projected type arguments, a projection inside a trait method, a derived Component, an f32 boundary, keyword-spelled fields, a borrowing builder and client, a nested associated call, a trait method through its import, trait-qualified receiver modes, and a capturing closure passed to a crate method
+# behavior: Rust interop preserves constructors, borrowed and mutable arguments, projections, trait-qualified calls, callbacks, and exported derive macros selected through direct imports or a rust.module facade
 # expect-stdout:
 #   1 2 3 2
 #   7
@@ -21,6 +21,7 @@
 #   3 true 3
 #   3 true 3
 #   true
+#   8
 
 from rust::demo import (
     Builder,
@@ -54,6 +55,7 @@ from rust::demo import (
 )
 from rust::demo_derive import Component as ComponentMacro
 from rust::client_probe import Client
+from native_macros import Component as NativeComponent
 
 
 def identity(value: int) -> int:
@@ -113,6 +115,17 @@ pub def inspect_static(values: FooBar[Static]) -> int:
 @rust.derive(ComponentMacro)
 model Velocity:
     x: f32
+
+
+@derive(NativeComponent)
+model FacadeComponent:
+    """Select a dependency's exported derive through its source facade and an alias."""
+    value: int
+
+
+@derive(NativeComponent)
+type FacadeWrapper = newtype int:
+    """Forward the same checked macro to a tuple newtype declaration."""
 
 
 pub def inspect_velocity(mut values: FooBar[Velocity]) -> int:
@@ -239,3 +252,4 @@ def main() -> None:
     match evaluate(Expression(seed=1), CfgSnapshot(target="x")):
         Some(value) => println(value)
         None => println("none")
+    println(FacadeComponent(value=5).value + FacadeWrapper(3).0)

@@ -8571,9 +8571,15 @@ impl TypeChecker {
     /// declaration itself is not imported as a symbol.
     fn register_dependency_derivable_metadata(&mut self, module_name: &str, module_ast: &Program) {
         let mut module_paths = vec![module_name.to_string()];
-        let dotted_module_path = module_name.replace('_', ".");
-        if dotted_module_path != module_name {
-            module_paths.push(dotted_module_path);
+        if let Some(segments) = self.canonical_owner_segments(module_name) {
+            let dotted = segments.join(".");
+            if !module_paths.contains(&dotted) {
+                module_paths.push(dotted);
+            }
+            let public = std::iter::once("std".to_owned()).chain(segments).collect::<Vec<_>>();
+            if self.owns_standard_module(&public) {
+                module_paths.push(public.join("."));
+            }
         }
         let traits = Self::derivable_traits_from_program(module_ast);
         if !traits.is_empty() {
@@ -8593,7 +8599,13 @@ impl TypeChecker {
                         .insert(format!("{module_path}.{}", tr.name), info.clone());
                 }
             }
-            let paths = Self::rust_derive_paths_from_trait(tr);
+            let mut paths = Self::rust_derive_paths_from_trait(tr);
+            if paths.is_empty()
+                && let Some(module) = &module_ast.rust_module_path
+                && let Some(path) = self.checked_native_derive_macro(&format!("{}::{}", module.node, tr.name))
+            {
+                paths.push(path);
+            }
             if paths.is_empty() {
                 continue;
             }
