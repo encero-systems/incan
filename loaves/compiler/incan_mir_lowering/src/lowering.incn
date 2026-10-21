@@ -215,7 +215,7 @@ from traits import (
     receiver_fills_retained_slot,
     validate_static_receiver,
 )
-from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
+from decls import lower_model_declarations, publish_local_layouts, static_slot, static_accessors, library_item, library_enum_item
 from fallible_factories import NativeFactory, fallible_factory, retain_factory_callable_storage
 from iterator_methods import standard_protocol as standard_iterator_protocol
 from model_lists import model_list_read, structural_prefix, prefix_place
@@ -480,7 +480,7 @@ def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
             return Err("invalid Body IR normal enum declaration identity")
     for declaration in module.nominal_declarations:
         if not module.is_well_formed_nominal_declaration(declaration):
-            return Err("invalid Body IR nominal declaration identity")
+            return Err(f"invalid Body IR nominal declaration identity {module.module_id.path()}::{declaration.name}")
     for declaration in module.fieldless_enum_declarations:
         if not module.is_well_formed_fieldless_enum_declaration(declaration):
             return Err("invalid Body IR fieldless enum declaration identity")
@@ -6919,14 +6919,7 @@ def lowered_plan(
     for declaration in intrinsics:
         enums.append(declaration)
     if library:
-        # A private type can occur in a public callable's signature or default. Its canonical ABI item is exported;
-        # source visibility remains the manifest's checked public surface.
-        for index in range(len(models)):
-            if models[index].library_item == "":
-                models[index].public = true
-        for index in range(len(enums)):
-            if enums[index].library_item == "":
-                enums[index].public = true
+        publish_local_layouts(models, enums)
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
     mut exports: list[PlanExport] = []
