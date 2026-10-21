@@ -300,7 +300,13 @@ impl TypeChecker {
                         );
                         let identity = self.type_info.resolved_identity(callee.span).cloned();
                         self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
-                        self.retain_body_ir_async_call_target(&info, span, callee.span, errors_before_call);
+                        self.retain_body_ir_async_call_target(
+                            info.is_async,
+                            &source_name,
+                            span,
+                            callee.span,
+                            errors_before_call,
+                        );
                         result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => self
@@ -412,7 +418,7 @@ impl TypeChecker {
                     // Body IR never recovers it from the import's local name.
                     self.record_direct_callee_identity(name, callee.span);
                 }
-                self.retain_body_ir_surface_call_arguments(name, args, span, errors_before_builtin);
+                self.retain_body_ir_surface_call(name, args, span, callee.span, errors_before_builtin);
                 return result;
             }
 
@@ -561,7 +567,7 @@ impl TypeChecker {
                         let result =
                             self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
                         self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
-                        self.retain_body_ir_async_call_target(&func_info, span, callee.span, first_error);
+                        self.retain_body_ir_async_call_target(func_info.is_async, name, span, callee.span, first_error);
                         if let Some(declaration) = declaration {
                             self.attach_related_declaration_to_new_errors(first_error, &declaration);
                         }

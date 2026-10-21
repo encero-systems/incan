@@ -6725,7 +6725,7 @@ impl TypeChecker {
                         );
                         let identity = self.type_info.resolved_identity(span).cloned();
                         self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
-                        self.retain_body_ir_async_call_target(&info, span, span, errors_before_call);
+                        self.retain_body_ir_async_call_target(info.is_async, method, span, span, errors_before_call);
                         result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => {

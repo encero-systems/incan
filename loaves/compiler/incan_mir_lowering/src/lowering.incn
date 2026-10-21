@@ -6849,7 +6849,7 @@ def lowered_plan(
             emitted_frames.append(body.clone())
             append_synthesized(functions, synthesized)?
             if body.is_async and function_name(context, body) == "main":
-                entry_function, entry_constructor, entry_runtime = async_entry(function)
+                entry_function, entry_constructor, entry_runtime = async_entry(context, function, intrinsics)?
                 functions.append(entry_function)
                 functions.append(entry_constructor)
                 _ = merge_externals(externals, [entry_runtime])?
@@ -7470,7 +7470,7 @@ def lower_function(
     declared_type = return_representation(body, declared_carrier)?
     return_type = producer_return_type(module, body, declared_type, intrinsics)?
     if function_name(module, body) == "main" and return_type != PlanType.Unit:
-        if body.is_async or (return_type != PlanType.Int and not entry_result(module, return_type, intrinsics)):
+        if (body.is_async or return_type != PlanType.Int) and not entry_result(module, return_type, intrinsics):
             return Err("unsupported Body IR non-unit native main")
         if len(body.params) != 0:
             return Err("unsupported Body IR non-unit native main parameters")

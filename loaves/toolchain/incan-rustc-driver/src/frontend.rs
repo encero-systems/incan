@@ -156,6 +156,12 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
                 .flat_map(|info| info.calls.body_ir_reexport_calls.values())
                 .map(|call| call.canonical.clone()),
         )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
+        )
         // A library unit's own declarations carry its package identity; they compile here, never from a Loaf.
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),

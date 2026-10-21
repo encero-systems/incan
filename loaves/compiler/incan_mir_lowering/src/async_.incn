@@ -245,25 +245,33 @@ pub def integer_entry(body: Function) -> Function:
     )
 
 
-pub def async_entry(body: Function) -> tuple[Function, Function, ExternalFunction]:
-    """Run the planned main coroutine through the same SDK executor and runtime initialization boundary as legacy."""
+pub def async_entry(module: &BodyIrModule, body: Function, intrinsics: list[EnumDeclaration]) -> Result[tuple[Function, Function, ExternalFunction], str]:
+    """Return the coroutine's checked output through native main, preserving Result termination after executor setup."""
     span = body.span
-    future = PlanType.Future([PlanType.Unit])
-    constructor = Function(
-        name="__incan_main_future",
-        parameters=[],
-        return_type=future,
-        locals=[Local(ty=future, span=span)],
-        blocks=[plan_block([], TerminatorKind.Unreachable, span)],
-        span=span,
-        future_callee=Some(Callee(kind=CalleeKind.Planned(body.name), span=span)),
-    )
-    path = "incan_native_runtime::run_future_entry"
+    future = PlanType.Future([body.return_type])
+    constructor = boxed_future_constructor("__incan_main_future", CalleeKind.Planned(body.name), [], body.return_type, span)
+    mut path = "incan_native_runtime::run_future_entry"
+    mut arguments = [future]
+    if body.return_type != PlanType.Unit:
+        match body.return_type:
+            PlanType.Enum(owner, _name) =>
+                index = owner - len(module.enum_declarations)
+                if index < 0 or index >= len(intrinsics):
+                    return Err("unsupported Body IR async main outside a standard Result")
+                declaration = intrinsics[index]
+                if declaration.carrier != "Result" or len(declaration.variants) != 2:
+                    return Err("unsupported Body IR async main outside a standard Result")
+                errors = declaration.variants[1].fields
+                if len(errors) != 1:
+                    return Err("unsupported Body IR async main error arity")
+                arguments = [errors[0], future]
+                path = "incan_native_runtime::run_result_future_entry"
+            _ => return Err("unsupported Body IR async main output")
     entry = Function(
         name="main",
         parameters=[],
-        return_type=PlanType.Unit,
-        locals=[Local(ty=PlanType.Unit, span=span), Local(ty=future, span=span)],
+        return_type=body.return_type,
+        locals=[Local(ty=body.return_type, span=span), Local(ty=future, span=span)],
         blocks=[plan_block(
             [],
             TerminatorKind.Call(
@@ -277,7 +285,7 @@ pub def async_entry(body: Function) -> tuple[Function, Function, ExternalFunctio
         ), plan_block(
             [],
             TerminatorKind.Call(
-                Callee(kind=CalleeKind.Instantiated(path, [future]), span=span),
+                Callee(kind=CalleeKind.Instantiated(path, arguments), span=span),
                 [read_place(plan_place(1, span), true, span)],
                 plan_place(0, span),
                 2,
@@ -289,9 +297,9 @@ pub def async_entry(body: Function) -> tuple[Function, Function, ExternalFunctio
     )
     external = ExternalFunction(
         path=path,
-        type_arguments=[future],
+        type_arguments=arguments,
         parameters=[future],
-        return_type=PlanType.Unit,
+        return_type=body.return_type,
         span=span,
     )
-    return (entry, constructor, external)
+    return Ok((entry, constructor, external))

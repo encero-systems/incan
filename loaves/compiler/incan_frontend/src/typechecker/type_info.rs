@@ -2831,6 +2831,30 @@ impl TypeCheckInfo {
         self.declarations.resolved_import_identities.get(local_name)
     }
 
+    /// Select the executable identity of a checked call while preserving a module binding's navigation identity.
+    /// A matching imported function refines that module binding; otherwise an existing selected target wins over a
+    /// validated reexport fallback. An absent call-site identity stays absent; only checking may publish a proven
+    /// import selection at a successful call site. Source shadows never inherit an import's authority.
+    pub fn resolved_call_identity<'a>(
+        &'a self,
+        name: &str,
+        span: Span,
+        reexport: Option<&'a CanonicalSymbolId>,
+    ) -> Option<&'a CanonicalSymbolId> {
+        let selected = self.resolved_identity(span);
+        let imported = self.resolved_import_identity(name);
+        match (selected, imported) {
+            (Some(module), Some(function))
+                if module.kind == SemanticSourceTargetKind::Module
+                    && function.kind == SemanticSourceTargetKind::Function
+                    && module.origin == function.origin =>
+            {
+                Some(function)
+            }
+            _ => selected.or(reexport),
+        }
+    }
+
     /// Return the name the declaring module binds an imported source symbol under, if resolution recorded it.
     ///
     /// Absent for imports the source module graph did not resolve (compiled providers): see

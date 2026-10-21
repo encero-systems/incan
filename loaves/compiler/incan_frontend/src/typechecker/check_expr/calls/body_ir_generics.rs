@@ -13,47 +13,64 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
     /// A surface-import call validates on its builtin path rather than through the ordinary generic validator. Use
-    /// that successful selection and its imported signature with the same private argument producer; source shadows,
-    /// failed calls and non-function bindings publish no instantiation.
-    pub(super) fn retain_body_ir_surface_call_arguments(
+    /// that successful selection and its imported signature with the same argument and async-target producers;
+    /// source shadows, failed calls and non-function bindings publish no executable contract.
+    pub(super) fn retain_body_ir_surface_call(
         &mut self,
         name: &str,
         args: &[CallArg],
         span: Span,
+        callee_span: Span,
         errors_before: usize,
     ) {
         if self.errors.len() != errors_before || self.active_surface_function_import(name).is_none() {
             return;
         }
-        let Some(SymbolKind::Function(info)) = self.lookup_symbol(name).map(|symbol| symbol.kind.clone()) else {
-            return;
+        let signature = self.lookup_symbol(name).map(|symbol| symbol.kind.clone());
+        let is_async = match &signature {
+            Some(SymbolKind::Function(info)) => info.is_async,
+            _ => self
+                .type_info
+                .declarations
+                .function_bindings
+                .get(name)
+                .is_some_and(|binding| binding.is_async),
         };
-        let identity = self.called_function_identity(name);
-        self.retain_body_ir_call_arguments(&info, args, &HashMap::new(), span, identity.as_ref());
+        if let Some(SymbolKind::Function(info)) = signature {
+            let identity = self.called_function_identity(name);
+            self.retain_body_ir_call_arguments(&info, args, &HashMap::new(), span, identity.as_ref());
+        }
+        self.retain_body_ir_async_call_target(is_async, name, span, callee_span, errors_before);
     }
 
     /// Retain a selected async function call only after its arity, argument, bound and capture checks succeed. The
     /// enclosing module wrapper's earlier diagnostics are included; a missing canonical function grants no contract.
     pub(in crate::typechecker::check_expr) fn retain_body_ir_async_call_target(
         &mut self,
-        info: &FunctionInfo,
+        is_async: bool,
+        name: &str,
         span: Span,
         callee_span: Span,
         errors_before_call: usize,
     ) {
         let key = (span.start, span.end);
         self.type_info.calls.body_ir_async_call_targets.remove(&key);
-        if !info.is_async || self.errors.len() != errors_before_call {
+        if !is_async || self.errors.len() != errors_before_call {
             return;
         }
-        let Some(identity) = self.type_info.resolved_identity(callee_span) else {
+        let Some(identity) = self
+            .type_info
+            .resolved_call_identity(name, callee_span, None)
+            .or_else(|| self.type_info.resolved_import_identity(name))
+            .cloned()
+        else {
             return;
         };
         if identity.kind == SemanticSourceTargetKind::Function {
-            self.type_info
-                .calls
-                .body_ir_async_call_targets
-                .insert(key, identity.clone());
+            if self.type_info.resolved_identity(callee_span).is_none() {
+                self.type_info.record_resolved_identity(callee_span, identity.clone());
+            }
+            self.type_info.calls.body_ir_async_call_targets.insert(key, identity);
         }
     }
 

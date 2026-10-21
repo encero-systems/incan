@@ -1,0 +1,19 @@
+# behavior: an error from an awaited local function propagates out of async main
+# expect-stdout:
+# expect-stderr-contains:
+#   local awaited failure
+# expect-exit: 1
+
+import std.async
+
+
+async def fail() -> Result[None, str]:
+    """Return an application error through an async function's output."""
+    return Err("local awaited failure")
+
+
+async def main() -> Result[None, str]:
+    """Propagate the awaited error before the following statement."""
+    await fail()?
+    println("unreachable")
+    return Ok(None)
