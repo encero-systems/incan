@@ -1,0 +1,22 @@
+# behavior: an adopter calls a receiver-free static trait default without an instance
+# expect-stdout:
+#   42
+
+trait Answer:
+    """Supply a receiver-free default."""
+
+    @staticmethod
+    def answer() -> int:
+        """Return the default answer."""
+        return 42
+
+
+model Item with Answer:
+    """Adopt the default without an override."""
+
+    value: int
+
+
+def main() -> None:
+    """Call the adopted receiver-free default."""
+    println(Item.answer())

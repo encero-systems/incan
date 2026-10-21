@@ -42,7 +42,9 @@ pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrMo
 
 
 pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
-    """Identify a trait-owned executable by its retained declaration, so only a selected adopter schedules it."""
+    """Identify a retained trait instance method so only the selected adopter schedules its default."""
+    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
+        return false
     match body.canonical:
         None => return false
         Some(identity) =>
