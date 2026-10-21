@@ -178,7 +178,9 @@ impl rustc_driver::Callbacks for FactsCallbacks {
     }
 }
 
-/// The named paths, then the nominal types their signatures name, `depth` steps out.
+/// Describe named paths and bounded signature dependencies, closing every selected public field layout transitively.
+/// Field records can be reached through nested Options and collections without a source import of each record.
+/// Their types need the same metadata as an imported owner; signature expansion stays bounded independently.
 fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BTreeMap<String, RustItemMetadata> {
     let mut facts = BTreeMap::new();
     let mut pending = paths
@@ -187,10 +189,15 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
         .collect::<Vec<_>>();
     for _ in 0..=depth {
         let mut named = HashSet::new();
-        for (path, def) in std::mem::take(&mut pending) {
+        while let Some((path, def)) = pending.pop() {
             if facts.contains_key(&path) {
                 continue;
             }
+            pending.extend(
+                layout_dependencies(tcx, def)
+                    .into_iter()
+                    .map(|dependency| (visible_path(tcx, dependency), dependency)),
+            );
             let metadata = describe(tcx, def, &path, &mut named);
             for (constructor_path, constructor) in enum_constructors(tcx, def, &path) {
                 let metadata = describe(tcx, constructor, &constructor_path, &mut named);
@@ -205,6 +212,31 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
             .collect();
     }
     facts
+}
+
+/// Collect public field and enum payload owners, including generic arguments, without expanding method signatures.
+/// Opaque private fields grant no access. The caller deduplicates item identities so recursive layouts terminate.
+fn layout_dependencies(tcx: TyCtxt<'_>, def: DefId) -> HashSet<DefId> {
+    let mut named = HashSet::new();
+    match tcx.def_kind(def) {
+        DefKind::Struct | DefKind::Enum | DefKind::Union => {
+            let owner = tcx.adt_def(def);
+            for field in owner
+                .all_fields()
+                .filter(|field| owner.is_enum() || field.vis.is_public())
+            {
+                note_named(
+                    tcx.type_of(field.did).instantiate_identity().skip_normalization(),
+                    &mut named,
+                );
+            }
+        }
+        DefKind::TyAlias => {
+            note_named(tcx.type_of(def).instantiate_identity().skip_normalization(), &mut named);
+        }
+        _ => {}
+    }
+    named
 }
 
 /// Every public item of the named crates, under each public module path that reaches it. Standard roots also retain
