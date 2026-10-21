@@ -223,6 +223,12 @@ fn required_loaf_identities(
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
                 .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
         )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.traits.default_method_identities.iter().cloned()),
+        )
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
@@ -336,6 +342,10 @@ fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) 
                 .canonical
                 .as_ref()
                 .is_some_and(|identity| governed.contains(identity))
+                || body
+                    .locals
+                    .first()
+                    .is_some_and(|local| local.ty == incan_semantics_core::IncanType::SelfType)
             {
                 return true;
             }
@@ -344,7 +354,6 @@ fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) 
                     loaf_callables.push(callable);
                     false
                 }
-                None => true,
                 None => true,
             }
         });
