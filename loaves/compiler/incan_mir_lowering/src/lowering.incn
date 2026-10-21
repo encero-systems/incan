@@ -251,7 +251,7 @@ from model_values import (
 )
 from enum_values import serialize_enum_operand
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
-from enum_display import display_enum_operand
+from enum_display import display_enum_operand, native_enum_text
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import (
     value_variant,
@@ -5199,6 +5199,7 @@ pub def call_argument_operand(
         return Ok(read_place(text, true, span))
     match ty:
         PlanType.ModelRef(_owner, _name) => return shared_model_argument(builder, value, ty, span)
+        PlanType.EnumRef(_owner, _name) => return shared_model_argument(builder, value, ty, span)
         PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
         PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
         PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
@@ -5215,7 +5216,7 @@ def shared_model_argument(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Pass a checked method-chain receiver by shared reference, retaining a reference already on its frame."""
+    """Pass a checked nominal or enum by shared reference, retaining a reference already on its frame."""
     match value:
         RustOperand.Place(read) =>
             mut receiver = model_place(
@@ -5231,6 +5232,14 @@ def shared_model_argument(
             source = place_type(builder.locals, receiver)
             if source == ty:
                 return Ok(read_place(receiver, false, span))
+            match source:
+                PlanType.Enum(owner, name) =>
+                    if ty != PlanType.EnumRef(owner, name):
+                        return Err(f"unsupported Body IR shared enum owner mismatch for {name}")
+                    reference = temporary(builder, ty, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+                    return Ok(read_place(reference, false, span))
+                _ => pass
             match source:
                 PlanType.Model(owner, name) =>
                     if ty != PlanType.ModelRef(owner, name):
@@ -6274,7 +6283,10 @@ def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, sp
 
 
 def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
-    """Render admitted scalar and list values with legacy Debug after materializing their checked ownership."""
+    """Render native enums through their Rust Debug implementation and materialize other admitted Debug values."""
+    match native_enum_text(builder, value, true, span)?:
+        Some(text) => return Ok(text)
+        None => pass
     match value:
         RustOperand.Place(read) =>
             if len(read.place.projection) == 0:
@@ -6532,7 +6544,7 @@ def clone_display_place(
     ):
         return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
     if place_type(builder.locals, place) != PlanType.String:
-        return Err("unsupported Body IR nonscalar display borrow")
+        return Err(f"unsupported Body IR nonscalar display borrow {ty:?} at {span.file}:{span.line} in {builder.name}")
     return clone_text(builder, place, span)
 
 
@@ -10603,6 +10615,13 @@ def match_scrutinee_place(
             source = scalar_place(builder, read.place, span)?
             if in_place and source.local in builder.borrowed_items:
                 return Err("unsupported Body IR in-place match on a copied loop variable")
+            if source.projection == Projection.Whole:
+                match place_type(builder.locals, source):
+                    PlanType.EnumRef(owner, name) =>
+                        return Ok(Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
+                    PlanType.EnumMutRef(owner, name) =>
+                        return Ok(Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
+                    _ => pass
             return Ok(source)
         _ => return Err("unsupported Body IR nonplace enum match scrutinee")
 
@@ -11823,6 +11842,15 @@ def bind_enum_fields(
                 local = int(binding.local.index()) + 1 + builder.local_offset
                 ty = builder.locals[local].ty
                 projected = appended_field(source, FieldProjection(slot=slot, ty=payload_types[slot], variant=variant), span)?
+                if ty != payload_types[slot]:
+                    # A reference binding borrows its exact payload. Other representation changes, such as native
+                    # borrowed text becoming owned source text, keep their ordinary materialization path below.
+                    match shared_receiver_type(payload_types[slot]):
+                        Ok(reference) =>
+                            if ty == reference:
+                                builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(projected), span))
+                                continue
+                        Err(_reason) => pass
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:

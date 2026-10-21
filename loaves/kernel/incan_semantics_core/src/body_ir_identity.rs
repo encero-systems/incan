@@ -276,6 +276,7 @@ impl BodyIrModule {
                     && variant.canonical.declaration_name == variant.name
             })
     }
+
     /// Whether `id` is a span-derived declaration identity of exactly the shape lowering emits for this module.
     pub fn is_own_span_declaration_id(&self, id: &CompilerNodeId) -> bool {
         if self.module_id.kind() != CompilerNodeKind::Module || id.kind() != CompilerNodeKind::Declaration {

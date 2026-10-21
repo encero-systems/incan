@@ -248,5 +248,8 @@ def receiver_borrow(
 pub def receiver_mode(value: &LocalOrigin) -> Option[bool]:
     """Read receiver origins through the typed Rust-enum boundary used for imported struct variants."""
     match value:
-        LocalOrigin.Receiver(mutable=mutable) => return Some(mutable.clone())
+        LocalOrigin.Receiver(mutable=mutable) =>
+            if not mutable:
+                return Some(false)
+            return Some(true)
         _ => return None

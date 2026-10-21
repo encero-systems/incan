@@ -1,6 +1,7 @@
-"""Derived Display of an ordinary source enum uses its actual Debug implementation on a shared reference."""
+"""Native Rust enum formatting and checked derived Display for source enums."""
 
 from rust::incan_semantics_core::body_ir import Operand as RustOperand
+from rust::incan_semantics_core import SymbolOrigin
 from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind, ExternalFunction, CalleeKind
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place, terminate_call
@@ -10,6 +11,9 @@ from decls import library_enum_item
 
 pub def display_enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
     """Use native Display for foreign layouts and retained derived Display for whole source enums."""
+    match native_enum_text(builder, value, false, span)?:
+        Some(text) => return Ok(Some(text))
+        None => pass
     match value:
         RustOperand.Place(read) =>
             if len(read.place.projection) != 0:
@@ -32,6 +36,44 @@ pub def display_enum_operand(mut builder: Builder, value: &RustOperand, span: So
                 _ => pass
         _ => pass
     return Ok(None)
+
+
+pub def native_enum_text(
+    mut builder: Builder,
+    value: &RustOperand,
+    debug: bool,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Borrow an exact native enum for its Rust Display or Debug implementation; trait validation stays in rustc."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0 or read.place.local_id() == None:
+                return Ok(None)
+            place = scalar_place(builder, read.place, span)?
+            mut argument = read_place(place, false, span)
+            match place_type(builder.locals, place):
+                PlanType.Enum(owner, name) =>
+                    if not native_enum_owner(builder, owner):
+                        return Ok(None)
+                    argument = enum_reference(builder, place, owner, name, span)
+                PlanType.EnumRef(owner, _name) =>
+                    if not native_enum_owner(builder, owner):
+                        return Ok(None)
+                _ => return Ok(None)
+            mut path = "incan_native_runtime::display_value"
+            if debug:
+                path = "incan_native_runtime::debug_value"
+            return Ok(Some(runtime_text(builder, path, argument, span)?))
+        _ => return Ok(None)
+
+
+def native_enum_owner(builder: Builder, owner: int) -> bool:
+    """Require an authenticated Rust enum layout, independently of compiled source enum aliases and their derives."""
+    if owner < 0 or owner >= len(builder.enums) or library_enum_item(builder.enums[owner]) == "":
+        return false
+    match builder.enums[owner].canonical.origin:
+        SymbolOrigin.RustCrate(_path) => return true
+        _ => return false
 
 
 def borrowed_enum_debug(

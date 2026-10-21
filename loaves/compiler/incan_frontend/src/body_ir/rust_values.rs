@@ -58,7 +58,7 @@ pub(super) fn enum_declarations(facts: &TypeCheckInfo) -> Vec<bir::EnumDeclarati
             let variants = layout
                 .variants
                 .iter()
-                .map(|(name, fields)| {
+                .map(|(name, fields, _)| {
                     (
                         name.clone(),
                         fields

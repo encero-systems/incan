@@ -1,0 +1,16 @@
+# behavior: named native enum payloads use metadata field identities and reject a text binding returned as an integer
+# expect-diagnostic: INCAN-T0001
+
+from rust::messages import Message
+
+
+def inspect(value: &Message) -> int:
+    """Returning the named text field as an integer must fail even when the fields are written out of order."""
+    match value:
+        Message.Record(text=message, count=number) => return message
+        Message.Empty => return 0
+
+
+def main() -> None:
+    """Keep the rejected declaration in the checked unit."""
+    pass

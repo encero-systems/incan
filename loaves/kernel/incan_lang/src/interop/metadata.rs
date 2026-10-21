@@ -1207,18 +1207,22 @@ pub enum RustPayloadCarrier {
 
 /// One enum variant and its payload field types.
 ///
-/// Payload shapes are normalized for matching. For example, prost-style `Box<T>` payloads are recorded as `T` because
-/// that is what Incan binds in constructor patterns; the stripped carrier is remembered in `field_carriers`.
+/// Payload shapes retain source-facing pattern types. Exact native displays preserve storage before normalization,
+/// and `field_carriers` records wrappers omitted from the shapes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustVariantInfo {
     /// Variant name as it appears in Rust.
     pub name: String,
-    /// Positional payload field shapes in declaration order.
+    /// Payload field shapes in declaration order, for both tuple and struct variants.
     pub fields: Vec<RustTypeShape>,
     /// Exact native payload templates, before source shape normalization. Direct-route patterns retain integer
     /// widths, references and native owner binders from these displays; an absent record grants no payload layout.
     #[serde(default)]
     pub field_type_displays: Vec<String>,
+    /// Field names in declaration order for a struct variant; empty for tuple and unit variants. Names select the
+    /// same payload slots as `fields`, independently of the order written in a source pattern.
+    #[serde(default)]
+    pub field_names: Vec<String>,
     /// Storage carrier per payload field, parallel to `fields`. Entries an older cache did not record mean
     /// [`RustPayloadCarrier::Direct`].
     #[serde(default)]

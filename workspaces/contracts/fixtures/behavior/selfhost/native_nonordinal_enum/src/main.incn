@@ -1,0 +1,14 @@
+# behavior: a native enum with nonordinal discriminants is refused before matching can select the wrong arm
+# expect-exit: 1
+# expect-stderr-contains:
+#   unsupported native enum discriminant: matching requires ordinal isize tags
+
+from rust::tags import Message, message
+
+
+def main() -> None:
+    """Require a refusal instead of silently treating the explicit tag as a variant index."""
+    value = message()
+    match value:
+        Message.Record(value=number) => println(number)
+        _ => println("other")
