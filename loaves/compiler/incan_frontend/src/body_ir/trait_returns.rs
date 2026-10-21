@@ -62,7 +62,7 @@ pub(super) fn retain_returns(
             refine_block(
                 &mut body.block.stmts,
                 &mut body.locals,
-                &body.named_type_identities,
+                &mut body.named_type_identities,
                 &nominals,
                 &implementations,
                 &signatures,
@@ -190,7 +190,7 @@ fn signature(body: &bir::Body) -> ReturnSignature {
 fn refine_block(
     statements: &mut [bir::Statement],
     locals: &mut [bir::LocalDecl],
-    identities: &BTreeMap<String, CanonicalSymbolId>,
+    identities: &mut BTreeMap<String, CanonicalSymbolId>,
     nominals: &[bir::NominalDeclaration],
     implementations: &[&bir::TraitImplementation],
     signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
@@ -346,7 +346,7 @@ fn method_return_witness(
     target: &bir::MethodTarget,
     args: &[bir::ArgumentElement],
     locals: &[bir::LocalDecl],
-    identities: &BTreeMap<String, CanonicalSymbolId>,
+    identities: &mut BTreeMap<String, CanonicalSymbolId>,
     nominals: &[bir::NominalDeclaration],
     implementations: &[&bir::TraitImplementation],
     signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
@@ -390,7 +390,12 @@ fn method_return_witness(
                 ))
             })
             .collect::<Option<HashMap<_, _>>>()?;
-        bindings = trait_bindings;
+        let own_method = record.implementation.origin == owner.canonical.origin
+            && owner.canonical.declaration_span.start <= record.implementation.declaration_span.start
+            && record.implementation.declaration_span.end <= owner.canonical.declaration_span.end;
+        if !own_method {
+            bindings = trait_bindings;
+        }
         signature
     } else {
         if selected.origin != owner.canonical.origin
@@ -412,7 +417,40 @@ fn method_return_witness(
     for (parameter, argument) in method_parameters.into_iter().zip(&target.type_args) {
         bindings.insert(parameter.clone(), argument.clone());
     }
-    instantiate_witness(&signature.carrier, &bindings, &receiver)
+    let carrier = instantiate_witness(&signature.carrier, &bindings, &receiver)?;
+    retain_witness_identities(&carrier, &signature.identities, identities).then_some(carrier)
+}
+
+/// Carry only a selected executable return's named owners into the receiving frame, including generic heads.
+/// Conflicting caller bindings grant no carrier; unrelated names from the producer's namespace are never imported.
+fn retain_witness_identities(
+    ty: &IncanType,
+    source: &BTreeMap<String, CanonicalSymbolId>,
+    destination: &mut BTreeMap<String, CanonicalSymbolId>,
+) -> bool {
+    let name = match ty {
+        IncanType::Named(name) | IncanType::Generic { base: name, .. } => Some(name),
+        _ => None,
+    };
+    if let Some((name, identity)) = name.and_then(|name| source.get(name).map(|identity| (name, identity))) {
+        if destination.get(name).is_some_and(|previous| previous != identity) {
+            return false;
+        }
+        destination.insert(name.clone(), identity.clone());
+    }
+    match ty {
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
+            .iter()
+            .all(|argument| retain_witness_identities(argument, source, destination)),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => retain_witness_identities(inner, source, destination),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .all(|parameter| retain_witness_identities(&parameter.ty, source, destination))
+                && retain_witness_identities(return_type, source, destination)
+        }
+        _ => true,
+    }
 }
 
 /// Resolve the exact checked nominal before canonical carrier bindings have been added to the body table.
