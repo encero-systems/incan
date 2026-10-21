@@ -55,6 +55,13 @@ pub def source_fingerprint(unit: UnitDescription, compiler: str) -> Result[str, 
         for path in artifact_files(Path(loaf.dir), loaf.name):
             inputs.append(path.0)
             inputs.append(file_digest(path)?)
+    for native in unit.externs:
+        inputs.append(native.name)
+        inputs.append(native.path)
+        inputs.append(file_digest(Path(native.path))?)
+    for cache in unit.rust_abi:
+        inputs.append(cache)
+        inputs.append(file_digest(Path(cache))?)
     return fingerprint(inputs)
 
 

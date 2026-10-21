@@ -12,6 +12,7 @@ from home import dependency_artifact_dir
 from toolchain import Toolchain
 from unit import UnitDescription, dependency_units
 from unit_freshness import artifact_files, compiler_fingerprint, reusable, source_fingerprint
+from unit_rust import prepare_native
 
 
 pub def crate_name(unit: UnitDescription) -> str:
@@ -26,7 +27,8 @@ pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> 
     prepared = prepare_dependencies(unit, toolchain)?
     if prepared != 0:
         return Ok(prepared)
-    path = write_unit(unit, crate_name(unit))?
+    ready = prepare_native(unit, toolchain)?
+    path = write_unit(ready, crate_name(ready))?
     arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
     return run_compiler(toolchain, arguments)
 
@@ -45,7 +47,7 @@ pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) 
     prepared = prepare_dependencies(unit, toolchain)?
     if prepared != 0:
         return Ok(prepared)
-    return compile_prepared_unit(unit, toolchain, output)
+    return compile_prepared_unit(prepare_native(unit, toolchain)?, toolchain, output)
 
 
 pub def prepare_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
@@ -55,7 +57,7 @@ pub def prepare_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Res
         return Ok(0)
     compiler = compiler_fingerprint(toolchain)?
     for dependency in dependencies:
-        mut library_unit = dependency
+        mut library_unit = prepare_native(dependency, toolchain)?
         library_unit.kind = "library"
         directory = dependency_artifact_dir(unit.project_root, dependency.package, unit.profile)
         digest = source_fingerprint(library_unit, compiler)?
