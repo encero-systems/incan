@@ -3046,6 +3046,12 @@ impl TypeChecker {
             {
                 Some(args.clone())
             }
+            ResolvedType::Generic(name, args)
+                if RustCollectionFamily::for_canonical_path(rust_path)
+                    .is_some_and(|family| RustCollectionFamily::for_type_name(name) == Some(family)) =>
+            {
+                Some(args.clone())
+            }
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
             ResolvedType::Generic(name, args)

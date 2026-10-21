@@ -1,5 +1,4 @@
 # behavior: a Rust type keeps its identity through two public module paths (#705)
-# pending: #705 the re-exported map's method lacks canonical Body IR identity
 # expect-stdout:
 #   true
 
