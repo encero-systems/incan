@@ -327,6 +327,9 @@ impl TypeChecker {
                 _ => (&target, &actual),
             };
             self.infer_type_param_bindings(target, actual, &mut bound);
+            if let Some(callable) = self.rust_bound_callable_type(sig, &parameter.type_display, false) {
+                self.infer_type_param_bindings(&self.rust_inference_type(&callable, parameters), actual, &mut bound);
+            }
         }
         if let Some(expected) = expected {
             let result = self.resolved_rust_return_type_from_sig(sig, owner_path);
@@ -446,6 +449,7 @@ impl TypeChecker {
                 type_arguments: arguments,
                 parameters,
                 return_type: result,
+                result_item_path: self.rust_result_item_path(&signature.return_type, path),
                 has_receiver: false,
             },
         );
@@ -1146,6 +1150,8 @@ impl TypeChecker {
         preserves_lookup_arg_shape: bool,
         span: Span,
     ) -> ResolvedType {
+        let contextual_types = self.contextualize_rust_bound_closures(sig, args, arg_types);
+        let arg_types = contextual_types.as_slice();
         if let Some(contract) = sig.receiver_contract {
             self.type_info
                 .rust

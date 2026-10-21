@@ -1,0 +1,19 @@
+# behavior: Rust From, blanket ToString, Into with an expected type, and PartialEq calls preserve reusable values
+# expect-stdout:
+#   hello
+#   hello
+#   hello
+#   true
+
+from rust::std::string import String as RustString
+from rust::std::time import Duration
+
+
+def main() -> None:
+    """Use native trait methods and keep their owners readable after each call."""
+    text = RustString.from("hello")
+    println(text.to_string())
+    converted: str = text.into()
+    println(converted.to_string())
+    println(text)
+    println(Duration.from_secs(3).eq(Duration.from_secs(3)))

@@ -37,6 +37,7 @@ mod builtins;
 mod constructors;
 mod generic_bounds;
 mod rust_boundary;
+mod rust_callable_bounds;
 mod rust_layouts;
 mod task_arguments;
 

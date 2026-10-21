@@ -948,6 +948,8 @@ pub struct RustInteropArtifacts {
     /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
     /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
     pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
+    /// Native result item selected for each local binding, even when its source type projects to str or a collection.
+    pub value_item_paths: HashMap<CanonicalSymbolId, String>,
     /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
     /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
     pub(crate) body_ir_diverging_import_calls: HashMap<(usize, usize), Vec<String>>,
@@ -1067,6 +1069,8 @@ pub struct RustCheckedCall {
     pub parameters: Vec<CallableParam>,
     /// The checked instantiated result type.
     pub return_type: ResolvedType,
+    /// Native result's nominal item before source scalar or collection projection, when metadata names one.
+    pub result_item_path: Option<String>,
     /// Whether the source receiver is a value passed in the first parameter slot.
     pub has_receiver: bool,
 }

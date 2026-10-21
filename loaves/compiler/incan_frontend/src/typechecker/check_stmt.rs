@@ -1002,6 +1002,7 @@ impl TypeChecker {
         }
         self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
+        self.retain_rust_value_binding(&assign.name, &assign.value);
         self.retain_body_ir_assignment_value(assign);
         self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);

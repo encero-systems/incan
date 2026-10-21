@@ -54,6 +54,8 @@ use super::calls::PublicModuleConstructorContext;
 
 use super::{GenericPartialTarget, TypeChecker};
 
+mod rust_traits;
+
 /// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
 const HASH_DUNDER: &str = "__hash__";
 
@@ -3284,6 +3286,7 @@ impl TypeChecker {
                 type_arguments,
                 parameters,
                 return_type: native_result,
+                result_item_path: self.rust_result_item_path(&method.signature.return_type, path),
                 has_receiver: receiver.is_some(),
             },
         );
@@ -3364,6 +3367,27 @@ impl TypeChecker {
             self.preserve_unresolved_rust_call_argument_returns(args);
             return None;
         };
+        if let RustItemKind::Type(info) = &metadata.kind
+            && !info.methods.iter().any(|candidate| candidate.name == method)
+            && let Some(result) = self.resolve_retained_rust_trait_call(
+                RustPathMethodCall {
+                    rust_path,
+                    method,
+                    receiver_metadata,
+                    receiver_binding,
+                    receiver_expr,
+                    type_args,
+                    args,
+                    arg_types,
+                    receiver_span,
+                    expected_return_ty,
+                    span,
+                },
+                info,
+            )
+        {
+            return Some(result);
+        }
         match &metadata.kind {
             RustItemKind::Type(type_info) => {
                 let Some(sig) = type_info
@@ -6747,7 +6771,9 @@ impl TypeChecker {
         // Rust callable bounds are not available until receiver metadata selects the method signature below. Defer
         // direct closures on Rust receivers so the selected `Fn`/`FnMut` bound can contextually type them once, rather
         // than first checking their parameters as unknowns and retaining spurious errors from that incomplete pass.
-        let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty);
+        let rust_receiver_path = self
+            .rust_canonical_path_for_receiver_type(&base_ty)
+            .or_else(|| self.rust_value_item_path(base));
         let defer_rust_closures = rust_receiver_path.is_some();
 
         // `Enum.Variant(payload)` reaches this shared method-call path, and this is the only place its arguments are
