@@ -2444,7 +2444,11 @@ impl ResultVariant {
             && required.iter().all(|(path, builtin)| {
                 self.canonical_types.get(path).is_some_and(|identity| {
                     if let Some(builtin) = builtin {
-                        return crate::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(builtin);
+                        let selected = crate::RuntimeBuiltinType::from_identity(identity).or_else(|| {
+                            native_nominal_item(identity)
+                                .and_then(|path| crate::RuntimeBuiltinType::from_carrier_path(&path))
+                        });
+                        return selected.as_ref() == Some(builtin);
                     }
                     identity.scope_discriminant.is_none()
                         && ((matches!(

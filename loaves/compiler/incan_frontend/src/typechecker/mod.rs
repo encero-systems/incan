@@ -2563,7 +2563,8 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
-    /// Project named leaves through the module/provider or native metadata binding retained by this compilation.
+    /// Project named leaves through the module/provider or native metadata binding retained by this compilation,
+    /// retaining an inspected runtime carrier's identity before Body IR normalizes its dedicated builtin type.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2643,10 +2644,17 @@ impl TypeChecker {
             return;
         }
         if let Some(builtin) = incan_semantics_core::RuntimeBuiltinType::from_carrier_path(display) {
-            if let Some(identity) = self.type_info.body_ir_runtime_types.values().find(|identity| {
-                incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(&builtin)
-            }) {
-                identities.insert(path.clone(), identity.clone());
+            let identity = self
+                .type_info
+                .body_ir_runtime_types
+                .values()
+                .find(|identity| {
+                    incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(&builtin)
+                })
+                .cloned()
+                .or_else(|| incan_semantics_core::body_ir::rust_item_identity(display));
+            if let Some(identity) = identity {
+                identities.insert(path.clone(), identity);
             }
             return;
         }
