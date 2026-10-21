@@ -137,6 +137,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_fn_def(tcx, definition, tcx.mk_args(&[]))
         }
         PlanType::Unit => tcx.types.unit,
+        PlanType::Never => tcx.types.never,
         PlanType::UnitFunction => Ty::new_fn_ptr(
             tcx,
             rustc_middle::ty::Binder::dummy(tcx.mk_fn_sig_safe_rust_abi([], tcx.types.unit)),

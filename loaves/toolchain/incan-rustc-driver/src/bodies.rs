@@ -90,7 +90,7 @@ pub fn body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, function: &Function) -> Re
                 .collect::<Result<_, _>>()?;
             Ok(mir::BasicBlockData::new_stmts(
                 statements,
-                Some(terminators::terminator(tcx, &sources, &block.terminator)?),
+                Some(terminators::terminator(tcx, &sources, function, &block.terminator)?),
                 block.cleanup,
             ))
         })

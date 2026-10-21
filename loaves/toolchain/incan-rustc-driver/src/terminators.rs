@@ -24,10 +24,11 @@ pub(crate) fn unwind(value: &Unwind) -> Result<mir::UnwindAction, PlanError> {
     })
 }
 
-/// Lower one block exit, retaining its source location and call argument locations.
+/// Lower one block exit, retaining source locations and removing the normal continuation of checked diverging calls.
 pub fn terminator<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
+    function: &crate::plan::Function,
     value: &Terminator,
 ) -> Result<mir::Terminator<'tcx>, PlanError> {
     let span = sources.span(&value.span)?;
@@ -52,7 +53,15 @@ pub fn terminator<'tcx>(
                 .chain(generator_producer(tcx, sources, callee)?.into_iter().map(Ok))
                 .collect::<Result<_, PlanError>>()?,
             destination: place(tcx, destination)?,
-            target: Some(block(*target)?),
+            target: if function
+                .locals
+                .get(index(destination.local)?)
+                .is_some_and(|local| matches!(local.ty, crate::plan::PlanType::Never))
+            {
+                None
+            } else {
+                Some(block(*target)?)
+            },
             unwind: unwind(action)?,
             call_source: mir::CallSource::Normal,
             fn_span: span,

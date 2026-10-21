@@ -138,6 +138,8 @@ pub enum PlanType:
     Bool
     Unit
     CheckedNumeric(SizedNumeric)
+    # A checked diverging result has no value and gives its native call no normal continuation.
+    Never
     # A source-free executor callback; ordinary source callable values stay outside this carrier.
     UnitFunction
     EnumTag

@@ -49,6 +49,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    Never,
     NativeStr,
     NativeSlice(Vec<Scalar>),
     SliceRef(Vec<Scalar>),
@@ -195,6 +196,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::Never => Scalar::Never,
         PlanType::NativeStr => Scalar::NativeStr,
         PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
         PlanType::SliceRef(elements) => Scalar::SliceRef(elements.iter().map(scalar).collect()),
@@ -352,7 +354,8 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             .parameters
             .iter()
             .any(|ty| !external_signature_type(&scalar(ty)))
-            || !external_signature_type(&scalar(&external.return_type))
+            || (!matches!(external.return_type, PlanType::Never)
+                && !external_signature_type(&scalar(&external.return_type)))
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),

@@ -40,6 +40,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         Some(result) => return result
         None => pass
     match ty:
+        RustType.Never => return Ok(PlanType.Never)
         RustType.RustInteropPath(path) => return Err(f"unsupported Body IR type RustInteropPath {path}")
         RustType.Named(name) =>
             for index in range(len(declarations)):
