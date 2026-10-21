@@ -1,0 +1,6 @@
+"""A local dependency that does not need to be compiled to format its consumer's ordinary syntax."""
+
+
+pub def answer() -> int:
+    """Return the example answer."""
+    return 42

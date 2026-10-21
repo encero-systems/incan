@@ -64,8 +64,8 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
         return Err(f"the header declares nothing to compare; the {fixture.family} family compares {', '.join(allowed)}")
     if fixture.family == "library" and fixture.shape != "project":
         return Err("a library fixture is a project that carries its libraries as path dependencies")
-    if fixture.family == "format" and (fixture.shape != "file" or not header.declares("expect-formatted")):
-        return Err("a format fixture is one file with `expect-formatted:`")
+    if fixture.family == "format" and (fixture.shape == "module" or not header.declares("expect-formatted")):
+        return Err("a format fixture is one file or a project with `expect-formatted:`")
     if fixture.family == "testing" and (fixture.shape != "file" or not fixture.name.startswith("test_")):
         return Err("a testing fixture is one test file named `test_<subject>.incn`")
     return Ok(None)

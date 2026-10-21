@@ -46,7 +46,7 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# expect-dependencies:` | Exactly these dependencies, one `<key> <package>` per line; an empty block means none. |
 | `# expect-std-packages:` | Standard packages the unit must reach. |
 | `# expect-active-features:` | Exactly these active features; an empty block means none. |
-| `# expect-formatted:` | Exact formatted source, indented as a block. Required for a single-file `format` case. The header and its separating blank line are removed before formatting; the expected text has one final newline. |
+| `# expect-formatted:` | Exact formatted source, indented as a block. Required for a `format` file or project case. The header and its separating blank line are removed from the entry source before formatting; the expected text has one final newline. |
 | `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
 
 A directive is `#`, one space, the key, a colon. Block lines follow their directive, each `#` and at least two spaces; the first line sets the indentation. A bare `#` inside a block is an empty line. A blank line or any other non-comment line ends the header, and a directive after it is refused. Every case declares at least one expectation its family compares; a family refuses the expectations it does not compare.

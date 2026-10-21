@@ -4,7 +4,7 @@ from std.fs import Path
 from features import FeatureRequest
 from incan_units import format_unit
 from toolchain import load_toolchain
-from unit_rust import describe_native
+from unit import describe
 
 
 pub def format_paths(arguments: list[str]) -> Result[i32, str]:
@@ -33,7 +33,7 @@ pub def format_paths(arguments: list[str]) -> Result[i32, str]:
     toolchain = load_toolchain()?
     mut code: i32 = 0
     for file in files:
-        match describe_native(Path(file), "debug", FeatureRequest()):
+        match describe(Path(file), "debug", FeatureRequest()):
             Err(reason) =>
                 println(f"Error formatting {file}: {reason}")
                 code = 1

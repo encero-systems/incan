@@ -28,6 +28,8 @@ incan fmt src/ tests/ myfile.incn
 
 In dev.8, `--check` lists files that would change and leaves their contents untouched. Directories are searched recursively, skipping hidden directories, `target`, and `node_modules`. Formatting uses each file's unit vocabulary. Use `--` before a path that starts with `-`.
 
+Formatting does not build native dependencies or require checked model bundles. Available compiled Loaf manifests supply dependency vocabulary; a file using custom syntax still needs its vocabulary manifest to parse. Missing manifests do not become source-based substitutes, and malformed manifests are reported as errors.
+
 ## Relationship To The Style Guide
 
 The style guide is the canonical source for what Incan code should look like:
