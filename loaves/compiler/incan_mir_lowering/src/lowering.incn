@@ -717,8 +717,6 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                         return Err("unsupported Body IR partial closure move")
                     return Ok(read_place(target, true, span))
                 OwnershipFact.Clone =>
-                    if target.projection != Projection.Whole:
-                        return Err("unsupported Body IR partial closure clone")
                     receiver = callable_object(builder, target, signature, span)?
                     result = temporary(builder, PlanType.Closure(signature), span)
                     terminate_call(builder, CalleeKind.CloneClosure(signature), [receiver], result, span)
@@ -1865,6 +1863,10 @@ def lower_local_assignment(
             name, ty = item
             if target.projection != Projection.Whole:
                 return Err("unsupported Body IR projected function-item construction")
+            if is_owned_callable(place_type(builder.locals, target)):
+                held = temporary(builder, ty, span)
+                builder.emit(plan_assign(held, RvalueKind.FunctionItem(function_item_callee(builder, name, span)), span))
+                return assign_callable(builder, target, read_place(held, false, span), false, span)
             builder.locals[target.local].ty = ty
             builder.emit(
                 plan_assign(target, RvalueKind.FunctionItem(function_item_callee(builder, name, span)), span),
@@ -1999,7 +2001,8 @@ def lower_local_assignment(
                         return Err("unsupported Body IR nonnumeric implicit conversion")
                     operation = RvalueKind.NumericCast(operand, source_type, ty)
             else:
-                payload = option_payload_operand(builder, operand, place_type(builder.locals, target), span)?
+                callable = carrier_callable_operand(builder, operand, ty, span)?
+                payload = option_payload_operand(builder, callable, place_type(builder.locals, target), span)?
                 operation = carrier_injection(
                     builder.nominals,
                     builder.enums,
@@ -2090,6 +2093,11 @@ def assign_callable(
     if target.projection != Projection.Whole:
         return Err("unsupported Body IR projected callable assignment")
     source = operand_type(builder, value)?
+    match place_type(builder.locals, target):
+        PlanType.Closure(signature) =>
+            owned = owned_callable_value(builder, value, signature, span)?
+            return move_closure(builder, target, owned, signature, false, span)
+        _ => pass
     ty, operation = function_assignment(
         place_type(builder.locals, target),
         source,
@@ -2267,7 +2275,7 @@ def lower_closure(
     )?
     synthesize(builder, lifted)
     item = RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span))
-    if len(capture_types) == 0:
+    if len(capture_types) == 0 and not is_owned_callable(place_type(builder.locals, target)):
         if target.local in builder.function_pointer_locals:
             held = temporary(builder, PlanType.FunctionItem(name, signature), span)
             builder.emit(plan_assign(held, item, span))
@@ -4198,7 +4206,7 @@ def lower_library_method(
     for index in range(1, len(delegation.parameters)):
         parameter: RustType = substitute(delegation.parameters[index], names, closed)?
         _ = require_native_union_signature(parameter, builder.intrinsics)?
-        match delegation.declaration_frame.as_ref():
+        match delegation.declaration_frame:
             Some(boxed) =>
                 frame = boxed.as_ref()
                 ordinary_types.append(call_parameter_type(builder, frame, frame.params[index])?)
@@ -4841,6 +4849,12 @@ def callable_argument(
 
 def pointer_callable_argument(mut builder: Builder, pointer: Place, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
     """Box a function pointer behind the same local forwarding environment for source and compiled function items."""
+    boxed = pointer_callable_owner(builder, pointer, signature, span)?
+    return callable_object(builder, boxed, signature, span)
+
+
+def pointer_callable_owner(mut builder: Builder, pointer: Place, signature: list[PlanType], span: SourceSpan) -> Result[Place, str]:
+    """Own a forwarding environment so either a borrowed argument or a union payload retains the function value."""
     _ = closure_arguments(signature)?
     name = f"__incan_pointer_closure_{builder.name}_{len(builder.synthesized)}"
     synthesize(builder, pointer_forwarder(name, signature, span))
@@ -4849,7 +4863,42 @@ def pointer_callable_argument(mut builder: Builder, pointer: Place, signature: l
     boxed = temporary(builder, PlanType.Closure(signature), span)
     terminate_call(builder, CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
     builder.owned.append(boxed.local)
-    return callable_object(builder, boxed, signature, span)
+    return Ok(boxed)
+
+
+def carrier_callable_operand(mut builder: Builder, value: Operand, target: PlanType, span: SourceSpan) -> Result[Operand, str]:
+    """Fill an environment-owning payload selected by the retained union declaration, preserving captured values."""
+    mut owner = -1
+    match target:
+        PlanType.Enum(index, _name) => owner = index
+        _ => return Ok(value)
+    if owner < len(builder.enums):
+        return Ok(value)
+    declaration = builder.intrinsics[owner - len(builder.enums)]
+    source = operand_type(builder, value)?
+    if declaration.carrier != "" or not callable_copy_type(source):
+        return Ok(value)
+    signature = callable_signature(source)?
+    for variant in declaration.variants:
+        if variant.fields != [PlanType.Closure(signature)]:
+            continue
+        return owned_callable_value(builder, value, signature, span)
+    return Ok(value)
+
+
+def owned_callable_value(mut builder: Builder, value: Operand, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
+    """Retain a function item's forwarding environment at any environment-owning value boundary."""
+    source = operand_type(builder, value)?
+    if source == PlanType.Closure(signature):
+        return Ok(value)
+    if not callable_copy_type(source) or callable_signature(source)? != signature:
+        return Err("unsupported Body IR callable ownership conversion")
+    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    match source:
+        PlanType.FunctionItem(_item, _held) => builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(value), span))
+        _ => builder.emit(plan_assign(pointer, RvalueKind.Use(value), span))
+    boxed = pointer_callable_owner(builder, pointer, signature, span)?
+    return Ok(read_place(boxed, true, span))
 # =====================================================================================================================
 # Plain model construction and field replacement
 # =====================================================================================================================
@@ -4946,7 +4995,7 @@ def lower_delegated_call(
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
-    match delegation.declaration_frame.as_ref():
+    match delegation.declaration_frame:
         Some(boxed) =>
             frame = boxed.as_ref()
             parameters = []
@@ -4956,7 +5005,7 @@ def lower_delegated_call(
     returned: RustType = substitute(delegation.return_type, signature_names, signature_arguments)?
     _ = require_native_union_signature(returned, builder.intrinsics)?
     mut result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
-    match delegation.declaration_frame.as_ref():
+    match delegation.declaration_frame:
         Some(boxed) => result = return_representation(boxed.as_ref(), result)?
         None => pass
     mut type_arguments: list[PlanType] = []
@@ -5064,11 +5113,14 @@ pub def instantiated_external_call(
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Declare one generic external instantiation and preserve owned-result replacement and cleanup."""
+    """Declare one selected external signature and preserve owned-result replacement and cleanup."""
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span),
     )
-    return lower_callable_result(builder, CalleeKind.Instantiated(path, type_arguments), operands, output, result, span)
+    mut callee = CalleeKind.Instantiated(path, type_arguments)
+    if len(type_arguments) == 0:
+        callee = CalleeKind.External(path)
+    return lower_callable_result(builder, callee, operands, output, result, span)
 
 
 def ordered_arguments(
@@ -11700,6 +11752,7 @@ def boundary_plan_operand(
         Some(converted) => return Ok(converted)
         None => pass
     match target:
+        PlanType.Closure(signature) => return owned_callable_value(builder, value, signature, span)
         PlanType.FunctionPointer(_signature) =>
             ty, operation = function_assignment(
                 target,
@@ -11721,13 +11774,16 @@ def boundary_plan_operand(
                     for union in builder.unions:
                         if str(union) != builder.intrinsics[owner - len(builder.enums)].source_type:
                             continue
-                        members = union_members(builder.nominals, builder.enums, union, builder.intrinsics)?
+                        mut members: list[PlanType] = []
+                        for variant in builder.intrinsics[owner - len(builder.enums)].variants:
+                            members.append(variant.fields[0])
                         convert = PlanType.FrozenStr not in members and PlanType.String in members
                         break
                     if convert:
                         text = display_plan_operand(builder, operand, span)?
                         operand = read_place(text, true, span)
             _ => pass
+    operand = carrier_callable_operand(builder, operand, target, span)?
     operand = option_payload_operand(builder, operand, target.clone(), span)?
     operation = carrier_injection(
         builder.nominals,

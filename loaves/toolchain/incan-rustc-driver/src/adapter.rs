@@ -553,13 +553,13 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
 
 /// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
 /// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
-/// An opaque struct, enum or alias grants no projection; a field-bearing layout requires an actual struct declaration.
+/// An opaque carrier grants no projection; a field-bearing layout requires a native struct after alias instantiation.
 fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
         reason: reason.into(),
     };
-    let def = library_model_item(tcx, model)?;
+    let def = callees::native_type_item(tcx, &model.library_item)?;
     if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
         types::native_trait_object(tcx, def, &model.library_type_arguments)?;
         return if model.fields.is_empty() {
@@ -584,10 +584,16 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if model.fields.is_empty() {
         return Ok(());
     }
-    let adt = tcx.adt_def(def);
+    let native = tcx.type_of(def).instantiate(tcx, arguments).skip_normalization();
+    let rustc_middle::ty::Adt(adt, arguments) = native.kind() else {
+        return Err(invalid("native field layout requires a struct"));
+    };
+    if !adt.is_struct() {
+        return Err(invalid("native field layout requires a struct"));
+    }
     let declared = &adt.non_enum_variant().fields;
     if declared.len() != model.fields.len()
-        && crate::generic_layouts::marker_type(tcx, adt, arguments, model.fields.len()).is_none()
+        && crate::generic_layouts::marker_type(tcx, *adt, arguments, model.fields.len()).is_none()
     {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
@@ -602,15 +608,6 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         }
     }
     Ok(())
-}
-
-/// Select the public carrier kind once for every layout and generic-profile validation pass.
-/// Only an opaque declaration admits enums, aliases and trait principals; retained fields require a struct.
-fn library_model_item(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<DefId, PlanError> {
-    if model.fields.is_empty() {
-        return callees::native_type_item(tcx, &model.library_item);
-    }
-    callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
@@ -801,7 +798,7 @@ pub fn compile(
 /// Bounds follow argument dependency order, so an invalid child cannot surface as a Rust alias diagnostic first.
 fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
     for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-        let def = library_model_item(tcx, model)?;
+        let def = callees::native_type_item(tcx, &model.library_item)?;
         if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
             types::native_trait_object(tcx, def, &model.library_type_arguments)?;
             continue;
@@ -831,7 +828,7 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         if model.library_item.is_empty() {
             continue;
         }
-        let def = library_model_item(tcx, model)?;
+        let def = callees::native_type_item(tcx, &model.library_item)?;
         if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
             continue;
         }

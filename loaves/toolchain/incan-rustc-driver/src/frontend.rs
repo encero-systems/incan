@@ -356,7 +356,9 @@ fn complete_dependency_context(
         .modules
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?;
-    entry_module.native_union_declarations = native_union_layouts(loaves);
+    entry_module
+        .native_union_declarations
+        .extend(native_union_layouts(loaves));
     Ok(program)
 }
 
@@ -467,6 +469,20 @@ fn native_union_layouts(
                 .native_unions
                 .iter()
                 .filter_map(|native| {
+                    let mut callables = native.closure_members.iter();
+                    let members = native
+                        .members
+                        .iter()
+                        .map(|member| {
+                            if matches!(member, incan_frontend::library_manifest::TypeRef::Function { .. }) {
+                                callables.next().cloned()
+                            } else {
+                                Some(semantic_type_from_resolved(&resolved_type_from_manifest_type_ref(
+                                    member,
+                                )))
+                            }
+                        })
+                        .collect::<Option<Vec<_>>>()?;
                     Some(incan_semantics_core::body_ir::NativeUnionDeclaration {
                         ty: native.semantic_type.clone()?,
                         rust_item: format!(
@@ -474,10 +490,17 @@ fn native_union_layouts(
                             incan_semantics_core::body_ir::loaf_crate_name(&entry.artifact.manifest.name),
                             native.rust_name
                         ),
-                        members: native
-                            .members
+                        members,
+                        closure_members: native.closure_members.clone(),
+                        closure_items: native
+                            .closure_items
                             .iter()
-                            .map(|member| semantic_type_from_resolved(&resolved_type_from_manifest_type_ref(member)))
+                            .map(|item| {
+                                format!(
+                                    "{}::{item}",
+                                    incan_semantics_core::body_ir::loaf_crate_name(&entry.artifact.manifest.name),
+                                )
+                            })
                             .collect(),
                     })
                 })

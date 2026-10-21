@@ -31,9 +31,24 @@
 #   envelope 4
 #   plain 5
 #   8
+#   text 9 14 12
 
 from pub::querykit import BoolColumnExpr, NumberColumnExpr, BoolLiteralExpr, StringLiteralExpr, ColumnExpr, IntExpr, Surcharge as Charge, describe, describe_pair, column, literal, accept_optional, accept_expr, lit, first, second, select, pick, charge_total
 from pub::other import ProviderColumn, render
+from pub::querykit import replacement, captured_replacement, extracted_replacement
+
+
+def double(value: int) -> int:
+    """Supply a named function as a dependency-owned callable union payload."""
+    return value * 2
+
+
+def describe_replacement(value: str | Callable[int, int]) -> str:
+    """Narrow and invoke a callback returned inside the dependency's union."""
+    if isinstance(value, str):
+        return value
+    else:
+        return str(value(7))
 
 
 model LocalValue:
@@ -124,3 +139,8 @@ def main() -> None:
     println(show_envelope(IntExpr(value=4)))
     println(show_envelope(5))
     println(bump(IntExpr(value=4)))
+    callback: Callable[int, int] = (value) => value + 2
+    assert replacement((value) => value + 2) == "9"
+    assert extracted_replacement(captured_replacement(5))(7) == 12
+    assert extracted_replacement("text")(7) == 7
+    println(replacement("text"), replacement(callback), replacement(double), describe_replacement(captured_replacement(5)))

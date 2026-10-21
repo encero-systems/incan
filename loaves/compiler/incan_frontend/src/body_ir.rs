@@ -341,6 +341,7 @@ pub fn build_body_ir_module(
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
     nominal_carriers::retain(&mut module, type_info, context);
+    union_layouts::retain(&mut module);
     module
 }
 
@@ -2126,6 +2127,7 @@ mod registry_effects;
 mod representation_facts;
 mod result_channels;
 mod static_aliases;
+mod union_layouts;
 
 mod bodies;
 mod enum_types;

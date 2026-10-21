@@ -832,6 +832,8 @@ pub model EnumDeclaration:
     pub raw_values: list[str] = []
     # Checked source equality and ordering bodies; the adapter validates their exact enum input ABI before bridging.
     pub comparison_methods: list[str] = []
+    # Exact callable object aliases for environment-holding union variants, in their physical order.
+    pub closure_items: list[str] = []
 
 
 @derive(Clone, PartialEq)

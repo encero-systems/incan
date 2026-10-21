@@ -263,6 +263,8 @@ pub fn publish_native_unions(manifest: &mut LibraryManifest, unions: Vec<NativeU
             Ok(NativeUnionExport {
                 owner: NativeUnionOwnerExport::ContainingArtifact,
                 rust_name: declaration.rust_item,
+                closure_items: declaration.closure_items,
+                closure_members: declaration.closure_members,
                 members: declaration
                     .members
                     .iter()
@@ -296,6 +298,13 @@ fn native_union_member(ty: &IncanType) -> CliResult<TypeRef> {
         },
         IncanType::Tuple(elements) => TypeRef::Tuple {
             elements: elements.iter().map(native_union_member).collect::<CliResult<_>>()?,
+        },
+        IncanType::Function { params, return_type } => TypeRef::Function {
+            params: params
+                .iter()
+                .map(|parameter| native_union_member(&parameter.ty))
+                .collect::<CliResult<_>>()?,
+            return_type: Box::new(native_union_member(return_type)?),
         },
         _ => return Err(CliError::failure(format!("cannot publish native union payload {ty}"))),
     })

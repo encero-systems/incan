@@ -228,7 +228,7 @@ impl TypeChecker {
     }
 
     /// Normalize qualified projections structurally, including projections nested in ordinary result containers.
-    pub(super) fn rust_projected_type(&self, display: &str, depth: usize) -> Option<ResolvedType> {
+    pub(in crate::typechecker) fn rust_projected_type(&self, display: &str, depth: usize) -> Option<ResolvedType> {
         if depth >= 12 {
             return None;
         }

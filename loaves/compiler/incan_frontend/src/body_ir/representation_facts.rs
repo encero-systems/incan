@@ -18,8 +18,81 @@ pub(super) fn retain(body: &mut bir::Body) {
                 facts.closure_holding_parameters.push(local);
             }
         }
+        retain_union_callable_values(
+            &mut body.block.stmts,
+            facts,
+            matches!(body.return_type, IncanType::Function { .. }),
+        );
     }
     retain_residual_types(&mut body.block.stmts);
+}
+
+/// Preserve an extracted callable's environment in its destination frame without partially moving its union owner.
+fn retain_union_callable_values(
+    statements: &mut [bir::Statement],
+    facts: &mut bir::CallableRepresentation,
+    callable_return: bool,
+) {
+    for statement in statements {
+        match &mut statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(value),
+            } => {
+                if retain_union_callable_read(value)
+                    && let Some(local) = place.local_id()
+                    && place.projection.is_empty()
+                {
+                    if !facts.closure_holding_locals.contains(&local) {
+                        facts.closure_holding_locals.push(local);
+                    }
+                    facts.function_pointer_locals.retain(|held| *held != local);
+                }
+            }
+            bir::StatementKind::Return { value: Some(value) } => {
+                if retain_union_callable_read(value) && callable_return {
+                    facts.closure_holding_return = true;
+                }
+            }
+            bir::StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                retain_union_callable_values(&mut then_block.stmts, facts, callable_return);
+                if let Some(block) = else_block {
+                    retain_union_callable_values(&mut block.stmts, facts, callable_return);
+                }
+            }
+            bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
+                retain_union_callable_values(&mut body.stmts, facts, callable_return);
+            }
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => {
+                for arm in arms {
+                    retain_union_callable_values(&mut arm.body_stmts, facts, callable_return);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A checker-selected callable payload is cloned out of its union; the union remains responsible for its own drop.
+fn retain_union_callable_read(value: &mut bir::Operand) -> bool {
+    let bir::Operand::Place(read) = value else { return false };
+    if !matches!(
+        read.place.projection.last(),
+        Some(bir::PlaceElem::UnionMember {
+            ty: IncanType::Function { .. }
+        })
+    ) {
+        return false;
+    }
+    if !matches!(read.fact, bir::OwnershipFact::Unknown | bir::OwnershipFact::MutBorrow) {
+        read.fact = bir::OwnershipFact::Clone;
+    }
+    true
 }
 
 /// Select generic parameter carriers only from a checker-resolved standard callable hook, including nested branches.

@@ -273,7 +273,7 @@ impl TypeChecker {
         projected
     }
 
-    /// Reuse storage projection recursively without allowing diagnostic displays into a structural signature.
+    /// Reuse storage projection recursively, normalizing admitted associated types before freezing structural storage.
     fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(binder) = source_binder(leaf, parameters) {
@@ -298,6 +298,12 @@ impl TypeChecker {
             let public = self.rust_public_type_path(display);
             if public != *display {
                 return Some(self.rust_storage_constructor(&public, Vec::new(), parameters));
+            }
+            if display.trim_start().starts_with('<')
+                && let Some(projected) = self.rust_projected_type(display, 0)
+                && projected != *leaf
+            {
+                return Some(self.rust_storage_resolved(&projected, parameters));
             }
             let parsed = self
                 .native_runtime_type(display)

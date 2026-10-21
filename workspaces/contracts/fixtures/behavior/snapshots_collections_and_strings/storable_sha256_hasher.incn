@@ -1,9 +1,9 @@
-# behavior: a Sha256Hasher stored in a model field accepts incremental updates and finalizes to the same digest as a one-shot sha256 (#969)
+# behavior: a stored Sha256Hasher preserves incremental updates, and SHA-224 retains its associated output length (#969, #2256)
 # expect-stdout:
 #   true
 #   false
 
-from std.hash import Sha256Hasher, sha256
+from std.hash import Sha256Hasher, sha224, sha256
 
 
 model StructuralSink:
@@ -17,6 +17,7 @@ model StructuralSink:
 
 
 def main() -> None:
+    assert len(sha224.digest(b"")) == 28
     mut sink = StructuralSink(hasher=sha256.new())
     sink.append(b"a")
     sink.append(b"bc")

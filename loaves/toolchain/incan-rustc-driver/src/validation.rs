@@ -1016,12 +1016,10 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::FunctionItem(name.clone(), parameters))
         }
         RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
-            Scalar::Closure(signature) if matches!(value.projection, Projection::Whole) => {
-                Ok(Scalar::ClosureRef(signature))
-            }
+            Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
             _ => Err(invalid(
                 function,
-                "callable-object borrow requires a whole owned closure",
+                "callable-object borrow requires an owned closure payload",
             )),
         },
         RvalueKind::ReifyFunction(value) => {

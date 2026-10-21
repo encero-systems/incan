@@ -94,3 +94,25 @@ pub def charge_total(charge: Charges) -> int:
     match charge:
         Surcharge(extra) => return 100 + extra.value
         int(amount) => return amount
+
+
+pub def replacement(value: str | Callable[int, int]) -> str:
+    """Invoke a captured or named callback supplied by a consumer."""
+    if isinstance(value, str):
+        return value
+    else:
+        return str(value(7))
+
+
+pub def captured_replacement(offset: int) -> str | Callable[int, int]:
+    """Publish a union that owns its callback's captured environment."""
+    callback: Callable[int, int] = (value) => value + offset
+    return callback
+
+
+pub def extracted_replacement(value: str | Callable[int, int]) -> Callable[int, int]:
+    """Return an owned callable extracted from the dependency's union."""
+    if isinstance(value, str):
+        return (number) => number
+    else:
+        return value
