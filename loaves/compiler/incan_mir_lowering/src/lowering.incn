@@ -771,6 +771,8 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                         Projection.VariantField(_variant, _slot, _ty) =>
                             return clone_nominal_operand(builder, target, span)
                         Projection.Fields(_fields) => return clone_nominal_operand(builder, target, span)
+                        Projection.DerefField(_slot, _ty) => return clone_nominal_operand(builder, target, span)
+                        Projection.DerefFields(_fields) => return clone_nominal_operand(builder, target, span)
                         _ => pass
                 PlanType.Model(_owner, _name) =>
                     match target.projection:
