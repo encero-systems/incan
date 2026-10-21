@@ -1,0 +1,28 @@
+# behavior: a function with a native future type parameter runs a closed unit future and resumes its caller
+# expect-stdout:
+#   before
+#   polled
+#   after
+
+import std.async
+from rust::incan_std_async::runtime import block_on
+from rust::incan_std_async::task import RuntimeFuture
+
+
+async def task() -> None:
+    """Expose the time the executor polls the source future."""
+    println("polled")
+
+
+def run[F with RuntimeFuture[None]](future: F) -> None:
+    """Call the native executor with the active source instance's exact future carrier."""
+    match block_on(future):
+        Ok(_) => pass
+        Err(error) => println(error.message())
+
+
+def main() -> None:
+    """Observe successful continuation after the native executor returns."""
+    println("before")
+    run(task())
+    println("after")
