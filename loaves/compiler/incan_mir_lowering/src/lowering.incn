@@ -6015,9 +6015,11 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     """
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
 
-    A shared model reference, such as a receiver, already is the borrow that Clone takes.
+    A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
+    reference copies the reference itself through the ordinary carrier-payload read.
     """
     match place_type(builder.locals, value):
+        PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
         PlanType.ValidationError => return carrier_payload_value(builder, value, span)
         PlanType.ValidationErrorRef =>
             owned = Place(local=value.local, projection=Projection.Deref(PlanType.ValidationError), span=span)

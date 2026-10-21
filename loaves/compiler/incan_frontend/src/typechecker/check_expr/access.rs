@@ -2031,6 +2031,37 @@ impl TypeChecker {
         crate::symbols::canonical_builtin_member_identity(owner, member)
     }
 
+    /// Copy a shared native function-pointer reference through the builtin Clone contract. Capturing callable values
+    /// and exclusive references do not acquire pointer-copy semantics from an arrow-shaped source type.
+    fn clone_function_reference(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let ResolvedType::Ref(inner) = receiver else {
+            return None;
+        };
+        if !matches!(inner.as_ref(), ResolvedType::Function(_, _)) || method != trait_bounds::rust::CLONE_METHOD {
+            return None;
+        }
+        if !self.validate_rust_method_type_arg_arity(method, &[], type_args, span) {
+            return Some(ResolvedType::Unknown);
+        }
+        if !args.is_empty() {
+            self.errors
+                .push(errors::builtin_arity("function reference clone", 0, args.len(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info.record_resolved_identity(
+            span,
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
+        Some(inner.as_ref().clone())
+    }
+
     /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
     /// and explicit bound methods have already resolved before this boundary; no legacy fact is changed here.
     fn record_body_ir_inferred_clone(
@@ -3249,6 +3280,7 @@ impl TypeChecker {
 
     /// Retain an inherent Rust callee using the impl's declared native binders, rather than the owner's arity.
     /// Receiver references are explicit checked parameter types; no downstream consumer guesses a borrow from a name.
+    /// Metadata-defaulted receiver arguments use the same storage arity as constructors and retained dereferences.
     #[allow(clippy::too_many_arguments)]
     fn retain_checked_rust_method(
         &mut self,
@@ -3328,7 +3360,8 @@ impl TypeChecker {
                 ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
                 other => other,
             };
-            let Some(parameter) = Self::checked_rust_receiver_parameter(&method.signature, receiver) else {
+            let storage = self.rust_storage_owner(receiver, owner, path);
+            let Some(parameter) = Self::checked_rust_receiver_parameter(&method.signature, &storage) else {
                 return;
             };
             parameters.insert(0, parameter);
@@ -7613,6 +7646,9 @@ impl TypeChecker {
             }
         }
 
+        if let Some(ret) = self.clone_function_reference(&base_ty, method, type_args, args, span) {
+            return ret;
+        }
         if let Some(ret) =
             self.resolve_union_clone_trait_method_call(&base_ty, method, type_args, args, &arg_types, span)
         {

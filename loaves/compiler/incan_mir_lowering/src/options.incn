@@ -537,12 +537,13 @@ pub def format_carrier(mut builder: Builder, source: Place, span: SourceSpan) ->
 
 
 pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Operand, str]:
-    """Copy primitive payloads and clone an owned active payload without consuming its borrowed carrier."""
+    """Copy primitive, function-pointer and immutable scalar-reference payloads, or clone an owned active payload."""
     ty = frame_place_type(builder.locals, place)
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return Ok(read_place(place, false, span))
     match ty:
         PlanType.FunctionPointer(_signature) => return Ok(read_place(place, false, span))
+        PlanType.ScalarRef(_elements) => return Ok(read_place(place, false, span))
         _ => pass
     mut reference_type = PlanType.StringRef
     match ty:

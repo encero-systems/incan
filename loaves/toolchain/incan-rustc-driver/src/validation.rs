@@ -1376,8 +1376,11 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier only borrows exact numeric, Boolean, decimal or frozen primitive storage.
+/// The scalar reference carrier borrows exact primitive storage or an admitted native function pointer.
 fn scalar_referent(ty: &Scalar) -> bool {
+    if matches!(ty, Scalar::FunctionPointer(_)) {
+        return source_signature_type(ty);
+    }
     sized_numeric(ty).is_some()
         || matches!(
             ty,
