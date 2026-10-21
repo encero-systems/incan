@@ -6663,7 +6663,7 @@ def clone_display_place(
     type_parameter: bool,
 ) -> Result[Place, str]:
     """
-    Clone borrowed owned text for display; copyable decimal and frozen carriers keep their exact values.
+    Materialize borrowed text for display; native str slices, copyable decimal and frozen carriers keep their checked representation.
 
     A scalar a type parameter's checked clone or borrow fact reads, once its instance or closed binding makes it
     concrete, displays from a copy, in the type-parameter display style when the value's checked type is one.
@@ -6676,7 +6676,8 @@ def clone_display_place(
     ):
         return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
     if place_type(builder.locals, place) != PlanType.String:
-        return Err(f"unsupported Body IR nonscalar display borrow {ty:?} at {span.file}:{span.line} in {builder.name}")
+        site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+        return Err(f"unsupported Body IR nonscalar display borrow at {site}; type {ty:?}; projection {place.projection:?}")
     return clone_text(builder, place, span)
 
 
