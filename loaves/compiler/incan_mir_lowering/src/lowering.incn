@@ -208,6 +208,7 @@ from decorator_caches import (
     reified_pointer,
 )
 from traits import (
+    is_default_body,
     method_index,
     owner_method_index,
     receiver_fills_slot,
@@ -3736,6 +3737,10 @@ def instantiated_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
+        if is_default_body(module, body):
+            builder.instances.append(
+                Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false),
+            )
     return Ok(body)
 
 
@@ -6870,6 +6875,8 @@ def lowered_plan(
             if body_module_identity(body)? != str(checked[index].module_id.path()):
                 continue
             if len(body.type_parameters) != 0:
+                continue
+            if is_default_body(context, body):
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue

@@ -230,6 +230,14 @@ fn required_loaf_identities(
             modules
                 .iter()
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.declarations.body_ir_trait_adoptions.values())
+                .flatten()
+                .flat_map(|adoption| adoption.methods.iter().flatten().cloned()),
+        )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
                 .flat_map(|info| info.expressions.validated_newtype_coercions.values())
                 .flat_map(|coercion| &coercion.steps)
                 .flat_map(|step| step.owner_identity.iter().chain(step.ctor_identity.iter()).cloned()),

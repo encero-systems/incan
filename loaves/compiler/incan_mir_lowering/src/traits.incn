@@ -41,6 +41,17 @@ pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrMo
     return specialize_for(module, implementations, owners)
 
 
+pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
+    """Identify a trait-owned executable by its retained declaration, so only a selected adopter schedules it."""
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            for owner in module.trait_declarations:
+                if owner.origin == identity.origin and owner.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.declaration_span.end:
+                    return true
+    return false
+
+
 def append_records(mut records: list[TraitImplementation], module: &BodyIrModule) -> None:
     """Copy one module's implementation records through the explicit interop clone the opaque Rust type needs."""
     for implementation in module.trait_implementations:
