@@ -570,6 +570,7 @@ impl TypeChecker {
                 &mut bound,
             );
         }
+        self.infer_rust_predicate_bindings(sig, parameters, &mut bound);
         bound
     }
 

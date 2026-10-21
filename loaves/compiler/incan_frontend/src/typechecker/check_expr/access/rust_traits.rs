@@ -567,7 +567,7 @@ impl TypeChecker {
     }
 
     /// Bind one impl's declared Self template to a concrete native owner before inspecting its members or projections.
-    pub(super) fn rust_impl_self_bindings(
+    pub(in crate::typechecker::check_expr) fn rust_impl_self_bindings(
         &self,
         implementation: &RustImplementedTrait,
         owner: &ResolvedType,
@@ -714,6 +714,7 @@ impl TypeChecker {
     fn disjoint_rust_method_binders(
         signature: &RustFunctionSig,
         implementation: &RustImplementedTrait,
+        trait_parameters: &[String],
     ) -> Option<RustFunctionSig> {
         let mut substitutions = HashMap::new();
         for (index, parameter) in signature.type_params.iter().enumerate() {
@@ -721,7 +722,10 @@ impl TypeChecker {
                 continue;
             }
             let mut name = format!("__incan_method_{index}");
-            while implementation.type_params.contains(&name) || signature.type_params.contains(&name) {
+            while implementation.type_params.contains(&name)
+                || signature.type_params.contains(&name)
+                || trait_parameters.contains(&name)
+            {
                 name.push('_');
             }
             substitutions.insert(parameter.as_str(), name);
@@ -767,7 +771,7 @@ impl TypeChecker {
         if original.is_async || original.is_unsafe {
             return None;
         }
-        let scoped = Self::disjoint_rust_method_binders(original, implementation);
+        let scoped = Self::disjoint_rust_method_binders(original, implementation, &trait_info.type_params);
         let original = scoped.as_ref().unwrap_or(original);
         let mut variables = implementation.type_params.clone();
         variables.extend(original.type_params.iter().cloned());

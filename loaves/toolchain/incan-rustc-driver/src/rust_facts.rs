@@ -744,7 +744,7 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
     RustFunctionSig {
         // No receiver contract: a missing fact authorizes no inferred borrowing.
         receiver_contract: None,
-        bounds: trait_bounds(tcx, def),
+        bounds: trait_bounds(tcx, def, named),
         type_params,
         params,
         return_type: display(output),
@@ -753,8 +753,9 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
     }
 }
 
-/// Preserve trait predicates and projection equalities without flattening Fn inputs or inventing an output.
-fn trait_bounds(tcx: TyCtxt<'_>, def: DefId) -> Vec<RustTraitBound> {
+/// Preserve trait predicates and projection equalities, retaining their named traits and types for fallback
+/// extraction's closure.
+fn trait_bounds(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> Vec<RustTraitBound> {
     let predicates = tcx.predicates_of(def).instantiate_identity(tcx).predicates;
     let mut bounds = Vec::new();
     for clause in &predicates {
@@ -762,6 +763,10 @@ fn trait_bounds(tcx: TyCtxt<'_>, def: DefId) -> Vec<RustTraitBound> {
             continue;
         };
         let reference = predicate.skip_binder().trait_ref;
+        named.insert(reference.def_id);
+        for argument in reference.args.types() {
+            note_named(argument, named);
+        }
         bounds.push(RustTraitBound {
             self_type: display(reference.self_ty()),
             path: visible_path(tcx, reference.def_id),
@@ -777,6 +782,8 @@ fn trait_bounds(tcx: TyCtxt<'_>, def: DefId) -> Vec<RustTraitBound> {
         let Some(value) = projection.term.as_type() else {
             continue;
         };
+        named.insert(projection.trait_def_id(tcx));
+        note_named(value, named);
         let Some(name) = tcx.opt_item_name(projection.def_id()) else {
             continue;
         };
@@ -893,17 +900,21 @@ fn trait_impl_template(
             .map(|parameter| parameter.name.to_string())
             .collect(),
         type_arguments: reference.args.types().skip(1).map(display).collect(),
-        bounds: trait_bounds(tcx, implementation),
+        bounds: trait_bounds(tcx, implementation, named),
         associated_type_bindings,
     })
 }
 
-/// Include a trait's implementation templates independently of any cached implementor. An unconstrained Self
-/// asks rustc for every relevant bucket; native predicates still decide each closed instantiation's applicability.
+/// Include positive trait templates from both blanket and concrete self-type buckets, independently of any cached
+/// implementor. Native predicates still decide each closed instantiation's applicability.
 fn trait_implementations(tcx: TyCtxt<'_>, owner: DefId, named: &mut HashSet<DefId>) -> Vec<RustImplementedTrait> {
-    let mut implementations = Vec::new();
-    let self_type = Ty::new_param(tcx, 0, rustc_span::Symbol::intern("Self"));
-    tcx.for_each_relevant_impl(owner, self_type, |implementation| implementations.push(implementation));
+    let templates = tcx.trait_impls_of(owner);
+    let mut implementations = templates
+        .blanket_impls()
+        .iter()
+        .chain(templates.non_blanket_impls().values().flatten())
+        .copied()
+        .collect::<Vec<_>>();
     implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
     implementations
         .into_iter()
