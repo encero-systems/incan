@@ -1535,12 +1535,17 @@ pub enum RustTraitAssoc {
     Constant { name: String, type_display: String },
 }
 
+/// Retained native trait members and supertrait equalities used for method and associated-type selection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustTraitInfo {
     /// Whether rustc's Rust 2024 prelude imports this exact trait identity.
     pub is_in_prelude: bool,
     /// Trait type binders after Self, in native declaration order.
     pub type_params: Vec<String>,
+    /// Supertrait predicates and associated output equalities on this trait's Self parameter.
+    #[serde(default)]
+    pub bounds: Vec<RustTraitBound>,
+    /// Associated functions, types, and constants declared by this trait.
     pub items: Vec<RustTraitAssoc>,
     /// Co-located derive-macro namespace metadata for this same Rust path, when invoked by the project.
     ///

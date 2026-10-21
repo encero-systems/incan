@@ -249,12 +249,16 @@ impl TypeChecker {
 
     /// Project only declared Rust parameters into the checker's ordinary structural inference representation.
     /// Opaque generic paths are opened here once; lowering receives the instantiated checked result.
-    pub(in crate::typechecker::check_expr) fn rust_inference_type(
-        &self,
-        ty: &ResolvedType,
-        parameters: &[String],
-    ) -> ResolvedType {
+    pub(in crate::typechecker) fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
+            if let ResolvedType::Named(name) = leaf
+                && parameters.contains(name)
+            {
+                return Some(ResolvedType::TypeVar(name.clone()));
+            }
+            if let Some(name) = self.generic_placeholder_name(leaf) {
+                return Some(ResolvedType::TypeVar(name.to_owned()));
+            }
             if *leaf == ResolvedType::Bytes {
                 return Some(ResolvedType::Generic(
                     "List".into(),
@@ -264,7 +268,11 @@ impl TypeChecker {
             let ResolvedType::RustPath(path) = leaf else {
                 return None;
             };
-            if parameters.iter().any(|parameter| parameter == path.trim()) {
+            if parameters.iter().any(|parameter| parameter == path.trim())
+                || self
+                    .generic_placeholder_name(&ResolvedType::Named(path.clone()))
+                    .is_some()
+            {
                 return Some(ResolvedType::TypeVar(path.trim().to_owned()));
             }
             let (base, arguments) = Self::rust_generic_base_and_args(path)?;
@@ -361,7 +369,7 @@ impl TypeChecker {
             .filter(|(_, ty)| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
             .map(|(name, ty)| (name.as_str(), render_resolved_type_as_rust_arg(ty)))
             .collect();
-        Self::specialize_rust_signature(sig, &substitutions, owner)
+        self.rust_signature_projections(Self::specialize_rust_signature(sig, &substitutions, owner))
     }
 
     /// Instantiate a checked Rust signature structurally so Incan argument identities survive the foreign boundary.
@@ -450,8 +458,8 @@ impl TypeChecker {
         }
     }
 
-    /// Retain only a safe synchronous call whose Rust signature and native instantiation were fully selected.
-    /// The external call boundary later checks the retained signature against the exact linked Rust item.
+    /// Retain a safe call whose Rust signature and native instantiation were fully selected. Async calls retain a
+    /// future of the declared output, which the existing native constructor boxes without polling its body.
     fn retain_checked_rust_function(
         &mut self,
         path: &str,
@@ -459,7 +467,7 @@ impl TypeChecker {
         bindings: &HashMap<String, ResolvedType>,
         span: Span,
     ) {
-        if signature.is_async || signature.is_unsafe {
+        if signature.is_unsafe {
             return;
         }
         let arguments = signature
@@ -480,6 +488,17 @@ impl TypeChecker {
             &signature.type_params,
             bindings,
         );
+        let result = if signature.return_type.contains(" as ") {
+            let selected = self.specialize_inferred_rust_signature(signature, path, bindings);
+            self.native_rust_signature_type(&selected.return_type, path)
+        } else {
+            result
+        };
+        let result = if signature.is_async {
+            ResolvedType::Generic("Awaitable".into(), vec![result])
+        } else {
+            result
+        };
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
@@ -1309,7 +1328,7 @@ impl TypeChecker {
             self.validate_rust_boundary_value(path, param.type_display.as_str(), arg_expr, arg_ty, false);
         }
 
-        let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
+        let ret = self.resolved_rust_call_type_from_sig(&effective_sig, path, span);
         let ret = self.instantiate_rust_signature_type(&ret, &sig.type_params, &callable_returns);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         if self.errors.len() == errors_before {

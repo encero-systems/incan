@@ -1047,6 +1047,11 @@ pub struct RustInteropArtifacts {
     /// this artifact so direct async Rust calls still realize to their output type without reintroducing import-time
     /// extraction or relying on stale symbol metadata.
     pub async_call_realizations: HashSet<(usize, usize)>,
+    /// Metadata-selected IntoFuture conversions keyed by the await operand's span; Body IR emits each once before
+    /// suspension.
+    pub await_conversions: HashMap<(usize, usize), RustCheckedCall>,
+    /// Transparent rusttype aliases with their native owner template and source type parameters.
+    pub type_aliases: HashMap<String, (Vec<String>, ResolvedType)>,
 }
 
 /// A metadata-selected native struct layout, generic over its declaring type parameters.

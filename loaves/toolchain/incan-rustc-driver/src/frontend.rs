@@ -364,7 +364,7 @@ fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &Bo
     let newtype_count = program
         .declarations
         .iter()
-        .filter(|declaration| matches!(declaration.node, Declaration::Newtype(_)))
+        .filter(|declaration| matches!(&declaration.node, Declaration::Newtype(item) if !item.is_rusttype))
         .count();
     let retained_newtypes = module
         .nominal_declarations
@@ -430,6 +430,19 @@ fn validate_declarations(
                 if let Some(feature) = trait_refusal_feature(item) {
                     return Err(format!("unsupported source Trait {feature} on the native route"));
                 }
+                continue;
+            }
+            Declaration::Newtype(newtype)
+                if newtype.is_rusttype
+                    && newtype.methods.is_empty()
+                    && newtype.traits.is_empty()
+                    && newtype.decorators.is_empty()
+                    && newtype.method_aliases.is_empty()
+                    && newtype.rebindings.is_empty()
+                    && newtype.method_partials.is_empty()
+                    && newtype.interop_edges.is_empty()
+                    && type_info.rust.type_aliases.contains_key(&newtype.name) =>
+            {
                 continue;
             }
             Declaration::Newtype(newtype)

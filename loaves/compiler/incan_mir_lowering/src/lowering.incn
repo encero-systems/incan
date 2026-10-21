@@ -376,6 +376,7 @@ from async_ import (
     validate_futures,
     construct_future,
     construct_boxed_future,
+    boxed_future_constructor,
     await_future,
     async_entry,
     integer_entry,
@@ -4833,9 +4834,6 @@ def lower_delegated_call(
                         callee = CalleeKind.Instantiated(path, type_arguments)
                     return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
                 _ => pass
-            if len(type_arguments) == 0:
-                external_call(builder, path, parameters, result, operands, output, span)
-                return Ok(None)
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
 
 
@@ -5130,7 +5128,7 @@ def shared_model_argument(
             match source:
                 PlanType.Model(owner, name) =>
                     if ty != PlanType.ModelRef(owner, name):
-                        return Err("unsupported Body IR shared receiver owner mismatch")
+                        return Err(f"unsupported Body IR shared receiver owner mismatch for {name} in {builder.name} at {span.file}:{span.line}")
                     reference = temporary(builder, ty, span)
                     builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
                     return Ok(read_place(reference, false, span))
@@ -6837,6 +6835,17 @@ def lowered_plan(
                 if retained.name == function.name:
                     return Err(f"unsupported Body IR overloaded function {body.name}")
             functions.append(function)
+            if library and body.is_async:
+                mut captures: list[PlanType] = []
+                for parameter in function.parameters:
+                    captures.append(parameter.ty)
+                functions.append(boxed_future_constructor(
+                    function_name(context, body),
+                    CalleeKind.Planned(function.name),
+                    captures,
+                    function.return_type,
+                    function.span,
+                ))
             emitted_frames.append(body.clone())
             append_synthesized(functions, synthesized)?
             if body.is_async and function_name(context, body) == "main":
@@ -11542,7 +11551,7 @@ def bind_enum_fields(
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:
-                    value = moved_sdk_enum_payload(builder, source, projected, fields, binding.fact, span)?
+                    value = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
                     track_rvalue_moves(builder, RvalueKind.Use(value))
                     builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
                     if ty == PlanType.String or is_nominal_type(ty):
@@ -11553,7 +11562,7 @@ def bind_enum_fields(
     return Ok(None)
 
 
-def moved_sdk_enum_payload(
+def moved_native_enum_payload(
     mut builder: Builder,
     source: Place,
     payload: Place,
@@ -11561,10 +11570,17 @@ def moved_sdk_enum_payload(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Transfer a checked SDK payload move, retiring its complete single-field carrier before cleanup edges."""
+    """Transfer a checked native or standard payload move, retiring its single-field carrier before cleanup edges."""
     owner = enum_owner(place_type(builder.locals, source))?
-    if fact != OwnershipFact.Move or owner >= len(builder.enums) or library_enum_item(builder.enums[owner]) == "":
+    if fact != OwnershipFact.Move:
         return enum_payload_read(builder, payload, fact, span)
+    if owner < len(builder.enums):
+        if library_enum_item(builder.enums[owner]) == "":
+            return enum_payload_read(builder, payload, fact, span)
+    else:
+        carrier = builder.intrinsics[owner - len(builder.enums)].carrier
+        if carrier != "Option" and carrier != "Result":
+            return enum_payload_read(builder, payload, fact, span)
     if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
         return Err("unsupported Body IR SDK enum payload move outside a whole owned single-field carrier")
     forget_owned(builder, source.local)

@@ -205,6 +205,10 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
     """Substitute a plan carrier's field types while preserving the original canonical owner and field identities."""
     mut result = instance.declaration.clone()
     result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
+    if library_item(instance.declaration) != "":
+        result.native_type_arguments.clear()
+        for argument in instance.arguments:
+            result.native_type_arguments.push(argument.clone())
     result.field_types.clear()
     for ty in instance.declaration.field_types:
         concrete: RustType = substitute(ty, instance.declaration.type_parameters, instance.arguments)?

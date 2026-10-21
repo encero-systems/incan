@@ -92,13 +92,14 @@ fn rust_item<'a>(display: &'a str, facts: &TypeCheckInfo) -> Option<(CanonicalSy
         ),
         None => (display, Vec::new()),
     };
-    // A builtin's carrier and an SDK runtime surface already have their own storage; they are never a second layout.
+    let path = facts.rust.item_public_paths.get(path).map_or(path, String::as_str);
+    // A builtin's carrier and an SDK runtime surface already have their own storage; a checked raw reexport keeps
+    // its native identity before that decision, independently of an authored source wrapper with the runtime name.
     if incan_semantics_core::RuntimeBuiltinType::from_carrier_path(path).is_some()
         || incan_lang::lang::surface::types::from_runtime_rust_path(path).is_some()
     {
         return None;
     }
-    let path = facts.rust.item_public_paths.get(path).map_or(path, String::as_str);
     let identity = bir::rust_item_identity(path)?;
     bir::native_opaque_nominal(&identity, arguments.len())?;
     let arguments = arguments

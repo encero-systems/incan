@@ -1,0 +1,12 @@
+# behavior: a Rust async function yields its logical output when awaited
+# expect-stdout:
+#   resumed
+
+import std.async
+from rust::tokio::task import yield_now
+
+
+async def main() -> None:
+    """Resume after a native async function suspends."""
+    await yield_now()
+    println("resumed")

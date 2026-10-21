@@ -455,8 +455,8 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
     }
 }
 
-/// A function's signature: parameters with a method's receiver first, as written (`&self`, `&mut self`, `self`).
-/// Async signatures expose the declared future output; the separate async flag retains the pending-call boundary.
+/// Retain parameters with the written receiver first, and an async function's logical Future::Output instead of its
+/// opaque future display. Native construction and polling retain their own checked ABI boundaries.
 fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFunctionSig {
     let signature = tcx
         .fn_sig(def)
@@ -483,7 +483,8 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
         .collect();
     let is_async = tcx.asyncness(def).is_async();
     let output = if is_async {
-        async_output(tcx, signature.output()).unwrap_or(signature.output())
+        tcx.get_impl_future_output_ty(signature.output())
+            .unwrap_or(signature.output())
     } else {
         signature.output()
     };
@@ -639,28 +640,6 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
         .collect()
 }
 
-/// Read an async function's declared `Future::Output` from its opaque return bounds, preserving generic arguments.
-/// No hidden future layout is revealed, and an unproven output keeps the original opaque signature for refusal.
-fn async_output<'tcx>(tcx: TyCtxt<'tcx>, output: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    let ty::Alias(_, alias) = output.kind() else {
-        return None;
-    };
-    let ty::Opaque { def_id, .. } = alias.kind else {
-        return None;
-    };
-    let output_item = tcx.lang_items().future_output()?;
-    tcx.explicit_item_bounds(def_id)
-        .iter_instantiated_copied(tcx, alias.args)
-        .find_map(|bound| {
-            let (clause, _) = bound.skip_normalization();
-            let projection = clause.as_projection_clause()?.skip_binder();
-            if !matches!(projection.projection_term.kind, ty::AliasTermKind::ProjectionTy { def_id } if def_id == output_item) {
-                return None;
-            }
-            projection.term.as_type()
-        })
-}
-
 /// Eliminate impossible blanket candidates for unsized primitives. A slice element remains unconstrained during
 /// extraction, so applicable conditional templates survive for the checker to instantiate and rustc to verify.
 fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
@@ -720,6 +699,7 @@ fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
 /// A trait's associated functions and their signatures.
 fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTraitInfo {
     RustTraitInfo {
+        bounds: trait_bounds(tcx, def),
         is_in_prelude: resolve(tcx, "std::prelude::rust_2024").is_some_and(|prelude| {
             tcx.module_children(prelude)
                 .iter()

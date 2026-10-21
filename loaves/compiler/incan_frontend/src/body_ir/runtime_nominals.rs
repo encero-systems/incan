@@ -149,7 +149,7 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
     })
 }
 
-/// Resolve registered task, race and synchronization vocabulary to its runtime facet; source-owned names stay out.
+/// Resolve registered native vocabulary to its runtime facet; an authored declaration keeps its source layout.
 fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclaration> {
     let id = surface_types::from_str(name)?;
     if !matches!(
@@ -170,9 +170,6 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         .or_else(|| type_info.declarations.body_ir_native_type_identities.get(name))
     {
         match &identity.origin {
-            SymbolOrigin::Module(owner) if owner == &path => {}
-            SymbolOrigin::Package { library, module_path }
-                if library == "incan_stdlib_async" && module_path == &path[1..] => {}
             SymbolOrigin::RustCrate(owner) if surface_types::from_runtime_rust_path(&owner.join("::")) == Some(id) => {}
             _ => return None,
         }
@@ -278,7 +275,9 @@ fn project_path(path: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
 /// Share registry and source-ownership admission with private call inference, retaining the native argument spelling.
 /// Named carriers reject generic syntax, and consumer declarations cannot authorize an equal-spelled SDK carrier.
 pub(crate) fn project_resolved_path(path: &str, facts: &TypeCheckInfo) -> Option<crate::symbols::ResolvedType> {
-    let id = surface_types::from_runtime_rust_path(path)?;
+    let base = path.split('<').next()?;
+    let public = facts.rust.item_public_paths.get(base).map_or(base, String::as_str);
+    let id = surface_types::from_runtime_rust_path(public)?;
     let name = surface_types::as_str(id);
     // A source declaration may share a spelling, but never authorizes a native runtime path conversion.
     nominal(facts, name)?;

@@ -2603,6 +2603,9 @@ impl TypeChecker {
             }
             ResolvedType::Named(name) => self.rust_canonical_path_for_nominal_receiver(name, None),
             ResolvedType::Generic(name, args) => {
+                if name.contains("::") {
+                    return Some(name.trim_start_matches("::").to_owned());
+                }
                 self.rust_canonical_path_for_nominal_receiver(name, Some(args.as_slice()))
             }
             _ => None,
@@ -3218,7 +3221,7 @@ impl TypeChecker {
         result: &ResolvedType,
         span: Span,
     ) {
-        if method.signature.is_async || method.signature.is_unsafe || owner.has_const_params {
+        if method.signature.is_unsafe || owner.has_const_params {
             return;
         }
         let native_parameters = method
@@ -3316,6 +3319,9 @@ impl TypeChecker {
             if let Some(projected) = self.rust_projected_type(&display, 0) {
                 native_result = projected;
             }
+        }
+        if method.signature.is_async {
+            native_result = ResolvedType::Generic("Awaitable".into(), vec![native_result]);
         }
         let result_item_path = self.rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path);
         self.type_info.rust.checked_calls.insert(

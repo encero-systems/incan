@@ -1,0 +1,15 @@
+# behavior: a Rust timeout projects its IntoFuture argument and yields the future output inside Result
+# expect-stdout:
+#   7
+
+import std.async
+from rust::std::future import ready
+from rust::std::time import Duration
+from rust::tokio::time import timeout
+
+
+async def main() -> None:
+    """Await a projected native future under a deadline."""
+    match await timeout(Duration.from_secs(1), ready(7)):
+        Ok(value) => println(value)
+        Err(_) => println("expired")

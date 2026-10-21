@@ -33,7 +33,6 @@ from frame import (
     cleanup_exit,
 )
 from models import place_type
-from decls import library_item
 
 
 pub def is_future(ty: PlanType) -> bool:
@@ -80,13 +79,14 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
 
 
 def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
-    """Retain owned captures only; source borrows require an explicit future lifetime and remain refused."""
+    """Retain owned captures and at most one nominal loan, whose lifetime the native boxing constructor preserves."""
     mut fields: list[PlanType] = []
+    mut loans = 0
     for parameter in body.params:
         ty = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
         match ty:
-            PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR async borrowed receiver capture")
-            PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR async mutable receiver capture")
+            PlanType.ModelRef(_owner, _name) => loans += 1
+            PlanType.ModelMutRef(_owner, _name) => loans += 1
             PlanType.List(_leaf, _depth) => return Err("unsupported Body IR async borrowed list capture")
             PlanType.Set(_leaf) => return Err("unsupported Body IR async borrowed set capture")
             PlanType.Dict(_key, _value) => return Err("unsupported Body IR async borrowed dictionary capture")
@@ -94,6 +94,8 @@ def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDecla
         if parameter.mutable and ty == PlanType.String:
             return Err("unsupported Body IR async mutable string capture")
         fields.append(ty)
+    if loans > 1:
+        return Err("unsupported Body IR async future with multiple borrowed captures")
     return Ok(fields)
 
 
@@ -104,8 +106,8 @@ pub def validate_futures(module: &BodyIrModule, intrinsics: list[EnumDeclaration
             continue
         match body.canonical:
             Some(identity) =>
-                if identity.kind != SemanticSourceTargetKind.Function:
-                    return Err("unsupported Body IR async method future")
+                if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method:
+                    return Err("unsupported Body IR async callable identity")
             None => return Err("unsupported Body IR async body without canonical identity")
         if len(body.type_parameters) == 0:
             _ = capture_types(module, body, intrinsics)?
@@ -123,27 +125,36 @@ pub def construct_boxed_future(
 ) -> Result[None, str]:
     """Construct a source or SDK future now and pin it, preserving deferred body execution and native obligations."""
     name = f"__incan_future_ctor_{builder.name}_{len(builder.synthesized)}"
+    builder.synthesized.append(boxed_future_constructor(name, callee, types, output, span))
+    forget_moved_arguments(builder, arguments)
+    terminate_call(builder, CalleeKind.Planned(name), arguments, destination, span)
+    builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def boxed_future_constructor(
+    name: str,
+    callee: CalleeKind,
+    types: list[PlanType],
+    output: PlanType,
+    span: SourceSpan,
+) -> Function:
+    """Retain one exact boxed-future ABI for both call-site shims and a library's exported async constructor."""
     result = PlanType.Future([output])
     mut parameters: list[Parameter] = []
     mut locals = [Local(ty=result, span=span)]
     for index in range(len(types)):
         parameters.append(Parameter(name=f"capture{index}", ty=types[index], span=span))
         locals.append(Local(ty=types[index], span=span))
-    builder.synthesized.append(
-        Function(
-            name=name,
-            parameters=parameters,
-            return_type=result,
-            locals=locals,
-            blocks=[plan_block([], TerminatorKind.Unreachable, span)],
-            span=span,
-            future_callee=Some(Callee(kind=callee, span=span)),
-        ),
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[plan_block([], TerminatorKind.Unreachable, span)],
+        span=span,
+        future_callee=Some(Callee(kind=callee, span=span)),
     )
-    forget_moved_arguments(builder, arguments)
-    terminate_call(builder, CalleeKind.Planned(name), arguments, destination, span)
-    builder.owned.append(destination.local)
-    return Ok(None)
 
 
 pub def construct_future(
@@ -184,14 +195,7 @@ pub def await_future(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Retain a native suspension and an explicit cancellation edge; the adapter emits only the pinned poll plumbing."""
-    match place_type(builder.locals, future):
-        PlanType.Future(_output) => pass
-        PlanType.Model(owner, _name) =>
-            if owner < 0 or owner >= len(module.nominal_declarations):
-                return Err("unsupported Body IR Await without a retained native future")
-            if library_item(module.nominal_declarations[owner]) != "incan_std_async::task::JoinHandle":
-                return Err("unsupported Body IR Await without a retained native future")
-        _ => return Err("unsupported Body IR Await without a retained native future")
+    # The checked suspension already retains its output. Rustc validates the native Future obligation and exact poll output.
     incoming = builder.owned
     current = builder.current
     cancelled = builder.new_block(span)

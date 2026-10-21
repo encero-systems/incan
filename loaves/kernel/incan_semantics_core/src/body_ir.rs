@@ -351,7 +351,9 @@ pub fn loaf_item_path(canonical: &CanonicalSymbolId) -> Option<String> {
 
 impl LoafCallable {
     /// The declaration record of a Loaf's callable body: its parameters, result, type parameters and defaults, and the
-    /// compiled item its package identity names. `None` for a body no Loaf declares.
+    /// compiled item its package identity names. Async items expose a future constructor rather than the resumed
+    /// body output, so consumers use the same retained boxed-future ABI as calls within the declaring package.
+    /// `None` for a body no Loaf declares.
     pub fn from_body(body: &Body) -> Option<Self> {
         let canonical = body.canonical.clone()?;
         let item = loaf_item_path(&canonical)?;
@@ -370,7 +372,14 @@ impl LoafCallable {
                     },
                 )
                 .collect(),
-            return_type: body.return_type.clone(),
+            return_type: if body.is_async {
+                IncanType::Generic {
+                    base: "Awaitable".into(),
+                    args: vec![body.return_type.clone()],
+                }
+            } else {
+                body.return_type.clone()
+            },
             type_parameters: body.type_parameters.clone(),
             native_type_arguments: Vec::new(),
             parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),

@@ -1909,11 +1909,8 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
                         "await destination",
                     )?;
                 }
-                Scalar::Model(owner)
-                    if model(plan, owner)
-                        .is_some_and(|model| model.library_item == "incan_std_async::task::JoinHandle") =>
-                {
-                    // The SDK Future implementation supplies its exact join-result type; coroutine expansion checks it.
+                Scalar::Model(_) => {
+                    // The checked suspension retains the output; coroutine expansion verifies Future::poll against it.
                     place(plan, function, destination)?;
                 }
                 _ => {
@@ -2332,10 +2329,11 @@ fn validate_frozen_values(
 
 /// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples. Serde
 /// derives fit either shape (a tuple wrapper serializes as its wrapped value), and so does Copy, which rustc admits
-/// only when every field is Copy.
+/// only when every field is Copy. A newtype retains only the automatic derives its underlying type supports; a
+/// non-Clone native permit must not acquire Clone merely by being wrapped.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
-        &["Debug", "Clone"]
+        &[]
     } else {
         &["Debug", "Clone", "FieldInfo", "IncanClass"]
     };
