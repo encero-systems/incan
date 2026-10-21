@@ -6847,7 +6847,7 @@ def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
 
 
 def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
-    """Borrow an owned string for a helper without transferring its owner."""
+    """Borrow owned text or reuse a checked shared String reference without transferring its owner or adding a reference layer."""
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
@@ -6863,6 +6863,10 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             if is_element_place(builder, read.place)?:
                 return borrow_element_text(builder, value, read.fact, span)
             place = scalar_place(builder, read.place, span)?
+            match read.fact:
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
+                _ => pass
             if place_type(builder.locals, place) == PlanType.StringRef:
                 return Ok(read_place(place, false, span))
             if place_type(builder.locals, place) == PlanType.StrRef:
@@ -6872,18 +6876,12 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) == PlanType.FrozenStr:
-                if read.fact == OwnershipFact.MutBorrow or read.fact == OwnershipFact.Unknown:
-                    return Err("unsupported Body IR unproven FrozenStr text borrow")
                 owner = display_plan_operand(builder, read_place(place, false, span), span)?
                 reference = temporary(builder, PlanType.StringRef, span)
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) != PlanType.String:
-                return Err("unsupported Body IR non-string text operand")
-            match read.fact:
-                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
-                OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
-                _ => pass
+                return Err(unsupported_text_operand(builder, place_type(builder.locals, place), span))
             reference = temporary(builder, PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
             return Ok(read_place(reference, false, span))
@@ -6897,6 +6895,12 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                 None => return Err("unsupported Body IR non-string text constant")
 
 
+def unsupported_text_operand(builder: Builder, ty: PlanType, span: SourceSpan) -> str:
+    """Identify the checked text boundary's actual carrier and source site when it cannot be borrowed as text."""
+    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+    return f"unsupported Body IR non-string text operand at {site}; type {ty:?}"
+
+
 def borrow_element_text(
     mut builder: Builder,
     value: &RustOperand,
@@ -6908,14 +6912,15 @@ def borrow_element_text(
         OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
         _ => pass
-    match value_operand(builder, value, span)?.kind:
+    operand = value_operand(builder, value, span)?
+    match operand.kind:
         OperandKind.Move(owner) =>
             if place_type(builder.locals, owner) != PlanType.String:
-                return Err("unsupported Body IR non-string text operand")
+                return Err(unsupported_text_operand(builder, place_type(builder.locals, owner), span))
             reference = temporary(builder, PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
             return Ok(read_place(reference, false, span))
-        _ => return Err("unsupported Body IR non-string text operand")
+        _ => return Err(unsupported_text_operand(builder, operand_type(builder, operand)?, span))
 
 
 def lower_text_helper(
