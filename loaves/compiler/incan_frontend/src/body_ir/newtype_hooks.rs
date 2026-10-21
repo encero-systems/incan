@@ -1,7 +1,8 @@
-//! Source-local, checker-selected fail-fast newtype validation ingress.
+//! Checker-selected fail-fast newtype validation ingress, including imported hooks with retained signatures.
 
 use super::args::fixed_elements;
 use super::{BodyBuilder, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, bir};
+use crate::typechecker::FunctionBindingInfo;
 
 impl BodyBuilder<'_, '_> {
     /// Replace outside-owner explicit construction with its checked hook; raw constructions stay aggregates.
@@ -20,8 +21,7 @@ impl BodyBuilder<'_, '_> {
         if self.newtype_implementation.as_ref() == Some(identity) {
             return None;
         }
-        let declaration = self
-            .local_nominal_declarations
+        self.local_nominal_declarations
             .values()
             .find(|declaration| &declaration.canonical == identity)?;
         let facts = self
@@ -40,17 +40,6 @@ impl BodyBuilder<'_, '_> {
             ));
         };
         facts.checked_constructor.as_ref()?;
-        if incan_semantics_core::canonical_module_identity(&declaration.canonical).as_deref()
-            != Some(self.module_identity)
-        {
-            return Some(self.unsupported_typed_operand(
-                "checked-newtype imported hook body".into(),
-                ty.clone(),
-                scope,
-                span,
-                out,
-            ));
-        }
         let Some(identity) = facts.checked_constructor_identity.as_ref() else {
             return Some(self.unsupported_typed_operand(
                 "checked-newtype constructor without a checked hook identity".into(),
@@ -103,7 +92,39 @@ impl BodyBuilder<'_, '_> {
         )
     }
 
+    /// Find a hook's exact checked signature, retaining a direct span only for declarations in this module.
+    /// Imported signatures come from the constructor's checked owner binding and must carry the selected hook
+    /// identity. Another alias of the same declaration may use a different local result name and cannot substitute.
+    fn checked_newtype_hook_binding(
+        &self,
+        owner: &str,
+        identity: &CanonicalSymbolId,
+    ) -> Option<(Option<CompilerNodeId>, &FunctionBindingInfo)> {
+        if incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity) {
+            let ((start, end), binding) = self
+                .type_info
+                .declarations
+                .method_bindings_by_span
+                .iter()
+                .find(|(_, binding)| binding.identity.as_ref() == Some(identity))?;
+            return Some((
+                Some(CompilerNodeId::declaration_span(self.module_identity, *start, *end)),
+                binding,
+            ));
+        }
+        let binding = self
+            .type_info
+            .declarations
+            .newtype_construction
+            .get(owner)?
+            .checked_constructor_binding
+            .as_ref()
+            .filter(|binding| binding.identity.as_ref() == Some(identity))?;
+        Some((None, binding))
+    }
+
     /// Call the canonical source hook without choosing a failure strategy; its caller owns Result extraction.
+    /// An imported hook resolves by canonical identity across the retained module graph, never a caller-local span.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn checked_newtype_hook_call(
         &mut self,
@@ -115,13 +136,7 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let Some(((start, end), binding)) = self
-            .type_info
-            .declarations
-            .method_bindings_by_span
-            .iter()
-            .find(|(_, binding)| binding.identity.as_ref() == Some(&identity))
-        else {
+        let Some((direct_call_id, binding)) = self.checked_newtype_hook_binding(owner, &identity) else {
             return self.unsupported_operand(
                 "checked-newtype hook without its source binding".into(),
                 scope,
@@ -132,7 +147,6 @@ impl BodyBuilder<'_, '_> {
         if binding.params.len() != 1 || binding.is_async {
             return self.unsupported_operand("checked-newtype hook signature".into(), scope, span, out);
         }
-        let direct_call_id = CompilerNodeId::declaration_span(self.module_identity, *start, *end);
         let returned = super::bodies::close_self_type(self.checked_type(&binding.return_type), ty);
         let IncanType::Generic { base, args } = &returned else {
             return self.unsupported_operand("checked-newtype hook return".into(), scope, span, out);
@@ -145,7 +159,7 @@ impl BodyBuilder<'_, '_> {
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: Some(ty.clone()),
                 name: format!("{owner}.{hook_name}"),
-                direct_call_id: Some(direct_call_id),
+                direct_call_id,
                 canonical: Some(identity),
                 builtin: None,
                 type_args: Vec::new(),

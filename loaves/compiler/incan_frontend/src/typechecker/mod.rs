@@ -3440,7 +3440,8 @@ impl TypeChecker {
     ///
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
     /// current module, so lowering can resolve supertrait graphs, generic trait arity, and same-type method aliases
-    /// across module boundaries.
+    /// across module boundaries. Newtype construction retains the selected hook's checked signature and identity
+    /// so imported validation calls use the declaring module's contract.
     fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
@@ -3530,11 +3531,18 @@ impl TypeChecker {
             let supports_string_conversion = self
                 .temporary_trait_capability_supports_type(string_conversion, &concrete_type)
                 .unwrap_or(false);
-            let checked_constructor = Self::validated_newtype_ctor_name(&name, &info);
-            let checked_constructor_identity = checked_constructor
+            let declared_name = self
+                .symbols
+                .module_type_identity(&name)
+                .map_or(name.as_str(), |identity| identity.declaration_name.as_str());
+            let checked_constructor = Self::validated_newtype_ctor_name(declared_name, &info);
+            let checked_constructor_binding = checked_constructor
                 .as_deref()
                 .and_then(|constructor| info.methods.get(constructor))
-                .and_then(|method| method.identity.clone());
+                .map(|method| Self::newtype_constructor_binding(method, concrete_type.clone()));
+            let checked_constructor_identity = checked_constructor_binding
+                .as_ref()
+                .and_then(|binding| binding.identity.clone());
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
             let mut explicit_derives = info.derives.clone();
             Self::append_implied_derives(&mut explicit_derives);
@@ -3559,6 +3567,7 @@ impl TypeChecker {
                     underlying: info.underlying.clone(),
                     checked_constructor,
                     checked_constructor_identity,
+                    checked_constructor_binding,
                     constraints: info.constraints.clone(),
                     implicit_coercion_enabled: info.implicit_coercion_enabled,
                     supports_string_conversion,
@@ -8655,6 +8664,24 @@ impl TypeChecker {
     /// Return whether a source value can be passed to a newtype's underlying constructor without primitive parsing.
     fn validated_newtype_source_matches_underlying(actual: &ResolvedType, underlying: &ResolvedType) -> bool {
         matches!(actual, ResolvedType::Unknown | ResolvedType::TypeVar(_)) || actual == underlying
+    }
+
+    /// Retain a selected hook in the consumer's owner binding, including when an import renamed that owner.
+    /// The caller must first validate the hook through `validated_newtype_ctor_name`; only its proven Ok owner is
+    /// rebound, preserving the original parameters, error type, and canonical method identity.
+    fn newtype_constructor_binding(method: &MethodInfo, owner: ResolvedType) -> type_info::FunctionBindingInfo {
+        let mut return_type = method.return_type.clone();
+        if let ResolvedType::Generic(_, arguments) = &mut return_type
+            && let Some(success) = arguments.first_mut()
+        {
+            *success = owner;
+        }
+        type_info::FunctionBindingInfo {
+            is_async: method.is_async,
+            params: method.params.clone(),
+            return_type,
+            identity: method.identity.clone(),
+        }
     }
 
     /// Return the canonical checked-construction hook for a newtype when the collected method shape is usable.
