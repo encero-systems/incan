@@ -1,0 +1,12 @@
+"""Canonical owner of a text newtype."""
+
+from files import text
+
+
+@derive(Clone)
+pub type Path = newtype str:
+    """A text owner whose method calls a sibling module."""
+
+    def text(self) -> str:
+        """Read through the sibling's parameter, creating a module dependency cycle."""
+        return text(self)
