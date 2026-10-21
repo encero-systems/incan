@@ -236,16 +236,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower `start..end` / `start..=end` used as a **value** into a [`bir::AggregateKind::Range`] aggregate.
     ///
-    /// A range is a value, not only a loop header: `r = 0..10` typechecks, so Body IR has to be able to hold one
-    /// wherever an operand goes. The four operands are laid down in [`bir::AggregateKind::RANGE_FIELDS`] order --
-    /// the two bounds first, in written source order because both are arbitrary expressions whose evaluation is
-    /// observable, then the step and the inclusivity flag, neither of which the surface can spell as an
-    /// expression. See that variant's own docs for why a range is an aggregate rather than a constant form or a
-    /// helper-constructed value, and for why inclusivity rides as an operand instead of as a static property of
-    /// the kind.
+    /// Source ranges retain their four operands in [`bir::AggregateKind::RANGE_FIELDS`] order: bounds evaluated once in
+    /// written order, then unit step and inclusivity. A checker-selected native argument instead uses its retained
+    /// canonical constructor and ordered slots; this boundary performs no native lookup or inference.
     ///
-    /// No runtime requirement is recorded: four scalars side by side allocate nothing and call nothing, which is
-    /// [`bir::AggregateKind::Tuple`]'s treatment rather than [`Self::lower_list_literal`]'s.
+    /// The source aggregate records no runtime requirement because four scalars allocate nothing and call nothing, as
+    /// with [`bir::AggregateKind::Tuple`].
     pub(super) fn lower_range_value(
         &mut self,
         start: &ast::Spanned<ast::Expr>,
@@ -256,6 +252,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span) {
+            let name = owner.declaration_name.clone();
+            let arguments = [
+                ast::CallArg::Positional(start.clone()),
+                ast::CallArg::Positional(end.clone()),
+            ];
+            return self.lower_nominal_construction(&name, &arguments, span, span, scope, out);
+        }
         let start_operand = self.lower_expr_to_operand(start, scope, out);
         let start_operand = self.retain_evaluated_value_read(start, start_operand, scope, out);
         let end_operand = self.lower_expr_to_operand(end, scope, out);

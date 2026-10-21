@@ -16,6 +16,18 @@ def choose(low: int, high: int) -> int:
     return rng.gen_range(Range(start=low, end=high))
 
 
+def choose_source(low: int, high: int) -> int:
+    """Pass a source half-open range through the same checked native argument contract."""
+    mut rng = thread_rng()
+    return rng.gen_range(low..high)
+
+
+def bound(mut observed: list[int], value: int) -> int:
+    """Record each range endpoint evaluation before returning its value."""
+    observed.append(value)
+    return value
+
+
 def main() -> None:
     """Retain the cell's element type and a deterministic singleton random range."""
     value = Cell.new(7)
@@ -23,3 +35,9 @@ def main() -> None:
     value.set(8)
     println(value.get())
     assert choose(7, 8) == 7
+    assert choose_source(9, 10) == 9
+    mut observed: list[int] = []
+    mut rng = thread_rng()
+    selected: int = rng.gen_range(bound(observed, 11)..bound(observed, 12))
+    assert selected == 11
+    assert observed == [11, 12]

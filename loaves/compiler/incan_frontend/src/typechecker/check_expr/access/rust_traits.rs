@@ -871,7 +871,7 @@ impl TypeChecker {
         }
         let mut cost = 0;
         for ((parameter, argument), expression) in ordinary.iter().zip(call.arg_types).zip(call.args) {
-            let native = self.rust_native_value_type(Self::call_arg_expr(expression));
+            let native = self.rust_argument_native_type(Self::call_arg_expr(expression));
             let argument = native.as_ref().unwrap_or(argument);
             let target = self.native_rust_signature_type(&parameter.type_display, call.rust_path);
             if self.rust_trait_carriers_match(&target, argument) {

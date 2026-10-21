@@ -356,6 +356,19 @@ impl TypeChecker {
         }
     }
 
+    /// Select a native argument carrier without changing a source range binding's ordinary four-field storage.
+    /// A half-open range literal constructs Rust's public Range layout only at an admitted native boundary.
+    pub(in crate::typechecker::check_expr) fn rust_argument_native_type(
+        &self,
+        expression: &Spanned<Expr>,
+    ) -> Option<ResolvedType> {
+        match &expression.node {
+            Expr::Paren(inner) => self.rust_argument_native_type(inner),
+            Expr::Range { inclusive: false, .. } => Some(self.native_rust_signature_type("std::ops::Range<i64>", "")),
+            _ => self.rust_native_value_type(expression),
+        }
+    }
+
     /// Project declared Rust parameters and canonical native constructors into ordinary structural inference.
     /// Re-exported owners normalize once, and checked generic placeholders retain their declared binders.
     /// Source aliases expand before native inference; lowering receives their structural carrier, never an alias
@@ -535,7 +548,7 @@ impl TypeChecker {
                 owner_path,
             );
             let target = self.rust_inference_type(&target, parameters);
-            let native_actual = self.rust_native_value_type(Self::call_arg_expr(argument));
+            let native_actual = self.rust_argument_native_type(Self::call_arg_expr(argument));
             let actual = self.rust_inference_type(native_actual.as_ref().unwrap_or(actual), parameters);
             let (target, actual) = match (&target, &actual) {
                 (ResolvedType::Ref(_) | ResolvedType::RefMut(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
@@ -1143,6 +1156,9 @@ impl TypeChecker {
         let normalized = Self::compact_rust_display(&param_display);
         let target_ty =
             self.resolved_rust_boundary_target_from_param_display_for_owner_path(rust_type_display, owner_path);
+        if self.retain_rust_range_argument(arg_expr, &target_ty) {
+            return;
+        }
         self.prewarm_rust_type_identity_metadata(arg_ty);
         self.prewarm_rust_boundary_type_identity_metadata(&target_ty);
         match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
