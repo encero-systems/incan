@@ -151,7 +151,10 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
                 .flat_map(|info| info.calls.body_ir_reexport_calls.values())
                 .map(|call| call.canonical.clone()),
         )
-        .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+        // A library unit's own declarations carry its package identity; they compile here, never from a Loaf.
+        .filter(
+            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
+        )
         .collect();
     let mut bodies = incan_frontend::executable_resolution::resolve_loaf_declarations(session.loaves(), &requested)
         .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))?
@@ -180,6 +183,7 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
                 modules: &bodies,
                 provider_operations: &provider_operations,
                 registry_package: Some(package_identity),
+                library_package: library.then_some(package_identity),
             },
         );
         validate_retained_storage(&module.ast, &body_ir)?;
@@ -241,28 +245,31 @@ fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &Bo
     use incan_frontend::ast::Declaration;
     use incan_semantics_core::SemanticSourceTargetKind;
 
-    let static_count = program
+    let unretained = program
         .declarations
         .iter()
-        .filter(|declaration| matches!(declaration.node, Declaration::Static(_)))
-        .count();
-    let retained_statics = module
-        .static_declarations
-        .iter()
-        .filter(|declaration| {
-            declaration.canonical.kind == SemanticSourceTargetKind::Static
-                && incan_semantics_core::canonical_module_identity(&declaration.canonical).as_deref()
-                    == Some(module.module_id.path())
-                && program.declarations.iter().any(|source| {
-                    matches!(&source.node, Declaration::Static(storage)
-                        if storage.name == declaration.canonical.declaration_name
-                            && source.span.start == declaration.canonical.declaration_span.start
-                            && source.span.end == declaration.canonical.declaration_span.end)
-                })
+        .filter_map(|source| match &source.node {
+            Declaration::Static(storage) => Some((storage, source.span)),
+            _ => None,
         })
-        .count();
-    if static_count != retained_statics {
-        return Err("unsupported source Static initializer or carrier on the native route".to_owned());
+        .filter(|(storage, span)| {
+            !module.static_declarations.iter().any(|declaration| {
+                declaration.canonical.kind == SemanticSourceTargetKind::Static
+                    && incan_semantics_core::canonical_module_identity(&declaration.canonical).as_deref()
+                        == Some(module.module_id.path())
+                    && storage.name == declaration.canonical.declaration_name
+                    && span.start == declaration.canonical.declaration_span.start
+                    && span.end == declaration.canonical.declaration_span.end
+            })
+        })
+        .map(|(storage, _)| storage.name.as_str())
+        .collect::<Vec<_>>();
+    if !unretained.is_empty() {
+        return Err(format!(
+            "unsupported source Static initializer or carrier on the native route: `{}` in {}",
+            unretained.join("`, `"),
+            module.module_id.path()
+        ));
     }
     let newtype_count = program
         .declarations
@@ -346,6 +353,10 @@ fn validate_declarations(
             Declaration::Partial(_) => continue,
             // Type aliases have no runtime declaration; checked Body IR carries their resolved uses.
             Declaration::TypeAlias(_) => continue,
+            // A capability declares authority, not code: consumers reach it through its checked identity.
+            Declaration::Capability(_) => continue,
+            // An inline test module is compiled by the test runner, never into the production unit.
+            Declaration::TestModule(_) => continue,
             _ => "top-level declaration",
         };
         return Err(format!("unsupported source {kind} on the native route"));

@@ -110,13 +110,13 @@ pub def repeat_list[T with Clone](value: T, count: int) -> list[T]:
 
 pub def sorted_list[T with (Clone, Ord)](values: &list[T]) -> list[T]:
     """Copy and sort ordered elements through legacy builtin emission."""
-    owned = RuntimeClone.clone(values)
+    owned: list[T] = RuntimeClone.clone(values)
     return sorted(owned)
 
 
 pub def sorted_float(values: &list[float]) -> list[float]:
     """Use legacy partial-order sorting, including its NaN ordering policy."""
-    owned = RuntimeClone.clone(values)
+    owned: list[float] = RuntimeClone.clone(values)
     return sorted(owned)
 
 

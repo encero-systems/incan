@@ -1,0 +1,66 @@
+"""
+The toolchain Oven runs: its compiler, and the native closure every compiled unit links (DD-0008).
+
+Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolchain/1`):
+
+- `driver`: the compiler, `incan-rustc-driver`.
+- `sysroot`: the pinned Rust toolchain the compiler was built against. The compiler verifies the match itself.
+- `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and the standard packages' Rust crates.
+- `search`: the directories the dependencies of those crates live in.
+"""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from home import TOOLCHAIN, home
+from json_fields import array, field, strings, text_field
+
+
+pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
+
+
+pub model NativeCrate:
+    """One crate a unit may name: its crate name and its library."""
+
+    pub name: str
+    pub path: str
+
+
+pub model Toolchain:
+    """The toolchain's compiler and the native closure every unit links."""
+
+    pub driver: str
+    pub sysroot: str
+    pub externs: list[NativeCrate]
+    pub search: list[str]
+
+
+pub def load_toolchain() -> Result[Toolchain, str]:
+    """The description of this Oven's toolchain, from its home directory."""
+    path = home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("toolchain.json")
+    if not path.is_file():
+        return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    document = parse(text).map_err((error) => f"{path.0}: {error.message()}")?
+    match toolchain_of(document):
+        Ok(toolchain) => return Ok(toolchain)
+        Err(failed) => return Err(f"{path.0}: `{'.'.join(failed)}` is missing or malformed")
+
+
+def toolchain_of(document: JsonValue) -> Result[Toolchain, list[str]]:
+    """A toolchain description's fields; a refusal is the field path that failed."""
+    schema = text_field(document, "schema", [])?
+    if schema != TOOLCHAIN_SCHEMA:
+        return Err(["schema"])
+    mut externs: list[NativeCrate] = []
+    entries = array(field(document, "externs", [])?, ["externs"])?
+    for index in range(len(entries)):
+        place = ["externs", str(index)]
+        externs.append(NativeCrate(name=text_field(entries[index], "name", place)?, path=text_field(entries[index], "path", place)?))
+    return Ok(
+        Toolchain(
+            driver=text_field(document, "driver", [])?,
+            sysroot=text_field(document, "sysroot", [])?,
+            externs=externs,
+            search=strings(field(document, "search", [])?, ["search"])?,
+        ),
+    )

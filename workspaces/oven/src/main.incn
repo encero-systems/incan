@@ -1,9 +1,13 @@
 """
 `incan`: the command line, which is Oven (DD-0008).
 
-    incan describe-unit PATH [--profile NAME] [--features A,B] [--no-default-features] [--all-features]
-    incan build PROJECT --registry-units FILE [--substitute NAME=DIR] [--profile NAME] [--features A,B] [--no-default-features]
+    incan run PATH [UNIT OPTIONS] [-- ARGS...]
+    incan check PATH [--format text|json] [UNIT OPTIONS]
+    incan describe-unit PATH [UNIT OPTIONS]
+    incan build PROJECT --registry-units FILE [--substitute NAME=DIR] [UNIT OPTIONS]
     incan --version
+
+UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
 """
 
 from rust::std::env import args
@@ -14,7 +18,9 @@ from std.fs import Path
 from features import FeatureRequest
 from home import TOOLCHAIN
 from unit import describe
+from incan_units import check_unit, compile_unit, crate_name, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
+from toolchain import load_toolchain
 from std.environ import get_or
 
 
@@ -39,6 +45,12 @@ def main() -> None:
     if command == "--version" or command == "version":
         println(f"incan {TOOLCHAIN}")
         return
+    if command == "run":
+        run(rest)
+        return
+    if command == "check":
+        check(rest)
+        return
     if command == "build":
         build(rest)
         return
@@ -50,7 +62,7 @@ def main() -> None:
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan describe-unit PATH [--profile NAME] [--features A,B] [--no-default-features] [--all-features]\n       incan build PROJECT --registry-units FILE [--substitute NAME=DIR] [--profile NAME] [--features A,B] [--no-default-features]"
+    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT --registry-units FILE [--substitute NAME=DIR] [UNIT OPTIONS]\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:
@@ -99,6 +111,66 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     if options.path == "":
         return Err("a PATH is required")
     return Ok(options)
+
+
+def run(arguments: list[str]) -> None:
+    """Compile the program whose entry source is PATH and run it with the arguments after `--`."""
+    mut own: list[str] = []
+    mut passed: list[str] = []
+    mut after = false
+    for argument in arguments:
+        if after:
+            passed.append(argument)
+        elif argument == "--":
+            after = true
+        else:
+            own.append(argument)
+    match parse_options(own):
+        Err(reason) => fail(f"incan run: {reason}\n{usage()}", 2)
+        Ok(options) => finish("run", ran(options, passed))
+
+
+def ran(options: Options, passed: list[str]) -> Result[i32, str]:
+    """Compile the unit into its project's target directory and run it; a refused compile is the run's result."""
+    unit = describe(Path(options.path), options.profile, options.request)?
+    toolchain = load_toolchain()?
+    binary = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(options.profile).joinpath("bin").joinpath(crate_name(unit))
+    compiled = compile_unit(unit, toolchain, binary, false)?
+    if compiled != 0:
+        return Ok(compiled)
+    return run_program(binary, passed)
+
+
+def check(arguments: list[str]) -> None:
+    """Check the unit whose entry source is PATH; the report is text, or JSON with `--format json`."""
+    mut format = "text"
+    mut own: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        if arguments[index] == "--format" and index + 1 < len(arguments):
+            format = arguments[index + 1]
+            index += 2
+            continue
+        own.append(arguments[index])
+        index += 1
+    if format != "text" and format != "json":
+        fail(f"incan check: `--format` is text or json, got `{format}`", 2)
+    match parse_options(own):
+        Err(reason) => fail(f"incan check: {reason}\n{usage()}", 2)
+        Ok(options) => finish("check", checked(options, format))
+
+
+def checked(options: Options, format: str) -> Result[i32, str]:
+    """Check the described unit with the toolchain's compiler."""
+    unit = describe(Path(options.path), options.profile, options.request)?
+    return check_unit(unit, load_toolchain()?, format)
+
+
+def finish(command: str, result: Result[i32, str]) -> None:
+    """Exit with a command's exit code, or report why it could not run."""
+    match result:
+        Err(reason) => fail(f"incan {command}: {reason}", 1)
+        Ok(code) => exit(code)
 
 
 def describe_unit(arguments: list[str]) -> None:

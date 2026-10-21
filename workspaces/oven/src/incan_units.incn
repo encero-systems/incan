@@ -1,0 +1,107 @@
+"""
+Incan units: checking and compiling a described unit with the toolchain's compiler (DD-0008).
+
+Oven writes the unit description where the compiler reads it, `<project>/target/incan/units/<crate>.unit.json`, and
+runs the compiler once per unit. A compiled unit links the toolchain's native closure and the artifacts of every Loaf
+the description lists: `lib<crate>.rlib` in the Loaf's artifact directory, and the directories the Loaf's own closure
+(`<name>.native.json`) searches.
+"""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.json import parse
+from json_fields import field, strings
+from toolchain import Toolchain
+from unit import UnitDescription
+
+
+pub def crate_name(unit: UnitDescription) -> str:
+    """The crate a unit compiles to: its package, or its source file's stem when it has no project."""
+    if unit.package != "":
+        return unit.package.replace("-", "_")
+    return Path(unit.source).stem().replace("-", "_")
+
+
+pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
+    """Check the unit; the compiler prints the report. Returns the check's exit code."""
+    path = write_unit(unit, crate_name(unit))?
+    return run_compiler(toolchain, ["--check", path.0, "--format", format])
+
+
+pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path, library: bool) -> Result[i32, str]:
+    """Compile the unit to `output`, a binary or a library's rlib. Returns the compiler's exit code."""
+    compiled = crate_name(unit)
+    path = write_unit(unit, compiled)?
+    output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
+    mut arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
+    arguments = arguments + native_arguments(unit, toolchain)?
+    if library:
+        arguments.append("--library")
+    return run_compiler(toolchain, arguments)
+
+
+pub def run_program(binary: Path, arguments: list[str]) -> Result[i32, str]:
+    """Run a compiled program with its own arguments and the caller's standard streams. Returns its exit code."""
+    mut command = Command.new(binary.0)
+    for argument in arguments:
+        command.arg(argument)
+    return status_of(command, binary.0)
+
+
+def write_unit(unit: UnitDescription, compiled: str) -> Result[Path, str]:
+    """Write the unit description where the compiler reads it."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+    path = directory.joinpath(f"{compiled}.unit.json")
+    text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => f"{path.0}: {error.message()}")?
+    return Ok(path)
+
+
+def native_arguments(unit: UnitDescription, toolchain: Toolchain) -> Result[list[str], str]:
+    """The crates the unit may name and the directories their dependencies live in."""
+    mut arguments: list[str] = []
+    for native in toolchain.externs:
+        arguments = arguments + ["--extern", f"{native.name}={native.path}"]
+    for directory in toolchain.search:
+        arguments = arguments + ["--search", directory]
+    for loaf in unit.loaves:
+        linked = loaf.name.replace("-", "_")
+        library = Path(loaf.dir).joinpath(f"lib{linked}.rlib")
+        arguments = arguments + ["--extern", f"{linked}={library.0}", "--search", loaf.dir]
+        for directory in loaf_search(Path(loaf.dir).joinpath(f"{loaf.name}.native.json"))?:
+            arguments = arguments + ["--search", directory]
+    return Ok(arguments)
+
+
+def loaf_search(closure: Path) -> Result[list[str], str]:
+    """The directories a compiled Loaf's native closure searches; none when the Loaf has not been compiled."""
+    if not closure.is_file():
+        return Ok([])
+    text = closure.read_text("utf-8", "strict").map_err((error) => f"{closure.0}: {error.message()}")?
+    document = parse(text).map_err((error) => f"{closure.0}: {error.message()}")?
+    match field(document, "search", []):
+        Err(_) => return Err(f"{closure.0}: `search` is missing")
+        Ok(value) =>
+            match strings(value, ["search"]):
+                Err(_) => return Err(f"{closure.0}: `search` is not a list of directories")
+                Ok(directories) => return Ok(directories)
+
+
+def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
+    """Run the toolchain's compiler; it refuses an inherited `RUSTC_BOOTSTRAP`, so none reaches it."""
+    mut command = Command.new(toolchain.driver)
+    for argument in arguments:
+        command.arg(argument)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    return status_of(command, toolchain.driver)
+
+
+def status_of(mut command: Command, program: str) -> Result[i32, str]:
+    """Run a command with the caller's standard streams; a process ended by a signal counts as exit code 1."""
+    match command.status():
+        Err(error) => return Err(f"cannot run {program}: {error}")
+        Ok(status) =>
+            match status.code():
+                Some(code) => return Ok(code)
+                None => return Ok(1)

@@ -2448,6 +2448,7 @@ fn lowered_declaration_facts(
         modules: &[],
         provider_operations: &provider_operations,
         registry_package: Some(session.unit().package.as_str()),
+        library_package: None,
     };
     let body_ir =
         incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);

@@ -79,6 +79,8 @@ pub model RustFacet:
     pub version: str
     # Whether a binary needs the toolchain's unstable features (`unstable_features`).
     pub unstable: bool
+    # Whether a binary links the toolchain's own libraries (`sysroot_dependencies`) and finds them at run time.
+    pub sysroot: bool
 
 
 pub model BuiltUnit:
@@ -196,6 +198,7 @@ pub def rust_facet(project: str) -> Result[RustFacet, str]:
             kind = declared
     mut binaries: list[Tuple[str, str]] = []
     mut unstable = false
+    mut sysroot = false
     for binary in declared_binaries(document)?:
         name = binary.get[str]("name").map_err((error) => error.message())?
         path = binary.get[str]("path").map_err((error) => error.message())?
@@ -203,12 +206,15 @@ pub def rust_facet(project: str) -> Result[RustFacet, str]:
         if let Some(features) = binary.get_optional[list[str]]("unstable_features").map_err((error) => error.message())?:
             if len(features) > 0:
                 unstable = true
+        if let Some(libraries) = binary.get_optional[list[str]]("sysroot_dependencies").map_err((error) => error.message())?:
+            if len(libraries) > 0:
+                sysroot = true
     if kind == "" and len(binaries) == 0:
         if root.joinpath("src").joinpath("lib.incn").is_file():
             return Err(f"{project} is an Incan Loaf; its Rust crate comes from compiling it, which this build does not do yet")
         return Err(f"{project} declares no Rust crate: no {library.0} and no [[rust.bin]]")
     version = document.get[str]("project.version").map_err((error) => error.message())?
-    return Ok(RustFacet(crate_name=crate_name, kind=kind, edition=edition, library=library_path, binaries=binaries, package=package, version=version, unstable=unstable))
+    return Ok(RustFacet(crate_name=crate_name, kind=kind, edition=edition, library=library_path, binaries=binaries, package=package, version=version, unstable=unstable, sysroot=sysroot))
 
 
 def identity(facet: LocalFacet, profile: str) -> str:
@@ -397,8 +403,54 @@ def compile_binary(
     if key in built:
         arguments = arguments + ["--extern", f"{declared.crate_name}={built[key].artifact}"]
     arguments = arguments + linking(facet, request, built, search)?
-    invoke_rustc(request.rustc, arguments, package_environment(facet.project, declared, name.replace("-", "_")), declared.unstable, name)?
+    mut environment = package_environment(facet.project, declared, name.replace("-", "_"))
+    if declared.sysroot:
+        # The toolchain's `rustc_driver` stays in its sysroot: the binary carries a runpath to it and the identity
+        # it was built against, which it verifies before it compiles anything.
+        libraries = toolchain_libraries(request.rustc)?
+        arguments = arguments + ["-C", f"link-arg=-Wl,-rpath,{libraries.directory}"]
+        for variable in sorted([key for key in libraries.environment.keys()]):
+            value = libraries.environment[variable]
+            environment[variable] = value
+    invoke_rustc(request.rustc, arguments, environment, declared.unstable, name)?
     return Ok(binary.0)
+
+
+model ToolchainLibraries:
+    """Where the pinned toolchain's `rustc_driver` is, and the identity a binary that links it is built against."""
+
+    # The directory of the toolchain's `rustc_driver`: the binary's runpath.
+    directory: str
+    # `INCAN_DRIVER_SYSROOT`, `_RUSTC_IDENTITY`, `_LIBRARY` (relative to the sysroot) and `_LIBRARY_DIGEST`.
+    environment: Dict[str, str]
+
+
+def toolchain_libraries(rustc: str) -> Result[ToolchainLibraries, str]:
+    """The pinned toolchain's one `rustc_driver` library (in `lib/rustlib/<host>/lib`) and its identity."""
+    sysroot = run_text(rustc, ["--print", "sysroot"])?.strip()
+    compiler = run_text(rustc, ["-vV"])?
+    mut host = ""
+    for line in compiler.split("\n"):
+        if line.startswith("host: "):
+            host = line[6:].strip()
+    relative = f"lib/rustlib/{host}/lib"
+    directory = Path(sysroot).joinpath(relative)
+    mut found: list[Path] = []
+    for candidate in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        name = candidate.name()
+        if name.startswith("librustc_driver-") and (name.endswith(".dylib") or name.endswith(".so")):
+            found.append(candidate)
+    if len(found) != 1:
+        return Err(f"{directory.0} holds {len(found)} rustc_driver libraries; the rustc-dev component gives exactly one")
+    library = found[0]
+    content = library.read_bytes().map_err((error) => f"{library.0}: {error.message()}")?
+    environment: Dict[str, str] = {
+        "INCAN_DRIVER_SYSROOT": sysroot,
+        "INCAN_DRIVER_RUSTC_IDENTITY": compiler,
+        "INCAN_DRIVER_LIBRARY": f"{relative}/{library.name()}",
+        "INCAN_DRIVER_LIBRARY_DIGEST": hexlify(sha256.digest(content)),
+    }
+    return Ok(ToolchainLibraries(directory=directory.0, environment=environment))
 
 
 def invoke_rustc(rustc: str, arguments: list[str], environment: Dict[str, str], unstable: bool, unit: str) -> Result[None, str]:

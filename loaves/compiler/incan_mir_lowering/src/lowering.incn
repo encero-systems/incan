@@ -54,7 +54,6 @@ from pub::incan_mir_plan import (
     TerminatorKind,
     UnaryOp,
     Unwind,
-    scalar_example,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
 from bytes_plan import bytes_literal
@@ -2952,6 +2951,17 @@ def lower_value_enum_ordinal(
             return Ok(true)
 
 
+def ordinal_encoding_identity(identity: &RustCanonicalSymbolId) -> bool:
+    """Whether `identity` is the standard `OrdinalKey`'s associated ordinal encoding, not a source callable spelled
+    the same way."""
+    if identity.declaration_name != "OrdinalKey.ordinal_encoding":
+        return false
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_data" and len(path) == 1 and path[0] == "collections"
+        _ => return false
+
+
 def lower_value_enum_ordinal_encoding(
     module: &BodyIrModule,
     mut builder: Builder,
@@ -2963,11 +2973,8 @@ def lower_value_enum_ordinal_encoding(
     """Retain legacy's source-module and ordered raw-value schema for an authenticated associated OrdinalKey call."""
     mut authenticated = false
     for callable in module.loaf_callables:
-        if Some(delegation.canonical.clone()) == target.canonical:
-            match delegation.rust_path():
-                Some(path) =>
-                    authenticated = path == "incan_stdlib_data::collections::OrdinalKey::ordinal_encoding"
-                None => pass
+        if Some(callable.canonical.clone()) == target.canonical and ordinal_encoding_identity(callable.canonical):
+            authenticated = true
     if not authenticated:
         return Ok(false)
     match target.receiver_type:
@@ -3325,8 +3332,8 @@ def lower_method_call(
             break
         match target.canonical:
             Some(identity) =>
-                if identity == delegation.canonical:
-                    return lower_library_method(module, builder, delegation, target, arguments, destination, span)
+                if identity == callable.canonical:
+                    return lower_library_method(module, builder, callable, target, arguments, destination, span)
             None => pass
     return lower_retained_method_call(module, builder, target, arguments, destination, span)
 
@@ -3503,8 +3510,8 @@ def lower_sdk_element_method(
             if library_item(module.nominal_declarations[owner]) == "":
                 return Ok(false)
             for callable in module.loaf_callables:
-                if target.canonical == Some(delegation.canonical):
-                    lower_library_method(module, builder, delegation, target, arguments, destination, span)?
+                if target.canonical == Some(callable.canonical):
+                    lower_library_method(module, builder, callable, target, arguments, destination, span)?
                     return Ok(true)
             return Ok(false)
         _ => return Ok(false)
@@ -3779,11 +3786,11 @@ def lower_global_method(
                         builder.intrinsics,
                     ):
                         for callable in module.loaf_callables:
-                            if Some(delegation.canonical) == target.canonical:
+                            if Some(callable.canonical) == target.canonical:
                                 lower_static_sdk_method(
                                     module,
                                     builder,
-                                    delegation,
+                                    callable,
                                     target,
                                     read,
                                     global,
@@ -6711,7 +6718,7 @@ def lowered_plan(
     )
 
 
-def loaf_exports(context: &BodyIrModule, emitted: &list[RustBody]) -> list[PlanExport]:
+def loaf_exports(context: &BodyIrModule, emitted: list[RustBody]) -> list[PlanExport]:
     """
     Export every body and public type a Loaf compiles at its crate root, under the encoding of its canonical identity:
     the item its consumers name (DD-0007).
@@ -6748,7 +6755,7 @@ def loaf_exports(context: &BodyIrModule, emitted: &list[RustBody]) -> list[PlanE
     return unique
 
 
-def exports_name(exports: &list[PlanExport], name: str) -> bool:
+def exports_name(exports: list[PlanExport], name: str) -> bool:
     """Whether an export already takes `name`."""
     for export in exports:
         if export.name == name:

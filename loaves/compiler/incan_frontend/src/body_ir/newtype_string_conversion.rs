@@ -170,6 +170,9 @@ fn selected_string_conversion_contract(
 
 /// Retain the consumer's complete source import union once, selecting the conversion trait the standard package
 /// owning its module publishes. A missing publication returns None; an inactive union stays distinct.
+///
+/// A checked unit whose imports reach the trait's module while no Loaf owns it is the package that declares the trait:
+/// an import of a module no Loaf provides is refused at check time. It links no conversion contract, so it is inactive.
 pub fn compilation_string_conversion_contract<'program>(
     programs: impl IntoIterator<Item = &'program ast::Program>,
     loaves: &LoafIndex,
@@ -183,7 +186,10 @@ pub fn compilation_string_conversion_contract<'program>(
         .iter()
         .map(|segment| (*segment).to_owned())
         .collect::<Vec<_>>();
-    let manifest = &loaves.owner_of(&module)?.artifact.manifest;
+    let Some(owner) = loaves.owner_of(&module) else {
+        return Some(bir::StringConversionContract::Inactive);
+    };
+    let manifest = &owner.artifact.manifest;
     let public_path = std::iter::once(manifest.name.clone())
         .chain(module.into_iter().skip(1))
         .chain(std::iter::once(capability.trait_name.to_owned()))
