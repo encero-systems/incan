@@ -341,11 +341,12 @@ fn complete_dependency_context(
 }
 
 /// Replace standalone package bodies with linked contracts. Body IR keeps governed templates, including defaults
-/// with an open Self receiver, available for checked adopter specialization.
+/// with an open Self receiver, available for checked adopter specialization. Move existing contracts into the
+/// returned inventory so joining declaration modules cannot publish the same compiled callable twice.
 fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) -> Vec<LoafCallable> {
     let mut loaf_callables = modules
-        .iter()
-        .flat_map(|module| module.loaf_callables.iter().cloned())
+        .iter_mut()
+        .flat_map(|module| std::mem::take(&mut module.loaf_callables))
         .collect::<Vec<_>>();
     for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {

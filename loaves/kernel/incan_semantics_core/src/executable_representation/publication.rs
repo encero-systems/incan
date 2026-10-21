@@ -36,7 +36,7 @@ pub(super) fn project_constant(
     Ok((value, audit.requirements))
 }
 
-/// Select an ordinary body or the complete checked decorator replacement, preserving one public source identity.
+/// Select a compiled contract, governed body, or complete checked decorator replacement under one public identity.
 pub(super) fn project_callable(
     source: &Body,
     module: &BodyIrModule,
@@ -71,8 +71,55 @@ pub(super) fn project_callable(
             value.requirements,
         ));
     }
+    if !module.body_requires_instantiation(source)
+        && !source.is_generator()
+        && crate::body_ir::LoafCallable::from_body(source).is_some()
+    {
+        return project_compiled_callable(source, module, library, eligible);
+    }
     let value = project_body(source, module, library, eligible)?;
     Ok((ExecutableDeclaration::Body(Box::new(value.body)), value.requirements))
+}
+
+/// Publish only the caller-visible frame of an already compiled item, retaining parameter defaults and their local
+/// types. Implementation locals and Rust calls stay in the rlib; they cannot become consumer execution requirements.
+fn project_compiled_callable(
+    source: &Body,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    let mut frame = source.clone();
+    frame.block.stmts.clear();
+    frame.panic_facts.clear();
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    let identity = frame.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
+    audit.identity(identity, false)?;
+    frame.decl_id = declaration_id(identity)?;
+    frame.direct_call_id = frame.decl_id.clone();
+    audit.ty(&frame.return_type)?;
+    audit.parameters(&mut frame.params)?;
+    let retained_slots = audit
+        .local_slots
+        .iter()
+        .next_back()
+        .map_or(0, |local| local.index() + 1);
+    frame.locals.truncate(retained_slots);
+    for local in &mut frame.locals {
+        local.identity = None;
+        if audit.local_slots.contains(&local.id) {
+            audit.ty(&local.ty)?;
+        } else {
+            // Keep slot indices stable for defaults without publishing implementation-only carriers.
+            local.ty = IncanType::Tuple(Vec::new());
+        }
+    }
+    frame.named_type_identities = audit.used_nominal_types;
+    require_module_initialization(module, &mut audit.requirements);
+    Ok((
+        ExecutableDeclaration::CompiledCallable(Box::new(frame)),
+        audit.requirements,
+    ))
 }
 
 /// Publish a generic wrapper and original atomically without inventing a polymorphic replacement cell.
@@ -368,6 +415,8 @@ struct PublicationAudit<'a> {
     nominal_declarations: &'a [crate::body_ir::NominalDeclaration],
     used_nominal_types: BTreeMap<String, CanonicalSymbolId>,
     requirements: BTreeSet<CanonicalSymbolId>,
+    /// Local storage referenced by retained parameter defaults, independent of implementation-only locals.
+    local_slots: BTreeSet<crate::body_ir::LocalId>,
 }
 
 impl<'a> PublicationAudit<'a> {
@@ -427,6 +476,7 @@ impl<'a> PublicationAudit<'a> {
             nominal_declarations: &module.nominal_declarations,
             used_nominal_types: BTreeMap::new(),
             requirements: BTreeSet::new(),
+            local_slots: BTreeSet::new(),
         }
     }
 
@@ -518,16 +568,20 @@ impl<'a> PublicationAudit<'a> {
         Ok(())
     }
 
-    /// Defaults are declaration-owned computations, including defaults nested in closure parameters.
+    /// Audit declaration-owned defaults, including nested closure parameters, and retain every referenced frame slot.
     fn parameters(&mut self, parameters: &mut [CallableParam]) -> Result<(), CoverageReason> {
         for parameter in parameters {
+            self.local_slots.insert(parameter.local);
             self.ty(&parameter.ty)?;
             match &mut parameter.default {
                 CallableParamDefault::Source(value) => {
                     self.statements(&mut value.stmts)?;
                     self.operand(&mut value.result)?;
                 }
-                CallableParamDefault::Required | CallableParamDefault::PartialPreset { .. } => {}
+                CallableParamDefault::Required => {}
+                CallableParamDefault::PartialPreset { capture } => {
+                    self.local_slots.insert(*capture);
+                }
                 CallableParamDefault::Unsupported { .. } => {
                     return Err(CoverageReason::UnsupportedConstruct);
                 }
@@ -590,6 +644,9 @@ impl<'a> PublicationAudit<'a> {
     /// Canonical fields and static storage require checked context; a requiring body cannot outlive missing
     /// initialization. Callable replacement storage additionally requires its validated decorator binding.
     fn place(&mut self, place: &mut Place) -> Result<(), CoverageReason> {
+        if let PlaceRoot::Local(local) = &place.root {
+            self.local_slots.insert(*local);
+        }
         if let PlaceRoot::Global(value) = &mut place.root {
             if value.identity.kind != crate::SemanticSourceTargetKind::Static
                 && !self.replacement_storage.contains(&value.identity)
