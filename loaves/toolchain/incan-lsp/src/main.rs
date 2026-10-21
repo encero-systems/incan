@@ -7,12 +7,12 @@
 //!
 //! The LSP communicates via stdin/stdout using the Language Server Protocol.
 
-use incan_lang::version::INCAN_VERSION;
 use incan_lsp::IncanLanguageServer;
 use std::ffi::OsString;
 use std::process::ExitCode;
 use tower_lsp::{LspService, Server};
 
+/// Run standalone flags or the stdio server on threads with the compiler's stack budget.
 fn main() -> ExitCode {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if let Some(exit_code) = handle_cli_args(&args) {
@@ -48,7 +48,7 @@ fn handle_cli_args(args: &[OsString]) -> Option<ExitCode> {
     match args {
         [] => None,
         [arg] if arg == "--version" || arg == "-V" => {
-            println!("incan-lsp {INCAN_VERSION}");
+            println!("incan-lsp {}", env!("CARGO_PKG_VERSION"));
             Some(ExitCode::SUCCESS)
         }
         [arg] if arg == "--help" || arg == "-h" => {
@@ -69,16 +69,19 @@ fn handle_cli_args(args: &[OsString]) -> Option<ExitCode> {
 mod tests {
     use super::*;
 
+    /// Construct an operating-system argument for the standalone flag checks.
     fn arg(value: &str) -> OsString {
         OsString::from(value)
     }
 
     #[test]
+    /// An empty argument list selects the JSON-RPC transport.
     fn no_args_start_lsp_stdio_server() {
         assert_eq!(handle_cli_args(&[]), None);
     }
 
     #[test]
+    /// Informational flags exit before initializing the server runtime.
     fn version_and_help_exit_successfully() {
         assert_eq!(handle_cli_args(&[arg("--version")]), Some(ExitCode::SUCCESS));
         assert_eq!(handle_cli_args(&[arg("-V")]), Some(ExitCode::SUCCESS));
@@ -87,6 +90,7 @@ mod tests {
     }
 
     #[test]
+    /// Unknown flags preserve the command-line usage failure status.
     fn unknown_args_exit_with_usage_error() {
         assert_eq!(handle_cli_args(&[arg("--bogus")]), Some(ExitCode::from(2)));
         assert_eq!(

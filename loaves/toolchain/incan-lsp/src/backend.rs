@@ -21,7 +21,6 @@ use crate::diagnostics::{
     compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
 };
 use crate::semantic_tokens;
-use incan_driver::project::discover_effective_project_manifest;
 use incan_driver::session::CompilationSession;
 use incan_frontend::api_metadata::{
     ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiPartial, ApiStatic,
@@ -61,6 +60,7 @@ use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SymbolOrigin};
 
 mod analysis;
 mod loaves;
+mod rust_hover;
 
 const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
 
@@ -166,13 +166,17 @@ struct LocalCallSignature {
 pub struct IncanLanguageServer {
     client: Client,
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
+    /// Only the most recently requested analysis may publish, including after a close and reopen.
+    analysis_tickets: RwLock<HashMap<Url, Arc<()>>>,
 }
 
 impl IncanLanguageServer {
+    /// Initialize document facts and analysis publication tracking for one client connection.
     pub fn new(client: Client) -> Self {
         Self {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
+            analysis_tickets: RwLock::new(HashMap::new()),
         }
     }
 
@@ -3967,21 +3971,15 @@ fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<Ca
         return Ok(bundles);
     }
 
-    let start_dir = if absolute.is_dir() {
-        absolute.as_path()
+    // Description needs an existing file in the project, not parsed source. A directory request uses its manifest
+    // as that anchor; Oven remains the sole reader of project settings, including model bundle declarations.
+    let anchor = if absolute.is_dir() {
+        absolute.join("loaf.toml")
     } else {
-        absolute.parent().unwrap_or(Path::new("."))
+        absolute
     };
-    let manifest = discover_effective_project_manifest(start_dir)
-        .map_err(|error| error.message)?
-        .ok_or_else(|| {
-            format!(
-                "model emit requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",
-                path.display()
-            )
-        })?;
-    read_project_model_bundles(manifest.project_root(), &manifest.contract_model_bundle_paths())
-        .map_err(|error| error.to_string())
+    let unit = analysis::unit_description(&anchor).map_err(|error| error.message)?;
+    read_project_model_bundles(&unit.project_root, &unit.contract_models).map_err(|error| error.to_string())
 }
 
 /// Resolve a single LSP model-emit bundle by logical type name or stable model id.
@@ -4116,9 +4114,13 @@ impl LanguageServer for IncanLanguageServer {
             Ok(format) => format,
             Err(error) => return Ok(Some(json!({ "error": error }))),
         };
-        match emit_contract_model_command_payload(&path, &parsed.model, format) {
-            Ok(payload) => Ok(Some(payload)),
-            Err(error) => Ok(Some(json!({ "error": error }))),
+        let emitted =
+            tokio::task::spawn_blocking(move || emit_contract_model_command_payload(&path, &parsed.model, format))
+                .await;
+        match emitted {
+            Ok(Ok(payload)) => Ok(Some(payload)),
+            Ok(Err(error)) => Ok(Some(json!({ "error": error }))),
+            Err(error) => Ok(Some(json!({ "error": format!("model emission failed: {error}") }))),
         }
     }
 
@@ -4140,8 +4142,11 @@ impl LanguageServer for IncanLanguageServer {
         }
     }
 
+    /// Discard pending analysis and cached facts before clearing the closed document's diagnostics.
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
+        let mut tickets = self.analysis_tickets.write().await;
+        tickets.remove(&uri);
 
         // Remove document from cache
         let mut docs = self.documents.write().await;
@@ -4241,6 +4246,10 @@ impl LanguageServer for IncanLanguageServer {
                     }),
                     range: None,
                 }));
+            }
+
+            if let Some(hover) = rust_hover::checked_call_hover(doc, offset) {
+                return Ok(Some(hover));
             }
 
             if let Some(rust_symbol) = rust_symbol_at_offset(&doc.rust_origin_symbols, offset) {

@@ -1,12 +1,12 @@
 [project]
 name = "incan_lsp"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 private = true
 license = "Apache-2.0"
 description = "The Incan language server: diagnostics, hover, definitions and semantic tokens over stdio"
 
 [project.features]
-# The server ships the stdlib semantics packs and Rust inspection the way the toolchain does.
+# These features still gate parser/checker semantics; Rust facts come from toolchain ABI caches.
 default = ["std_testing", "std_async", "std_decorators"]
 std_testing = ["incan_frontend/std_testing", "incan_driver/std_testing"]
 std_async = ["incan_frontend/std_async", "incan_driver/std_async"]

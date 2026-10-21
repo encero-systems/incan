@@ -1,0 +1,17 @@
+# behavior: a declared Rust dependency and a standard module retain their signatures in one unit
+# expect-accepted:
+
+"""A unit's dependency artifacts supply the same Rust signatures as its toolchain caches."""
+
+from rust::serde_json import from_str, Error as JsonError
+from std.testing import assert_eq
+
+
+def parse(text: str) -> Result[int, JsonError]:
+    """Infer the Rust function's result from the public return annotation."""
+    return from_str(text)
+
+
+def main() -> None:
+    """Check the standard package beside the imported Rust function."""
+    assert_eq(7, 7)
