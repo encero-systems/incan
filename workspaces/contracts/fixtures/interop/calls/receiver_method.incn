@@ -1,13 +1,17 @@
-# behavior: a Rust value's inherent method receives its checked shared borrow
+# behavior: native method receivers retain checked borrows and carriers used by imported method defaults
 # expect-stdout:
 #   2
 
 """Call a method on an opaque Rust value."""
 
 from rust::std::time import Duration
+from std.io import BytesIO
 
 
 def main() -> None:
     """Read a duration through its inherent Rust method."""
     value = Duration.from_secs(2)
     println(value.as_secs())
+    match BytesIO(b"abc").read():
+        Ok(data) => assert data == b"abc"
+        Err(_) => assert false

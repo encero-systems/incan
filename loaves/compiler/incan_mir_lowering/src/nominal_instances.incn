@@ -5,7 +5,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDecla
 from symbols import type_component
 from type_parameters import substitute
 from class_inheritance import specialize_classes
-from nominal_frames import nominal_frames, closed_arguments
+from nominal_frames import nominal_frames, closed_arguments, declaration_storage
 from decls import library_item
 
 
@@ -49,6 +49,10 @@ pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclarati
             match find_instance_arguments(local.ty, base, name):
                 Some(arguments) => return Ok(arguments)
                 None => pass
+    for ty in declaration_storage(module):
+        match find_instance_arguments(ty, base, name):
+            Some(arguments) => return Ok(arguments)
+            None => pass
     for owner in module.nominal_declarations:
         for field in owner.field_types:
             match find_instance_arguments(field, base, name):
@@ -104,6 +108,8 @@ pub def specialize_nominals_with_instances(
         collect_nominal_type(module, callable.return_type, instances, [])?
         for argument in callable.native_type_arguments:
             collect_nominal_type(module, argument, instances, [])?
+    for ty in declaration_storage(module):
+        collect_nominal_type(module, ty, instances, [])?
     for declaration in module.enum_declarations:
         for variant in declaration.variants:
             for field in variant.fields:

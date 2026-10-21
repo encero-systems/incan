@@ -24,6 +24,21 @@ model ScheduledFrame:
     ancestors: list[str]
 
 
+pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
+    """Project frozen return, parameter and local types from imported default frames, without copying or scheduling their implementation bodies."""
+    mut types: list[RustType] = []
+    for callable in module.loaf_callables:
+        match callable.declaration_frame:
+            None => pass
+            Some(body) =>
+                types.append(body.return_type.clone())
+                for parameter in body.params:
+                    types.append(parameter.ty.clone())
+                for local in body.locals:
+                    types.append(local.ty.clone())
+    return types
+
+
 pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
     """Inventory function, computed-static and closed source-call frames without granting execution or altering module bodies."""
     mut frames: list[Body] = []

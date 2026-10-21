@@ -60,7 +60,7 @@ from text_plan import clone_text
 from numerics import numeric_carrier
 from unions import lower_union_declaration
 from type_parameters import substitute
-from nominal_frames import closed_arguments, closed_type
+from nominal_frames import closed_arguments, closed_type, declaration_storage
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -157,6 +157,9 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
     """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
+    for ty in declaration_storage(module):
+        if closed_type(ty):
+            retain_carrier(module, declarations, ty, file)?
     for delegation in module.loaf_callables:
         if len(delegation.type_parameters) != 0 or not closed_arguments(delegation.native_type_arguments):
             continue

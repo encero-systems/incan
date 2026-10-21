@@ -888,11 +888,12 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
             callable.parameters.iter().for_each(&mut record);
             callable.native_type_arguments.iter().for_each(&mut record);
             record(&callable.return_type);
+            if let Some(frame) = &callable.declaration_frame {
+                record_held_rust_frame(frame, &mut record);
+            }
         }
         for body in &module.bodies {
-            record(&body.return_type);
-            body.locals.iter().for_each(|local| record(&local.ty));
-            body.params.iter().for_each(|param| record(&param.ty));
+            record_held_rust_frame(body, &mut record);
         }
         for declaration in &module.nominal_declarations {
             declaration.field_types.iter().for_each(&mut record);
@@ -905,8 +906,7 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         for storage in &module.static_declarations {
             record(&storage.ty);
             if let StaticInitializer::Computed(body) = &storage.initial {
-                record(&body.return_type);
-                body.locals.iter().for_each(|local| record(&local.ty));
+                record_held_rust_frame(body, &mut record);
             }
         }
     }
@@ -914,6 +914,14 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         .into_iter()
         .filter_map(|(path, arity)| native_opaque_nominal(&rust_item_identity(&path)?, arity?))
         .collect()
+}
+
+/// Retain every declared storage type in an executable or imported default frame without granting its statements
+/// execution.
+fn record_held_rust_frame(body: &Body, record: &mut impl FnMut(&IncanType)) {
+    record(&body.return_type);
+    body.locals.iter().for_each(|local| record(&local.ty));
+    body.params.iter().for_each(|param| record(&param.ty));
 }
 
 /// Record the Rust items `ty` names anywhere inside it: a type a Rust value carries is named by its item's path.

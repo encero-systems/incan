@@ -4,6 +4,7 @@ from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration
 from nominal_instances import nominal_symbol
 from type_parameters import substitute
+from nominal_frames import declaration_storage
 
 
 model EnumInstance:
@@ -17,6 +18,8 @@ model EnumInstance:
 pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Close payload layouts before native type selection; open templates never become physical declarations."""
     mut instances: list[EnumInstance] = []
+    for ty in declaration_storage(module):
+        collect_type(module, ty, instances, [])?
     for body in module.bodies:
         for local in body.locals:
             _ = collect_type(module, local.ty, instances, [])?
