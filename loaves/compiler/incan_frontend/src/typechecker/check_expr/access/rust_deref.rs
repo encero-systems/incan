@@ -11,6 +11,37 @@ const DEREF_TRAIT: &str = "std::ops::Deref";
 const DEREF_MUT_TRAIT: &str = "std::ops::DerefMut";
 
 impl TypeChecker {
+    /// Retain native dereferences only when their metadata-selected target satisfies a source shared parameter.
+    /// This is a call-boundary adjustment, never assignment compatibility or an owned-value conversion.
+    pub(in crate::typechecker) fn retain_borrowed_argument_dereferences(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        span: Span,
+    ) -> Option<()> {
+        let ResolvedType::Ref(expected) = expected else {
+            return None;
+        };
+        let mut owner = self.rust_inference_type(actual, &[]);
+        let mut steps = Vec::new();
+        for _ in 0..12 {
+            let target = self.rust_associated_type(&owner, DEREF_TRAIT, "Target")?;
+            if target == owner {
+                return None;
+            }
+            steps.push(self.rust_deref_adjustment(&owner, &target, false)?);
+            if self.rust_trait_carriers_match(&target, expected) {
+                self.type_info
+                    .rust
+                    .argument_adjustments
+                    .insert((span.start, span.end), steps);
+                return Some(());
+            }
+            owner = target;
+        }
+        None
+    }
+
     /// Search instantiated Deref targets for an inherent or imported trait instance method. Associated functions do not
     /// participate in value lookup, and an adjustment chain remains explicit through Body IR rather than changing
     /// receiver types.
@@ -198,13 +229,14 @@ impl TypeChecker {
         let RustItemKind::Type(info) = metadata.kind else {
             return None;
         };
+        let owner = self.rust_closed_owner(owner, &info, &path);
         let trait_path = if mutable { DEREF_MUT_TRAIT } else { DEREF_TRAIT };
         let implementation = info.implemented_traits.iter().find(|implementation| {
             ancestral_rust_path(&implementation.path) == ancestral_rust_path(trait_path)
-                && self.rust_impl_self_bindings(implementation, owner).is_some()
+                && self.rust_impl_self_bindings(implementation, &owner).is_some()
         })?;
         let method = if mutable { "deref_mut" } else { "deref" };
-        let owner = self.rust_storage_owner(owner, &info, &path);
+        let owner = self.rust_storage_owner(&owner, &info, &path);
         let reference = |ty: ResolvedType| {
             if mutable {
                 ResolvedType::RefMut(Box::new(ty))

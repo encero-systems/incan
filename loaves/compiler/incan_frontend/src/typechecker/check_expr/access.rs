@@ -2625,7 +2625,7 @@ impl TypeChecker {
 
     /// Return the receiver's Rust item path, keeping instantiated arguments on the checked receiver type.
     /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
-    fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
+    pub(in crate::typechecker) fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
             ResolvedType::Generic(base, arguments) if base == "[]" && arguments.len() == 1 => Some(base.clone()),
             ResolvedType::Generic(base, _) if base.contains("::") => Some(base.clone()),
@@ -3290,24 +3290,11 @@ impl TypeChecker {
             let template = self.resolved_type_from_rust_display(template);
             self.infer_type_param_bindings(
                 &self.rust_inference_type(&template, &native_parameters),
-                &self.rust_inference_type(receiver, &[]),
+                &self.rust_inference_type(&self.rust_closed_owner(receiver, owner, path), &[]),
                 &mut bindings,
             );
         }
-        let arguments = native_parameters
-            .iter()
-            .map(|parameter| {
-                bindings
-                    .get(parameter)
-                    .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
-                    .cloned()
-                    .or_else(|| {
-                        let index = owner.type_params.iter().position(|name| name == parameter)?;
-                        Some(self.resolved_type_from_rust_display(owner.type_param_defaults.get(index)?.as_deref()?))
-                    })
-            })
-            .collect::<Option<Vec<_>>>();
-        let Some(type_arguments) = arguments else {
+        let Some(type_arguments) = self.rust_method_type_arguments(&native_parameters, owner, &bindings) else {
             return;
         };
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
@@ -3375,9 +3362,32 @@ impl TypeChecker {
         );
     }
 
-    /// Apply the declared receiver mode to the selected native Self, preserving references inside Self. Inherent
-    /// lookup supplies its referent owner; trait lookup may select an impl whose Self is itself a reference.
-    /// Typed arbitrary receivers require their own retained carrier and remain refused.
+    /// Select native arguments in declaration order after the receiver and written arguments constrain them.
+    /// Only metadata-declared owner defaults fill absent bindings; unresolved inputs grant no executable call.
+    fn rust_method_type_arguments(
+        &self,
+        parameters: &[String],
+        owner: &incan_lang::interop::RustTypeInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<Vec<ResolvedType>> {
+        parameters
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                    .cloned()
+                    .or_else(|| {
+                        let index = owner.type_params.iter().position(|name| name == parameter)?;
+                        Some(self.resolved_type_from_rust_display(owner.type_param_defaults.get(index)?.as_deref()?))
+                    })
+            })
+            .collect()
+    }
+
+    /// Apply the declared receiver mode to an already selected native Self, including Self that is itself a reference.
+    /// Inherent selection removes a source receiver borrow before this boundary; trait selection must preserve it.
+    /// Typed arbitrary receivers require their own retained carrier and are refused rather than treated as owned Self.
     fn checked_rust_receiver_parameter(signature: &RustFunctionSig, receiver: &ResolvedType) -> Option<CallableParam> {
         let display = signature.params.first()?.type_display.trim();
         let ty = match Self::rust_display_borrow_kind(display) {
@@ -7899,6 +7909,26 @@ impl TypeChecker {
 
         // Guardrail: don't silently return Unknown for missing methods on known user types.
         // For unknown/external types we returned Unknown above without error.
+        if let Some(numeric) = super::super::numeric_type_id_for_compat(&base_ty) {
+            let errors_before = self.errors.len();
+            if let Some(result) = self.resolve_rust_path_method_call(RustPathMethodCall {
+                rust_path: numerics::as_str(numeric),
+                method,
+                receiver_metadata: None,
+                receiver_binding: None,
+                receiver_expr: base,
+                type_args,
+                args,
+                arg_types: &arg_types,
+                receiver_span: base.span,
+                expected_return_ty,
+                span,
+            }) && (self.errors.len() != errors_before
+                || self.type_info.rust.checked_calls.contains_key(&(span.start, span.end)))
+            {
+                return result;
+            }
+        }
         let base_name_str = base_ty.to_string();
         let skip_error_for_known_runtime = surface_types::from_str(base_name_str.as_str()).is_some();
         if !(matches!(base_ty, ResolvedType::Named(ref n) if self.symbols.lookup(n).is_none())

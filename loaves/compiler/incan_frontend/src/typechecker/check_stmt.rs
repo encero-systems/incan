@@ -2268,6 +2268,7 @@ impl TypeChecker {
             }
         }
         match iter_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.infer_iterator_element_type(inner),
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
             ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),
             ResolvedType::Generic(name, args) => {

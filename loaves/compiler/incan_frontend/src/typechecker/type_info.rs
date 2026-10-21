@@ -948,6 +948,9 @@ pub struct RustInteropArtifacts {
     /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
     /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
     pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
+    /// Checked native dereference calls at source borrowed-argument boundaries, keyed by argument expression span.
+    /// Body IR emits these steps before the source call and never infers a dereference from compatible types.
+    pub argument_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
     /// Exact native values of public field expressions before source collection and scalar projection.
     pub field_values: HashMap<(usize, usize), RustCheckedFieldValue>,
     /// Native result item selected for each local binding, even when its source type projects to str or a collection.

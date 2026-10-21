@@ -1,0 +1,15 @@
+# behavior: a boxed value does not implicitly become an owned source argument
+# expect-diagnostic: INCAN-T0001
+
+from rust::std::boxed import Box
+
+
+def read(value: str) -> int:
+    """Require owned text rather than a borrowed box target."""
+    return len(value)
+
+
+def main() -> None:
+    """Refuse an unboxing conversion outside a borrowed parameter boundary."""
+    value: Box[str] = Box.new("abc")
+    println(read(value))

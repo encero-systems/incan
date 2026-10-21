@@ -1916,22 +1916,26 @@ impl TypeChecker {
         None
     }
 
-    /// Resolve a Rust callable bound display into an Incan function type.
+    /// Resolve a safe Rust function pointer or callable bound display into an Incan function type.
     ///
     /// Rust generic callback parameters often surface as `impl FnMut(&mut T, &U)` or through a generic bound that is
     /// normalized to that display. Treating those as ordinary type variables lets by-value Incan function values reach
     /// rustc and fail there. This resolver preserves the callback input borrow shape so the frontend can reject
     /// incompatible named callbacks before emission.
     fn resolved_function_type_from_rust_callable_bound_display(&self, rust_ty: &str) -> Option<ResolvedType> {
-        let body = Self::rust_callable_bound_body(rust_ty)?;
-        let body = body
-            .strip_prefix("std::ops::")
-            .or_else(|| body.strip_prefix("core::ops::"))
-            .unwrap_or(body);
-        let after_name = ["FnOnce", "FnMut", "Fn"]
-            .into_iter()
-            .find_map(|name| body.strip_prefix(name))?
-            .trim_start();
+        let after_name = if let Some(pointer) = rust_ty.trim().strip_prefix("fn") {
+            pointer.trim_start()
+        } else {
+            let body = Self::rust_callable_bound_body(rust_ty)?;
+            let body = body
+                .strip_prefix("std::ops::")
+                .or_else(|| body.strip_prefix("core::ops::"))
+                .unwrap_or(body);
+            ["FnOnce", "FnMut", "Fn"]
+                .into_iter()
+                .find_map(|name| body.strip_prefix(name))?
+                .trim_start()
+        };
         if !after_name.starts_with('(') {
             return None;
         }

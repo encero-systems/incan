@@ -1,0 +1,8 @@
+# behavior: a native unsigned scalar selects its Clone implementation without changing its carrier
+# expect-stdout:
+#   3
+
+def main() -> None:
+    """Clone a native unsigned scalar and convert its retained value to source int."""
+    value: usize = 3
+    println(int(value.clone()))

@@ -1,0 +1,18 @@
+# behavior: cloning shared native text selects the owned String implementation
+# expect-stdout:
+#   retained
+#   retained
+
+from rust::std::string import String as RustString
+
+
+def copy(value: &RustString) -> RustString:
+    """Clone the referent rather than selecting Clone for its reference."""
+    return value.clone()
+
+
+def main() -> None:
+    """Copy the same borrowed native text twice."""
+    value: RustString = "retained"
+    println(copy(value))
+    println(copy(value))

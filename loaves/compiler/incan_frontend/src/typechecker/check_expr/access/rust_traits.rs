@@ -137,7 +137,7 @@ impl TypeChecker {
 
     /// Compare canonical native carriers for trait selection. The source compatibility relation deliberately admits
     /// opaque Rust paths, so it cannot distinguish competing trait instantiations such as From<char> and From<String>.
-    pub(super) fn rust_trait_carriers_match(&self, left: &ResolvedType, right: &ResolvedType) -> bool {
+    pub(in crate::typechecker) fn rust_trait_carriers_match(&self, left: &ResolvedType, right: &ResolvedType) -> bool {
         self.rust_trait_comparison_type(left) == self.rust_trait_comparison_type(right)
     }
 

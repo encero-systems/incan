@@ -1,0 +1,20 @@
+# behavior: boxed native arguments borrow their contents at positional and named source parameters
+# expect-stdout:
+#   3
+#   3
+#   3
+
+from rust::std::boxed import Box
+
+
+def read(value: &str) -> int:
+    """Read shared text without taking its owning box."""
+    return len(value)
+
+
+def main() -> None:
+    """Borrow one box twice and a fresh box once through the same source boundary."""
+    value: Box[str] = Box.new("abc")
+    println(read(value))
+    println(read(value=value))
+    println(read(Box.new("abc")))

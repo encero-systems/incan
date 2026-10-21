@@ -118,6 +118,13 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
         }
         PlanType::String => ast::TyKind::Path(None, standard_path(&["string", "String"], span)),
+        PlanType::StringRef => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::String, span),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
         PlanType::NativeStr => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
         PlanType::NativeSlice(elements) => elements
             .first()

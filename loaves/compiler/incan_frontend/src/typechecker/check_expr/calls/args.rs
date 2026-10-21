@@ -714,6 +714,12 @@ impl TypeChecker {
         span: Span,
         compatibility: CallArgumentCompatibility,
     ) {
+        if self
+            .retain_borrowed_argument_dereferences(actual, expected, span)
+            .is_some()
+        {
+            return;
+        }
         let compatible = match expected {
             ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
                 self.types_compatible(actual, inner)

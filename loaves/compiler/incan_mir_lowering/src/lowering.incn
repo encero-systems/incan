@@ -235,7 +235,7 @@ from derived_defaults import is_derived_default, lower_derived_default
 from models import field_path, field_projection
 from newtype_hooks import lower_newtype_hook_result
 from newtype_sums import lower_newtype_sum_add, lower_newtype_sum_extract
-from validation_errors import lower_validation_error, display_validation_error
+from validation_errors import lower_validation_error, display_validation_error, validation_error_reference
 from models import model_type, model_place, constructor_index, field_slot
 from reflection import lower_reflection, lower_static_field_metadata
 from type_metadata import lower_type_metadata
@@ -749,6 +749,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
             if is_list(place_type(builder.locals, target)) and is_tuple_type(builder.locals[target.local].ty):
                 return carrier_payload_value(builder, target, span)
             match place_type(builder.locals, target):
+                PlanType.StringRef => return Ok(read_place(target, false, span))
                 PlanType.Enum(_owner, _name) =>
                     match target.projection:
                         Projection.Field(_slot, _ty) => return clone_nominal_operand(builder, target, span)
@@ -1904,9 +1905,9 @@ def lower_local_assignment(
         return collection_assignment(builder, target, value, span)
     if is_list(place_type(builder.locals, target)):
         return list_assignment(builder, target, value, span)
+    if place_type(builder.locals, target) in [PlanType.String, PlanType.StringRef] and target.local in builder.iteration_locals:
+        return initialize_text_iterator(builder, target, value, span)
     if place_type(builder.locals, target) == PlanType.String:
-        if target.local in builder.iteration_locals:
-            return initialize_text_iterator(builder, target, value, span)
         return lower_string_assignment(builder, target, value, span)
     if place_type(builder.locals, target) == PlanType.FrozenStr:
         match value:
@@ -3347,7 +3348,7 @@ def lower_method_call(
                                 )
                             None => pass
                     None => pass
-            return Err("unsupported Body IR Method without canonical identity")
+            return Err(f"unsupported Body IR Method without canonical identity for {target.name} at {builder.file}:{span.line}:{span.column} in {builder.name}")
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
     if lower_global_method(module, builder, target, arguments, destination, span)?:
@@ -5151,6 +5152,10 @@ pub def call_argument_operand(
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         PlanType.StringRef => return borrow_text_operand(builder, value, span)
         PlanType.StrRef => return borrow_str_operand(builder, value, span)
+        PlanType.ValidationErrorRef =>
+            match value:
+                RustOperand.Place(read) => return validation_error_reference(builder, scalar_place(builder, read.place, span)?, span)
+                _ => return Err("unsupported Body IR validation error reference without a place")
         PlanType.SliceRef(elements) => return borrow_slice_operand(builder, value, elements, false, span)
         PlanType.SliceMutRef(elements) => return borrow_slice_operand(builder, value, elements, true, span)
         PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
@@ -6679,6 +6684,8 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             if is_element_place(builder, read.place)?:
                 return borrow_element_text(builder, value, read.fact, span)
             place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.StringRef:
+                return Ok(read_place(place, false, span))
             if place_type(builder.locals, place) == PlanType.StrRef:
                 owner = owned_slice_text(builder, read_place(place, false, span), span)
                 builder.owned.append(owner.local)
