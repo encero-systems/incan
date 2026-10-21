@@ -1,9 +1,9 @@
-# behavior: a stored Sha256Hasher preserves incremental updates, and SHA-224 retains its associated output length (#969, #2256)
+# behavior: stored hashers preserve incremental updates, and SHA-224 and HMAC retain their associated output lengths (#969, #2256)
 # expect-stdout:
 #   true
 #   false
 
-from std.hash import Sha256Hasher, sha224, sha256
+from std.hash import Sha256Hasher, hmac_sha256, sha224, sha256
 
 
 model StructuralSink:
@@ -18,6 +18,7 @@ model StructuralSink:
 
 def main() -> None:
     assert len(sha224.digest(b"")) == 28
+    assert len(hmac_sha256.digest(b"", b"")) == 32
     mut sink = StructuralSink(hasher=sha256.new())
     sink.append(b"a")
     sink.append(b"bc")

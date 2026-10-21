@@ -12,6 +12,7 @@ from rust::std::cmp import Ordering
 from rust::std::env import VarError
 from rust::std::ffi import OsString
 from rust::std::io import SeekFrom
+from rust::std::num import Wrapping
 from rust::std::ops import ControlFlow
 
 
@@ -54,6 +55,13 @@ def text_length(value: str) -> int:
     return len(value)
 
 
+def wrapped_flow(value: ControlFlow[Wrapping[int], bool]) -> bool:
+    """Retain the closed layout of an unselected native generic payload."""
+    match value:
+        ControlFlow.Continue(result) => return result
+        _ => return false
+
+
 def main() -> None:
     """Observe native unit and payload variants through direct and nested patterns."""
     println(environment_kind(Err(VarError.NotPresent)))
@@ -67,6 +75,8 @@ def main() -> None:
     continued: ControlFlow[int, str] = ControlFlow.Continue("abc")
     assert flow_score(stopped) == 9
     assert flow_score(continued) == 3
+    wrapped: ControlFlow[Wrapping[int], bool] = ControlFlow.Continue(true)
+    assert wrapped_flow(wrapped)
     missing = VarError.NotPresent
     assert text_length(missing) > 0
     assert text_length(missing) > 0

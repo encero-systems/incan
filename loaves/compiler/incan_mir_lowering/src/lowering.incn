@@ -1141,7 +1141,7 @@ def scalar_rvalue(
             if left_type == PlanType.Decimal:
                 return Ok(RvalueKind.Use(decimal_comparison(builder, operator, left_operand, right_operand, span)?))
             if is_text_or_nominal(left_type):
-                return Err("unsupported Body IR binary operator on text or nominal operands")
+                return Err(f"unsupported Body IR binary operator {operator:?} on text or nominal operands {left_type:?} at {span:?}")
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
         RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
             return lower_union_isinstance(builder, value, ty, target.ty, span)
