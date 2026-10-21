@@ -1,0 +1,81 @@
+# behavior: returning and passing enum fields from shared receivers preserves the owner's fields for later reads
+# expect-stdout:
+#   ready
+#   optional
+#   optional
+#   result
+#   ready
+#   payload
+#   payload
+#   ready
+
+enum State(str):
+    """A string-backed state stored inside a borrowed receiver."""
+
+    Ready = "ready"
+    Done = "done"
+
+
+enum Message:
+    """An enum whose owned payload must survive reads through its owner."""
+
+    Text(str)
+
+
+model Holder:
+    """Own enum fields behind a shared method receiver."""
+
+    state: State
+    message: Message
+    optional: Option[str]
+    result: Result[str, str]
+
+    def state_value(self) -> State:
+        """Return an owned state while retaining the source field."""
+        return self.state
+
+    def message_value(self) -> Message:
+        """Return an owned enum with a text payload."""
+        return self.message
+
+    def pass_state(self) -> str:
+        """Pass the field through an ordinary value parameter."""
+        return state_text(self.state)
+
+    def optional_value(self) -> Option[str]:
+        """Read an intrinsic enum through the same borrowed field boundary."""
+        return self.optional
+
+    def result_value(self) -> Result[str, str]:
+        """Return an owned Result field without transferring the receiver's payload."""
+        return self.result
+
+
+def state_text(state: State) -> str:
+    """Read the enum's backing value."""
+    return state.value()
+
+
+def show(message: Message) -> None:
+    """Print the retained payload."""
+    match message:
+        Message.Text(text) => println(text)
+
+
+def main() -> None:
+    """Repeat each borrowed field read to observe source preservation."""
+    holder = Holder(state=State.Ready, message=Message.Text("payload"), optional=Some("optional"), result=Ok("result"))
+    println(holder.state_value().value())
+    match holder.optional_value():
+        Some(text) => println(text)
+        None => println("missing")
+    match holder.optional_value():
+        Some(text) => println(text)
+        None => println("missing")
+    match holder.result_value():
+        Ok(text) => println(text)
+        Err(text) => println(text)
+    println(holder.pass_state())
+    show(holder.message_value())
+    show(holder.message_value())
+    println(holder.state_value().value())
