@@ -60,6 +60,7 @@ mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
 mod native_newtype_facts;
+mod native_storage;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
@@ -7238,6 +7239,7 @@ impl TypeChecker {
 
         if fatal.is_empty() {
             self.record_public_type_bridge_roots(program);
+            self.publish_rust_storage_types(program);
             self.type_info.body_ir_newtypes = native_newtype_facts::project(program, &self.type_info);
             self.publish_body_ir_empty_lists();
             Ok(())

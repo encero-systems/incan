@@ -24,7 +24,7 @@ sources:
 
 ## Decision
 
-Rust interop compiles on the direct route from checked facts alone. The facts come from rustc's metadata (DD-0009); nothing is re-resolved from source spellings or display strings, and nothing is listed by hand.
+Rust interop compiles on the direct route from checked facts alone. The facts come from rustc's metadata (DD-0009); the accepting checker freezes native storage and declaration identities, and Body IR copies those structural facts. Nothing is re-resolved from source spellings or display strings, and nothing is listed by hand.
 
 1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each an ordinary Body IR type. Each closed instantiation a program uses becomes one plan declaration. An item whose public fields or variants the facts expose has that layout, so public fields are readable, variants can be matched and constructed, and named construction infers the owner's type arguments. Any other item is opaque. Lifetime arguments are erased: rustc infers them.
 2. **Calls.** The checker records the resolved callee of every Rust call it admits (a free function, an inherent associated function or method, or a trait method with its trait), with the instantiated signature, the receiver's mode and the type arguments it inferred, using the same unifier as Incan calls. Inherent methods come before trait methods, as in Rust. Body IR carries that record; the lowering calls it through the external-call contract that Loaf calls use, and the driver keeps rustc's signature and predicate check. A call the checker cannot resolve refuses at the call site.
@@ -47,6 +47,7 @@ Source models and newtypes may derive Rust traits (`Serialize`, `Deserialize`, `
 - Const-generic arguments.
 - Borrowed Rust types in Incan signatures and fields, and Rust statics, until a lifetime or storage contract exists.
 - Changing RFC 005's source surface.
+- Rust statics without a storage contract, borrowed aliases in source signatures/fields without retained lifetime contracts, and unsafe or unsupported calls without complete checked facts.
 
 ## Revisit condition
 

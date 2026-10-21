@@ -152,10 +152,7 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
 /// Resolve registered native vocabulary to its runtime facet; an authored declaration keeps its source layout.
 fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclaration> {
     let id = surface_types::from_str(name)?;
-    if !matches!(
-        surface_types::category(id),
-        SurfaceTypeCategory::AsyncTask | SurfaceTypeCategory::AsyncRace | SurfaceTypeCategory::AsyncSync
-    ) {
+    if !type_info.runtime_owner_admitted(id) {
         return None;
     }
     let info = surface_types::info_for(id);
@@ -163,17 +160,6 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         .split('.')
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    if let Some(identity) = type_info
-        .declarations
-        .named_type_identities
-        .get(name)
-        .or_else(|| type_info.declarations.body_ir_native_type_identities.get(name))
-    {
-        match &identity.origin {
-            SymbolOrigin::RustCrate(owner) if surface_types::from_runtime_rust_path(&owner.join("::")) == Some(id) => {}
-            _ => return None,
-        }
-    }
     let namespace = path.get(1)?;
     let library = facets::for_namespace(namespace).to_owned();
     // Runtime vocabulary has no Incan declaration span. Its registry position is a stable synthetic declaration
@@ -227,14 +213,16 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
     })
 }
 
-/// Project only registry-owned native Rust paths onto the same SDK carrier that source annotations name.
-/// Argument splitting uses the existing Rust interop parser; unregistered paths and unsupported arguments retain their
-/// refusal.
+/// Copy checker-retained native storage and recursively preserve already structural source carriers.
+/// An unretained native display remains opaque and cannot trigger parsing or default specialization in Body IR.
 pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
+    if let Some(storage) = facts.rust.storage_types.get(&ty) {
+        return storage.clone();
+    }
     match ty {
-        IncanType::RustInteropPath(path) => project_path(&path, facts)
-            .or_else(|| super::rust_values::project(&path, facts))
-            .unwrap_or(IncanType::RustInteropPath(path)),
+        IncanType::RustInteropPath(path) => {
+            super::rust_values::project(&path, facts).unwrap_or(IncanType::RustInteropPath(path))
+        }
         IncanType::Generic { base, args } => {
             let base = facts.rust.item_public_paths.get(&base).cloned().unwrap_or(base);
             let base = match super::rust_values::project(&base, facts) {
@@ -242,11 +230,9 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
                 _ => base,
             };
             let args: Vec<_> = args.into_iter().map(|arg| project_type(arg, facts)).collect();
-            super::rust_values::complete_owner(base, args, facts)
+            IncanType::Generic { base, args }
         }
-        IncanType::Named(name) if bir::rust_item_identity(&name).is_some() => {
-            super::rust_values::complete_owner(name, Vec::new(), facts)
-        }
+        IncanType::Named(name) if bir::rust_item_identity(&name).is_some() => IncanType::Named(name),
         IncanType::Tuple(items) => IncanType::Tuple(items.into_iter().map(|item| project_type(item, facts)).collect()),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(project_type(*inner, facts))),
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(project_type(*inner, facts))),
@@ -263,35 +249,6 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
         },
         other => other,
     }
-}
-
-/// Preserve checked SDK ownership and exact argument types when the provider's signature uses native Rust spelling.
-fn project_path(path: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
-    let ty = project_resolved_path(path, facts)?;
-    Some(project_type(semantic_type_from_resolved(&ty), facts))
-}
-
-/// Share registry and source-ownership admission with private call inference, retaining the native argument spelling.
-/// Named carriers reject generic syntax, and consumer declarations cannot authorize an equal-spelled SDK carrier.
-pub(crate) fn project_resolved_path(path: &str, facts: &TypeCheckInfo) -> Option<crate::symbols::ResolvedType> {
-    let base = path.split('<').next()?;
-    let public = facts.rust.item_public_paths.get(base).map_or(base, String::as_str);
-    let id = surface_types::from_runtime_rust_path(public)?;
-    let name = surface_types::as_str(id);
-    // A source declaration may share a spelling, but never authorizes a native runtime path conversion.
-    nominal(facts, name)?;
-    if surface_types::info_for(id).kind == SurfaceTypeKind::Named {
-        return (!path.contains('<')).then(|| crate::symbols::ResolvedType::Named(name.to_owned()));
-    }
-    let (_, inner) = path.split_once('<')?;
-    let inner = inner.strip_suffix('>')?;
-    let arguments = incan_lang::interop::split_top_level_rust_args(inner);
-    if arguments.len() != 1 {
-        return None;
-    }
-    let parser = crate::typechecker::TypeChecker::new();
-    let argument = parser.resolved_type_from_rust_display(arguments[0]);
-    Some(crate::symbols::ResolvedType::Generic(name.to_owned(), vec![argument]))
 }
 
 /// Collect the nominal names a type mentions, through generic arguments, tuples and references.

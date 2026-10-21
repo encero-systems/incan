@@ -252,7 +252,21 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
 pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
-    facts.declarations.named_type_identities.clone()
+    let mut identities = facts.declarations.named_type_identities.clone();
+    for call in facts.rust.checked_calls.values().chain(
+        facts
+            .rust
+            .iteration_hooks
+            .values()
+            .flat_map(|hooks| [&hooks.iter, &hooks.next]),
+    ) {
+        for call in call.receiver_adjustments.iter().chain(std::iter::once(call)) {
+            if let Some(storage) = &call.storage {
+                identities.extend(storage.identities.clone());
+            }
+        }
+    }
+    identities
 }
 
 /// Read the checker-retained owner of a source binding or carrier key without decoding or rebuilding a name.

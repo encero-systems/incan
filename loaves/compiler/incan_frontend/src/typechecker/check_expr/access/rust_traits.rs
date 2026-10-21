@@ -87,6 +87,8 @@ impl TypeChecker {
             return None;
         }
         Some(crate::typechecker::type_info::RustCheckedCall {
+            storage: None,
+            source_type_parameters: self.native_call_type_parameters(),
             receiver_adjustments: Vec::new(),
             path: selected.path,
             type_arguments: selected.arguments,
@@ -417,10 +419,8 @@ impl TypeChecker {
         owner
     }
 
-    /// Keep checker inference owners in the shortest form rustc displays at constructors. Body IR completes native
-    /// storage defaults separately from retained declaration facts, including defaults exposed by public field
-    /// templates. Already-short owners retain structured source arguments rather than round-tripping their aliases
-    /// and model identities through a display.
+    /// Keep inference owners in the shortest form rustc displays at constructors. The accepting checker separately
+    /// freezes complete native storage defaults, including public field templates, before publishing its facts.
     pub(in crate::typechecker::check_expr) fn rust_storage_owner(
         &self,
         owner: &ResolvedType,
@@ -428,7 +428,9 @@ impl TypeChecker {
         path: &str,
     ) -> ResolvedType {
         match owner {
-            ResolvedType::Ref(inner) => return ResolvedType::Ref(Box::new(self.rust_storage_owner(inner, info, path))),
+            ResolvedType::Ref(inner) => {
+                return ResolvedType::Ref(Box::new(self.rust_storage_owner(inner, info, path)));
+            }
             ResolvedType::RefMut(inner) => {
                 return ResolvedType::RefMut(Box::new(self.rust_storage_owner(inner, info, path)));
             }
@@ -905,6 +907,8 @@ impl TypeChecker {
         self.type_info.rust.checked_calls.insert(
             (call.span.start, call.span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
                 receiver_adjustments: Vec::new(),
                 path: selected.path,
                 type_arguments: selected.arguments,

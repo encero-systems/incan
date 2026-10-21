@@ -105,8 +105,8 @@ impl TypeChecker {
             let Some(actual) = self.type_info.expr_type(expression.span) else {
                 return;
             };
-            let expected = normalized(parameter, &names, &self.type_info);
-            let actual = normalized(actual, &[], &self.type_info);
+            let expected = normalized(parameter, &names, self);
+            let actual = normalized(actual, &[], self);
             if !concrete(&actual) {
                 return;
             }
@@ -116,7 +116,7 @@ impl TypeChecker {
                 return;
             }
         }
-        let output = substitute_resolved_type(&normalized(&result, &names, &self.type_info), &bindings);
+        let output = substitute_resolved_type(&normalized(&result, &names, self), &bindings);
         if !concrete(&output) {
             return;
         }
@@ -162,8 +162,8 @@ impl TypeChecker {
         }
         let mut bindings: HashMap<_, _> = legacy_bindings
             .iter()
-            .filter(|(_, ty)| concrete(&normalized(ty, &names, &self.type_info)))
-            .map(|(name, ty)| (name.clone(), normalized(ty, &names, &self.type_info)))
+            .filter(|(_, ty)| concrete(&normalized(ty, &names, self)))
+            .map(|(name, ty)| (name.clone(), normalized(ty, &names, self)))
             .collect();
         let mut native_binders = HashSet::new();
         let rest = info
@@ -194,7 +194,7 @@ impl TypeChecker {
             else {
                 return;
             };
-            let expected = normalized(&parameter.ty, &names, &self.type_info);
+            let expected = normalized(&parameter.ty, &names, self);
             let actual = testing_argument.unwrap_or_else(|| self.body_ir_argument_type(expression, actual));
             // A native slice is not the source byte buffer used by legacy inference. Preserve the selected
             // reference at the source instantiation boundary, before argument storage is chosen.
@@ -206,7 +206,7 @@ impl TypeChecker {
                     .body_ir_expr_types
                     .insert(key, actual.clone());
             }
-            let actual = normalized(actual, &[], &self.type_info);
+            let actual = normalized(actual, &[], self);
             let actual = self.body_ir_adopted_trait_type(&expected, &actual).unwrap_or(actual);
             if let ResolvedType::TypeVar(name) = &expected {
                 let first_actual = native_binders.insert(name.clone());
@@ -230,7 +230,7 @@ impl TypeChecker {
                 .calls
                 .body_ir_call_type_arguments
                 .insert((span.start, span.end), arguments);
-            let result = substitute_resolved_type(&normalized(&info.return_type, &names, &self.type_info), &bindings);
+            let result = substitute_resolved_type(&normalized(&info.return_type, &names, self), &bindings);
             self.retain_body_ir_call_parameters(info, &names, &bindings, span);
             tracing::debug!(target: "incan::invocation", identity = ?identity, declared = ?info.return_type, names = ?names, bindings = ?bindings, result = ?result, "direct-route checked call result");
             if concrete(&result) {
@@ -244,7 +244,8 @@ impl TypeChecker {
                 .values()
                 .flatten()
                 .any(|bound| self.body_ir_runtime_bridge_bound(bound));
-            let runtime_result = matches!(&info.return_type, ResolvedType::RustPath(path) if crate::body_ir::runtime_nominals::project_resolved_path(path, &self.type_info).is_some());
+            let runtime_result =
+                matches!(&info.return_type, ResolvedType::RustPath(path) if self.native_runtime_type(path).is_some());
             if concrete(&result) && (runtime_bridge || runtime_result || info.is_async) {
                 self.type_info
                     .calls
@@ -266,7 +267,7 @@ impl TypeChecker {
             .params
             .iter()
             .map(|parameter| crate::symbols::CallableParam {
-                ty: substitute_resolved_type(&normalized(&parameter.ty, names, &self.type_info), bindings),
+                ty: substitute_resolved_type(&normalized(&parameter.ty, names, self), bindings),
                 ..parameter.clone()
             })
             .collect::<Vec<_>>();
@@ -461,7 +462,7 @@ impl TypeChecker {
                     continue;
                 }
                 for (parameter, output) in bound.type_args.iter().zip(outputs) {
-                    self.infer_type_param_bindings(&normalized(parameter, names, &self.type_info), &output, bindings);
+                    self.infer_type_param_bindings(&normalized(parameter, names, self), &output, bindings);
                 }
             }
         }
@@ -514,22 +515,19 @@ impl TypeChecker {
     }
 }
 
-/// Normalize checked tuple aliases and only the callee's declared named binders for structural unification.
-pub(super) fn normalized(
-    ty: &ResolvedType,
-    binders: &[String],
-    facts: &crate::typechecker::TypeCheckInfo,
-) -> ResolvedType {
+/// Normalize checked aliases and declared binders in the accepting checker; SDK projection keeps its lexical scope.
+pub(super) fn normalized(ty: &ResolvedType, binders: &[String], checker: &TypeChecker) -> ResolvedType {
     match ty {
         ResolvedType::Named(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
         ResolvedType::RustPath(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
-        ResolvedType::RustPath(path) => crate::body_ir::runtime_nominals::project_resolved_path(path, facts)
-            .map(|carrier| normalized(&carrier, binders, facts))
+        ResolvedType::RustPath(path) => checker
+            .native_runtime_type(path)
+            .map(|carrier| normalized(&carrier, binders, checker))
             .unwrap_or_else(|| ty.clone()),
         ResolvedType::Generic(name, elements) => {
             let elements = elements
                 .iter()
-                .map(|element| normalized(element, binders, facts))
+                .map(|element| normalized(element, binders, checker))
                 .collect();
             if name == "Tuple" {
                 ResolvedType::Tuple(elements)
@@ -540,27 +538,27 @@ pub(super) fn normalized(
         ResolvedType::Tuple(elements) => ResolvedType::Tuple(
             elements
                 .iter()
-                .map(|element| normalized(element, binders, facts))
+                .map(|element| normalized(element, binders, checker))
                 .collect(),
         ),
-        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(normalized(inner, binders, facts))),
-        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(normalized(inner, binders, facts))),
-        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(normalized(inner, binders, checker))),
+        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(normalized(inner, binders, checker))),
+        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(normalized(inner, binders, checker))),
         ResolvedType::Function(parameters, result) => ResolvedType::Function(
             parameters
                 .iter()
                 .map(|parameter| crate::symbols::CallableParam {
-                    ty: normalized(&parameter.ty, binders, facts),
+                    ty: normalized(&parameter.ty, binders, checker),
                     ..parameter.clone()
                 })
                 .collect(),
-            Box::new(normalized(result, binders, facts)),
+            Box::new(normalized(result, binders, checker)),
         ),
-        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(normalized(inner, binders, facts))),
-        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(normalized(inner, binders, checker))),
+        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(normalized(inner, binders, checker))),
         ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
-            Box::new(normalized(key, binders, facts)),
-            Box::new(normalized(value, binders, facts)),
+            Box::new(normalized(key, binders, checker)),
+            Box::new(normalized(value, binders, checker)),
         ),
         ty => ty.clone(),
     }

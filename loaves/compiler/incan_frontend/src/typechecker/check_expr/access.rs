@@ -3421,6 +3421,8 @@ impl TypeChecker {
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
                 receiver_adjustments: Vec::new(),
                 path: format!("{path}::{}", method.name),
                 type_arguments,
@@ -7483,7 +7485,9 @@ impl TypeChecker {
                         }
                         M::Pop => return elem,
                         M::Contains => return ResolvedType::Bool,
-                        M::Swap | M::Reserve | M::ReserveExact | M::Remove => return ResolvedType::Unit,
+                        M::Swap | M::Reserve | M::ReserveExact | M::Remove => {
+                            return ResolvedType::Unit;
+                        }
                         M::Count | M::Index => return ResolvedType::Int,
                     }
                 }
@@ -8060,7 +8064,9 @@ impl TypeChecker {
     /// Return whether a `to_vec` receiver shape is known to produce digest bytes even when rust-inspect erases it.
     fn rust_to_vec_receiver_is_known_byte_output(base: &Spanned<Expr>) -> bool {
         match &base.node {
-            Expr::MethodCall(_, method, _, _) => matches!(method.as_str(), "as_bytes" | "digest" | "finalize_reset"),
+            Expr::MethodCall(_, method, _, _) => {
+                matches!(method.as_str(), "as_bytes" | "digest" | "finalize_reset")
+            }
             _ => false,
         }
     }

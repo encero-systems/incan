@@ -110,6 +110,8 @@ impl TypeChecker {
             self.type_info.rust.argument_adjustments.insert(
                 (value.span.start, value.span.end),
                 vec![RustCheckedCall {
+                    storage: None,
+                    source_type_parameters: self.native_call_type_parameters(),
                     receiver_adjustments: Vec::new(),
                     path: "std::boxed::Box::new".into(),
                     type_arguments: vec![param.ty.clone()],

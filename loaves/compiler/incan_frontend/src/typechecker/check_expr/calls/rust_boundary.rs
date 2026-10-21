@@ -608,6 +608,8 @@ impl TypeChecker {
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
                 receiver_adjustments: Vec::new(),
                 path: path.trim_start_matches("rust::").to_owned(),
                 type_arguments: arguments,
@@ -2662,7 +2664,8 @@ mod validate_rust_function_call_tests {
                 .calls
                 .call_site_callable_params
                 .get(&(span.start, span.end))
-                .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
+                .is_some_and(|params| params.len() == 1
+                    && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
             "expected Rust by-value impl Trait method param shape to be recorded, got {:?}",
             checker.type_info.calls.call_site_callable_params
         );
