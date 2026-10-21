@@ -481,6 +481,8 @@ pub(super) fn lower_method_body(
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
+    let checked_receiver = lowering_facts.type_info.qualify_semantic_type(receiver_ty.clone());
+    let receiver_ty = &checked_receiver;
 
     // Method names are not unique across a module the way top-level function names are (two classes can each
     // declare a method named `new`), so the method's CompilerNodeId is scoped under its owning declaration's name

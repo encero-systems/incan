@@ -84,7 +84,19 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
 }
 
 /// Use the original checked leaf where projection erased its qualified name; otherwise keep the retained type.
+/// Generic owners use the same retained identity as plain nominal leaves; their arguments retain separate owners.
 fn qualify_type(ty: &mut IncanType, checked: Option<&IncanType>, identities: &Identities) {
+    if let IncanType::Generic { base, .. } = ty {
+        let original = match checked {
+            Some(IncanType::Generic { base, .. }) => Some(IncanType::Named(base.clone())),
+            _ => None,
+        };
+        let mut owner = IncanType::Named(base.clone());
+        qualify_type(&mut owner, original.as_ref(), identities);
+        if let IncanType::Named(name) = owner {
+            *base = name;
+        }
+    }
     match ty {
         IncanType::Named(name) => {
             let selected = match checked {

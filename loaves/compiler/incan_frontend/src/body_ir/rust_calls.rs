@@ -64,6 +64,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
             projected
         };
         let declaration = bir::LoafCallable {
+            declaration_frame: None,
             canonical,
             item: call.path.clone(),
             parameters: call.parameters.iter().map(|parameter| checked(&parameter.ty)).collect(),

@@ -1,6 +1,6 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind, SymbolOrigin
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
 from symbols import type_component
 from type_parameters import substitute
@@ -18,10 +18,8 @@ pub model NominalInstance:
 
 
 pub def template_base(declaration: &NominalDeclaration) -> str:
-    """The base a generic nominal's uses spell: a Rust item's path (its opaque name, DD-0006), else its declared name."""
-    match declaration.canonical.origin:
-        SymbolOrigin.RustCrate(path) => return "::".join(path)
-        _ => return str(declaration.canonical.declaration_name)
+    """Match checked nominal uses by their retained carrier key; native owners retain their public Rust path."""
+    return declaration.template_carrier_name()
 
 
 pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:

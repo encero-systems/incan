@@ -2801,8 +2801,8 @@ impl TypeCheckInfo {
         self.qualify_semantic_type(semantic_type_from_resolved(ty))
     }
 
-    /// Retain checker-owned nominal leaves after an active declaration's binders have been classified. Body IR
-    /// consumes this result directly and must not rebuild identities from normalized source names.
+    /// Retain checker-owned nominal heads and leaves after an active declaration's binders have been classified.
+    /// Body IR consumes this result directly and must not rebuild identities from normalized source names.
     pub fn qualify_semantic_type(&self, ty: IncanType) -> IncanType {
         match ty {
             IncanType::Named(name) => {
@@ -2827,9 +2827,12 @@ impl TypeCheckInfo {
                 }
                 IncanType::Named(key)
             }
-            IncanType::Generic { base, args } => IncanType::Generic {
-                base,
-                args: args.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect(),
+            IncanType::Generic { base, args } => match self.qualify_semantic_type(IncanType::Named(base)) {
+                IncanType::Named(base) => IncanType::Generic {
+                    base,
+                    args: args.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect(),
+                },
+                refused => refused,
             },
             IncanType::Tuple(items) => {
                 IncanType::Tuple(items.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect())

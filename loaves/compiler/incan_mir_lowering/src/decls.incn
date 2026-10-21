@@ -81,6 +81,20 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
+pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: list[EnumDeclaration]) -> None:
+    """Expose canonical native ABI items for a compiled Loaf; its checked manifest retains source visibility.
+
+    Private layouts can appear in compiled callable signatures or governed defaults. Linked layouts already belong
+    to their selected artifact and keep its visibility.
+    """
+    for index in range(len(models)):
+        if models[index].library_item == "":
+            models[index].public = true
+    for index in range(len(enums)):
+        if enums[index].library_item == "":
+            enums[index].public = true
+
+
 pub def lower_model_declarations(
     module: &BodyIrModule,
     file: str,

@@ -107,6 +107,20 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::Value(value) = &callee.kind {
         return operand(tcx, sources, value);
     }
+    let (definition, arguments) = call_instance(tcx, callee)?;
+    Ok(mir::Operand::function_handle(
+        tcx,
+        definition,
+        arguments,
+        sources.span(&callee.span)?,
+    ))
+}
+
+/// Resolve one concrete call instance for both pre-MIR bound validation and MIR construction.
+pub(crate) fn call_instance<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    callee: &crate::plan::Callee,
+) -> Result<(rustc_hir::def_id::DefId, rustc_middle::ty::GenericArgsRef<'tcx>), PlanError> {
     let mut arguments = Vec::new();
     match &callee.kind {
         crate::plan::CalleeKind::SpawnGenerator(name, leaf, depth) => {
@@ -158,12 +172,7 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::External(_) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[])?.iter());
     }
-    Ok(mir::Operand::function_handle(
-        tcx,
-        callees::resolve(tcx, callee)?,
-        arguments,
-        sources.span(&callee.span)?,
-    ))
+    Ok((callees::resolve(tcx, callee)?, tcx.mk_args(&arguments)))
 }
 
 /// Instantiate the runtime method's yielded element without changing its representation.

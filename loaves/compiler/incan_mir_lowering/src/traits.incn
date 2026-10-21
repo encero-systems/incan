@@ -204,8 +204,7 @@ def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaratio
     """
     Retain the implementing owner's own parameters in Self until checked nominal instance scheduling closes them.
 
-    A canonical owner lookup supplies the declared frame; the trait's arguments never stand in for independent owner
-    arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
+    A canonical owner lookup supplies the template carrier and declared frame; the trait's arguments never stand in for independent owner arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
     """
     for declaration in owners:
         if not PartialEq.eq(declaration.canonical, owner):
@@ -216,7 +215,7 @@ def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaratio
         for parameter in declaration.type_parameters:
             placeholder: RustType = RustType.TypeVar(str(parameter))
             arguments.append(placeholder.clone())
-        return Ok(generic(str(declaration.name), arguments))
+        return Ok(generic(str(declaration.template_carrier_name()), arguments))
     if owner.kind == SemanticSourceTargetKind.Enum:
         return Ok(RustType.Named(str(owner.declaration_name)))
     return Err("unsupported Body IR trait default without retained owner layout")

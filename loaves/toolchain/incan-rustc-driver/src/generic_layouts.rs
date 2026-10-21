@@ -128,7 +128,8 @@ fn parameters_of(model: &GenericModelDeclaration, bound: Option<&[&str]>, span: 
     }
 }
 
-/// Whether an authored field carries a binder; concrete field carriers contain no open parameters.
+/// Whether a field requires its binder's Clone or Debug implementation. Function pointers implement both traits
+/// independently of their input and output types, and the compiler-private marker never imposes either bound.
 fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
     match ty {
         GenericLayoutType::Parameter(name) => name == parameter,
@@ -137,7 +138,7 @@ fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
         | GenericLayoutType::FunctionPointer(arguments) => {
             arguments.iter().any(|argument| uses_parameter(argument, parameter))
         }
-        GenericLayoutType::Concrete(_) => false,
+        GenericLayoutType::Concrete(_) | GenericLayoutType::FunctionPointer(_) => false,
     }
 }
 

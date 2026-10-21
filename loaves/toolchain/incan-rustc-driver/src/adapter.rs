@@ -2,7 +2,7 @@
 
 use crate::error::PlanError;
 use crate::identity::DriverIdentity;
-use crate::plan::{Plan, PlanType};
+use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use incan_driver::unit::UnitKind;
@@ -421,7 +421,7 @@ impl rustc_driver::Callbacks for Callbacks {
         rustc_driver::Compilation::Continue
     }
 
-    /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
+    /// Verify external signatures and synthesized clone bounds against native metadata before building planned MIR.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         if let Err(error) = verify_library_argument_profiles(tcx, &self.plan) {
             refuse(tcx, error);
@@ -451,6 +451,9 @@ impl rustc_driver::Callbacks for Callbacks {
             refuse(tcx, error);
         }
         if let Err(error) = crate::statics::verify_method_results(tcx, &self.plan) {
+            refuse(tcx, error);
+        }
+        if let Err(error) = verify_planned_clone_bounds(tcx, &self.plan) {
             refuse(tcx, error);
         }
         for external in &self.plan.externals {
@@ -511,6 +514,20 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Reject synthesized nominal clones without a native Clone implementation before rustc constructs their MIR.
+fn verify_planned_clone_bounds(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
+    for block in plan.functions.iter().flat_map(|function| &function.blocks) {
+        let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
+            continue;
+        };
+        if matches!(callee.kind, CalleeKind::CloneEnum(..) | CalleeKind::CloneModel(..)) {
+            let (definition, arguments) = crate::terminators::call_instance(tcx, callee)?;
+            callees::verify_bounds(tcx, definition, arguments)?;
+        }
+    }
+    Ok(())
 }
 
 /// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated
@@ -655,7 +672,6 @@ fn enum_items(
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching
 /// instantiated callee, so signature verification and MIR construction see one explicit instantiation.
 fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
-    use crate::plan::{CalleeKind, TerminatorKind};
     let mut instantiated = plan.clone();
     let mut inferred = std::collections::BTreeMap::new();
     for external in &mut instantiated.externals {

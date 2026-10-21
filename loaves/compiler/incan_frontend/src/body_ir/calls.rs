@@ -158,6 +158,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A bare identifier follows [`named_static_receiver_type`]. An explicitly instantiated nominal (`Box[int]`) is
     /// the checker's applied type for the whole receiver, so an associated call closes the owner's type parameters at
     /// exactly those arguments; an application the checker did not type as that nominal is a value receiver.
+    /// Qualified generic heads must agree with the receiver's checked declaration identity, not its source spelling.
     pub(super) fn static_receiver_type(
         &self,
         recv: &ast::Spanned<ast::Expr>,
@@ -172,22 +173,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         match &recv.node {
             ast::Expr::Ident(name) => {
-                let checked = named_static_receiver_type(name, self.type_info.resolved_identity(recv.span)?)?;
+                let identity = self.type_info.resolved_identity(recv.span)?;
+                let checked = named_static_receiver_type(name, identity)?;
                 if let Some(ty @ IncanType::Generic { base, .. }) =
                     self.type_overrides.get(&(recv.span.start, recv.span.end))
-                    && base == name
+                    && parameter_types::retained_nominal_identity(base, self.type_info) == Some(identity)
                 {
                     return Some(ty.clone());
                 }
-                Some(checked)
+                Some(self.type_info.qualify_semantic_type(checked))
             }
             ast::Expr::Index(owner, _) => {
                 let ast::Expr::Ident(name) = &owner.node else {
                     return None;
                 };
-                named_static_receiver_type(name, self.type_info.resolved_identity(owner.span)?)?;
+                let identity = self.type_info.resolved_identity(owner.span)?;
+                named_static_receiver_type(name, identity)?;
                 match self.resolve_ty(recv.span) {
-                    IncanType::Generic { base, args } if base == *name => Some(IncanType::Generic { base, args }),
+                    IncanType::Generic { base, args }
+                        if parameter_types::retained_nominal_identity(&base, self.type_info) == Some(identity) =>
+                    {
+                        Some(IncanType::Generic { base, args })
+                    }
                     _ => None,
                 }
             }

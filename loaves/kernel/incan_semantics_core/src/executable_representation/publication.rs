@@ -221,6 +221,7 @@ pub(super) fn project_body(
 /// Audit a checked plain-model layout with the same type/reference rules used for executable bodies.
 ///
 /// Every field, including private storage, retains its checked identity and type in the required execution layout.
+/// A generic layout also retains its own template binding when none of its field types names the owner.
 pub(super) fn project_nominal(
     source: &crate::body_ir::NominalDeclaration,
     module: &BodyIrModule,
@@ -275,7 +276,11 @@ pub(super) fn project_nominal(
         *binding.frame = projected.body;
         audit.requirements.extend(projected.requirements);
     }
-    let carrier = source.carrier_name();
+    let carrier = if source.type_parameters.is_empty() {
+        source.carrier_name()
+    } else {
+        source.template_carrier_name()
+    };
     if carrier != source.name {
         if crate::body_ir::nominal_carrier_key(&nominal.canonical).as_ref() != Some(&carrier) {
             return Err(CoverageReason::UnresolvedReference);

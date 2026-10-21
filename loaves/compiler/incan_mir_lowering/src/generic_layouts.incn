@@ -1,11 +1,12 @@
 """Generic native ADTs published by their declaring Loaf, without consumer-owned replacement structs."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, IncanCallableParamKind
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, IncanCallableParam, IncanCallableParamKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
 from pub::incan_mir_plan import GenericLayoutType, GenericLayoutField, GenericModelDeclaration, SourceSpan
 from nominal_instances import NominalInstance
 from decls import library_item
 from unions import native_source_type
+from closures import callable_component, packed_input
 
 
 pub def generic_models(
@@ -30,9 +31,13 @@ pub def generic_models(
             return Err("unsupported Body IR generic Loaf newtype layout")
         mut fields: list[GenericLayoutField] = []
         for index in range(len(declaration.fields)):
+            mut field_type = GenericLayoutType.Parameter("")
+            match generic_field_type(module, declaration.field_types[index], declaration.type_parameters.clone()):
+                Ok(ty) => field_type = ty
+                Err(error) => return Err(f"{declaration.name}.{declaration.fields[index]}: {error}")
             fields.append(GenericLayoutField(
                 name=str(declaration.fields[index]),
-                ty=generic_field_type(module, declaration.field_types[index], declaration.type_parameters.clone())?,
+                ty=field_type,
                 public=declaration.field_public[index],
             ))
         mut derives: list[str] = []
@@ -75,12 +80,26 @@ def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[st
         RustType.Function(params=inputs, return_type=output) =>
             mut signature: list[GenericLayoutType] = []
             for parameter in inputs:
-                if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
-                    return Err("unsupported Body IR generic callable field with a mutable or rest input")
-                signature.append(generic_field_type(module, parameter.ty, parameters)?)
+                signature.append(generic_callable_input(module, parameter, parameters)?)
             signature.append(generic_field_type(module, output, parameters)?)
             return Ok(GenericLayoutType.FunctionPointer(signature))
         _ => return Ok(GenericLayoutType.Concrete(native_source_type(module.nominal_declarations, module.enum_declarations, [], ty, [])?))
+
+
+def generic_callable_input(module: &BodyIrModule, parameter: &IncanCallableParam, parameters: list[str]) -> Result[GenericLayoutType, str]:
+    """Retain an owned declaration binder; closed inputs reuse the ordinary callable ABI policy.
+
+    Mutable and rest inputs whose storage depends on an open binder remain refused, as do unclosed aggregate inputs.
+    """
+    match parameter.ty:
+        RustType.TypeVar(_name) =>
+            if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
+                return Err("unsupported Body IR generic callable field input ownership")
+            return generic_field_type(module, parameter.ty, parameters)
+        _ => pass
+    component = callable_component(parameter.ty)?
+    storage = packed_input(component, parameter.kind, parameter.is_mut)?
+    return Ok(GenericLayoutType.Concrete(storage))
 
 
 def generic_layout_path(module: &BodyIrModule, base: str) -> Result[str, str]:
