@@ -1,0 +1,17 @@
+# behavior: a dependency publishes a generic callable field and executes it through its own layout
+# expect-stdout:
+#   6
+"""Use one provider-owned generic layout for a concrete function pointer."""
+
+from pub::callbacks import Callback, apply
+
+
+def increment(value: int) -> int:
+    """Supply a concrete pointer whose input and output close the provider's binder."""
+    return value + 1
+
+
+def main() -> None:
+    """Construct the provider's native instance and pass it back for invocation."""
+    callback: Callback[int] = Callback(f=increment)
+    println(apply(callback, 5))

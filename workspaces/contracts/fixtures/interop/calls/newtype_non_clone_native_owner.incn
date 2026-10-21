@@ -1,0 +1,22 @@
+# behavior: a newtype can own a non-Clone Rust file and borrow its descriptor
+# expect-stdout:
+#   owned
+
+"""Retain the conditional derives of a native-owning source newtype."""
+
+from rust::std::fs import File as RustFile
+
+
+type FileGuard = newtype RustFile:
+    """Own one descriptor without claiming that the descriptor can be cloned."""
+
+
+def main() -> None:
+    """Read the manifest through a source owner and borrow its retained descriptor."""
+    match RustFile.open("loaf.toml"):
+        Ok(file) =>
+            guard = FileGuard(file)
+            match guard.0.metadata():
+                Ok(_metadata) => println("owned")
+                Err(error) => println(f"{error}")
+        Err(error) => println(f"{error}")

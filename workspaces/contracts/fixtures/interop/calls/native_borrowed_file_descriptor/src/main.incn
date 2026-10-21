@@ -1,0 +1,21 @@
+# behavior: a borrowed descriptor supports locking while its file remains usable
+# expect-stdout:
+#   locked
+"""Pass a borrowed descriptor to Rust without consuming the file owner."""
+
+from rust::std::fs import File
+from rust::std::os::fd import AsFd
+from rust::rustix::fs import flock, FlockOperation
+
+
+def main() -> None:
+    """Retain the descriptor owner across a native advisory-lock call."""
+    match File.open("loaf.toml"):
+        Ok(file) =>
+            match flock(file.as_fd(), FlockOperation.NonBlockingLockShared):
+                Ok(_) =>
+                    match file.metadata():
+                        Ok(_metadata) => println("locked")
+                        Err(error) => println(f"{error}")
+                Err(error) => println(f"{error}")
+        Err(error) => println(f"{error}")

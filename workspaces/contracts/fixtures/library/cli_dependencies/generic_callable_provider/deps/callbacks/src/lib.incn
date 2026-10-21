@@ -1,0 +1,12 @@
+"""A generic provider whose field retains a source function signature."""
+
+
+pub model Callback[T]:
+    """Store an ordinary function pointer with its declared input and output binder."""
+    pub f: (T) -> T
+
+
+pub def apply(callback: Callback[int], value: int) -> int:
+    """Invoke the callback through the provider's native layout."""
+    invoke = callback.f
+    return invoke(value)

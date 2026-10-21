@@ -1,0 +1,9 @@
+[project]
+name = "native_borrowed_file_descriptor"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }

@@ -1,0 +1,22 @@
+# behavior: an owned native result parameter transfers its last-use payload
+# expect-stdout:
+#   owned
+"""Consume a native Result parameter once without cloning either payload."""
+
+from rust::std::fs import File
+from rust::std::io import Error as IoError
+
+
+def describe(result: Result[File, IoError]) -> str:
+    """Borrow metadata from the file moved out of the owned result."""
+    match result:
+        Ok(file) =>
+            match file.metadata():
+                Ok(_metadata) => return "owned"
+                Err(error) => return f"{error}"
+        Err(error) => return f"{error}"
+
+
+def main() -> None:
+    """Open the fixture project manifest and transfer its result to the consumer."""
+    println(describe(File.open("loaf.toml")))

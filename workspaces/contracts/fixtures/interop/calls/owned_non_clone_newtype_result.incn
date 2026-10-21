@@ -1,0 +1,44 @@
+# behavior: a temporary result transfers a non-Clone newtype payload
+# expect-stdout:
+#   owned
+#   nested
+"""Match a result whose source newtype owns a non-Clone native file."""
+
+from rust::std::fs import File
+
+
+type FileGuard = newtype File:
+    """Retain the unique owned file descriptor."""
+
+
+def open_guard() -> Result[FileGuard, str]:
+    """Wrap a fresh file without requesting a clone."""
+    match File.open("loaf.toml"):
+        Ok(file) => return Ok(FileGuard(file))
+        Err(error) => return Err(f"{error}")
+
+
+def optional_guard() -> Result[Option[FileGuard], str]:
+    """Retain the non-Clone owner through a nested carrier."""
+    match open_guard():
+        Ok(guard) => return Ok(Some(guard))
+        Err(error) => return Err(error)
+
+
+def main() -> None:
+    """Move the guard out of a temporary result and borrow its descriptor."""
+    match open_guard():
+        Ok(guard) =>
+            match guard.0.metadata():
+                Ok(_metadata) => println("owned")
+                Err(error) => println(f"{error}")
+        Err(error) => println(error)
+    match optional_guard():
+        Ok(maybe_guard) =>
+            match maybe_guard:
+                Some(guard) =>
+                    match guard.0.metadata():
+                        Ok(_metadata) => println("nested")
+                        Err(error) => println(f"{error}")
+                None => println("missing")
+        Err(error) => println(error)
