@@ -452,9 +452,18 @@ impl TypeChecker {
         let displays = bindings
             .iter()
             .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
-            .collect();
+            .collect::<HashMap<_, _>>();
+        let mut closed = displays.clone();
+        for (name, template) in &substitutions {
+            closed.insert(
+                *name,
+                Self::substitute_rust_owner_display(template, &displays, &owner_display),
+            );
+        }
+        // Apply the final bindings to the original signature once: Self's inserted owner may contain caller binders
+        // with the same spelling as an impl parameter, and must not be substituted again as an open template.
         let signature =
-            self.rust_signature_projections(Self::specialize_rust_signature(&signature, &displays, &owner_display));
+            self.rust_signature_projections(Self::specialize_rust_signature(original, &closed, &owner_display));
         let borrow_cost = self.rust_trait_input_borrow_cost(&signature, call)?;
         let mut arguments = vec![storage.clone()];
         for display in &implementation.type_arguments {
