@@ -2589,7 +2589,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
             || (!declaration.library_item.is_empty()
                 && (!declaration.carrier.is_empty()
-                    || !declaration.derives.is_empty()
+                    || declaration.derives.iter().any(|derive| derive != "Clone")
                     || !declaration.raw_kind.is_empty()))
             || declaration.derives.iter().any(|name| match name.as_str() {
                 "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash" => false,

@@ -578,6 +578,10 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
     }
     let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
     callees::verify_bounds(tcx, def, arguments)?;
+    if value.derives.iter().any(|derive| derive == "Clone") {
+        let owner = rustc_middle::ty::Ty::new_adt(tcx, tcx.adt_def(def), arguments);
+        callees::verify_bounds(tcx, callees::clone_method(tcx)?, tcx.mk_args(&[owner.into()]))?;
+    }
     for (variant, planned) in declared.iter().zip(&value.variants) {
         if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
             return Err(invalid("unsupported stdlib enum variant differs from metadata"));
@@ -602,7 +606,7 @@ fn enum_items(
 ) -> Vec<Box<ast::Item>> {
     let value_enum = !value.raw_kind.is_empty();
     let mut item = declarations::enum_declaration(value, span);
-    if value.carrier.is_empty() {
+    if value.carrier.is_empty() && value.library_item.is_empty() {
         for derive in value
             .derives
             .iter()
