@@ -50,3 +50,8 @@ pub struct Holder {
 pub fn borrowed<'a>(items: &'a [Widget]) -> impl Iterator<Item = &'a Widget> {
     items.iter()
 }
+
+/// The consumer's method target must link to the dependency's definition.
+pub fn dependency_method() -> i32 {
+    graph_provider::Gadget.value()
+}

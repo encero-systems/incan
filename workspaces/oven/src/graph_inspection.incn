@@ -90,24 +90,48 @@ pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
                     return Err(f"{selected.path}: no owning loaf.toml")
                 root = parent
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain)?
-    if selected.query != "":
-        records = read_records(query_paths(paths, selected.query)?, path.0)?
-        for line in query(records, selected.query, selected.term):
-            println(line)
-        return Ok(0)
-    records = read_records(paths, path.0)?
-    if selected.format == "json":
-        println(JsonValue.array(records).to_json().map_err((error) => error.message())?)
-    else:
-        for record in records:
-            println(record.to_json().map_err((error) => error.message())?)
+    rendered = response(paths, path.0, selected)?
+    if rendered != "":
+        println(rendered)
     return Ok(0)
+
+
+def response(paths: list[Path], root: str, selected: GraphOptions) -> Result[str, str]:
+    """Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records."""
+    if len(paths) == 0:
+        return Err("no units selected for graph inspection")
+    inputs = ["incan.codegraph.presentation/1", root, selected.format, selected.query, selected.term] + [path.0 for path in paths]
+    digest = fingerprint(inputs)?
+    cached = paths[0].parent().joinpath(f"{digest}.answer")
+    if cached.is_file():
+        return cached.read_text("utf-8", "strict").map_err((error) => error.message())
+    mut rendered = ""
+    if selected.query != "":
+        records = read_records(query_paths(paths, selected.query)?, root)?
+        rendered = "\n".join(query(records, selected.query, selected.term))
+    else:
+        # An exported snapshot is query-ready: the one-time projection belongs to cold export, not a later query.
+        _ = query_paths(paths, "defs")?
+        records = read_records(paths, root)?
+        if selected.format == "json":
+            rendered = JsonValue.array(records).to_json().map_err((error) => error.message())?
+        else:
+            rendered = "\n".join([record.to_json().map_err((error) => error.message())? for record in records])
+    publish(cached, rendered)?
+    return Ok(rendered)
 
 
 def inspect_incan(source: Path, toolchain: Toolchain) -> Result[Path, str]:
     """Describe before checking the cache; only a changed unit prepares dependencies and invokes shared analysis."""
     unit = describe(source, "debug", FeatureRequest())?
-    mut inputs = ["incan.codegraph.incan/1", compiler_digest(Path(unit.project_root), toolchain.driver)?, unit.to_json().to_json().map_err((error) => error.message())?]
+    project = Path(unit.project_root)
+    mut inputs = ["incan.codegraph.incan/1", compiler_digest(project, toolchain.driver)?, toolchain.sysroot, unit.to_json().to_json().map_err((error) => error.message())?]
+    for native in toolchain.externs:
+        inputs = inputs + [native.name, native.path, compiler_digest(project, native.path)?]
+    for cache in toolchain.rust_abi:
+        inputs = inputs + [cache, compiler_digest(project, cache)?]
+    inputs = inputs + toolchain.search
+    inputs.append(compiler_digest(project, toolchain.registry_units)?)
     inputs = inputs + tree_inputs(Path(unit.project_root))?
     for dependency in dependency_units(unit)?:
         inputs = inputs + tree_inputs(Path(dependency.project_root))?

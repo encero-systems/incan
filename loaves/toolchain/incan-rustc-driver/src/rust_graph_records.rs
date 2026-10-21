@@ -14,13 +14,23 @@ use rustc_span::{FileName, Pos, Span};
 
 /// A logical definition path, replacing rustc's traversal-numbered impl segments with their semantic owner.
 pub fn path(tcx: TyCtxt<'_>, def: DefId) -> String {
+    let def = declaration(tcx, def);
     if let DefKind::Impl { of_trait } = tcx.def_kind(def) {
         let self_ty = tcx.type_of(def).instantiate_identity().skip_normalization();
         let trait_name = of_trait.then(|| {
-            tcx.impl_trait_ref(def)
-                .instantiate_identity()
-                .skip_normalization()
-                .to_string()
+            let reference = tcx.impl_trait_ref(def).instantiate_identity().skip_normalization();
+            let arguments = reference
+                .args
+                .iter()
+                .skip(1)
+                .map(|argument| argument.to_string())
+                .collect::<Vec<_>>();
+            let suffix = if arguments.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", arguments.join(", "))
+            };
+            format!("{}{suffix}", path(tcx, reference.def_id))
         });
         return format!(
             "{}::<{}{}>",
@@ -41,6 +51,7 @@ pub fn path(tcx: TyCtxt<'_>, def: DefId) -> String {
 
 /// A span-free key; signatures separate impl blocks while methods retain their semantic self/trait owner.
 pub fn identity(tcx: TyCtxt<'_>, def: DefId) -> CodegraphStableDeclarationId {
+    let def = declaration(tcx, def);
     let logical = path(tcx, def);
     let signature = match tcx.def_kind(def) {
         DefKind::Fn | DefKind::AssocFn => Some(tcx.fn_sig(def).instantiate_identity().skip_normalization().to_string()),
@@ -65,6 +76,15 @@ pub fn identity(tcx: TyCtxt<'_>, def: DefId) -> CodegraphStableDeclarationId {
         declaration_kind: kind(tcx.def_kind(def)).to_owned(),
         location: CodegraphStableDeclarationLocation::ModuleLevel,
         signature,
+    }
+}
+
+/// Tuple and unit constructors refer to the declared struct or enum variant rather than an unexported synthetic item.
+fn declaration(tcx: TyCtxt<'_>, def: DefId) -> DefId {
+    if matches!(tcx.def_kind(def), DefKind::Ctor(..)) {
+        tcx.parent(def)
+    } else {
+        def
     }
 }
 

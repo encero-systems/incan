@@ -59,6 +59,7 @@ def declaration_identities(document: str) -> Result[list[str], str]:
 def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     """JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement."""
     original = document(incan, project, "json")?
+    check_rust_links(original)?
     jsonl = document(incan, project, "jsonl")?
     mut lines: list[JsonValue] = []
     for line in jsonl.split("\n"):
@@ -84,3 +85,40 @@ def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     if invalid.code == Some(0):
         failures.append("broken source reused a checked cached graph")
     return Ok(failures)
+
+
+def string_field(value: JsonValue, key: str) -> str:
+    """Read an optional wire string for referential-integrity checks."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(text) => return text
+                None => pass
+        None => pass
+    return ""
+
+
+def check_rust_links(document: str) -> Result[None, str]:
+    """A resolved call into a represented Rust crate must link to its exported declaration, including dependency methods."""
+    records = parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    mut declarations: Dict[str, bool] = {}
+    mut crates: list[str] = []
+    for record in records:
+        if string_field(record, "record") != "declaration" or string_field(record, "language") != "rust":
+            continue
+        declarations[string_field(record, "id")] = true
+        stable = record.require("stable_identity").map_err((error) => error.message())?
+        origin = stable.require("origin").map_err((error) => error.message())?
+        path = origin.require("path").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+        if len(path) > 0:
+            root = path[0].expect_str().map_err((error) => error.message())?
+            if root not in crates:
+                crates.append(root)
+    for record in records:
+        if string_field(record, "record") != "call" or string_field(record, "language") != "rust":
+            continue
+        callee = string_field(record, "callee")
+        for root in crates:
+            if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:
+                return Err(f"resolved Rust call has no declaration in its represented crate: {callee}")
+    return Ok(None)

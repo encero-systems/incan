@@ -52,6 +52,8 @@ pub def display(value: JsonValue) -> str:
         if text(value, "name") != "":
             return text(value, "name")
         return text(value, "id")
+    if "::" in name:
+        return name
     if len(segments) == 0 or segments[len(segments) - 1] != name:
         segments.append(name)
     return "::".join(segments)

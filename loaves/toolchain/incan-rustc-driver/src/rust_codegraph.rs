@@ -5,6 +5,7 @@ use incan_codegraph::{
 };
 use rustc_interface::interface;
 use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::print::{with_no_trimmed_paths, with_no_visible_paths, with_resolve_crate_name};
 
 /// Analyze a Rust invocation and publish only a complete checked graph. Failed analysis never creates a cache entry.
 pub fn export(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -45,8 +46,11 @@ impl rustc_driver::Callbacks for Observer {
             semantic_contexts: Vec::new(),
             degraded: false,
         }));
-        crate::rust_graph_records::declarations(tcx, &mut self.records);
-        crate::rust_graph_bodies::references(tcx, &mut self.records);
+        // Identities must print identically in a defining crate and a consumer, regardless of reexports or aliases.
+        with_resolve_crate_name!(with_no_trimmed_paths!(with_no_visible_paths!({
+            crate::rust_graph_records::declarations(tcx, &mut self.records);
+            crate::rust_graph_bodies::references(tcx, &mut self.records);
+        })));
         rustc_driver::Compilation::Stop
     }
 }
