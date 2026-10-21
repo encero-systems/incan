@@ -1,0 +1,10 @@
+# behavior: a declared registry crate is callable through its authored alias
+# expect-stdout:
+#   3.5
+
+from rust::foreign_math import fabs
+
+
+def main() -> None:
+    """Call the registry dependency selected by the package's compact features."""
+    println(fabs(-3.5))

@@ -44,6 +44,22 @@ pub struct UnitDescription {
     pub contract_models: Vec<String>,
     /// The C headers the package declares, package-relative, which checked C bindings may name.
     pub c_headers: Vec<String>,
+    /// The exact Rust libraries this unit links, including its toolchain and reached Loaves.
+    pub externs: Vec<UnitNativeCrate>,
+    /// Directories containing the transitive dependencies of the named libraries.
+    pub search: Vec<PathBuf>,
+    /// Rust ABI caches supplied by the toolchain for this unit.
+    pub rust_abi: Vec<PathBuf>,
+}
+
+/// One exact native artifact bound to the crate alias the unit names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitNativeCrate {
+    /// The Rust crate alias, with hyphens normalized to underscores.
+    pub name: String,
+    /// The library artifact; the compiler never chooses it from a directory.
+    pub path: PathBuf,
 }
 
 /// One Loaf a unit reaches.

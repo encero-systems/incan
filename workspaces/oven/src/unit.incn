@@ -8,6 +8,7 @@ from std.json import JsonValue
 from features import FeatureRequest, resolve_features
 from home import dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalProject, intake
+from toolchain import NativeCrate
 
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
@@ -51,6 +52,9 @@ pub model UnitDescription:
     pub rust_crates: list[str]
     pub contract_models: list[str]
     pub c_headers: list[str]
+    pub externs: list[NativeCrate] = []
+    pub search: list[str] = []
+    pub rust_abi: list[str] = []
 
     def to_json(self) -> JsonValue:
         """The description as the compiler reads it."""
@@ -69,6 +73,9 @@ pub model UnitDescription:
                 "rust_crates": texts(self.rust_crates),
                 "contract_models": texts(self.contract_models),
                 "c_headers": texts(self.c_headers),
+                "externs": JsonValue.array([JsonValue.object({"name": JsonValue.string(item.name), "path": JsonValue.string(item.path)}) for item in self.externs]),
+                "search": texts(self.search),
+                "rust_abi": texts(self.rust_abi),
             },
         )
 
@@ -181,8 +188,9 @@ def single_file_unit(entry: Path, profile: str, standard: list[UnitLoaf]) -> Uni
 def rust_crates_of(project: LocalProject) -> list[str]:
     """The Rust crates a package's `rust::` imports may name: its Rust dependencies and the sibling Loaves' crates its
     Rust facet links."""
-    mut names = [request.alias for request in project.intent.rust_inputs]
+    mut names = [request.alias.replace("-", "_") for request in project.intent.rust_inputs]
     for dependency in project.intent.dependencies:
-        if dependency.rust_facet and dependency.alias not in names:
-            names.append(dependency.alias)
+        alias = dependency.alias.replace("-", "_")
+        if dependency.rust_facet and alias not in names:
+            names.append(alias)
     return sorted(names)

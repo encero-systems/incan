@@ -1,0 +1,14 @@
+[project]
+name = "registry_alias"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+foreign_math = { package = "libm", version = "0.2", optional = true }
+unused = { package = "libm", version = "999", optional = true }
+
+[project.features]
+default = ["math"]
+math = ["dep:foreign_math"]

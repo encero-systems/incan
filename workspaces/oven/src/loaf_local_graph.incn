@@ -6,6 +6,7 @@ from std.fs import Path
 from std.json import JsonValue
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource, RustRegistryRequest
 from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, SlotActivation, TargetConfiguration, activate_unit, target_matches, version_matches
+from intake import feature_declaration
 
 
 @derive(Eq)
@@ -18,7 +19,7 @@ pub model LocalDemand:
     pub defaults: bool
 
 
-def unique(values: list[str]) -> list[str]:
+pub def unique(values: list[str]) -> list[str]:
     """Canonicalize feature requests without changing activation semantics."""
     mut result: list[str] = []
     for value in values:
@@ -34,22 +35,41 @@ def optional_bool(value: TomlValue, key: str, fallback: bool) -> Result[bool, st
         None => return Ok(fallback)
 
 
-def declaration(alias: str, value: TomlValue, index: int) -> Result[RustDependencyDeclaration, str]:
+def declaration(alias: str, value: TomlValue, index: int, group: str = "dependencies") -> Result[RustDependencyDeclaration, str]:
     """Decode one Loaf edge without reading Cargo declarations or losing its target and optional policy."""
-    package = value.get[str]("loaf").map_err((e) => e.message())?
-    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
-    if let Some(path) = value.get_optional[str]("path").map_err((e) => e.message())?:
-        source = RustDependencySource.Path(path, RustRegistryRequest.Default)
+    mut package = alias
+    mut version: Option[str] = None
+    mut path: Option[str] = None
     mut features: list[str] = []
-    if let Some(selected) = value.get_optional[list[str]]("features").map_err((e) => e.message())?:
-        features = selected
+    mut target: Option[str] = None
+    mut defaults = true
+    mut optional = false
+    if value.kind() == TomlKind.String:
+        version = Some(value.as_str().map_err((e) => e.message())?)
+    else:
+        path = value.get_optional[str]("path").map_err((e) => e.message())?
+        version = value.get_optional[str]("version").map_err((e) => e.message())?
+        target = value.get_optional[str]("target").map_err((e) => e.message())?
+        defaults = optional_bool(value, "default-features", true)?
+        optional = optional_bool(value, "optional", false)?
+        if let Some(selected) = value.get_optional[list[str]]("features").map_err((e) => e.message())?:
+            features = selected
+        if let Some(selected) = value.get_optional[str]("package").map_err((e) => e.message())?:
+            package = selected
+        if let Some(selected) = value.get_optional[str]("loaf").map_err((e) => e.message())?:
+            package = selected
+    if group == "rust-dependencies" and path is None:
+        package = f"crates-io/{package}"
+    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
+    if let Some(relative) = path:
+        source = RustDependencySource.Path(relative, RustRegistryRequest.Default)
     return Ok(RustDependencyDeclaration(
-        index=index, field=["dependencies", alias], role=RustDependencyRole.Normal,
-        target_condition=value.get_optional[str]("target").map_err((e) => e.message())?,
+        index=index, field=[group, alias], role=RustDependencyRole.Normal,
+        target_condition=target,
         alias=alias, package=package,
-        version_requirement=value.get_optional[str]("version").map_err((e) => e.message())?,
-        features=features, default_features=Some(optional_bool(value, "default-features", true)?),
-        optional=Some(optional_bool(value, "optional", false)?), source=source,
+        version_requirement=version,
+        features=features, default_features=Some(defaults),
+        optional=Some(optional), source=source,
     ))
 
 
@@ -57,18 +77,34 @@ pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
     """Build the existing activation catalog from converted Loaf declarations, including target alternatives."""
     root = document.as_table().map_err((e) => e.message())?
     mut dependencies: list[RustDependencyDeclaration] = []
-    if "dependencies" in root:
-        table = root["dependencies"].as_table().map_err((e) => e.message())?
+    for group in ["dependencies", "rust-dependencies"]:
+        if group not in root:
+            continue
+        table = root[group].as_table().map_err((e) => e.message())?
         for alias in sorted([key for key in table.keys()]):
             value = table[alias]
+            if group == "dependencies" and value.kind() == TomlKind.Table:
+                entry = value.as_table().map_err((e) => e.message())?
+                if "path" in entry and "loaf" not in entry:
+                    continue
             if value.kind() == TomlKind.Array:
                 for alternative in value.as_array().map_err((e) => e.message())?:
-                    dependencies.append(declaration(alias, alternative, len(dependencies))?)
+                    dependencies.append(declaration(alias, alternative, len(dependencies), group)?)
             else:
-                dependencies.append(declaration(alias, value, len(dependencies))?)
+                dependencies.append(declaration(alias, value, len(dependencies), group)?)
     mut features: Dict[str, list[str]] = {}
-    if let Some(selected) = document.get_optional[Dict[str, list[str]]]("project.features").map_err((e) => e.message())?:
-        features = selected
+    project = root["project"].as_table().map_err((e) => e.message())?
+    if "features" in project:
+        selected = project["features"].as_table().map_err((e) => e.message())?
+        for name in sorted([key for key in selected.keys()]):
+            declared = feature_declaration(selected[name], "loaf.toml", ["project", "features", name]).map_err((e) => e.message())?
+            mut entries = declared.includes
+            for alias in declared.optional_dependencies:
+                entries.append(f"dep:{alias}")
+            for alias in sorted([key for key in declared.dependency_features.keys()]):
+                for feature in declared.dependency_features[alias]:
+                    entries.append(f"{alias}/{feature}")
+            features[name] = entries
     return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=None))
 
 

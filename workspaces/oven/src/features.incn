@@ -86,9 +86,13 @@ model Resolution:
         for included in declaration.includes:
             self.work.append(("feature", root, included))
         for alias in declaration.optional_dependencies:
-            self.work.append(("edge", root, alias))
+            # Rust slots are activated by the Rust graph, not the Incan path graph.
+            if edge_key(root, alias) in self.targets:
+                self.work.append(("edge", root, alias))
         for alias in sorted([key for key in declaration.dependency_features.keys()]):
             key = edge_key(root, alias)
+            if key not in self.targets:
+                continue
             if key in self.active_edges:
                 for feature in declaration.dependency_features[alias]:
                     self.work.append(("feature", self.targets[key], feature))

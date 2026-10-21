@@ -4,7 +4,7 @@
     incan run PATH [UNIT OPTIONS] [-- ARGS...]
     incan check PATH [--format text|json] [UNIT OPTIONS]
     incan describe-unit PATH [UNIT OPTIONS]
-    incan build PROJECT --registry-units FILE [--substitute NAME=DIR] [UNIT OPTIONS]
+    incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]
     incan --version
 
 UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
@@ -17,7 +17,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from features import FeatureRequest
 from home import TOOLCHAIN
-from unit import describe
+from unit_rust import describe_native
 from incan_units import check_unit, compile_unit, crate_name, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
 from toolchain import load_toolchain
@@ -30,7 +30,6 @@ pub model Options:
     pub path: str = ""
     pub profile: str = "debug"
     pub request: FeatureRequest = FeatureRequest()
-    pub registry_units: str = ""
     pub substitutes: Dict[str, str] = {}
 
 
@@ -62,7 +61,7 @@ def main() -> None:
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT --registry-units FILE [--substitute NAME=DIR] [UNIT OPTIONS]\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
+    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:
@@ -78,7 +77,7 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument == "--profile" or argument == "--features" or argument == "--registry-units" or argument == "--substitute":
+        if argument == "--profile" or argument == "--features" or argument == "--substitute":
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")
             value = arguments[index + 1]
@@ -87,8 +86,6 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
                 if len(parts) != 2 or parts[0] == "" or parts[1] == "":
                     return Err(f"`--substitute` takes NAME=DIR, got `{value}`")
                 options.substitutes[parts[0]] = parts[1]
-            elif argument == "--registry-units":
-                options.registry_units = value
             elif argument == "--profile":
                 options.profile = value
             else:
@@ -132,7 +129,7 @@ def run(arguments: list[str]) -> None:
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     """Compile the unit into its project's target directory and run it; a refused compile is the run's result."""
-    unit = describe(Path(options.path), options.profile, options.request)?
+    unit = describe_native(Path(options.path), options.profile, options.request)?
     toolchain = load_toolchain()?
     binary = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(options.profile).joinpath("bin").joinpath(crate_name(unit))
     compiled = compile_unit(unit, toolchain, binary, false)?
@@ -162,7 +159,7 @@ def check(arguments: list[str]) -> None:
 
 def checked(options: Options, format: str) -> Result[i32, str]:
     """Check the described unit with the toolchain's compiler."""
-    unit = describe(Path(options.path), options.profile, options.request)?
+    unit = describe_native(Path(options.path), options.profile, options.request)?
     return check_unit(unit, load_toolchain()?, format)
 
 
@@ -178,7 +175,7 @@ def describe_unit(arguments: list[str]) -> None:
     match parse_options(arguments):
         Err(reason) => fail(f"incan describe-unit: {reason}\n{usage()}", 2)
         Ok(options) =>
-            match describe(Path(options.path), options.profile, options.request):
+            match describe_native(Path(options.path), options.profile, options.request):
                 Err(reason) => fail(f"incan describe-unit: {reason}", 1)
                 Ok(unit) =>
                     match unit.to_json().to_pretty_json():
@@ -191,22 +188,24 @@ def build(arguments: list[str]) -> None:
     match parse_options(arguments):
         Err(reason) => fail(f"incan build: {reason}\n{usage()}", 2)
         Ok(options) =>
-            if options.registry_units == "":
-                fail("incan build: `--registry-units FILE` names the compiled registry units this build links", 2)
-            match read_registry_units(Path(options.registry_units)):
+            match build_project(options):
                 Err(reason) => fail(f"incan build: {reason}", 1)
-                Ok(registry) =>
-                    request = RustBuild(
-                        project=options.path,
-                        profile=options.profile,
-                        rustc=get_or("RUSTC", "rustc"),
-                        registry=registry,
-                        features=options.request.features,
-                        default_features=options.request.default_features,
-                        substitutes=options.substitutes,
-                    )
-                    match build_rust(request):
-                        Err(reason) => fail(f"incan build: {reason}", 1)
-                        Ok(binaries) =>
-                            for binary in binaries:
-                                println(f"binary: {binary}")
+                Ok(binaries) =>
+                    for binary in binaries:
+                        println(f"binary: {binary}")
+
+
+def build_project(options: Options) -> Result[list[str], str]:
+    """Compile a Rust project against the registry units of its installed toolchain."""
+    toolchain = load_toolchain()?
+    registry = read_registry_units(Path(toolchain.registry_units))?
+    request = RustBuild(
+        project=options.path,
+        profile=options.profile,
+        rustc=get_or("RUSTC", Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0),
+        registry=registry,
+        features=options.request.features,
+        default_features=options.request.default_features,
+        substitutes=options.substitutes,
+    )
+    return build_rust(request)

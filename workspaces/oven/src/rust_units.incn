@@ -18,6 +18,7 @@ from std.encoding.hex import hexlify
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
 from semver_req import compare_version_order, parse_version
+from json_fields import field, strings
 
 
 @derive(Eq)
@@ -28,6 +29,7 @@ pub model RegistryUnit:
     pub version: str
     pub domain: str
     pub directory: str
+    pub features: list[str] = []
 
 
 pub model RegistryUnits:
@@ -36,15 +38,17 @@ pub model RegistryUnits:
     pub units: list[RegistryUnit]
     pub search: list[str]
 
-    def artifact(self, loaf: str, requirement: str, domain: str) -> Result[str, str]:
-        """The library of the highest compiled version of `loaf` that satisfies `requirement`, in `domain` when
-        there is one there, else in the other domain."""
+    def artifact(self, loaf: str, requirement: str, domain: str, features: list[str] = []) -> Result[str, str]:
+        """The single library of the highest compiled compatible version with every requested feature, preferring
+        `domain` and otherwise using the other native domain. An ambiguous artifact directory is refused."""
         mut best: Option[RegistryUnit] = None
         for preferred in [domain, "host", "target"]:
             for unit in self.units:
                 if unit.loaf != loaf or unit.domain != preferred:
                     continue
                 if not version_matches(requirement, unit.version, loaf).map_err((error) => error.message())?:
+                    continue
+                if len([feature for feature in features if feature not in unit.features]) > 0:
                     continue
                 match best:
                     None => best = Some(unit)
@@ -54,13 +58,16 @@ pub model RegistryUnits:
             if best != None:
                 break
         match best:
-            None => return Err(f"no compiled registry unit of {loaf} satisfies {requirement}")
+            None => return Err(f"no compiled registry unit of {loaf} satisfies {requirement} with features {features}")
             Some(unit) =>
+                mut artifacts: list[str] = []
                 for candidate in Path(unit.directory).iterdir().map_err((error) => error.message())?:
                     name = candidate.name()
                     if name.startswith("lib") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
-                        return Ok(candidate.0)
-                return Err(f"the compiled unit of {loaf} {unit.version} has no library in {unit.directory}")
+                        artifacts.append(candidate.0)
+                if len(artifacts) != 1:
+                    return Err(f"the compiled unit of {loaf} {unit.version} has {len(artifacts)} libraries in {unit.directory}; expected exactly one")
+                return Ok(artifacts[0])
 
 
 pub model RustFacet:
@@ -95,6 +102,9 @@ pub def read_registry_units(path: Path) -> Result[RegistryUnits, str]:
     """Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory."""
     text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
     document = parse(text).map_err((error) => f"{path.0}: {error.message()}")?
+    schema = document.require("schema").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+    if schema != "incan.oven.closure/1":
+        return Err(f"{path.0}: expected incan.oven.closure/1, found {schema}")
     mut entries = ""
     externs_table = document.require("externs").map_err((error) => error.message())?
     for name in externs_table.keys():
@@ -114,10 +124,17 @@ pub def read_registry_units(path: Path) -> Result[RegistryUnits, str]:
             version=unit.require("version").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?,
             domain=unit.require("domain").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?,
             directory=directory,
+            features=registry_features(unit)?,
         ))
         if directory not in search:
             search.append(directory)
     return Ok(RegistryUnits(units=units, search=search))
+
+
+pub def registry_features(value: JsonValue) -> Result[list[str], str]:
+    """The explicit features of a registry request or prepared unit, refusing malformed closure input."""
+    selected = field(value, "features", []).map_err((_) => "registry unit or request names no features")?
+    return strings(selected, ["features"]).map_err((_) => "registry features must be a list of strings")
 
 
 pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
@@ -171,8 +188,8 @@ def decoded(bytes: bytes) -> str:
         Err(_) => return "(output that is not UTF-8)"
 
 
-pub def rust_facet(project: str) -> Result[RustFacet, str]:
-    """The Rust crate a local Loaf's manifest declares."""
+pub def rust_facet(project: str, required: bool = true) -> Result[RustFacet, str]:
+    """The Rust crate a local Loaf's manifest declares; an Incan consumer may have no Rust facet of its own."""
     root = Path(project)
     source = root.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
     document = toml.parse(source).map_err((error) => error.message())?
@@ -209,7 +226,7 @@ pub def rust_facet(project: str) -> Result[RustFacet, str]:
         if let Some(libraries) = binary.get_optional[list[str]]("sysroot_dependencies").map_err((error) => error.message())?:
             if len(libraries) > 0:
                 sysroot = true
-    if kind == "" and len(binaries) == 0:
+    if required and kind == "" and len(binaries) == 0:
         if root.joinpath("src").joinpath("lib.incn").is_file():
             return Err(f"{project} is an Incan Loaf; its Rust crate comes from compiling it, which this build does not do yet")
         return Err(f"{project} declares no Rust crate: no {library.0} and no [[rust.bin]]")
@@ -303,6 +320,24 @@ pub def build_rust(request: RustBuild) -> Result[list[str], str]:
     return Ok(binaries)
 
 
+pub def build_dependencies(request: RustBuild, facets: list[LocalFacet]) -> Result[Dict[str, BuiltUnit], str]:
+    """Build the Rust facets a consumer reaches, including its own facet when present, through `incan build`'s unit compiler."""
+    output = Path(request.project).joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile)
+    mut built: Dict[str, BuiltUnit] = {}
+    mut search = request.registry.search
+    for facet in ordered(facets)?:
+        own = facet.project == request.project and facet.domain == DependencyDomain.Target
+        declared = rust_facet(facet.project, not own)?
+        if declared.kind == "":
+            if facet.project == request.project and facet.domain == DependencyDomain.Target:
+                continue
+            return Err(f"{facet.project} declares no Rust library")
+        unit = compile_library(facet, declared, output, request, built, search)?
+        built[f"{facet.project}@{facet.domain.value()}"] = unit
+        search.append(unit.directory)
+    return Ok(built)
+
+
 def unit_outputs(
     facet: LocalFacet,
     root: Path,
@@ -348,7 +383,8 @@ def linking(facet: LocalFacet, request: RustBuild, built: Dict[str, BuiltUnit], 
         selected = facet.registry[index]
         loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
         requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        artifact = request.registry.artifact(loaf, requirement, facet.domain.value()).map_err((reason) => f"{facet.project} links `{alias}`: {reason}")?
+        features = registry_features(selected)?
+        artifact = request.registry.artifact(loaf, requirement, facet.domain.value(), features).map_err((reason) => f"{facet.project} links `{alias}`: {reason}")?
         arguments.append("--extern")
         arguments.append(f"{alias.replace('-', '_')}={artifact}")
     if request.profile == "release":

@@ -68,6 +68,7 @@ pub model RustInputRequest:
     pub default_features: bool
     pub optional: bool
     pub target: Option[str]
+    pub path: Option[str] = None
 
 
 @derive(Eq)
@@ -229,7 +230,7 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
         for key in sorted([key for key in values.keys()]):
             scripts[key] = required(values, key, manifest, ["project", "scripts", key])?
     dependencies, rust_inputs = parse_dependencies(root, manifest)?
-    features = parse_features(project, dependencies, manifest)?
+    features = parse_features(project, dependencies, manifest, rust_inputs)?
     validate_facets(root, manifest)?
     mut target: Option[str] = None
     mut profile: Option[str] = None
@@ -288,6 +289,7 @@ def parse_features(
     project: Dict[str, TomlValue],
     dependencies: list[LocalDependency],
     manifest: str,
+    rust_inputs: list[RustInputRequest] = [],
 ) -> Result[Dict[str, FeatureDeclaration], IntakeError]:
     """The `[project.features]` declarations, each checked against the package's features and dependencies."""
     mut features: Dict[str, FeatureDeclaration] = {}
@@ -296,16 +298,17 @@ def parse_features(
     values = table(project["features"], manifest, ["project", "features"])?
     for name in sorted([key for key in values.keys()]):
         field = ["project", "features", name]
-        if values[name].kind() == TomlKind.Array:
-            features[name] = compact_feature(values[name], manifest, field)?
-        else:
-            features[name] = expanded_feature(values[name], manifest, field)?
+        features[name] = feature_declaration(values[name], manifest, field)?
     mut optional: list[str] = []
     mut aliases: list[str] = []
     for dependency in dependencies:
         aliases.append(dependency.alias)
         if dependency.optional:
             optional.append(dependency.alias)
+    for request in rust_inputs:
+        aliases.append(request.alias)
+        if request.optional:
+            optional.append(request.alias)
     for name in sorted([key for key in features.keys()]):
         field = ["project", "features", name]
         declaration = features[name]
@@ -341,6 +344,13 @@ def feature_cycle(features: Dict[str, FeatureDeclaration]) -> str:
                 if included not in path:
                     frontier.append(path + [included])
     return ""
+
+
+pub def feature_declaration(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:
+    """Normalize either authored feature spelling at the manifest boundary, for both Incan and Rust activation."""
+    if value.kind() == TomlKind.Array:
+        return compact_feature(value, manifest, field)
+    return expanded_feature(value, manifest, field)
 
 
 def compact_feature(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:
@@ -587,6 +597,7 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
     mut default_features = true
     mut optional = false
     mut target: Option[str] = None
+    mut local_path: Option[str] = None
     if value.kind() == TomlKind.String:
         version = text(value, manifest, field)?
     else:
@@ -599,7 +610,9 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
             loaf = Some(identity)
             package = identity[10:]
         else:
-            allowed(entry, ["version", "package", "features", "default-features", "optional"], manifest, field)?
+            allowed(entry, ["version", "package", "features", "default-features", "optional", "path", "target"], manifest, field)?
+            if "path" in entry:
+                local_path = Some(required(entry, "path", manifest, field + ["path"])?)
         if "target" in entry:
             predicate = required(entry, "target", manifest, field + ["target"])?
             validate_target(predicate).map_err(
@@ -607,7 +620,8 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
             )?
             target = Some(predicate)
 
-        version = required(entry, "version", manifest, field + ["version"])?
+        if "version" in entry:
+            version = required(entry, "version", manifest, field + ["version"])?
         if "package" in entry:
             package = required(entry, "package", manifest, field + ["package"])?
         if "features" in entry:
@@ -627,7 +641,7 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
             optional = entry["optional"]
                 .as_bool()
                 .map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
-    if version == "":
+    if version == "" and local_path is None:
         return Err(refusal(manifest, field, IntakeErrorKind.Missing, "version requirement is required"))
     return Ok(
         RustInputRequest(
@@ -639,6 +653,7 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
             default_features=default_features,
             optional=optional,
             target=target,
+            path=local_path,
         ),
     )
 

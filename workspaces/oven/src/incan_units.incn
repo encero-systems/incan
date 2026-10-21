@@ -2,15 +2,12 @@
 Incan units: checking and compiling a described unit with the toolchain's compiler (DD-0008).
 
 Oven writes the unit description where the compiler reads it, `<project>/target/incan/units/<crate>.unit.json`, and
-runs the compiler once per unit. A compiled unit links the toolchain's native closure and the artifacts of every Loaf
-the description lists: `lib<crate>.rlib` in the Loaf's artifact directory, and the directories the Loaf's own closure
-(`<name>.native.json`) searches.
+runs the compiler once per unit. The description already names the exact Rust externs, ABI caches, and dependency
+search directories; these are the same inputs for checking and compilation.
 """
 
 from rust::std::process import Command
 from std.fs import Path
-from std.json import parse
-from json_fields import field, strings
 from toolchain import Toolchain
 from unit import UnitDescription
 
@@ -25,7 +22,7 @@ pub def crate_name(unit: UnitDescription) -> str:
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
     """Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code."""
     path = write_unit(unit, crate_name(unit))?
-    arguments = ["--check", path.0, toolchain.sysroot, "--format", format] + native_arguments(unit, toolchain)?
+    arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
     return run_compiler(toolchain, arguments)
 
 
@@ -35,7 +32,6 @@ pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path, 
     path = write_unit(unit, compiled)?
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     mut arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
-    arguments = arguments + native_arguments(unit, toolchain)?
     if library:
         arguments.append("--library")
     return run_compiler(toolchain, arguments)
@@ -57,38 +53,6 @@ def write_unit(unit: UnitDescription, compiled: str) -> Result[Path, str]:
     text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
     path.write_text(text, "utf-8", "strict", None).map_err((error) => f"{path.0}: {error.message()}")?
     return Ok(path)
-
-
-def native_arguments(unit: UnitDescription, toolchain: Toolchain) -> Result[list[str], str]:
-    """The crates the unit may name and the directories their dependencies live in."""
-    mut arguments: list[str] = []
-    for native in toolchain.externs:
-        arguments = arguments + ["--extern", f"{native.name}={native.path}"]
-    for directory in toolchain.search:
-        arguments = arguments + ["--search", directory]
-    for cache in toolchain.rust_abi:
-        arguments = arguments + ["--rust-abi", cache]
-    for loaf in unit.loaves:
-        linked = loaf.name.replace("-", "_")
-        library = Path(loaf.dir).joinpath(f"lib{linked}.rlib")
-        arguments = arguments + ["--extern", f"{linked}={library.0}", "--search", loaf.dir]
-        for directory in loaf_search(Path(loaf.dir).joinpath(f"{loaf.name}.native.json"))?:
-            arguments = arguments + ["--search", directory]
-    return Ok(arguments)
-
-
-def loaf_search(closure: Path) -> Result[list[str], str]:
-    """The directories a compiled Loaf's native closure searches; none when the Loaf has not been compiled."""
-    if not closure.is_file():
-        return Ok([])
-    text = closure.read_text("utf-8", "strict").map_err((error) => f"{closure.0}: {error.message()}")?
-    document = parse(text).map_err((error) => f"{closure.0}: {error.message()}")?
-    match field(document, "search", []):
-        Err(_) => return Err(f"{closure.0}: `search` is missing")
-        Ok(value) =>
-            match strings(value, ["search"]):
-                Err(_) => return Err(f"{closure.0}: `search` is not a list of directories")
-                Ok(directories) => return Ok(directories)
 
 
 def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:

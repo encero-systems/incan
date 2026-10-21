@@ -1,0 +1,7 @@
+[project]
+name = "titlecase_var_not_type"
+version = "0.1.0"
+[project.scripts]
+main = "src/main.incn"
+[rust-dependencies]
+uuid = { version = "1", features = ["v4"] }
