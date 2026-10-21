@@ -23,6 +23,10 @@
 #   true
 #   Wrapped(Record { count: 7, text: "native", ready: false })
 #   7
+#   true
+#   true
+#   true
+#   true
 
 from rust::messages import CopyNumber, Message, category, message, boxed_message, message_envelope, wrapped_message
 from rust::messages::category import Kind as Category
@@ -123,3 +127,14 @@ def main() -> None:
     println(empty != value)
     println(f"{constructed:?}")
     inspect_optional([message()])
+    left_option: Option[Message] = Some(empty)
+    same_option: Option[Message] = Some(constructed)
+    other_option: Option[Message] = Some(value)
+    println(left_option == same_option)
+    println(left_option != other_option)
+    left_result: Result[Message, str] = Ok(empty)
+    other_result: Result[Message, str] = Ok(value)
+    println(left_result != other_result)
+    first_error: Result[Message, str] = Err("first")
+    other_error: Result[Message, str] = Err("other")
+    println(first_error != other_error)

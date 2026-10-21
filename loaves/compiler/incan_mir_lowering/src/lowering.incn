@@ -885,6 +885,32 @@ def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: Sou
     return Ok(operand)
 
 
+def external_enum_equality_kind(builder: Builder, owner: int) -> Result[Option[bool], str]:
+    """Select external equality for exact Option/Result carriers or published enums; true preserves Rust's own ne."""
+    if owner < 0:
+        return Err("invalid Body IR enum comparison owner")
+    if owner >= len(builder.enums):
+        index = owner - len(builder.enums)
+        if index >= len(builder.intrinsics):
+            return Err("invalid Body IR intrinsic enum comparison owner")
+        carrier = builder.intrinsics[index].carrier
+        if carrier == "Option" or carrier == "Result":
+            return Ok(Some(true))
+        return Ok(None)
+    declaration = builder.enums[owner]
+    if library_enum_item(declaration) == "":
+        return Ok(None)
+    native = native_enum_owner(builder, owner)
+    if native:
+        return Ok(Some(true))
+    if "PartialEq" not in declaration.derives:
+        return Err("unsupported Body IR SDK enum comparison without retained PartialEq")
+    for variant in declaration.variants:
+        if len(variant.fields) != 0:
+            return Ok(Some(false))
+    return Ok(None)
+
+
 def native_enum_equality(
     mut builder: Builder,
     operator: &BinOp,
@@ -905,25 +931,11 @@ def native_enum_equality(
             owner = index
             reference = PlanType.EnumRef(index, name)
         _ => return Ok(None)
-    if owner < 0:
-        return Ok(None)
-    native = native_enum_owner(builder, owner)
-    if owner < len(builder.enums):
-        declaration = builder.enums[owner]
-        if library_enum_item(declaration) == "":
-            return Ok(None)
-        if not native and "PartialEq" not in declaration.derives:
-            return Err("unsupported Body IR SDK enum comparison without retained PartialEq")
-        mut payload = false
-        for variant in declaration.variants:
-            if len(variant.fields) != 0:
-                payload = true
-        if not payload and not native:
-            return Ok(None)
-    else:
-        index = owner - len(builder.enums)
-        if index >= len(builder.intrinsics) or builder.intrinsics[index].carrier not in ["Option", "Result"]:
-            return Ok(None)
+    mut native = false
+    match external_enum_equality_kind(builder, owner)?:
+        Some(preserve_ne) =>
+            native = preserve_ne
+        None => return Ok(None)
     mut operands: list[Operand] = []
     for source in [left, right]:
         borrowed = temporary(builder, reference, span)
