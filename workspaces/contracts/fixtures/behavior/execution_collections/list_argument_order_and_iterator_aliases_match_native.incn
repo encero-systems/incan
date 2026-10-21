@@ -1,4 +1,4 @@
-# behavior: list argument order and iterator aliases match native
+# behavior: collection arguments and list spreads evaluate once in written order, iterator aliases preserve their items and spreads snapshot around mutation (#2115)
 # expect-stdout:
 #   left
 #   left
@@ -6,6 +6,13 @@
 #   pair
 #   pair
 #   58
+#   left
+#   right
+#   pair
+#   10
+#   4
+#   1 7 1 9
+#   2
 
 
 """List argument order and iterator aliases match native."""
@@ -37,6 +44,44 @@ def observe() -> int:
   return total
 
 
+def ordered_left() -> list[int]:
+    """Print when the first zip argument is evaluated."""
+    println("left")
+    return [10]
+
+
+def right_labels() -> list[str]:
+    """Print when the second zip argument is evaluated."""
+    println("right")
+    return ["ten"]
+
+
+def zip_written_order() -> int:
+    """Evaluate list-producing arguments in their written order."""
+    mut total = 0
+    for value, label in zip(ordered_left(), right_labels()):
+        println("pair")
+        total += value
+    return total
+
+
+def change(mut source: list[int]) -> int:
+    """Make the later spread observe an additional element."""
+    source.append(9)
+    return 7
+
+
+def spread_snapshots() -> None:
+    """Read the source before and after the mutating element."""
+    mut source = [1]
+    result = [*source, change(source), *source]
+    println(len(result))
+    println(f"{result[0]} {result[1]} {result[2]} {result[3]}")
+    println(len(source))
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(observe())
+    println(zip_written_order())
+    spread_snapshots()

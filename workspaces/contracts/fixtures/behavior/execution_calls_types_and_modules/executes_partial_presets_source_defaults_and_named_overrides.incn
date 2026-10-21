@@ -1,5 +1,6 @@
-# behavior: executes partial presets source defaults and named overrides
+# behavior: stored partials preserve captured presets and source defaults and accept named overrides through both mutable and immutable preset bindings
 # expect-stdout:
+#   868
 #   868
 
 
@@ -17,6 +18,16 @@ def program_result() -> int:
   return normal + overridden
 
 
+def partial_defaults() -> int:
+    """Capture an immutable preset and override every named argument."""
+    method = 1
+    get = partial route(method=method)
+    normal = get(4)
+    overridden = get(method=7, path=2, content_type=5)
+    return normal + overridden
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(partial_defaults())

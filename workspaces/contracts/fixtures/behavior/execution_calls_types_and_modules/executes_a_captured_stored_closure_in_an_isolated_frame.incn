@@ -1,5 +1,6 @@
-# behavior: executes a captured stored closure in an isolated frame
+# behavior: each source call constructs a stored typed closure expression that captures its own local value
 # expect-stdout:
+#   42
 #   42
 
 
@@ -13,4 +14,5 @@ def program_result() -> int:
 
 def main() -> None:
     """Print the fixture values in the expected order."""
+    println(program_result())
     println(program_result())

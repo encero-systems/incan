@@ -1,7 +1,9 @@
-# behavior: preserves float direct arguments and results
+# behavior: float arguments and returned conversions preserve their values and preceding output
 # expect-stdout:
 #   argument ran
 #   1.5
+#   before float result
+#   10.0
 
 
 """Preserves float direct arguments and results."""
@@ -11,6 +13,13 @@ def show(value: float) -> str:
   return str(value)
 
 
+def program_result() -> float:
+    """Print before returning the converted float."""
+    println("before float result")
+    return float(10)
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(show(1.5))
+    println(program_result())

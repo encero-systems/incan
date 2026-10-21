@@ -1,14 +1,28 @@
-# behavior: refuses scalar conversion calls missing checked builtin identity
+# behavior: scalar str, int and float calls convert their declared inputs and return the converted value
 # expect-stdout:
 #   42
+#   42
+#   42.0
 
 
-"""Refuses scalar conversion calls missing checked builtin identity."""
+"""Observe scalar conversion results through source function calls."""
 def program_result() -> str:
   """Return the fixture expression `str(42)`."""
   return str(42)
 
 
+def integer_result() -> int:
+    """Parse an integer string through the builtin."""
+    return int("42")
+
+
+def float_result() -> float:
+    """Parse a float string through the builtin."""
+    return float("42")
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(integer_result())
+    println(float_result())

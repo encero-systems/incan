@@ -1,4 +1,4 @@
-# behavior: native enum payloads retain identities through borrowed fields, boxed construction and nested re-exported variants (#2256)
+# behavior: native enum payloads retain identities through borrowed fields, boxed construction, nested re-exported variants and exact unsigned payload carriers (#2256)
 # expect-stdout:
 #   checked
 #   7
@@ -27,10 +27,12 @@
 #   true
 #   true
 #   true
+#   checked
 
 from rust::messages import CopyNumber, Message, category, message, boxed_message, message_envelope, wrapped_message
 from rust::messages::category import Kind as Category
 from rust::std::net import IpAddr
+from rust::std::io import SeekFrom
 from copying import borrowed_copy
 
 
@@ -39,6 +41,13 @@ def loopback[T](value: &IpAddr, unused: T) -> bool:
     match value:
         IpAddr.V4(address) => return address.is_loopback()
         IpAddr.V6(address) => return address.is_loopback()
+
+
+def offset[T](position: SeekFrom, unused: T) -> u64:
+    """Keep the unsigned carrier stored by an absolute seek position."""
+    match position:
+        SeekFrom.Start(value) => return value
+        _ => return 0
 
 
 def inspect(value: &Message) -> None:
@@ -138,3 +147,4 @@ def main() -> None:
     first_error: Result[Message, str] = Err("first")
     other_error: Result[Message, str] = Err("other")
     println(first_error != other_error)
+    println("checked")

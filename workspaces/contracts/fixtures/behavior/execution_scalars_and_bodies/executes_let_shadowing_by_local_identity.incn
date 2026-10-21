@@ -1,6 +1,10 @@
-# behavior: executes let shadowing by local identity
+# behavior: let and mut shadow only inside their block, while plain reassignment updates its existing binding
 # expect-stdout:
 #   3
+#   11
+#   3
+#   11
+#   2
 
 
 """Executes let shadowing by local identity."""
@@ -14,6 +18,27 @@ def program_result() -> int:
   return total + x
 
 
+def mutable_shadow() -> int:
+    """Keep the outer mutable name after the inner binding ends."""
+    mut total = 0
+    mut x = 4
+    if true:
+        mut x = 7
+        total += x
+    return total + x
+
+
+def reassigned() -> int:
+    """Reassign the existing local without introducing a shadow."""
+    mut x = 1
+    x = 2
+    return x
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(mutable_shadow())
+    println(program_result())
+    println(mutable_shadow())
+    println(reassigned())

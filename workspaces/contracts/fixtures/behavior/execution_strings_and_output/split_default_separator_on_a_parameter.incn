@@ -1,6 +1,9 @@
-# behavior: split() without a separator on a str parameter keeps the parameter as one part
+# behavior: split without a separator keeps parameter and literal text intact, while split_whitespace returns an indexable Unicode-aware list (#2239)
 # expect-stdout:
 #   [ a b ]
+#   [ a b ]
+#   3 alpha beta gamma
+#   0
 
 """Split() without a separator on a str parameter keeps the parameter as one part."""
 def split_default(text: str) -> str:
@@ -8,6 +11,20 @@ def split_default(text: str) -> str:
     return "|".join(text.split())
 
 
+def split_literal() -> str:
+    """Split and rejoin a literal without supplying a separator."""
+    return "|".join(" a b ".split())
+
+
+def whitespace_fields() -> None:
+    """Read the length and elements of whitespace-separated fields."""
+    fields = "  alpha\tbeta gamma\n".split_whitespace()
+    println(f"{len(fields)} {fields[0]} {fields[1]} {fields[2]}")
+    println(len(" \t\n".split_whitespace()))
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(f"[{split_default(" a b ")}]")
+    println(f"[{split_literal()}]")
+    whitespace_fields()

@@ -1,5 +1,7 @@
-# behavior: string len output is delivered exactly once
+# behavior: builtin and method length calls each preserve exactly one preceding print of the Unicode operand
 # expect-stdout:
+#   é
+#   1
 #   é
 #   1
 
@@ -10,6 +12,13 @@ def length(value: str) -> int:
     return len(value)
 
 
+def method_length(value: str) -> int:
+    """Print the string before returning its method length."""
+    println(value)
+    return value.len()
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(length("é"))
+    println(method_length("é"))

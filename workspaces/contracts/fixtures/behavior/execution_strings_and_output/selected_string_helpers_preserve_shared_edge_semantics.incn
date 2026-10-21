@@ -1,6 +1,13 @@
-# behavior: selected string helpers preserve shared edge semantics
+# behavior: Unicode case conversion and stripping, overlapping and empty replacements, joining and splitting preserve their edge semantics
 # expect-stdout:
 #   STRASSE
+#   héllo
+#   hi
+#   xba
+#   -é-
+#   α, β
+#   |é|
+#   a||b|
 
 """Selected string helpers preserve shared edge semantics."""
 def result() -> str:
@@ -8,6 +15,48 @@ def result() -> str:
     return "Straße".upper()
 
 
+def lower_text() -> str:
+    """Lowercase accented text."""
+    return "HÉLLO".lower()
+
+
+def stripped() -> str:
+    """Strip Unicode whitespace around text."""
+    return " hi ".strip()
+
+
+def replaced_overlap() -> str:
+    """Replace the first nonoverlapping match."""
+    return "ababa".replace("aba", "x")
+
+
+def replaced_empty() -> str:
+    """Replace the empty pattern around a Unicode scalar."""
+    return "é".replace("", "-")
+
+
+def joined() -> str:
+    """Join Unicode list elements with the written separator."""
+    return ", ".join(["α", "β"])
+
+
+def split_empty() -> str:
+    """Keep boundary items when splitting on the empty separator."""
+    return "|".join("é".split(""))
+
+
+def split_repeated() -> str:
+    """Keep interior and trailing empty fields."""
+    return "|".join("a,,b,".split(","))
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(result())
+    println(lower_text())
+    println(stripped())
+    println(replaced_overlap())
+    println(replaced_empty())
+    println(joined())
+    println(split_empty())
+    println(split_repeated())

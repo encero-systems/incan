@@ -1,5 +1,10 @@
-# behavior: canonical string comparisons use shared unicode order
+# behavior: all six string comparisons use Unicode scalar order through function parameters
 # expect-stdout:
+#   false
+#   true
+#   true
+#   true
+#   false
 #   false
 
 """Canonical string comparisons use shared unicode order."""
@@ -8,6 +13,36 @@ def compare(left: str, right: str) -> bool:
     return left == right
 
 
+def unequal(left: str, right: str) -> bool:
+    """Compare unequal Unicode strings."""
+    return left != right
+
+
+def less(left: str, right: str) -> bool:
+    """Compare Unicode strings with strict ascending order."""
+    return left < right
+
+
+def less_equal(left: str, right: str) -> bool:
+    """Compare Unicode strings with inclusive ascending order."""
+    return left <= right
+
+
+def greater(left: str, right: str) -> bool:
+    """Compare Unicode strings with strict descending order."""
+    return left > right
+
+
+def greater_equal(left: str, right: str) -> bool:
+    """Compare Unicode strings with inclusive descending order."""
+    return left >= right
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(compare("é", "猫"))
+    println(unequal("é", "猫"))
+    println(less("é", "猫"))
+    println(less_equal("é", "猫"))
+    println(greater("é", "猫"))
+    println(greater_equal("é", "猫"))

@@ -1,10 +1,16 @@
-# behavior: a boxed source model supplies its shared content to a source function
+# behavior: boxed model and text arguments borrow their contents at positional and named parameters, and nested native boxes preserve optional field payloads
 # expect-stdout:
 #   retained
 #   retained
 #   nested
+#   3
+#   3
+#   3
+#   3
+#   4
 
 from rust::std::boxed import Box
+from rust::std::ops import Range
 
 
 model Value:
@@ -17,6 +23,29 @@ def read(value: &Value) -> str:
     return value.text
 
 
+def read_text(value: &str) -> int:
+    """Read shared text without taking its owning box."""
+    return len(value)
+
+
+def shared_text_box() -> None:
+    """Borrow an owned box twice and a fresh box once."""
+    value: Box[str] = Box.new("abc")
+    println(read_text(value))
+    println(read_text(value=value))
+    println(read_text(Box.new("abc")))
+
+
+def native_box_fields() -> None:
+    """Read native fields without taking their types from another operand."""
+    owner = Box.new(Box.new(Range(start=3, end=4)))
+    value = Some(owner.start)
+    match value:
+        Some(number) => println(number)
+        None => println("missing")
+    println(owner.end)
+
+
 def main() -> None:
     """Borrow one boxed source model repeatedly."""
     value: Box[Value] = Box.new(Value(text="retained"))
@@ -24,3 +53,5 @@ def main() -> None:
     println(read(value=value))
     nested: Box[Box[Value]] = Box.new(Box.new(Value(text="nested")))
     println(read(nested))
+    shared_text_box()
+    native_box_fields()

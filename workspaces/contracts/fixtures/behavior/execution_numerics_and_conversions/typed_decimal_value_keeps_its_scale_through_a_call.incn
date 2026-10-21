@@ -1,7 +1,12 @@
-# behavior: a decimal[6, 2] value passed through a function keeps its two-digit scale
+# behavior: decimal, f32 and u128 arguments retain their scale or width through printing and returns, including a silent f32 identity
 # expect-stdout:
 #   19.90
 #   19.90
+#   1.2345679
+#   1.2345679
+#   340282366920938463463374607431768211455
+#   340282366920938463463374607431768211455
+#   1.2345679
 
 """A decimal[6, 2] value passed through a function keeps its two-digit scale."""
 def identity(value: decimal[6, 2]) -> decimal[6, 2]:
@@ -10,7 +15,45 @@ def identity(value: decimal[6, 2]) -> decimal[6, 2]:
     return value
 
 
+def f32_identity(value: f32) -> f32:
+    """Print the single-precision argument before returning it."""
+    println(value)
+    return value
+
+
+def u128_identity(value: u128) -> u128:
+    """Print the unsigned wide argument before returning it."""
+    println(value)
+    return value
+
+
+def quiet_identity(value: f32) -> f32:
+    """Return the single-precision argument without another print."""
+    return value
+
+
+def observed_f32() -> None:
+    """Observe the same single-precision argument on both sides of a call."""
+    value: f32 = 1.2345679
+    println(f32_identity(value))
+
+
+def observed_u128() -> None:
+    """Observe the maximum unsigned wide argument on both sides of a call."""
+    value: u128 = 340282366920938463463374607431768211455
+    println(u128_identity(value))
+
+
+def returned_f32() -> None:
+    """Observe the silent single-precision identity's result."""
+    value: f32 = 1.2345679
+    println(quiet_identity(value))
+
+
 def main() -> None:
     """Print `identity(value)` after preparing the fixture inputs."""
     value: decimal[6, 2] = 19.90d
     println(identity(value))
+    observed_f32()
+    observed_u128()
+    returned_f32()

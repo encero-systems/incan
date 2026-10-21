@@ -1,7 +1,12 @@
-# behavior: zip alias and original each match native
+# behavior: zip values and their aliases are independently traversable in either order, with and without per-item output
 # expect-stdout:
 #   3
 #   3
+#   6
+#   3
+#   3
+#   6
+#   6
 #   6
 
 """Zip alias and original each match native."""
@@ -19,6 +24,47 @@ def observe() -> int:
     return total
 
 
+def alias_first() -> int:
+    """Read the alias before the original while printing each item."""
+    pairs = zip([1], [2])
+    alias = pairs
+    mut total = 0
+    for left, right in alias:
+        println(left + right)
+        total += left + right
+    for other_left, other_right in pairs:
+        println(other_left + other_right)
+        total += other_left + other_right
+    return total
+
+
+def original_first_silent() -> int:
+    """Traverse the original then the alias without item output."""
+    pairs = zip([1], [2])
+    alias = pairs
+    mut total = 0
+    for left, right in pairs:
+        total += left + right
+    for other_left, other_right in alias:
+        total += other_left + other_right
+    return total
+
+
+def alias_first_silent() -> int:
+    """Traverse the alias then the original without item output."""
+    pairs = zip([1], [2])
+    alias = pairs
+    mut total = 0
+    for left, right in alias:
+        total += left + right
+    for other_left, other_right in pairs:
+        total += other_left + other_right
+    return total
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(observe())
+    println(alias_first())
+    println(original_first_silent())
+    println(alias_first_silent())

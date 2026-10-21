@@ -1,4 +1,4 @@
-# behavior: a Result retains its native error carrier, and borrowed Option/Result patterns retain canonical constructors (#2256)
+# behavior: a Result retains its native error carrier, borrowed Option/Result patterns retain canonical constructors, and native error display preserves repeated borrowing (#2256)
 # expect-stdout:
 #   invalid: bad
 #   7
@@ -7,6 +7,8 @@
 #   11
 #   7
 #   9
+#   invalid
+#   invalid
 
 from rust::incan_std_core::validation import ValidationError as NativeError
 
@@ -26,6 +28,18 @@ def inspect(value: &Option[int], result: &Result[int, int]) -> None:
         Err(message) => println(message.clone())
 
 
+def describe(value: &NativeError) -> str:
+    """Format the native error through its shared carrier."""
+    return str(value)
+
+
+def shared_error() -> None:
+    """Borrow the same error twice without consuming its owner."""
+    value = NativeError.new("invalid")
+    println(describe(value))
+    println(describe(value))
+
+
 def main() -> None:
     """Read the constructed error through the same public result contract."""
     match decoded():
@@ -38,3 +52,4 @@ def main() -> None:
     inspect(value, result)
     inspect(absent, error)
     inspect(value, result)
+    shared_error()

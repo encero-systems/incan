@@ -1,6 +1,11 @@
-# behavior: executes source local value enum members through a direct callable
+# behavior: value enum members preserve their integer or string values through source parameters, direct calls and from_value construction
 # expect-stdout:
 #   404
+#   404
+#   404
+#   404
+#   404
+#   42
 
 
 """Executes source local value enum members through a direct callable."""
@@ -31,6 +36,38 @@ def program_result() -> int:
   return status_code(HttpStatus.NotFound)
 
 
+enum Status(int):
+    """Keep a second enum with its own integer member identity."""
+    Ok = 200
+    Missing = 404
+
+
+def direct_status_code() -> int:
+    """Read a member without passing it as an argument."""
+    return HttpStatus.NotFound.value()
+
+
+def value_enum_values() -> int:
+    """Pass the selected member through the value-parameter caller."""
+    return status_code(HttpStatus.NotFound)
+
+
+def other_status() -> int:
+    """Read the other enum's declared member."""
+    return Status.Missing.value()
+
+
+def constructed_status() -> int:
+    """Construct from a known value before returning the marker."""
+    parsed = HttpStatus.from_value(404)
+    return 42
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(direct_status_code())
+    println(value_enum_values())
+    println(direct_status_code())
+    println(other_status())
+    println(constructed_status())

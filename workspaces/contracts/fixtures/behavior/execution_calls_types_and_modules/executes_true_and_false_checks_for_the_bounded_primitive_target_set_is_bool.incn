@@ -1,6 +1,14 @@
-# behavior: executes true and false checks for the bounded primitive target set
+# behavior: isinstance distinguishes boolean, float, integer and string union members and never coerces booleans to integers
 # expect-stdout:
 #   true
+#   false
+#   true
+#   true
+#   false
+#   true
+#   false
+#   true
+#   false
 
 """Executes true and false checks for the bounded primitive target set."""
 def is_int(value: int | str) -> bool:
@@ -33,6 +41,19 @@ def is_float() -> bool:
   return false
 
 
+def primitive_probe(value: int | bool) -> bool:
+    """Distinguish integer and boolean runtime tags."""
+    return isinstance(value, int)
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(is_bool(true))
+    println(is_bool("x"))
+    println(is_float())
+    println(is_int(7))
+    println(is_int("x"))
+    println(is_str("x"))
+    println(is_str(7))
+    println(primitive_probe(1))
+    println(primitive_probe(true))

@@ -1,6 +1,12 @@
-# behavior: collection len matches the receipt backed native route
+# behavior: set and dictionary lengths count distinct keys and empty containers, preserve returned results and evaluate elements once
 # expect-stdout:
 #   collection len
+#   2200
+#   collection len
+#   2200
+#   len element
+#   len element
+#   2
 #   2200
 
 """Exercise set and dictionary length through one result-bearing fixture."""
@@ -16,6 +22,34 @@ def collection_len() -> int:
     return len(values) * 1000 + len(mapping) * 100 + len(empty_values) * 10 + len(empty_mapping)
 
 
+def program_result() -> int:
+    """Return the marked collection length profile through a source call."""
+    return collection_len()
+
+
+def mark(value: int) -> int:
+    """Expose each element evaluation."""
+    println("len element")
+    return value
+
+
+def evaluated_length() -> int:
+    """Count elements whose construction is observable."""
+    return len({mark(1), mark(2)})
+
+
+def unmarked_length() -> int:
+    """Encode populated and empty lengths without extra output."""
+    values = {1, 1, 2}
+    mapping = {"a": 1, "a": 2, "b": 3}
+    empty_values: set[int] = Set()
+    empty_mapping: dict[str, int] = Dict()
+    return len(values) * 1000 + len(mapping) * 100 + len(empty_values) * 10 + len(empty_mapping)
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(collection_len())
+    println(program_result())
+    println(evaluated_length())
+    println(unmarked_length())

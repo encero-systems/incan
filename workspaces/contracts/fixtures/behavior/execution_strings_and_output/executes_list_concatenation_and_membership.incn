@@ -1,6 +1,8 @@
-# behavior: executes list concatenation and membership
+# behavior: list concatenation supports membership, leaves both operands readable and iterates tuple results from the start
 # expect-stdout:
 #   4
+#   61
+#   15
 
 
 """Executes list concatenation and membership."""
@@ -15,6 +17,26 @@ def program_result() -> int:
   return 0
 
 
+def retained_operands() -> int:
+    """Read both lists after constructing their concatenation."""
+    xs = [1, 2]
+    ys = [30]
+    joined = xs + ys
+    return xs[0] + ys[0] + joined[2]
+
+
+def iterated_concatenation() -> int:
+    """Traverse the concatenation from its first tuple."""
+    xs = [(1, 2)]
+    ys = [(4, 8)]
+    mut total = 0
+    for left, right in xs + ys:
+        total += left + right
+    return total
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(retained_operands())
+    println(iterated_concatenation())

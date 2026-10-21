@@ -1,6 +1,13 @@
-# behavior: executes source local nominal model values through a direct callable
+# behavior: model construction binds reordered keywords, preserves required field layout, fills omitted defaults and permits field assignment before a source return
 # expect-stdout:
 #   42
+#   42
+#   42
+#   40
+#   40
+#   40
+#   42
+#   41
 
 
 """Executes source local nominal model values through a direct callable."""
@@ -19,6 +26,55 @@ def program_result() -> int:
   return score(pair)
 
 
+model RequiredPair:
+    """Retain the two required fields independently of the defaulted model."""
+    left: int
+    right: int
+
+
+def required_score(pair: RequiredPair) -> int:
+    """Read both required fields through a source parameter."""
+    return pair.left + pair.right
+
+
+def nominal_values() -> int:
+    """Bind required constructor keywords in the opposite written order."""
+    pair = RequiredPair(right=2, left=40)
+    return required_score(pair)
+
+
+def omitted_default() -> int:
+    """Omit the defaulted field while reading the explicitly provided field."""
+    pair = Pair(left=40)
+    return pair.left
+
+
+def declaration_layout() -> int:
+    """Read the first required field from declaration-order arguments."""
+    pair = RequiredPair(left=40, right=2)
+    return pair.left
+
+
+def constructed_sum() -> int:
+    """Read both required fields directly after reordered construction."""
+    pair = RequiredPair(right=2, left=40)
+    return pair.left + pair.right
+
+
+def assigned_field() -> int:
+    """Write a mutable model field before reading it back."""
+    mut pair = RequiredPair(left=40, right=2)
+    pair.left = 41
+    return pair.left
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(program_result())
+    println(nominal_values())
+    println(omitted_default())
+    println(omitted_default())
+    println(declaration_layout())
+    println(constructed_sum())
+    println(assigned_field())
