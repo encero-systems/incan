@@ -632,8 +632,8 @@ type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
 fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) -> ReturnCarriers {
     context
         .iter()
-        .flat_map(|module| &module.bodies)
-        .chain(&module.bodies)
+        .flat_map(|module| module.callable_declaration_frames())
+        .chain(module.callable_declaration_frames())
         .filter_map(|body| {
             body.canonical.as_ref().map(|identity| {
                 (

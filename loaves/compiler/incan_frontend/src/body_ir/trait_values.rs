@@ -39,7 +39,7 @@ pub(super) fn retain_inputs(
             signatures.insert(identity, inputs);
         }
     }
-    for body in context.iter().flat_map(|module| &module.bodies) {
+    for body in context.iter().flat_map(|module| module.callable_declaration_frames()) {
         let slots = body
             .params
             .iter()

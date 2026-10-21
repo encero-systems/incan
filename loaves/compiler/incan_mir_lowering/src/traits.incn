@@ -421,7 +421,8 @@ pub def receiver_method_target(
 pub def implementation_target(module: &BodyIrModule, target: &MethodTarget, owner: PlanType) -> Result[MethodTarget, str]:
     """Name the retained concrete implementation rather than its trait slot when calling an already compiled method."""
     mut selected = target.clone()
-    selected.canonical = Some(owner_method_identity(module, target, owner)?)
+    canonical = owner_method_identity(module, target, owner)?
+    selected.canonical = Some(canonical)
     if selected.canonical != target.canonical:
         # The selected item is the implementation's ordinary compiled entry, not the trait's native generic item.
         selected.loaf_trait = None

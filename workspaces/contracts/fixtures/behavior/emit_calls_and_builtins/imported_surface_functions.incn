@@ -1,5 +1,4 @@
 # behavior: a sleep function imported by name or alias completes before execution continues
-# pending: imported sleep_ms is refused as an unresolved canonical call target
 # expect-stdout:
 #   slept
 

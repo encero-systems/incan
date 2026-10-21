@@ -14,7 +14,7 @@ pub(super) struct PublishedMethod {
     pub(super) return_type: IncanType,
 }
 
-/// Collect nongeneric, receiver-only immutable source methods within their exact retained owner declarations.
+/// Collect nongeneric, receiver-only immutable method frames within their exact retained owner declarations.
 ///
 /// The declaration anchors, origin, receiver type and canonical member identity must agree. Static methods, mutable
 /// receivers and ordinary parameter/default binding are outside this record's contract and remain unselected here.
@@ -22,7 +22,7 @@ pub(super) fn collect(context: &[bir::BodyIrModule]) -> Vec<PublishedMethod> {
     let mut methods: Vec<PublishedMethod> = Vec::new();
     for module in context {
         for owner in &module.nominal_declarations {
-            for body in &module.bodies {
+            for body in module.callable_declaration_frames() {
                 let Some(identity) = &body.canonical else {
                     continue;
                 };

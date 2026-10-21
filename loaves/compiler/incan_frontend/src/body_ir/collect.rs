@@ -564,7 +564,7 @@ pub(super) struct PublishedNewtypeReturn {
     pub(super) declaration: bir::NominalDeclaration,
 }
 
-/// Retain public, nongeneric newtype results by the checked method declaration that returns them. Missing layouts
+/// Retain public, nongeneric newtype results from governed or compiled method declarations. Missing layouts
 /// and conflicting copies remain explicit denials; no type is selected from a method or field spelling.
 pub(super) fn collect_published_newtype_returns(
     context: &[bir::BodyIrModule],
@@ -572,7 +572,7 @@ pub(super) fn collect_published_newtype_returns(
     let mut returns = HashMap::new();
     let mut newtype_methods = HashSet::new();
     for module in context {
-        for body in &module.bodies {
+        for body in module.callable_declaration_frames() {
             let Some(identity) = body.canonical.as_ref().filter(|identity| {
                 identity.kind == SemanticSourceTargetKind::Method
                     && identity.namespace == incan_semantics_core::SymbolNamespace::Member
@@ -629,7 +629,7 @@ fn declared_newtype_return_owner(body: &bir::Body) -> Option<&CanonicalSymbolId>
         .filter(|owner| owner.kind == SemanticSourceTargetKind::Newtype)
 }
 
-/// Retain a nongeneric source function's or checker-selected validation hook's exact return carrier before its
+/// Retain a nongeneric function's or checker-selected validation hook's exact declaration return carrier before its
 /// private aliases leave the provider. Ordinary method results keep their consumer's checked specialization.
 /// Generic callable results keep the consumer's checked instantiation facts; unresolved producer results never
 /// replace a consumer's type. The canonical key identifies the selected declaration, not a written import spelling.
@@ -646,7 +646,7 @@ pub(super) fn collect_published_callable_returns(
         .collect::<HashSet<_>>();
     context
         .iter()
-        .flat_map(|module| &module.bodies)
+        .flat_map(|module| module.callable_declaration_frames())
         .filter(|body| body.type_parameters.is_empty())
         .filter(|body| {
             !matches!(
@@ -669,7 +669,7 @@ pub(super) fn collect_published_callable_defaults(
 ) -> HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>> {
     context
         .iter()
-        .flat_map(|module| &module.bodies)
+        .flat_map(|module| module.callable_declaration_frames())
         .filter_map(|body| {
             let identity = body.canonical.as_ref()?;
             Some((
