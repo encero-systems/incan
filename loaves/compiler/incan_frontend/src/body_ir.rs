@@ -1039,6 +1039,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Local owners whose earlier call arguments have been read but are not consumed until that call is emitted.
     /// Nested argument evaluation cannot move one of these owners out from under the pending outer operand.
     pending_argument_reads: Vec<bir::LocalId>,
+    /// Active normalized loop scopes. Reads of enclosing owners must survive the next iteration even at their last
+    /// textual use.
+    loop_scopes: Vec<bir::ScopeId>,
     /// Source-annotated function locals whose Rust representation is a function pointer rather than an inferred item.
     function_pointer_locals: Vec<bir::LocalId>,
     /// Local bindings the checker proved hold capturing callable values rather than function pointers.
@@ -1133,6 +1136,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             pending_argument_reads: Vec::new(),
+            loop_scopes: Vec::new(),
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
@@ -1726,7 +1730,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
     /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A pending earlier call argument
     /// keeps its owner alive across later nested argument evaluation, so even its final textual read clones until the
-    /// outer call consumes that operand. A local with no tracked
+    /// outer call consumes that operand. An owner declared outside the active loop also clones at its last textual
+    /// read, because that source read executes again on the next iteration. Loop-local owners can still transfer at
+    /// their last use. A local with no tracked
     /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
     ///
     /// Note that [`count_reads_in_stmts`] counts a `.field`/`[index]` occurrence of a name toward that local's
@@ -1768,16 +1774,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             return (bir::OwnershipFact::Copy, false);
         }
+        let reused_by_loop = self.loop_reuses_local(local);
         let Some(remaining) = self.remaining_reads.get_mut(&local) else {
             return (bir::OwnershipFact::Unknown, false);
         };
         *remaining = remaining.saturating_sub(1);
-        if *remaining == 0 && !self.pending_argument_reads.contains(&local) {
+        if *remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop {
             self.moved_out.insert(local);
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)
         }
+    }
+
+    /// Identify storage declared outside the innermost loop, whose textual final read can execute repeatedly.
+    /// Descendants of the loop scope are initialized per iteration and retain ordinary last-use transfers.
+    fn loop_reuses_local(&self, local: bir::LocalId) -> bool {
+        let Some(loop_scope) = self.loop_scopes.last() else {
+            return false;
+        };
+        let Some(declaration) = self.locals.get(local.index()) else {
+            return false;
+        };
+        let mut scope = Some(declaration.scope);
+        while let Some(current) = scope {
+            if current == *loop_scope {
+                return false;
+            }
+            scope = self
+                .scopes
+                .iter()
+                .find(|entry| entry.id == current)
+                .and_then(|entry| entry.parent);
+        }
+        true
     }
 
     /// Whether `local` is a method's `self`/`mut self` receiver, per its recorded [`bir::LocalOrigin`].
