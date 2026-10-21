@@ -239,6 +239,21 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
                 }),
             },
         );
+        let element = Ty::new_param(tcx, 0, rustc_span::Symbol::intern("T"));
+        facts.insert(
+            "[]".into(),
+            RustItemMetadata {
+                canonical_path: "[]".into(),
+                definition_path: None,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    type_params: vec!["T".into()],
+                    type_param_defaults: vec![None],
+                    implemented_traits: trait_impls(tcx, Ty::new_slice(tcx, element), &mut named),
+                    ..RustTypeInfo::default()
+                }),
+            },
+        );
     }
     // Trait references use definition identities, including traits reached through a public re-export.
     for def in named.into_iter().filter(|def| tcx.def_kind(*def) == DefKind::Trait) {
@@ -557,9 +572,15 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
         .all_traits_including_private()
         .filter(|id| tcx.visibility(*id).is_public())
     {
-        tcx.for_each_relevant_impl(trait_id, owner, |implementation| {
-            implementations.insert(implementation);
-        });
+        for receiver in [
+            owner,
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, owner),
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, owner),
+        ] {
+            tcx.for_each_relevant_impl(trait_id, receiver, |implementation| {
+                implementations.insert(implementation);
+            });
+        }
     }
     let mut implementations = implementations.into_iter().collect::<Vec<_>>();
     implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
@@ -569,7 +590,9 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
             if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive {
                 return None;
             }
-            if owner == tcx.types.str_ && !concrete_impl_may_apply(tcx, implementation, owner) {
+            if (owner == tcx.types.str_ || matches!(owner.kind(), ty::Slice(_)))
+                && !concrete_impl_may_apply(tcx, implementation, owner)
+            {
                 return None;
             }
             let reference = tcx
@@ -638,14 +661,21 @@ fn async_output<'tcx>(tcx: TyCtxt<'tcx>, output: Ty<'tcx>) -> Option<Ty<'tcx>> {
         })
 }
 
-/// Eliminate impossible blanket candidates for the concrete unsized primitive. Nominal generic owners retain their
-/// conditional templates because future instantiations may satisfy bounds their declaration does not assume.
+/// Eliminate impossible blanket candidates for unsized primitives. A slice element remains unconstrained during
+/// extraction, so applicable conditional templates survive for the checker to instantiate and rustc to verify.
 fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
     use rustc_infer::infer::TyCtxtInferExt;
     use rustc_trait_selection::traits::{ObligationCtxt, query::evaluate_obligation::InferCtxtExt};
     let (infcx, param_env) = tcx
         .infer_ctxt()
         .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    // A slice template's element is not constrained yet. Retain impls that can apply to some element while still
+    // rejecting impossible Sized blanket implementations on the unsized slice itself.
+    let owner = if matches!(owner.kind(), ty::Slice(_)) {
+        Ty::new_slice(tcx, infcx.next_ty_var(rustc_span::DUMMY_SP))
+    } else {
+        owner
+    };
     let ocx = ObligationCtxt::new(&infcx);
     let arguments = infcx.fresh_args_for_item(rustc_span::DUMMY_SP, implementation);
     let reference = tcx

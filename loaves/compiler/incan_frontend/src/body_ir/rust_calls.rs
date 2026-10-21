@@ -67,8 +67,16 @@ impl BodyBuilder<'_, '_> {
     ) -> Option<bir::Operand> {
         let call = self.type_info.rust.checked_calls.get(&(span.start, span.end))?.clone();
         if !call.receiver_adjustments.is_empty() {
+            let (receiver, args) = if call.has_receiver {
+                (receiver?, args)
+            } else {
+                let ast::CallArg::Positional(receiver) = args.first()? else {
+                    return None;
+                };
+                (receiver, &args[1..])
+            };
             return Some(
-                match self.lower_adjusted_rust_call(&call, receiver?, args, span, scope, out) {
+                match self.lower_adjusted_rust_call(&call, receiver, args, span, scope, out) {
                     Ok(value) => value,
                     Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
                 },

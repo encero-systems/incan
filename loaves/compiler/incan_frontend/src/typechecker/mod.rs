@@ -1187,6 +1187,9 @@ impl TypeChecker {
     /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
     fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
         let trimmed = canonical_path.trim();
+        if trimmed == "[]" {
+            return Some(trimmed);
+        }
         if trimmed.is_empty() || trimmed == "{unknown}" {
             return None;
         }

@@ -34,9 +34,18 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
         .collect()
 }
 
-/// Project a Rust type display onto the opaque nominal of its item, or `None` when the display names no Rust item
-/// (`dyn` objects, references and function types keep their Rust spelling and refuse where they are laid out).
+/// Project a native display into its structural slice/reference carrier or the opaque nominal of its item. Trait
+/// objects and unsupported function types retain their refusal; the internal slice constructor is already structural.
 pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
+    if (display.trim().starts_with('[') && display.trim() != "[]") || display.trim().starts_with('&') {
+        let resolved = crate::typechecker::TypeChecker::new().native_rust_signature_type(display, "");
+        if !matches!(&resolved, crate::symbols::ResolvedType::RustPath(path) if path == display) {
+            return Some(super::runtime_nominals::project_type(
+                semantic_type_from_resolved(&resolved),
+                facts,
+            ));
+        }
+    }
     if let Some(checked) = checked_name(display.trim(), facts) {
         return Some(checked);
     }

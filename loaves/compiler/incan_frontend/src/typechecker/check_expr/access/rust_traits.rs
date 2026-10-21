@@ -172,6 +172,9 @@ impl TypeChecker {
 
     /// Close omitted native owner defaults once, before matching either impl members or associated type templates.
     pub(super) fn rust_closed_owner(&self, ty: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+        if matches!(ty, ResolvedType::Generic(base, _) if base == "[]") {
+            return ty.clone();
+        }
         let mut owner = match ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner.clone(),
             other => other.clone(),
@@ -192,6 +195,13 @@ impl TypeChecker {
     /// Keep metadata-defaulted owners in the same shortest form rustc displays at constructors, so opaque layouts
     /// have one argument arity across explicit trait adjustments and ordinary inherent calls.
     pub(super) fn rust_storage_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+        match owner {
+            ResolvedType::Ref(inner) => return ResolvedType::Ref(Box::new(self.rust_storage_owner(inner, info, path))),
+            ResolvedType::RefMut(inner) => {
+                return ResolvedType::RefMut(Box::new(self.rust_storage_owner(inner, info, path)));
+            }
+            _ => {}
+        }
         let Some(mut arguments) = self.rust_owner_type_args(owner, path) else {
             return owner.clone();
         };
@@ -219,6 +229,25 @@ impl TypeChecker {
             .collect::<Vec<_>>()
             .join(", ");
         self.resolved_type_from_rust_display(&format!("{path}<{arguments}>"))
+    }
+
+    /// Recognize only exact owned-text and vector views admitted at native borrowed parameters. Element equality
+    /// uses native carrier comparison, so this does not widen trait selection to permissive opaque path compatibility.
+    fn rust_borrowed_view_matches(&self, target: &ResolvedType, argument: &ResolvedType) -> bool {
+        if target == &ResolvedType::RustPath("str".into()) && argument == &ResolvedType::Str {
+            return true;
+        }
+        let ResolvedType::Generic(base, elements) = target else {
+            return false;
+        };
+        let ResolvedType::Generic(owner, arguments) = self.rust_inference_type(argument, &[]) else {
+            return false;
+        };
+        base == "[]"
+            && owner == "List"
+            && elements.len() == 1
+            && arguments.len() == 1
+            && self.rust_trait_carriers_match(&elements[0], &arguments[0])
     }
 
     /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
@@ -307,10 +336,9 @@ impl TypeChecker {
                 }
                 _ => &target,
             };
-            let borrowed_text = parameter.type_display.trim().starts_with('&')
-                && target == &ResolvedType::RustPath("str".into())
-                && argument == &ResolvedType::Str;
-            if !borrowed_text && !self.rust_trait_carriers_match(target, argument) {
+            let borrowed_view =
+                parameter.type_display.trim().starts_with('&') && self.rust_borrowed_view_matches(target, argument);
+            if !borrowed_view && !self.rust_trait_carriers_match(target, argument) {
                 return None;
             }
         }
@@ -353,12 +381,20 @@ impl TypeChecker {
         } else {
             self.resolved_type_from_rust_display(call.rust_path)
         };
-        let owner = self.rust_closed_owner(&owner, info, call.rust_path);
-        let mut candidates = info
-            .implemented_traits
-            .iter()
-            .filter_map(|implementation| self.retained_trait_candidate(implementation, &call, &owner, info))
-            .collect::<Vec<_>>();
+        self.resolve_retained_rust_trait_call_on_owner(call, info, &owner, value_receiver, None)
+    }
+
+    /// Resolve a trait call on an already selected native owner, including a checked dereference target. A qualified
+    /// call restricts candidates to its named trait; ordinary value lookup considers all imported and prelude traits.
+    pub(super) fn resolve_retained_rust_trait_call_on_owner(
+        &mut self,
+        call: RustPathMethodCall<'_>,
+        info: &RustTypeInfo,
+        owner: &ResolvedType,
+        value_receiver: bool,
+        trait_path: Option<&str>,
+    ) -> Option<ResolvedType> {
+        let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path);
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
                 "rust trait call: {}.{} owner {owner:?}, {} impls, candidates {:?}",
@@ -406,6 +442,58 @@ impl TypeChecker {
         }
         self.retain_selected_rust_trait_call(&call, selected)?;
         Some(result)
+    }
+
+    /// Match native value and reference impl templates before adding an automatic receiver borrow. A consuming
+    /// method on an exclusive reference takes that reference; a borrowing method may directly reborrow its referent.
+    fn retained_rust_trait_candidates(
+        &self,
+        call: &RustPathMethodCall<'_>,
+        info: &RustTypeInfo,
+        source: &ResolvedType,
+        trait_path: Option<&str>,
+    ) -> Vec<TraitCandidate> {
+        let mut candidates = Vec::new();
+        let mut current = source;
+        loop {
+            let owner = self.rust_trait_owner(current, info, call.rust_path);
+            for implementation in &info.implemented_traits {
+                if trait_path.is_some_and(|path| {
+                    incan_lang::interop::ancestral_rust_path(path)
+                        != incan_lang::interop::ancestral_rust_path(&implementation.path)
+                }) {
+                    continue;
+                }
+                let Some(mut candidate) = self.retained_trait_candidate(implementation, call, &owner, info) else {
+                    continue;
+                };
+                if Self::rust_signature_has_receiver(&candidate.signature) {
+                    let Some(receiver) =
+                        Self::checked_rust_receiver_parameter(&candidate.signature, &candidate.self_type)
+                    else {
+                        continue;
+                    };
+                    if !self.rust_trait_carriers_match(&receiver.ty, source) {
+                        candidate.borrow_cost += 1;
+                    }
+                }
+                candidates.push(candidate);
+            }
+            match current {
+                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => current = inner,
+                _ => break,
+            }
+        }
+        candidates
+    }
+
+    /// Fill metadata defaults inside a native reference without erasing that reference's identity as trait Self.
+    fn rust_trait_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+        match owner {
+            ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(self.rust_trait_owner(inner, info, path))),
+            ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(self.rust_trait_owner(inner, info, path))),
+            _ => self.rust_closed_owner(owner, info, path),
+        }
     }
 
     /// Project a closed trait reference into the same checked external-call record as inherent and free callees.

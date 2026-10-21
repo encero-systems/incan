@@ -43,6 +43,7 @@ from pub::incan_mir_plan import (
     SizedNumeric,
     TupleElement,
     tuple_element_type,
+    list_leaf_type,
     Projection,
     FieldProjection,
     Rvalue,
@@ -5068,6 +5069,8 @@ pub def call_argument_operand(
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         PlanType.StringRef => return borrow_text_operand(builder, value, span)
         PlanType.StrRef => return borrow_str_operand(builder, value, span)
+        PlanType.SliceRef(elements) => return borrow_slice_operand(builder, value, elements, false, span)
+        PlanType.SliceMutRef(elements) => return borrow_slice_operand(builder, value, elements, true, span)
         PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
         PlanType.ScalarMutRef(elements) => return borrow_scalar_operand(builder, value, elements, true, span)
         _ => pass
@@ -6371,7 +6374,7 @@ def type_parameter_display(mut builder: Builder, operand: Operand, span: SourceS
     return runtime_text(builder, "incan_native_runtime::display_value", operand, span)
 
 
-def runtime_text(mut builder: Builder, path: str, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+pub def runtime_text(mut builder: Builder, path: str, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Render one owned carrier through a runtime formatter instantiated at the carrier's exact type."""
     ty = operand_type(builder, operand)?
     result = temporary(builder, PlanType.String, span)
@@ -6461,6 +6464,57 @@ def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: Sou
     else:
         _ = value_operand(builder, value, span)?
     return Ok(None)
+
+
+def borrow_slice_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    elements: list[PlanType],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Lend exact vector storage through its native slice conversion, preserving checked exclusive-access authority."""
+    if len(elements) != 1:
+        return Err("invalid Body IR native slice element arity")
+    mut reference_type = PlanType.SliceRef(elements)
+    mut method = "core::convert::AsRef::as_ref"
+    if mutable:
+        reference_type = PlanType.SliceMutRef(elements)
+        method = "core::convert::AsMut::as_mut"
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            actual = place_type(builder.locals, place)
+            if actual == PlanType.SliceRef(elements) and not mutable:
+                return Ok(read_place(place, false, span))
+            if actual == PlanType.SliceMutRef(elements):
+                if mutable and read.fact != OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR mutable slice without exclusive authority")
+                referent = Place(local=place.local, projection=Projection.Deref(PlanType.NativeSlice(elements)), span=span)
+                output = temporary(builder, reference_type, span)
+                mut operation = RvalueKind.Borrow(referent)
+                if mutable:
+                    operation = RvalueKind.MutBorrow(referent)
+                builder.emit(plan_assign(output, operation, span))
+                return Ok(read_place(output, mutable, span))
+        _ => pass
+    mut reference = literal(Constant.Unit, span)
+    match value:
+        RustOperand.Constant(constant) =>
+            if mutable:
+                return Err("unsupported Body IR mutable slice literal")
+            owner = bytes_literal(builder, constant, span)?
+            reference = list_borrow(builder, owner, false, span)?
+        RustOperand.Place(_read) => reference = checked_list_argument(builder, value, mutable, span)?
+    parameter = operand_type(builder, reference)?
+    element, depth = require_list_shape(parameter, "unsupported Body IR native slice owner")?
+    if depth != 1 or list_leaf_type(element) != elements[0]:
+        return Err("unsupported Body IR native slice element mismatch")
+    output = temporary(builder, reference_type, span)
+    arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
+    builder.externals.append(ExternalFunction(path=method, type_arguments=arguments, parameters=[parameter], return_type=reference_type, span=span))
+    terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
+    return Ok(read_place(output, mutable, span))
 
 
 def borrow_scalar_operand(
@@ -10649,6 +10703,10 @@ def enum_payload_read(
     if place_type(builder.locals, place) == PlanType.FrozenStr:
         return Ok(read_place(place, false, span))
     payload_type = place_type(builder.locals, place)
+    match payload_type:
+        PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
+        _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
         return Ok(read_place(place, false, span))
     if is_tuple_type(payload_type):
