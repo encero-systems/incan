@@ -12494,11 +12494,24 @@ def typed_carrier_operand(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Materialize checked carrier and text conversions at a concrete call, return, or collection boundary."""
+    """Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
+
+    A checked native Copy read can dereference an explicit reference slot only for its matching owned carrier. Other
+    reference values retain the early reference-read boundary, and the adapter verifies the native Copy capability.
+    """
     if ty == PlanType.FrozenStr:
         return frozen_operand(builder, operand, span)
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
+        _ => pass
+    match (ty, operand):
+        (PlanType.Model(owner, _name), RustOperand.Place(read)) =>
+            if read.fact == OwnershipFact.Copy and owner >= 0 and owner < len(builder.nominals):
+                declaration = builder.nominals[owner]
+                if declaration.native_item != "" and "Copy" in declaration.derives:
+                    source = scalar_place(builder, read.place, span)?
+                    if place_type(builder.locals, source) == ty:
+                        return target_read(builder, source, read.fact, span)
         _ => pass
     value = value_operand(builder, operand, span)?
     if ty == PlanType.String and operand_type(builder, value)? == PlanType.FrozenStr:

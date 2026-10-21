@@ -6134,7 +6134,8 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a method call (`base.method(args...)`) and return the method's return type.
+    /// Type-check a method call (`base.method(args...)`) and return the method's return type. Native boxed variants
+    /// validate their semantic payload before the retained Box construction restores exact Rust storage.
     pub(in crate::typechecker::check_expr) fn check_method_call(
         &mut self,
         base: &Spanned<Expr>,
@@ -6958,7 +6959,11 @@ impl TypeChecker {
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                 }
                 let constructor = format!("{path}::{method}");
-                if let Some(metadata) = self.rust_item_metadata_for_path(&constructor)
+                let boxed_payload = self
+                    .rust_variant_payload_carriers(&path, method)
+                    .is_some_and(|carriers| carriers.contains(&incan_lang::interop::RustPayloadCarrier::Boxed));
+                if !boxed_payload
+                    && let Some(metadata) = self.rust_item_metadata_for_path(&constructor)
                     && let RustItemKind::Function(signature) = metadata.kind
                 {
                     return self.validate_rust_function_call_with_expected(
