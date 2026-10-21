@@ -14,7 +14,7 @@ pub def artifact_files(directory: Path, package: str) -> list[Path]:
     return [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json"]]
 
 
-def file_digest(path: Path) -> Result[str, str]:
+pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
     content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
     return Ok(hexlify(sha256.digest(content)))

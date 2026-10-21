@@ -13,6 +13,7 @@ The contract families say what `incan` must do, each case as a program that carr
 | `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
 | `project` | `incan describe-unit src/main.incn` | the unit description's dependencies, standard packages and active features, or the refusal's stderr and exit code |
 | `format` | `incan fmt [--check] src/main.incn` | exact formatted text, check exit codes, check immutability and repeated-format stability |
+| `graph` | `incan inspect codegraph` for each `graph-commands:` entry | query output, repeated-query equality, JSON/JSONL agreement, edit-stable declaration identities and invalidation after source changes |
 
 ## Layout
 
@@ -48,6 +49,7 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# expect-active-features:` | Exactly these active features; an empty block means none. |
 | `# expect-formatted:` | Exact formatted source, indented as a block. Required for a `format` file or project case. The header and its separating blank line are removed from the entry source before formatting; the expected text has one final newline. |
 | `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
+| `# graph-commands:` | Inspection arguments, one invocation per indented line, without `incan inspect codegraph`. Only the `graph` family admits this directive. Paths are relative to the fixture project. |
 
 A directive is `#`, one space, the key, a colon. Block lines follow their directive, each `#` and at least two spaces; the first line sets the indentation. A bare `#` inside a block is an empty line. A blank line or any other non-comment line ends the header, and a directive after it is refused. Every case declares at least one expectation its family compares; a family refuses the expectations it does not compare.
 

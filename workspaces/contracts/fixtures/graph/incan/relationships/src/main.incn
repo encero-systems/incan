@@ -1,0 +1,17 @@
+# behavior: Graph queries expose definitions, references, callers, callees and imports with stable cached answers.
+# graph-commands:
+#   src/main.incn --query defs helper
+#   src/main.incn --query callers helper
+#   src/main.incn --query callees main
+#   src/main.incn --query refs helper
+#   src/main.incn --query imports main
+# expect-stdout-contains:
+#   declaration provider::helper src/provider.incn:1
+#   call main src/main.incn:17
+#   call provider::helper src/main.incn:17
+#   reference provider::helper src/main.incn:17
+#   import provider::helper src/main.incn:14
+from provider import helper
+def main() -> None:
+    """Call a provider whose definition lives in another module."""
+    println(helper())

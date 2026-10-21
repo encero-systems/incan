@@ -1,0 +1,98 @@
+"""Compact query projections derived solely from exported graph records, cached beside each immutable unit graph."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from graph_cache import publish
+from graph_queries import display, identity, nested, text
+from std.hash import sha256
+from std.encoding.hex import hexlify
+
+
+def key(value: str) -> str:
+    """Shorten an existing linkage key without changing its equality relation; absence remains absence."""
+    if value == "":
+        return ""
+    return hexlify(sha256.digest(value.encode("utf-8")))
+
+
+pub def query_paths(paths: list[Path], kind: str) -> Result[list[Path], str]:
+    """Reuse or build a compact unit projection so new queries avoid decoding signatures and complete source spans."""
+    mut result: list[Path] = []
+    for path in paths:
+        nodes = Path(f"{path.0}.queries-v2.nodes")
+        if not nodes.is_file():
+            build_index(path)?
+        result.append(nodes)
+        mut edge = ""
+        if kind == "refs":
+            edge = "reference"
+        elif kind == "callers" or kind == "callees":
+            edge = "call"
+        elif kind == "imports":
+            edge = "import"
+        if edge != "":
+            result.append(Path(f"{path.0}.queries-v2.{edge}"))
+    return Ok(result)
+
+
+def compact(record: JsonValue) -> Result[str, str]:
+    """Keep presentation and linkage fields, without replicating the compiler's source or type analysis."""
+    mut fields: Dict[str, JsonValue] = {}
+    for name in ["record", "name", "path", "callee"]:
+        fields[name] = JsonValue.string(text(record, name))
+    for name in ["id", "target_id", "owner_id", "module_id"]:
+        fields[name] = JsonValue.string(key(text(record, name)))
+    fields["label"] = JsonValue.string(display(record))
+    fields["stable_key"] = JsonValue.string(key(identity(record)))
+    if text(record, "record") == "import":
+        mut targets: list[str] = []
+        match nested(record, "bindings").as_array():
+            Some(bindings) =>
+                for binding in bindings:
+                    if identity(binding) != "":
+                        label = display(binding)
+                        if label not in targets:
+                            targets.append(label)
+            None => pass
+        if len(targets) == 0:
+            targets.append(text(record, "path"))
+        fields["import_targets"] = JsonValue.array([JsonValue.string(label) for label in targets])
+    source = nested(record, "span")
+    fields["span"] = JsonValue.object({"file": nested(source, "file"), "start_line": nested(source, "start_line")})
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def build_index(path: Path) -> Result[None, str]:
+    """Project one immutable unit graph once, publishing the node file last as the completeness marker."""
+    document = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    mut nodes: list[str] = []
+    mut references: list[str] = []
+    mut calls: list[str] = []
+    mut imports: list[str] = []
+    for line in document.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => error.message())?
+        tag = text(record, "record")
+        if tag == "header":
+            nodes.append(line)
+            references.append(line)
+            calls.append(line)
+            imports.append(line)
+            continue
+        if tag not in ["module", "declaration", "reference", "call", "import"]:
+            continue
+        entry = compact(record)?
+        if tag == "module" or tag == "declaration":
+            nodes.append(entry)
+        elif tag == "reference":
+            references.append(entry)
+        elif tag == "call":
+            calls.append(entry)
+        else:
+            imports.append(entry)
+    groups: Dict[str, list[str]] = {"nodes": nodes, "reference": references, "call": calls, "import": imports}
+    for group in ["reference", "call", "import", "nodes"]:
+        output = Path(f"{path.0}.queries-v2.{group}")
+        publish(output, "\n".join(groups[group]) + "\n")?
+    return Ok(None)

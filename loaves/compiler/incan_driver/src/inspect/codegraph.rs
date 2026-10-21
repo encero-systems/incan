@@ -108,7 +108,19 @@ pub fn collect_codegraph_records(
     units: &[UnitDescription],
     allow_errors: bool,
 ) -> CodegraphResult<Vec<CodegraphRecord>> {
+    collect_codegraph_records_with_rust(path, units, allow_errors, None)
+}
+
+/// Export the same graph with the unit's exact Rust facts source, so interop inspection checks against the crates
+/// selected for compilation rather than silently losing checked references.
+pub fn collect_codegraph_records_with_rust(
+    path: &Path,
+    units: &[UnitDescription],
+    allow_errors: bool,
+    rust: Option<&crate::session::RustFactsSetup>,
+) -> CodegraphResult<Vec<CodegraphRecord>> {
     let mut sessions = UnitSessions::new(units);
+    sessions.rust = rust;
     let package = package_identity(&sessions, path);
     let package_name = package.as_ref().and_then(|package| package.name.clone());
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
@@ -163,6 +175,7 @@ pub fn collect_codegraph_records(
         let session = sessions.for_file(path)?;
         match collect_modules_detailed_with_session(path.to_path_buf(), session) {
             Ok(modules) => {
+                session.resolve_rust_facts(&modules)?;
                 let analysis = typecheck_diagnostics_and_info(session, &modules, package_name.as_deref())?;
                 if !analysis.diagnostics.is_empty() && !allow_errors {
                     return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
@@ -227,6 +240,7 @@ fn directory_modules_diagnostics_and_info(
         );
         match collected {
             Ok(modules) => {
+                session.resolve_rust_facts(&modules)?;
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
                         modules_by_path
@@ -530,13 +544,16 @@ fn collect_codegraph_semantic_contexts(
 struct UnitSessions<'u> {
     units: &'u [UnitDescription],
     sessions: BTreeMap<PathBuf, CompilationSession>,
+    rust: Option<&'u crate::session::RustFactsSetup>,
 }
 
 impl<'u> UnitSessions<'u> {
+    /// Bind lazily opened sessions to the units Oven selected; an optional Rust source is installed before checking.
     fn new(units: &'u [UnitDescription]) -> Self {
         Self {
             units,
             sessions: BTreeMap::new(),
+            rust: None,
         }
     }
 
@@ -550,14 +567,17 @@ impl<'u> UnitSessions<'u> {
     }
 
     /// The session of the unit that contains `file`.
-    fn for_file(&mut self, file: &Path) -> CodegraphResult<&CompilationSession> {
+    fn for_file(&mut self, file: &Path) -> CodegraphResult<&mut CompilationSession> {
         let unit = self.unit_for(file)?;
         if !self.sessions.contains_key(&unit.project_root) {
-            self.sessions
-                .insert(unit.project_root.clone(), CompilationSession::new(unit)?);
+            let mut session = CompilationSession::new(unit)?;
+            if let Some(rust) = self.rust {
+                session = session.with_rust_facts(rust)?;
+            }
+            self.sessions.insert(unit.project_root.clone(), session);
         }
         self.sessions
-            .get(&unit.project_root)
+            .get_mut(&unit.project_root)
             .ok_or_else(|| CodegraphError::failure(format!("no session for {}", unit.project_root.display())))
     }
 }

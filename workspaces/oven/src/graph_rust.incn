@@ -1,0 +1,96 @@
+"""Inspect the local Rust closure selected by Oven, using the same features, aliases and package environment as builds."""
+
+from rust::std::process import Command, id
+from std.fs import Path
+from std.toml import TomlValue
+from features import FeatureRequest
+from graph_cache import cache_file, compiler_digest, fingerprint, publish, tree_inputs
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from rust_activation import DependencyDomain
+from rust_units import RustBuild, BuiltUnit, binary_environment, build_dependencies, decoded, identity, library_arguments, linking, ordered, package_environment, read_registry_units, registry_features, rust_facet, target_configuration
+from toolchain import Toolchain, rust_compiler
+from unit_freshness import file_digest
+
+
+pub def inspect_rust(root: Path, profile: str, features: FeatureRequest, substitutes: Dict[str, str], toolchain: Toolchain) -> Result[list[Path], str]:
+    """Cache one graph per Rust unit digest, including its dependency identities; unchanged graphs skip rustc entirely."""
+    rustc = rust_compiler(toolchain)
+    configuration = target_configuration(rustc)?
+    demand = LocalDemand(project=root.0, domain=DependencyDomain.Target, features=features.features, defaults=features.default_features)
+    facets = ordered(local_facets(demand, configuration, None, substitutes)?)?
+    request = RustBuild(project=root.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?, features=features.features, default_features=features.default_features, substitutes=substitutes)
+    compiler = compiler_digest(root, toolchain.driver)?
+    mut digests: Dict[str, str] = {}
+    mut entries: Dict[str, Path] = {}
+    mut missing = false
+    for facet in facets:
+        key = f"{facet.project}@{facet.domain.value()}"
+        mut inputs = ["incan.codegraph.rust/1", compiler, toolchain.sysroot, identity(facet, profile)] + tree_inputs(Path(facet.project))?
+        for edge in facet.local:
+            inputs.append(digests[f"{edge.project}@{edge.domain.value()}"])
+        for selected in facet.registry:
+            inputs.append(selected.to_json().map_err((error) => error.message())?)
+            loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+            requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+            artifact = request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?
+            inputs.append(compiler_digest(root, artifact)?)
+        digest = fingerprint(inputs)?
+        digests[key] = digest
+        entry = cache_file(root, digest)?
+        entries[key] = entry
+        if not entry.is_file():
+            missing = true
+    mut paths: list[Path] = []
+    mut built: Dict[str, BuiltUnit] = {}
+    if missing:
+        declared = rust_facet(root.0)?
+        built = build_dependencies(request, facets, len(declared.binaries) > 0)?
+    for facet in facets:
+        key = f"{facet.project}@{facet.domain.value()}"
+        path = entries[key]
+        if not path.is_file():
+            export_facet(facet, root, path, request, built, toolchain)?
+        paths.append(path)
+    return Ok(paths)
+
+
+def export_facet(facet: LocalFacet, root: Path, path: Path, request: RustBuild, built: Dict[str, BuiltUnit], toolchain: Toolchain) -> Result[None, str]:
+    """Export a library and the selected root's binary targets through the driver's observer, with no code generation."""
+    declared = rust_facet(facet.project)?
+    mut search = request.registry.search
+    for key in sorted([key for key in built.keys()]):
+        search.append(built[key].directory)
+    links = linking(facet, request, built, search)?
+    mut documents: list[str] = []
+    if declared.kind != "":
+        arguments = library_arguments(declared) + links
+        documents.append(observe(path, facet, arguments, package_environment(facet.project, declared, declared.crate_name), false, toolchain)?)
+    if facet.project == root.0 and facet.domain == DependencyDomain.Target:
+        for name, source in declared.binaries:
+            mut arguments = [source, "--crate-name", name.replace("-", "_"), "--crate-type", "bin", "--edition", declared.edition] + links
+            key = f"{facet.project}@{facet.domain.value()}"
+            if key in built:
+                arguments = arguments + ["--extern", f"{declared.crate_name}={built[key].artifact}"]
+            environment = binary_environment(request.rustc, facet.project, declared, name.replace("-", "_"))?
+            documents.append(observe(path, facet, arguments, environment, declared.unstable, toolchain)?)
+    return publish(path, "".join(documents))
+
+
+def observe(path: Path, facet: LocalFacet, arguments: list[str], environment: Dict[str, str], unstable: bool, toolchain: Toolchain) -> Result[str, str]:
+    """Run the installed compiler in analysis-only mode, preserving diagnostics and never caching a failed export."""
+    output = Path(f"{path.0}.{id()}.analysis")
+    mut command = Command.new(toolchain.driver)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    if unstable:
+        command.env("RUSTC_BOOTSTRAP", "1")
+    for name in sorted([key for key in environment.keys()]):
+        value = environment[name]
+        command.env(name, value)
+    for argument in ["--rust-codegraph", output.0, facet.project, "--sysroot", toolchain.sysroot, "--cap-lints", "allow"] + arguments:
+        command.arg(argument)
+    result = command.output().map_err((error) => str(error))?
+    if not result.status.success():
+        return Err(f"Rust graph analysis failed for {facet.project}:\n{decoded(result.stderr)}")
+    text = output.read_text("utf-8", "strict").map_err((error) => error.message())?
+    output.unlink().map_err((error) => error.message())?
+    return Ok(text)

@@ -1,0 +1,25 @@
+# behavior: Rust definitions, aliases, receiver-resolved methods and direct and indirect calls are inspected without running the program.
+# graph-commands:
+#   . --query defs helper
+#   . --query callers helper
+#   . --query callees caller
+#   . --query refs helper
+#   . --query imports rust_relationships
+#   . --query defs leaf
+#   . --query callers leaf
+#   . --query callees indirect
+#   . --query callees dynamic
+#   . --query refs Widget
+# expect-stdout-contains:
+#   declaration rust_relationships::provider::helper src/lib.rs:4
+#   call rust_relationships::caller src/lib.rs:28
+#   call rust_relationships::provider::helper src/lib.rs:28
+#   call rust_relationships::<Widget>::value src/lib.rs:29
+#   reference rust_relationships::provider::helper src/lib.rs:28
+#   import rust_relationships::provider::helper src/lib.rs:9
+#   declaration graph_provider::leaf deps/provider/src/lib.rs:2
+#   call rust_relationships::caller src/lib.rs:29
+#   call graph_provider::leaf src/lib.rs:29
+#   call <indirect> src/lib.rs:33
+#   call rust_relationships::Value::value src/lib.rs:42
+#   reference rust_relationships::Widget src/lib.rs:46

@@ -1,0 +1,86 @@
+"""Public graph command contracts, including warm-query equality and wire-format agreement."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from compare import compare
+from header import Header
+from run import Outcome, invoke
+
+
+pub def compare_graph(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+    """Run the declared inspections twice, compare warm answers, and compare their observable output."""
+    mut stdout = ""
+    mut stderr = ""
+    mut code: Option[int] = Some(0)
+    mut failures: list[str] = []
+    for invocation in header.items("graph-commands"):
+        arguments = ["inspect", "codegraph"] + invocation.split(" ")
+        outcome = invoke(incan, arguments, project)?
+        repeated = invoke(incan, arguments, project)?
+        if repeated.stdout != outcome.stdout or repeated.code != outcome.code:
+            failures.append(f"warm inspection differs: {invocation}")
+        stdout += outcome.stdout.replace(f"{project.0}/", "")
+        stderr += outcome.stderr
+        if outcome.code != Some(0):
+            code = outcome.code
+    for failure in compare("graph", header, Outcome(stdout=stdout, stderr=stderr, code=code)):
+        failures.append(failure)
+    if len(failures) > 0 and stderr.strip() != "":
+        failures.append(stderr)
+    if code == Some(0):
+        for failure in check_documents(incan, project)?:
+            failures.append(failure)
+    return Ok(failures)
+
+
+def document(incan: str, project: Path, format: str) -> Result[str, str]:
+    """Read one public export, surfacing compiler refusal rather than comparing an empty document."""
+    result = invoke(incan, ["inspect", "codegraph", ".", "--format", format], project)?
+    if result.code != Some(0):
+        return Err(f"{format} export failed: {result.stderr}")
+    return Ok(result.stdout)
+
+
+def declaration_identities(document: str) -> Result[list[str], str]:
+    """Compare only declaration identities across a position-only source edit; spans must change independently."""
+    value = parse(document).map_err((error) => error.message())?
+    mut identities: list[str] = []
+    for record in value.expect_array().map_err((error) => error.message())?:
+        tag = record.require("record").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        if tag != "declaration":
+            continue
+        stable = record.require("stable_identity").map_err((error) => error.message())?
+        if stable.is_null():
+            return Err("a checked fixture declaration has no stable identity")
+        identities.append(stable.to_json().map_err((error) => error.message())?)
+    return Ok(sorted(identities))
+
+
+def check_documents(incan: str, project: Path) -> Result[list[str], str]:
+    """JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement."""
+    original = document(incan, project, "json")?
+    jsonl = document(incan, project, "jsonl")?
+    mut lines: list[JsonValue] = []
+    for line in jsonl.split("\n"):
+        if line != "":
+            lines.append(parse(line).map_err((error) => error.message())?)
+    mut failures: list[str] = []
+    canonical = parse(original).map_err((error) => error.message())?.to_json().map_err((error) => error.message())?
+    line_array = JsonValue.array(lines).to_json().map_err((error) => error.message())?
+    if canonical != line_array:
+        failures.append("JSON and JSONL exports disagree")
+    mut source = project.joinpath("src").joinpath("lib.rs")
+    if not source.is_file():
+        source = project.joinpath("src").joinpath("main.incn")
+    before = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source.write_text(f"\n{before}", "utf-8", "strict", None).map_err((error) => error.message())?
+    moved = document(incan, project, "json")?
+    if original == moved:
+        failures.append("source edit reused stale source spans")
+    if declaration_identities(original)? != declaration_identities(moved)?:
+        failures.append("line movement changed a declaration identity")
+    source.write_text("this is invalid in both languages {", "utf-8", "strict", None).map_err((error) => error.message())?
+    invalid = invoke(incan, ["inspect", "codegraph", "."], project)?
+    if invalid.code == Some(0):
+        failures.append("broken source reused a checked cached graph")
+    return Ok(failures)

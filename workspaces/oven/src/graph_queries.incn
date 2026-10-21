@@ -1,0 +1,143 @@
+"""Queries over the compiler's exported facts. No source parsing or inferred call edges live here."""
+
+from std.json import JsonValue
+
+
+pub def text(value: JsonValue, key: str) -> str:
+    """Read an optional presentation field; absence never becomes a proved relationship."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(result) => return result
+                None => pass
+        None => pass
+    return ""
+
+
+pub def nested(value: JsonValue, key: str) -> JsonValue:
+    """Read an optional structured fact without making absent identities compare equal to a proved one."""
+    match value.get(key):
+        Some(item) => return item
+        None => return JsonValue.null()
+
+
+pub def identity(value: JsonValue) -> str:
+    """Use the compiler's edit-stable identity, preserving its full structured origin and signature."""
+    if text(value, "stable_key") != "":
+        return text(value, "stable_key")
+    stable = nested(value, "stable_identity")
+    match stable.as_object():
+        None => return ""
+        Some(_) => return stable.to_json().unwrap_or("")
+
+
+pub def display(value: JsonValue) -> str:
+    """Show the qualified semantic origin, with the declared name when the origin names only a module."""
+    if text(value, "label") != "":
+        return text(value, "label")
+    stable = nested(value, "stable_identity")
+    origin = nested(stable, "origin")
+    mut segments: list[str] = []
+    match nested(origin, "path").as_array():
+        Some(items) =>
+            for item in items:
+                match item.as_str():
+                    Some(part) => segments.append(part)
+                    None => pass
+        None => pass
+    name = text(stable, "declaration_name")
+    if name == "":
+        if text(value, "callee") != "":
+            return text(value, "callee")
+        if text(value, "name") != "":
+            return text(value, "name")
+        return text(value, "id")
+    if len(segments) == 0 or segments[len(segments) - 1] != name:
+        segments.append(name)
+    return "::".join(segments)
+
+
+def location(value: JsonValue) -> str:
+    """A source anchor remains separate from the durable declaration identity."""
+    source = nested(value, "span")
+    file = text(source, "file")
+    line = nested(source, "start_line").to_json().unwrap_or("0")
+    if file == "":
+        return "<unknown>:0"
+    return f"{file}:{line}"
+
+
+pub def query(records: list[JsonValue], kind: str, term: str) -> list[str]:
+    """Select definitions and traverse only compiler-proven references, callers, callees or module imports."""
+    mut selected: list[str] = []
+    mut identities: list[str] = []
+    mut modules: list[str] = []
+    mut by_id: Dict[str, JsonValue] = {}
+    for record in records:
+        record_kind = text(record, "record")
+        identifier = text(record, "id")
+        if identifier != "" and record_kind in ["module", "declaration"]:
+            by_id[identifier] = record
+        if record_kind == "module":
+            if term in text(record, "name") or term in identifier:
+                modules.append(identifier)
+        if record_kind == "declaration":
+            if term in display(record) or term == identifier:
+                selected.append(identifier)
+                proved = identity(record)
+                if proved != "":
+                    identities.append(proved)
+    mut hits: list[str] = []
+    for record in records:
+        record_kind = text(record, "record")
+        if kind == "defs" and record_kind != "declaration":
+            continue
+        if kind == "imports" and record_kind != "import":
+            continue
+        if kind == "refs" and record_kind != "reference":
+            continue
+        if kind in ["callers", "callees"] and record_kind != "call":
+            continue
+        identifier = text(record, "id")
+        target = text(record, "target_id")
+        owner = text(record, "owner_id")
+        proved = identity(record)
+        targets = target in selected or (proved != "" and (proved in identities or term in display(record)))
+        mut hit = false
+        mut label = display(record)
+        if kind == "defs":
+            hit = record_kind == "declaration" and identifier in selected
+        elif kind == "imports":
+            hit = record_kind == "import" and text(record, "module_id") in modules
+            label = text(record, "path")
+            if hit:
+                match nested(record, "import_targets").as_array():
+                    Some(targets) =>
+                        for target in targets:
+                            match target.as_str():
+                                Some(name) =>
+                                    line = f"import {name} {location(record)}"
+                                    if line not in hits:
+                                        hits.append(line)
+                                None => pass
+                        continue
+                    None => pass
+        elif kind == "refs":
+            hit = record_kind == "reference" and targets
+        elif kind == "callers":
+            hit = record_kind == "call" and targets
+            if owner in by_id:
+                label = display(by_id[owner])
+            else:
+                label = owner
+        elif kind == "callees":
+            hit = record_kind == "call" and owner in selected
+            if target in by_id:
+                label = display(by_id[target])
+            elif label == "":
+                label = text(record, "callee")
+        if hit:
+            line = f"{record_kind} {label} {location(record)}"
+            if line not in hits:
+                hits.append(line)
+    return sorted(hits)
