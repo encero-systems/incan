@@ -143,7 +143,7 @@ impl TypeChecker {
         // RFC 088 gives builtin collections and generators the `Iterable[T]` protocol without a source-level
         // adoption entry. Reuse the assignment relation that owns those protocol conversions so a generic bound sees
         // the same iterable set as a parameter or return annotation.
-        if builtin_traits::from_str(&bound.name) == Some(TraitId::Iterable) && expected_args.len() == 1 {
+        if self.bound_is_builtin_trait(bound, TraitId::Iterable) && expected_args.len() == 1 {
             let expected = ResolvedType::Generic(builtin_traits::as_str(TraitId::Iterable).to_string(), expected_args);
             return self.types_compatible(ty, &expected);
         }
@@ -556,21 +556,37 @@ impl TypeChecker {
     /// spelling, or the builtin's own name with no import or local trait claiming it.
     pub(in crate::typechecker) fn bound_is_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
         let is_builtin_name = |name: &str| builtin_traits::from_str(name) == Some(trait_id);
+        if bound.name.starts_with("pub::") && builtin_traits::from_bound_str(&bound.name) == Some(trait_id) {
+            return true;
+        }
         if let Some(module_path) = &bound.module_path {
-            return is_builtin_name(Self::type_bound_source_name(bound))
-                && module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT);
+            let name = Self::type_bound_source_name(bound);
+            let qualified = if module_path.first().map(String::as_str) == Some("pub") {
+                format!("{}::{name}", module_path.join("::"))
+            } else {
+                format!("{}.{name}", module_path.join("."))
+            };
+            return builtin_traits::from_bound_str(&qualified) == Some(trait_id);
         }
         match self.import_binding_path(&bound.name) {
             Some(path) => {
-                path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
-                    && path.last().is_some_and(|name| is_builtin_name(name))
+                let qualified = if path.first().map(String::as_str) == Some("pub") {
+                    path.join("::")
+                } else {
+                    path.join(".")
+                };
+                builtin_traits::from_bound_str(&qualified) == Some(trait_id)
             }
             None => {
                 is_builtin_name(Self::type_bound_source_name(bound))
-                    && !matches!(
+                    && (!matches!(
                         self.lookup_symbol(&bound.name).map(|symbol| &symbol.kind),
                         Some(SymbolKind::Trait(_))
-                    )
+                    ) || self
+                        .symbols
+                        .lookup(&bound.name)
+                        .and_then(|symbol| self.symbols.identity_of(symbol))
+                        .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin))
             }
         }
     }
@@ -672,31 +688,15 @@ impl TypeChecker {
     fn builtin_comparison_bound_implies(&self, active: &TypeBoundInfo, required: &TypeBoundInfo) -> bool {
         let Some(active_derive) = [TraitId::Eq, TraitId::Ord]
             .into_iter()
-            .find(|trait_id| self.bound_names_builtin_trait(active, *trait_id))
+            .find(|trait_id| self.bound_is_builtin_trait(active, *trait_id))
             .and_then(|trait_id| derives::from_str(builtin_traits::as_str(trait_id)))
         else {
             return false;
         };
         derives::implied_derives(active_derive).iter().any(|implied| {
             builtin_traits::from_str(derives::as_str(*implied))
-                .is_some_and(|trait_id| self.bound_names_builtin_trait(required, trait_id))
+                .is_some_and(|trait_id| self.bound_is_builtin_trait(required, trait_id))
         })
-    }
-
-    /// Whether a checked bound names the builtin trait `trait_id` (see [`Self::bound_is_builtin_trait`]), the
-    /// builtin's own stub that a module binds without importing it included.
-    fn bound_names_builtin_trait(&self, bound: &TypeBoundInfo, trait_id: TraitId) -> bool {
-        if self.bound_is_builtin_trait(bound, trait_id) {
-            return true;
-        }
-        bound.module_path.is_none()
-            && self.import_binding_path(&bound.name).is_none()
-            && builtin_traits::from_str(Self::type_bound_source_name(bound)) == Some(trait_id)
-            && self
-                .symbols
-                .lookup(&bound.name)
-                .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
-                .is_some_and(|identity| identity.origin == incan_semantics_core::SymbolOrigin::Builtin)
     }
 
     /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.

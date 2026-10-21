@@ -107,6 +107,7 @@ impl TypeChecker {
             let actual = self.body_ir_checked_value_type(value.span)?;
             self.infer_type_param_bindings(&parameter.ty, actual, &mut bindings);
         }
+        self.infer_type_param_bindings_from_source_bounds(&member.type_param_bound_details, &mut bindings);
         if parameters
             .iter()
             .chain(&member.type_params)

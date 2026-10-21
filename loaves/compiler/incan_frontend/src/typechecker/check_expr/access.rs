@@ -1227,7 +1227,7 @@ impl TypeChecker {
     /// collection values that have an obvious frontend iterator element type. It is a typechecker-only surface helper;
     /// lowering and emission use the same protocol shape to route known iterator methods through dedicated backend
     /// handling. A `Generator[T]` satisfies `Iterator[T]` (RFC 006, RFC 088), so it is an iterator value here.
-    fn iterable_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+    pub(in crate::typechecker) fn iterable_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
             ResolvedType::Generic(name, args)
                 if (Self::is_iterator_protocol_name(name) || Self::is_iterable_protocol_name(name))

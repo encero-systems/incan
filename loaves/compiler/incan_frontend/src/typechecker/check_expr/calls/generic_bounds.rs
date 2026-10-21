@@ -154,7 +154,7 @@ impl TypeChecker {
             &info.type_param_bound_details,
             &mut type_bindings,
         );
-        self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
+        self.infer_type_param_bindings_from_source_bounds(&info.type_param_bound_details, &mut type_bindings);
         let arguments = Self::arguments_with_parameter_types(&params_with_explicit, args);
         self.unify_argument_type_bindings(&info.type_params, &arguments, &mut type_bindings);
         let mut instantiation =
@@ -1023,7 +1023,7 @@ impl TypeChecker {
             &method_info.type_param_bound_details,
             &mut type_bindings,
         );
-        self.infer_type_param_bindings_from_source_callables(&method_info.type_param_bound_details, &mut type_bindings);
+        self.infer_type_param_bindings_from_source_bounds(&method_info.type_param_bound_details, &mut type_bindings);
         let arguments = Self::arguments_with_parameter_types(&params, args);
         self.unify_argument_type_bindings(&method_info.type_params, &arguments, &mut type_bindings);
         let mut instantiation =
@@ -1316,32 +1316,57 @@ impl TypeChecker {
         (args.len() == arity + 1).then_some(args)
     }
 
-    /// Infer still-open generic arguments from a function value or nominal callable object and its `CallableN` bound.
-    fn infer_type_param_bindings_from_source_callables(
+    /// Close dependent binders from checked callable signatures, iterable elements and nominal trait adoptions.
+    /// A bound can depend on a binder another bound just closed; the finite pass count follows that dependency set.
+    pub(in crate::typechecker) fn infer_type_param_bindings_from_source_bounds(
         &self,
         bound_details: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
         bindings: &mut std::collections::HashMap<String, ResolvedType>,
     ) {
-        for (type_param, bounds) in bound_details {
-            let Some(actual) = bindings.get(type_param).cloned() else {
-                continue;
-            };
-            let Some(bound) = bounds
-                .iter()
-                .find(|bound| self.callable_trait_for_bound(bound).is_some())
-            else {
-                continue;
-            };
-            let Some(callable_args) = self.source_callable_signature_args(&actual, bound) else {
-                continue;
-            };
-            if bound.type_args.len() != callable_args.len() {
-                continue;
+        for _ in 0..=bound_details.len() {
+            let previous = bindings.clone();
+            for (type_param, bounds) in bound_details {
+                let Some(actual) = bindings.get(type_param).cloned() else {
+                    continue;
+                };
+                for bound in bounds {
+                    let Some(arguments) = self.source_bound_arguments(&actual, bound) else {
+                        continue;
+                    };
+                    if bound.type_args.len() != arguments.len() {
+                        continue;
+                    }
+                    for (expected, actual) in bound.type_args.iter().zip(&arguments) {
+                        let expected = substitute_resolved_type(expected, bindings);
+                        self.infer_type_param_bindings(&expected, actual, bindings);
+                    }
+                }
             }
-            for (expected, actual) in bound.type_args.iter().zip(callable_args.iter()) {
-                let expected = substitute_resolved_type(expected, bindings);
-                self.infer_type_param_bindings(&expected, actual, bindings);
+            if *bindings == previous {
+                break;
             }
+        }
+    }
+
+    /// Read a bound's actual arguments from its existing semantic relation, preserving standard protocol identity.
+    fn source_bound_arguments(
+        &self,
+        actual: &ResolvedType,
+        bound: &crate::symbols::TypeBoundInfo,
+    ) -> Option<Vec<ResolvedType>> {
+        if self.callable_trait_for_bound(bound).is_some() {
+            return self.source_callable_signature_args(actual, bound);
+        }
+        if self.bound_is_builtin_trait(bound, TraitId::Iterable) {
+            return self.iterable_protocol_element_type(actual).map(|element| vec![element]);
+        }
+        match actual {
+            ResolvedType::Named(name) => self.instantiated_trait_args_for_type(name, &[], &bound.name),
+            ResolvedType::Generic(name, arguments) => {
+                self.instantiated_trait_args_for_type(name, arguments, &bound.name)
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.source_bound_arguments(inner, bound),
+            _ => None,
         }
     }
 
