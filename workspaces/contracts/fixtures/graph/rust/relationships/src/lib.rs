@@ -55,3 +55,9 @@ pub fn borrowed<'a>(items: &'a [Widget]) -> impl Iterator<Item = &'a Widget> {
 pub fn dependency_method() -> i32 {
     graph_provider::Gadget.value()
 }
+
+/// A closure expression keeps its enclosing declared caller.
+pub fn closure_caller() -> i32 {
+    let invoke = || renamed();
+    invoke()
+}

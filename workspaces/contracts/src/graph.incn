@@ -120,7 +120,7 @@ def string_field(value: JsonValue, key: str) -> str:
 
 
 def check_rust_links(document: str) -> Result[None, str]:
-    """A resolved call into a represented Rust crate must link to its exported declaration, including dependency methods."""
+    """Resolved Rust targets and navigable caller owners link to declarations, including dependency methods and closure expressions."""
     records = parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
     mut declarations: Dict[str, bool] = {}
     mut crates: list[str] = []
@@ -138,6 +138,9 @@ def check_rust_links(document: str) -> Result[None, str]:
     for record in records:
         if string_field(record, "record") != "call" or string_field(record, "language") != "rust":
             continue
+        owner = string_field(record, "owner_id")
+        if owner != "" and owner not in declarations:
+            return Err(f"Rust call has no navigable declaration owner: {owner}")
         callee = string_field(record, "callee")
         for root in crates:
             if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:

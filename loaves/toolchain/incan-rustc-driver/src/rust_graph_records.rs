@@ -157,28 +157,45 @@ pub fn module_id(tcx: TyCtxt<'_>, def: DefId) -> String {
     format!("module:{}", id(tcx, module(tcx, def)))
 }
 
+/// Return whether this rustc definition has a declaration record in the source graph.
+fn represented_declaration(kind: DefKind) -> bool {
+    matches!(
+        kind,
+        DefKind::Fn
+            | DefKind::AssocFn
+            | DefKind::Struct
+            | DefKind::Enum
+            | DefKind::Trait
+            | DefKind::Impl { .. }
+            | DefKind::Mod
+            | DefKind::TyAlias
+            | DefKind::AssocTy
+            | DefKind::Const { .. }
+            | DefKind::AssocConst { .. }
+            | DefKind::Static { .. }
+            | DefKind::Variant
+            | DefKind::Field
+    )
+}
+
+/// Link a body to its nearest represented declaration through rustc's parent relation. A closure expression keeps
+/// its own type tables and fact IDs, but navigation follows the enclosing declaration rather than a missing node.
+pub fn owner_id(tcx: TyCtxt<'_>, mut def: DefId) -> String {
+    while !represented_declaration(tcx.def_kind(def)) {
+        let Some(parent) = tcx.opt_parent(def) else {
+            break;
+        };
+        def = parent;
+    }
+    id(tcx, def)
+}
+
 /// Export all local declarations, including private and associated items; macro definitions are outside this slice.
 pub fn declarations(tcx: TyCtxt<'_>, records: &mut Vec<CodegraphRecord>) {
     let mut files = BTreeSet::new();
     for local in tcx.iter_local_def_id() {
         let def = local.to_def_id();
-        if !matches!(
-            tcx.def_kind(def),
-            DefKind::Fn
-                | DefKind::AssocFn
-                | DefKind::Struct
-                | DefKind::Enum
-                | DefKind::Trait
-                | DefKind::Impl { .. }
-                | DefKind::Mod
-                | DefKind::TyAlias
-                | DefKind::AssocTy
-                | DefKind::Const { .. }
-                | DefKind::AssocConst { .. }
-                | DefKind::Static { .. }
-                | DefKind::Variant
-                | DefKind::Field
-        ) {
+        if !represented_declaration(tcx.def_kind(def)) {
             continue;
         }
         let source = span(tcx, tcx.def_span(def));

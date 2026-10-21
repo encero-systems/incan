@@ -13,6 +13,7 @@
 #   . --query callees dependency_method
 #   . --query defs value --limit 1
 #   . --query defs rust_relationships::provider::helper
+#   . --query callees closure_caller
 # expect-stdout-contains:
 #   declaration rust_relationships::provider::helper src/lib.rs:4
 #   call rust_relationships::caller src/lib.rs:28
@@ -28,3 +29,5 @@
 #   reference rust_relationships::Widget src/lib.rs:46
 #   call graph_provider::<graph_provider::Gadget>::value src/lib.rs:56
 #   … 4 more
+#   call rust_relationships::closure_caller src/lib.rs:61
+#   call rust_relationships::provider::helper src/lib.rs:61

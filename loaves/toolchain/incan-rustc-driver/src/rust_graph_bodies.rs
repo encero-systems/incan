@@ -10,7 +10,7 @@ use rustc_hir::{
 };
 use rustc_middle::ty::{self, TyCtxt, TypeckResults};
 
-use crate::rust_graph_records::{id, identity, module_id, path, span};
+use crate::rust_graph_records::{id, identity, module_id, owner_id, path, span};
 
 /// Visit HIR item owners and each checked body once. Synthetic opaque lifetimes are definitions but have no HIR
 /// node, so only `definitions()` from the crate's HIR items may enter the signature visitor.
@@ -55,7 +55,7 @@ impl<'tcx> Visitor<'tcx> for Signature<'_, 'tcx> {
                 ),
                 language: CodegraphLanguage::Rust,
                 module_id: module_id(self.tcx, self.owner.to_def_id()),
-                owner_id: Some(id(self.tcx, self.owner.to_def_id())),
+                owner_id: Some(owner_id(self.tcx, self.owner.to_def_id())),
                 name: path(self.tcx, target),
                 kind: "type".to_owned(),
                 target_id: Some(id(self.tcx, target)),
@@ -140,7 +140,7 @@ impl<'tcx> Visitor<'tcx> for Body<'_, 'tcx> {
                     ),
                     language: CodegraphLanguage::Rust,
                     module_id: module_id(self.tcx, self.owner.to_def_id()),
-                    owner_id: Some(id(self.tcx, self.owner.to_def_id())),
+                    owner_id: Some(owner_id(self.tcx, self.owner.to_def_id())),
                     name: path(self.tcx, target),
                     kind: "type".to_owned(),
                     target_id: Some(id(self.tcx, target)),
@@ -168,7 +168,7 @@ impl Body<'_, '_> {
             ),
             language: CodegraphLanguage::Rust,
             module_id: module_id(self.tcx, self.owner.to_def_id()),
-            owner_id: Some(id(self.tcx, self.owner.to_def_id())),
+            owner_id: Some(owner_id(self.tcx, self.owner.to_def_id())),
             name: path(self.tcx, target),
             kind: kind.to_owned(),
             target_id: Some(id(self.tcx, target)),
@@ -191,7 +191,7 @@ impl Body<'_, '_> {
             ),
             language: CodegraphLanguage::Rust,
             module_id: module_id(self.tcx, self.owner.to_def_id()),
-            owner_id: Some(id(self.tcx, self.owner.to_def_id())),
+            owner_id: Some(owner_id(self.tcx, self.owner.to_def_id())),
             callee: target
                 .map(|def| path(self.tcx, def))
                 .unwrap_or_else(|| "<indirect>".to_owned()),
