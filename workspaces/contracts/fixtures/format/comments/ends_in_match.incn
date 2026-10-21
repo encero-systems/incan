@@ -1,0 +1,25 @@
+# behavior: A comment after a function ending in a nested match retains module-level spacing.
+# expect-formatted:
+#   def visit(items: list[int]) -> None:
+#       for item in items:
+#           match item:
+#               _ => pass
+#
+#
+#   # Section comment
+#
+#
+#   def other() -> int:
+#       return 1
+
+def visit(items: list[int]) -> None:
+    for item in items:
+        match item:
+            _ => pass
+
+
+# Section comment
+
+
+def other() -> int:
+    return 1

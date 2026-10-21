@@ -1,0 +1,31 @@
+# behavior: A top-level comment after a two-paragraph docstring keeps both surrounding gaps.
+# expect-formatted:
+#   def count() -> int:
+#       """
+#       First paragraph.
+#
+#       Second paragraph.
+#       """
+#       return 0
+#
+#
+#   # Section comment
+#
+#
+#   def other() -> int:
+#       return 1
+
+def count() -> int:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return 0
+
+
+# Section comment
+
+
+def other() -> int:
+    return 1

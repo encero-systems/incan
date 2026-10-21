@@ -1,0 +1,32 @@
+# behavior: A section comment stays outside a function with nested for and match suites.
+# expect-formatted:
+#   def count(items: list[int]) -> int:
+#       mut total = 0
+#       for item in items:
+#           match item:
+#               0 =>
+#                   total += 1
+#               _ => pass
+#       return total
+#
+#
+#   # Section comment
+#
+#
+#   def other() -> int:
+#       return 1
+
+def count(items: list[int]) -> int:
+    mut total = 0
+    for item in items:
+        match item:
+            0 => total += 1
+            _ => pass
+    return total
+
+
+# Section comment
+
+
+def other() -> int:
+    return 1

@@ -1,0 +1,23 @@
+# behavior: A module-level comment with no surrounding gaps stays attached at module indentation.
+# expect-formatted:
+#   def count() -> int:
+#       """
+#       First paragraph.
+#
+#       Second paragraph.
+#       """
+#       return 0
+#   # Section comment
+#   def other() -> int:
+#       return 1
+
+def count() -> int:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return 0
+# Section comment
+def other() -> int:
+    return 1
