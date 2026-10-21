@@ -1,5 +1,4 @@
 # behavior: empty list and None fields use a dependency's identifier type even when the caller declares its own type with the same name
-# pending: needs Oven path-dependency compilation
 # expect-stdout:
 #   0
 #   true

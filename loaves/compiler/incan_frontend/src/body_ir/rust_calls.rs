@@ -6,6 +6,7 @@ use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span, nominal_c
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
 /// The signature is already instantiated by checking. Source-local declarations supply the canonical carrier for an
 /// inferred model argument even when no annotation introduced that name into the checker's type-position map.
+/// Rust metadata supplies its complete native signature and has no authenticated Incan declaration frame.
 pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclaration]) -> Vec<bir::LoafCallable> {
     let mut identities = parameter_types::retained_type_identities(facts);
     for declaration in locals {
@@ -40,6 +41,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
             type_parameters: Vec::new(),
             native_type_arguments: call.type_arguments.iter().map(checked).collect(),
             parameter_defaults: Vec::new(),
+            declaration_frame: None,
         };
         if !calls.contains(&declaration) {
             calls.push(declaration);

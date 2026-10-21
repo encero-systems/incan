@@ -6798,7 +6798,7 @@ def lowered_plan(
     _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
     for declaration in intrinsics:
         enums.append(declaration)
-    if library:
+    if kind == "library":
         # A private type can occur in a public callable's signature or default. Its canonical ABI item is exported;
         # source visibility remains the manifest's checked public surface.
         for index in range(len(models)):
