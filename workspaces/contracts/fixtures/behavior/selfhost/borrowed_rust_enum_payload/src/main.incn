@@ -1,4 +1,4 @@
-# behavior: borrowed Rust enum payloads retain concrete methods and named fields retain declaration identities (#2256)
+# behavior: native enum payloads retain identities through borrowed named fields and boxed variant construction (#2256)
 # expect-stdout:
 #   checked
 #   7
@@ -10,6 +10,10 @@
 #   7
 #   native message
 #   Record { count: 7, text: "native", ready: false }
+#   Wrapped(Record { count: 7, text: "native", ready: false })
+#   7
+#   Record { count: 7, text: "native", ready: false }
+#   native result
 
 from rust::messages import Message, message, boxed_message, message_envelope, wrapped_message
 from rust::std::net import IpAddr
@@ -51,6 +55,18 @@ def inspect_wrapped(value: &Message) -> None:
         _ => pass
 
 
+def constructed_result() -> Result[Message, str]:
+    """Retain a native enum identity when construction supplies a Result payload."""
+    return Ok(Message.Wrapped(message()))
+
+
+def inspect_positional(value: &Message) -> None:
+    """Borrow the exact Box stored in a positional native payload before borrowing its content."""
+    match value:
+        Message.Wrapped(inner) => inspect_count(inner.as_ref())
+        _ => pass
+
+
 def main() -> None:
     """Keep the native owner alive while its record payload is borrowed."""
     println("checked")
@@ -65,3 +81,12 @@ def main() -> None:
     inspect_wrapped(wrapped)
     println(value)
     println(f"{value:?}")
+    constructed = Message.Wrapped(message())
+    println(f"{constructed:?}")
+    inspect_positional(constructed)
+    values: list[Message] = [message()]
+    copied = values[0].clone()
+    println(f"{copied:?}")
+    match constructed_result():
+        Ok(_value) => println("native result")
+        Err(error) => println(error)

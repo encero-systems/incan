@@ -5216,19 +5216,14 @@ def shared_model_argument(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Pass a checked nominal or enum by shared reference, retaining a reference already on its frame."""
+    """Borrow a checked nominal or enum, materializing collection elements once and retaining existing frame references."""
     match value:
         RustOperand.Place(read) =>
-            mut receiver = model_place(
-                builder.nominals,
-                builder.locals[builder.local_offset:],
-                read.place,
-                span,
-                builder.enums,
-                builder.unions,
-                builder.intrinsics,
-            )?
-            receiver.local += builder.local_offset
+            mut receiver = plan_place(0, span)
+            if is_element_place(builder, read.place)?:
+                receiver = materialized_receiver(builder, read.place, span)?
+            else:
+                receiver = scalar_place(builder, read.place, span)?
             source = place_type(builder.locals, receiver)
             if source == ty:
                 return Ok(read_place(receiver, false, span))

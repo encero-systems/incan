@@ -1226,36 +1226,9 @@ impl TypeChecker {
         let RustItemKind::Type(info) = metadata.kind else {
             return None;
         };
-        if info.variants.is_empty()
-            || info.variants.iter().any(|variant| {
-                variant.fields.len() != variant.field_type_displays.len()
-                    || (!variant.field_names.is_empty() && variant.fields.len() != variant.field_names.len())
-            })
-        {
-            return None;
-        }
-        let names = info
-            .variants
-            .iter()
-            .find(|selected| selected.name == variant)?
-            .field_names
-            .clone();
-        let variants = info
-            .variants
-            .iter()
-            .map(|variant| {
-                (
-                    variant.name.clone(),
-                    variant
-                        .field_type_displays
-                        .iter()
-                        .map(|field| self.native_rust_signature_type(field, &path))
-                        .collect::<Vec<_>>(),
-                    variant.field_names.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let fields = &variants.iter().find(|(name, _, _)| name == variant)?.1;
+        let layout = self.checked_rust_enum_layout(&path, &info)?;
+        let (_, fields, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
+        let names = names.clone();
         let mut arguments = self.rust_owner_type_args(expected_ty, &path)?;
         if !self.complete_rust_owner_arguments(&info, &mut arguments) {
             return None;
@@ -1284,13 +1257,7 @@ impl TypeChecker {
         }
         let (identity, _) = incan_semantics_core::body_ir::native_enum_variant(&path, variant)?;
         self.type_info.record_resolved_identity(span, identity);
-        self.type_info.rust.checked_enums.insert(
-            path,
-            crate::typechecker::type_info::RustCheckedEnum {
-                type_parameters: info.type_params,
-                variants,
-            },
-        );
+        self.type_info.rust.checked_enums.insert(path, layout);
         Some(RustEnumPatternResolution::PayloadTypes { fields, names })
     }
 

@@ -18,8 +18,8 @@ use crate::typechecker::helpers::{
 };
 use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
-    CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
-    RustCheckedFieldValue, RustMethodTraitImportUse, RustTraitImportInfo,
+    CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustArgCoercionKind, RustCheckedFieldValue,
+    RustMethodTraitImportUse, RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -6105,40 +6105,6 @@ impl TypeChecker {
         }
     }
 
-    /// Record the storage carrier lowering must restore for each boxed payload of a Rust enum variant constructor.
-    ///
-    /// The checked parameter is the semantic payload type, so the argument has already matched `T`. Only metadata
-    /// knows that the Rust field stores `Box<T>`; recording a `BoxPayload` coercion on the argument keeps the emitter
-    /// target-driven instead of guessing from the source expression. Variant payloads are positional, so keyword or
-    /// unpacked arguments record nothing and leave the ordinary binding diagnostics to speak.
-    fn record_rust_variant_payload_carriers(
-        &mut self,
-        rust_path: &str,
-        variant: &str,
-        args: &[CallArg],
-        params: &[CallableParam],
-    ) {
-        let Some(carriers) = self.rust_variant_payload_carriers(rust_path, variant) else {
-            return;
-        };
-        for (index, (arg, param)) in args.iter().zip(params).enumerate() {
-            if carriers.get(index).copied().unwrap_or_default() != incan_lang::interop::RustPayloadCarrier::Boxed {
-                continue;
-            }
-            let CallArg::Positional(arg_expr) = arg else {
-                continue;
-            };
-            self.type_info.rust.arg_coercions.insert(
-                (arg_expr.span.start, arg_expr.span.end),
-                RustArgCoercionInfo {
-                    rust_target_type: param.ty.to_string(),
-                    target_type: param.ty.clone(),
-                    kind: RustArgCoercionKind::BoxPayload,
-                },
-            );
-        }
-    }
-
     /// Type-check a method call (`base.method(args...)`) and return the method's return type.
     pub(in crate::typechecker::check_expr) fn check_method_call(
         &mut self,
@@ -6985,7 +6951,7 @@ impl TypeChecker {
                     span,
                 );
                 self.type_info.record_call_site_callable_params_exact(span, &params);
-                self.record_rust_variant_payload_carriers(&path, method, args, &params);
+                self.retain_rust_variant_construction(&path, method, args, &params, span);
                 return ResolvedType::RustPath(path);
             }
             if let Some(ret) = Self::known_rust_path_method_return(path.as_str(), method) {
