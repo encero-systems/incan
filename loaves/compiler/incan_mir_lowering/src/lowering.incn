@@ -209,9 +209,10 @@ from decorator_caches import (
 )
 from traits import (
     is_default_body,
-    receiver_method_identity,
     method_index,
     owner_method_index,
+    receiver_method_target,
+    implementation_target,
     receiver_fills_slot,
     receiver_fills_source_slot,
     receiver_fills_retained_slot,
@@ -3366,7 +3367,7 @@ def lower_method_call(
         return Ok(None)
     if lower_value_enum_ordinal(module, builder, target, arguments, destination, span)?:
         return Ok(None)
-    if lower_compiled_implementation(module, builder, target, arguments, destination, span)?:
+    if lower_compiled_method(module, builder, target, arguments, destination, span, true)?:
         return Ok(None)
     if retained_iterator_default(module, builder, target, arguments, span):
         return lower_retained_method_call(module, builder, target, arguments, destination, span)
@@ -3403,9 +3404,34 @@ def lower_method_call(
     )?:
         Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
         None => pass
-    # A source adopter resolves its checked slot through its own implementation or the published default. Its slot
-    # cannot grant a native SDK trait implementation. SDK-owned receivers call their compiled crate methods.
-    for callable in module.loaf_callables:
+    if lower_compiled_method(module, builder, target, arguments, destination, span, false)?:
+        return Ok(None)
+    return lower_retained_method_call(module, builder, target, arguments, destination, span)
+
+
+def lower_compiled_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+    implementation_only: bool,
+) -> Result[bool, str]:
+    """Call one checked compiled target. Selected overrides precede SDK dispatch; ordinary calls preserve source slots."""
+    selected = receiver_method_target(
+        module,
+        target,
+        builder.locals[builder.local_offset:],
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    if implementation_only:
+        if selected.canonical == target.canonical:
+            return Ok(false)
+    else:
         if receiver_fills_source_slot(
             module,
             target,
@@ -3415,38 +3441,14 @@ def lower_method_call(
             builder.unions,
             builder.intrinsics,
         ):
-            break
-        match target.canonical:
+            return Ok(false)
+    for callable in module.loaf_callables:
+        match selected.canonical:
             Some(identity) =>
                 if identity == callable.canonical:
-                    return lower_library_method(module, builder, callable, target, arguments, destination, span)
+                    lower_library_method(module, builder, callable, selected, arguments, destination, span)?
+                    return Ok(true)
             None => pass
-    return lower_retained_method_call(module, builder, target, arguments, destination, span)
-
-
-def lower_compiled_implementation(
-    module: &BodyIrModule,
-    mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
-    span: SourceSpan,
-) -> Result[bool, str]:
-    """Call a checked adopter's compiled member through its declaration record, using the same slot selection as local bodies."""
-    selected = receiver_method_identity(
-        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
-    )?
-    if selected == target.canonical:
-        return Ok(false)
-    for callable in module.loaf_callables:
-        if selected != Some(callable.canonical):
-            continue
-        mut implementation = target.clone()
-        implementation.canonical = selected
-        implementation.native_trait_delegation = None
-        implementation.loaf_trait = None
-        lower_library_method(module, builder, callable, implementation, arguments, destination, span)?
-        return Ok(true)
     return Ok(false)
 
 
@@ -3618,12 +3620,13 @@ def lower_sdk_element_method(
 ) -> Result[bool, str]:
     """Borrow a retained SDK collection element for its authenticated ordinary SDK method, preserving source dispatch."""
     match element_method_owner(builder, arguments[0])?:
-        Some(PlanType.Model(owner, _name)) =>
+        Some(PlanType.Model(owner, name)) =>
             if library_item(module.nominal_declarations[owner]) == "":
                 return Ok(false)
+            selected = implementation_target(module, target, PlanType.Model(owner, name))?
             for callable in module.loaf_callables:
-                if target.canonical == Some(callable.canonical):
-                    lower_library_method(module, builder, callable, target, arguments, destination, span)?
+                if selected.canonical == Some(callable.canonical):
+                    lower_library_method(module, builder, callable, selected, arguments, destination, span)?
                     return Ok(true)
             return Ok(false)
         _ => return Ok(false)
