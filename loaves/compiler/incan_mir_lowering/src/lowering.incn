@@ -209,6 +209,7 @@ from decorator_caches import (
 )
 from traits import (
     is_default_body,
+    is_lazy_method_body,
     method_index,
     owner_method_index,
     receiver_method_target,
@@ -3555,8 +3556,9 @@ def lower_retained_method_call(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Borrow the concrete receiver and execute its selected source/default body without replacing its behavior."""
-    index = method_index(
+    """Borrow the concrete receiver and execute its selected body, naming the frame when its receiver is refused."""
+    mut index = -1
+    match method_index(
         module,
         target,
         builder.locals[builder.local_offset:],
@@ -3564,7 +3566,9 @@ def lower_retained_method_call(
         span,
         builder.unions,
         builder.intrinsics,
-    )?
+    ):
+        Ok(selected) => index = selected
+        Err(error) => return Err(f"{error} for {target.name} in {builder.name}")
     receiver_type, borrow = method_receiver(
         module,
         builder.locals[builder.local_offset:],
@@ -3780,7 +3784,7 @@ def instantiated_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
-        if is_default_body(module, body):
+        if is_lazy_method_body(module, body):
             builder.instances.append(
                 Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false),
             )
@@ -6957,7 +6961,7 @@ def lowered_plan(
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
     for body in context.bodies:
-        if is_default_body(context, body) and function_name(context, body) in bridge_bodies:
+        if is_lazy_method_body(context, body) and function_name(context, body) in bridge_bodies:
             instances.append(Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false))
     for index in range(len(checked)):
         for body in context.bodies:
@@ -6965,7 +6969,7 @@ def lowered_plan(
                 continue
             if len(body.type_parameters) != 0:
                 continue
-            if is_default_body(context, body):
+            if is_lazy_method_body(context, body):
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue

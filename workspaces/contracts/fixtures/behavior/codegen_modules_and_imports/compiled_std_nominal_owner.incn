@@ -1,5 +1,4 @@
 # behavior: a compiled standard nominal retains its provider identity and methods
-# pending: compiled Path.name has no retained native callable frame because governed publication refuses its Rust calls
 # expect-stdout:
 #   leaf.txt
 """Use a path whose canonical native item belongs to the compiled standard package."""

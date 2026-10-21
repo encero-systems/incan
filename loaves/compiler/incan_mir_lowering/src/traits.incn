@@ -4,6 +4,7 @@ from rust::incan_semantics_core import (
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     CanonicalSymbolId,
+    SymbolOrigin,
     SemanticSourceTargetKind,
     function_type,
     generic,
@@ -50,6 +51,30 @@ pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
         Some(identity) =>
             for owner in module.trait_declarations:
                 if owner.origin == identity.origin and owner.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.declaration_span.end:
+                    return true
+    return false
+
+
+pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
+    """Keep dependency generic-owner methods governed until a call or native bridge selects them.
+
+    Discovering an imported layout does not authorize execution of every closed receiver method. Source methods keep
+    their ordinary root policy, and trait defaults retain their existing call-driven scheduling.
+    """
+    if is_default_body(module, body):
+        return true
+    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
+        return false
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method:
+                return false
+            match identity.origin:
+                SymbolOrigin.Package(library=_library, module_path=_path) => pass
+                _ => return false
+            for owner in module.nominal_declarations:
+                if len(owner.type_parameters) != 0 and owner.canonical.origin == identity.origin and owner.canonical.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.canonical.declaration_span.end:
                     return true
     return false
 
@@ -464,7 +489,7 @@ def receiver_owner(
     unions: list[RustType],
     intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Read the concrete model or source enum receiver from its native place, never from a method spelling."""
+    """Read the concrete model or source enum receiver from its native place, reporting the refused frame carrier."""
     match argument.as_one():
         Some(value) =>
             match value:
@@ -478,13 +503,14 @@ def receiver_owner(
                         unions,
                         intrinsics,
                     )?
-                    match place_type(locals, place):
+                    actual = place_type(locals, place)
+                    match actual:
                         PlanType.Model(owner, name) => return Ok(PlanType.Model(owner, name))
                         PlanType.Enum(owner, name) =>
                             if owner < len(module.enum_declarations):
                                 return Ok(PlanType.Enum(owner, name))
                         _ => pass
-                    return Err("unsupported Body IR trait-object receiver")
+                    return Err(f"unsupported Body IR trait-object receiver {actual:?} at {span.line}:{span.column}")
                 _ => return Err("unsupported Body IR Method nonplace receiver")
         None => return Err("unsupported Body IR Method spread receiver")
 
