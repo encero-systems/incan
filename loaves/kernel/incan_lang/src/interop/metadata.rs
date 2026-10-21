@@ -1535,7 +1535,8 @@ pub enum RustTraitAssoc {
     Constant { name: String, type_display: String },
 }
 
-/// Retained native trait members and supertrait equalities used for method and associated-type selection.
+/// A native trait's declared callable surface and implementation templates. Templates belong to the trait's ABI
+/// too, so a later extension trait can describe implementations on a type whose own ABI was compiled earlier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustTraitInfo {
     /// Whether rustc's Rust 2024 prelude imports this exact trait identity.
@@ -1547,6 +1548,9 @@ pub struct RustTraitInfo {
     pub bounds: Vec<RustTraitBound>,
     /// Associated functions, types, and constants declared by this trait.
     pub items: Vec<RustTraitAssoc>,
+    /// Positive implementation templates supplied by the native trait's metadata; predicates remain obligations.
+    #[serde(default)]
+    pub implementations: Vec<RustImplementedTrait>,
     /// Co-located derive-macro namespace metadata for this same Rust path, when invoked by the project.
     ///
     /// Rust permits a trait and derive macro to share a spelling. Keeping the macro expansion separate prevents an

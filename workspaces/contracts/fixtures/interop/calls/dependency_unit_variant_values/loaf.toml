@@ -1,0 +1,9 @@
+[project]
+name = "dependency_unit_variant_values"
+version = "0.1.0"
+
+[dependencies]
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }
+
+[project.scripts]
+main = "src/main.incn"

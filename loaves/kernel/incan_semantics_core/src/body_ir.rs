@@ -2406,8 +2406,8 @@ pub struct ResultVariant {
 
 impl ResultVariant {
     /// Require exactly one declaration identity for every named payload-type leaf before execution. The exact
-    /// builtin ValidationError identity uses the same admitted runtime carrier boundary as nominal declarations;
-    /// arbitrary builtin names and malformed identities confer no executable layout.
+    /// builtin ValidationError and checked native item identities use the same admitted runtime carrier boundary
+    /// as nominal declarations; arbitrary names and malformed identities confer no executable layout.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
         fn paths(
@@ -2428,6 +2428,11 @@ impl ResultVariant {
                         paths(item, path, out);
                         path.pop();
                     }
+                }
+                IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+                    path.push(0);
+                    paths(inner, path, out);
+                    path.pop();
                 }
                 _ => {}
             }
@@ -2451,8 +2456,10 @@ impl ResultVariant {
                         ) && matches!(
                             identity.origin,
                             crate::SymbolOrigin::Module(_) | crate::SymbolOrigin::Package { .. }
-                        )) || (identity.origin == crate::SymbolOrigin::Builtin
-                            && native_nominal_item(identity).is_some()))
+                        )) || (matches!(
+                            identity.origin,
+                            crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
+                        ) && native_nominal_item(identity).is_some()))
                 })
             })
     }

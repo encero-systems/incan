@@ -1,0 +1,23 @@
+# behavior: imported Rust extension traits add ordinary and generic binary methods to a standard cursor
+# expect-stdout:
+#   1
+#   770
+#   2
+
+from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+from rust::std::io import Cursor
+
+
+def main() -> None:
+    """Read and write binary values through the imported cursor extension methods."""
+    mut input = Cursor.new(b"\x01\x02\x03")
+    match input.read_u8():
+        Ok(value) => println(int(value))
+        Err(_) => println(-1)
+    match input.read_u16[LittleEndian]():
+        Ok(value) => println(int(value))
+        Err(_) => println(-1)
+    mut output = Cursor.new(b"")
+    match output.write_u16[BigEndian](16706u16):
+        Ok(_) => println(len(output.into_inner()))
+        Err(_) => println(-1)

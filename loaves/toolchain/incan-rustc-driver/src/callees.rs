@@ -6,9 +6,24 @@ use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-/// Resolve a retained public constant through module children; statics and associated values require other contracts.
+/// Resolve a retained public constant or unit-variant constructor. Statics and associated constants still require
+/// their own contracts; a variant must belong to the exact public enum and expose a public constant constructor.
 pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    library_item(tcx, path, DefKind::Const { is_type_const: false })
+    if let Ok(constant) = library_item(tcx, path, DefKind::Const { is_type_const: false }) {
+        return Ok(constant);
+    }
+    let (owner, name) = path
+        .rsplit_once("::")
+        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+    let owner = library_item(tcx, owner, DefKind::Enum)?;
+    enum_constructor(tcx, owner, name)
+        .filter(|constructor| {
+            matches!(
+                tcx.def_kind(*constructor),
+                DefKind::Ctor(_, rustc_hir::def::CtorKind::Const)
+            )
+        })
+        .ok_or_else(|| PlanError::UnknownCallee(path.into()))
 }
 
 /// Resolve a planned source name, canonical external path, or explicit runtime operation to its exact function.
@@ -237,9 +252,9 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
                 .filter_map(|child| child.res.opt_def_id())
                 .find(|child| callee_path_step(tcx.def_kind(*child), last))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
-            DefKind::Struct | DefKind::Enum => {
-                inherent_function(tcx, current, segment).ok_or_else(|| PlanError::UnknownCallee(path.into()))?
-            }
+            DefKind::Struct | DefKind::Enum => inherent_function(tcx, current, segment)
+                .or_else(|| enum_constructor(tcx, current, segment))
+                .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
             DefKind::Trait => trait_function(tcx, current, segment).ok_or_else(|| PlanError::Unsupported {
                 function: path.into(),
                 reason: "the SDK trait publishes no method with this name".into(),
@@ -247,10 +262,33 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             _ => return Err(PlanError::UnknownCallee(path.into())),
         };
     }
-    if !matches!(tcx.def_kind(current), DefKind::Fn | DefKind::AssocFn) {
+    if !matches!(
+        tcx.def_kind(current),
+        DefKind::Fn | DefKind::AssocFn | DefKind::Ctor(_, rustc_hir::def::CtorKind::Fn)
+    ) {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Select the exact public constructor definition of a tuple or unit enum variant. The caller distinguishes
+/// function and constant constructors; named-field and non-exhaustive private constructors remain ineligible.
+pub(crate) fn enum_constructor(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
+    if tcx.def_kind(owner) != DefKind::Enum {
+        return None;
+    }
+    let variant = tcx
+        .adt_def(owner)
+        .variants()
+        .iter()
+        .find(|variant| variant.name.as_str() == name)?;
+    if variant.is_field_list_non_exhaustive() {
+        return None;
+    }
+    variant
+        .ctor
+        .map(|(_, constructor)| constructor)
+        .filter(|constructor| tcx.visibility(*constructor).is_public())
 }
 
 /// Whether a module child of this kind can be one step of a callee path: a module or a method's owner type on the way,
