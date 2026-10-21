@@ -1,5 +1,4 @@
 # behavior: a string literal is accepted as the default of a Rust method's Option of borrowed str (#2232)
-# pending: #2232 PathBuf construction leaves an unknown Body IR frame type
 # expect-stdout:
 #   present
 

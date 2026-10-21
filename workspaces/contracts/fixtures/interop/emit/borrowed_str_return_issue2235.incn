@@ -1,5 +1,4 @@
 # behavior: a borrowed string returned by a Rust method becomes an owned Incan str at a return (#2235)
-# pending: #2235 PathBuf construction leaves an unknown Body IR frame type
 # expect-stdout:
 #   borrowed
 
