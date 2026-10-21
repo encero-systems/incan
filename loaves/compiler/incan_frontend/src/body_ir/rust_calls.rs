@@ -1,7 +1,7 @@
 //! Checked Rust callees projected into the existing external callable and named-call machinery (DD-0006).
 
 use super::args::DeclaredSlot;
-use super::{BodyBuilder, TypeCheckInfo, ast, bir, hir_span};
+use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span};
 use crate::typechecker::RustCheckedCall;
 
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
@@ -118,6 +118,7 @@ impl BodyBuilder<'_, '_> {
 
     /// Materialize the checked shared native field base before ordinary canonical field projection. Other fields
     /// preserve their existing place path, and a missing adjustment identity remains an explicit unsupported operand.
+    /// The final place copies the accepting checker's frozen result storage rather than reconstructing its signature.
     pub(super) fn lower_checked_field_base(
         &mut self,
         base: &ast::Spanned<ast::Expr>,
@@ -140,7 +141,8 @@ impl BodyBuilder<'_, '_> {
         };
         let ty = steps
             .last()
-            .map_or(IncanType::Unknown, |step| self.checked_type(&step.return_type));
+            .and_then(|step| step.storage.as_ref())
+            .map_or(IncanType::Unknown, |storage| storage.return_type.clone());
         self.materialize_operand_to_place(value, ty, scope, hir_span(span), out)
     }
 

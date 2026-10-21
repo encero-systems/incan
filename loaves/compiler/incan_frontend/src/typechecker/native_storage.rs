@@ -276,6 +276,12 @@ impl TypeChecker {
             let ResolvedType::RustPath(display) = leaf else {
                 return None;
             };
+            // An admitted definition path has a native owner even when its final segment also names a source type.
+            // Apply its public import identity before the display parser can consult that source declaration.
+            let public = self.rust_public_type_path(display);
+            if public != *display {
+                return Some(self.rust_storage_constructor(&public, Vec::new(), parameters));
+            }
             let parsed = self
                 .native_runtime_type(display)
                 .unwrap_or_else(|| self.native_rust_signature_type(display, ""));
@@ -308,7 +314,7 @@ impl TypeChecker {
         mut arguments: Vec<ResolvedType>,
         parameters: &[String],
     ) -> ResolvedType {
-        let base = self.rust_storage_name(base);
+        let base = self.rust_public_type_path(base);
         if body_ir::rust_item_identity(&base).is_some()
             && let Some(incan_lang::interop::RustItemMetadata {
                 kind: incan_lang::interop::RustItemKind::Type(info),
@@ -326,16 +332,6 @@ impl TypeChecker {
         } else {
             ResolvedType::Generic(base, arguments)
         }
-    }
-
-    /// Select a native item's admitted public path, leaving source and builtin names to their own identities.
-    fn rust_storage_name(&self, name: &str) -> String {
-        self.type_info
-            .rust
-            .item_public_paths
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_owned())
     }
 
     /// Retain the exact owner beside the checker's shared nominal projection. Alias targets and native builtin storage
@@ -383,7 +379,7 @@ impl TypeChecker {
                 *ty = qualified;
             }
             IncanType::Generic { base, args } => {
-                *base = self.rust_storage_name(base);
+                *base = self.rust_public_type_path(base);
                 let mut owner = IncanType::Named(base.clone());
                 self.qualify_rust_storage(&mut owner, identities);
                 let IncanType::Named(name) = owner else {
@@ -416,8 +412,8 @@ impl TypeChecker {
         }
     }
 
-    /// Index native values before and after checked source-owner qualification.
-    /// A conflicting original type cannot authorize either storage representation.
+    /// Index native values before and after checked source-owner qualification, including short import aliases whose
+    /// native identity is exposed only by the projected type. A conflicting key cannot authorize either storage.
     fn remember_rust_storage(
         &self,
         original: &ResolvedType,
@@ -425,7 +421,7 @@ impl TypeChecker {
         storage: &mut HashMap<IncanType, IncanType>,
     ) {
         let key = semantic_type_from_resolved(original);
-        if has_native_storage(&key) {
+        if has_native_storage(&key) || has_native_storage(projected) {
             for key in [key.clone(), self.type_info.qualify_semantic_type(key)] {
                 let retained = storage.entry(key).or_insert_with(|| projected.clone());
                 if retained != projected {

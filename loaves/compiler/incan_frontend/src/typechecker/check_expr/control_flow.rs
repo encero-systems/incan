@@ -56,6 +56,8 @@ impl TypeChecker {
             self.type_info.rust.await_conversions.insert(
                 (expr.span.start, expr.span.end),
                 crate::typechecker::RustCheckedCall {
+                    storage: None,
+                    source_type_parameters: self.native_call_type_parameters(),
                     receiver_adjustments: Vec::new(),
                     path: "std::future::IntoFuture::into_future".into(),
                     type_arguments: vec![ty.clone()],

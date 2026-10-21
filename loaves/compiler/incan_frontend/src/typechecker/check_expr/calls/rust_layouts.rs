@@ -14,7 +14,7 @@ use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedCall, Ru
 impl TypeChecker {
     /// Select the checked public binding shared by native signatures, constructors, patterns and coverage. A
     /// definition path never creates a second carrier when metadata already binds it through a public reexport.
-    pub(in crate::typechecker::check_expr) fn rust_public_type_path(&self, path: &str) -> String {
+    pub(in crate::typechecker) fn rust_public_type_path(&self, path: &str) -> String {
         self.type_info
             .rust
             .item_public_paths
