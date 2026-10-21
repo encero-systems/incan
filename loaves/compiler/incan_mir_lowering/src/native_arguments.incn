@@ -1,15 +1,17 @@
 """Checked native storage uses that require source nominal ABI implementations."""
 
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule
 from nominal_instances import instance_arguments
 from decls import library_item
 
 
 pub def uses_native_argument(module: &BodyIrModule, name: str) -> Result[bool, str]:
-    """Find a normalized source carrier in actual SDK storage arguments, keeping source-only adopters independent."""
+    """Find a source carrier in foreign Rust storage; an ordinary Loaf's generic ADT imposes no SDK trait ABI."""
     for declaration in module.nominal_declarations:
         if library_item(declaration) == "":
+            continue
+        if not foreign_storage(declaration.canonical.origin):
             continue
         mut arguments: list[RustType] = []
         for argument in declaration.native_type_arguments:
@@ -20,6 +22,13 @@ pub def uses_native_argument(module: &BodyIrModule, name: str) -> Result[bool, s
             if contains_name(argument, name):
                 return Ok(true)
     return Ok(false)
+
+
+def foreign_storage(origin: &SymbolOrigin) -> bool:
+    """Distinguish an extracted Rust ADT from an Incan Loaf's compiled storage declaration."""
+    match origin:
+        SymbolOrigin.RustCrate(_path) => return true
+        _ => return false
 
 
 def contains_name(ty: &RustType, name: str) -> bool:

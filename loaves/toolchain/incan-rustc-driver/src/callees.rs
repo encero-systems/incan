@@ -182,6 +182,35 @@ fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> 
     Ok(current)
 }
 
+/// Resolve the crate this compilation explicitly imported, preserving its selected artifact when a transitive
+/// dependency has the same crate name. Implicit sysroot roots may use metadata only when their name is unambiguous.
+fn crate_root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
+    if name == "crate" {
+        return Some(rustc_hir::def_id::LOCAL_CRATE.as_def_id());
+    }
+    let mut imported = tcx
+        .hir_crate_items(())
+        .free_items()
+        .filter(|item| {
+            let definition = item.owner_id.to_def_id();
+            tcx.def_kind(definition) == DefKind::ExternCrate
+                && tcx
+                    .opt_item_name(definition)
+                    .is_some_and(|symbol| symbol.as_str() == name)
+        })
+        .filter_map(|item| tcx.extern_mod_stmt_cnum(item.owner_id.def_id));
+    if let Some(first) = imported.next() {
+        return imported.all(|other| other == first).then(|| first.as_def_id());
+    }
+    let mut crates = tcx
+        .crates(())
+        .iter()
+        .copied()
+        .filter(|krate| tcx.crate_name(*krate).as_str() == name);
+    let first = crates.next()?;
+    crates.next().is_none().then(|| first.as_def_id())
+}
+
 /// Resolve a public module item in its owning query domain. Local injected ADTs are HIR items; the external-only
 /// `module_children` query must never receive the current crate's definitions.
 fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind]) -> Option<DefId> {
