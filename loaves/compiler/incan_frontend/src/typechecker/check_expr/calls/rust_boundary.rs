@@ -1257,8 +1257,12 @@ impl TypeChecker {
     /// Arguments are typed before the callee resolves, so a `Self`-returning constructor such as `Box.new(v)`
     /// arrives as the bare owner `std::boxed::Box` while the parameter reads `Box<T>`. Re-checking that one
     /// argument against its parameter lets the receiver reconcile — the same contextual path literals and closures
-    /// already take. Owners are compared in the ancestral namespace so every re-export spelling matches.
+    /// already take. Projected source collections also carry their parameter expectation into the nested constructor.
+    /// Native owners are compared in the ancestral namespace so every re-export spelling matches.
     fn rust_call_arg_wants_owner_expectation(arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
+        if let (ResolvedType::Generic(actual, _), ResolvedType::Generic(expected, _)) = (arg_ty, target_ty) {
+            return actual == expected;
+        }
         // The uncontextual type may already carry the owner's own unresolved parameters (`RefCell<T>` from a
         // `RefCell<T>`-returning `new`), so compare owners by base, not whole display.
         let arg_owner = match arg_ty {

@@ -2953,7 +2953,7 @@ impl TypeChecker {
         None
     }
 
-    /// Whether a contextual type is one specialization of `rust_path`.
+    /// Whether a contextual type specializes the native owner, including its registered source collection projection.
     fn contextual_type_matches_rust_owner(expected: &ResolvedType, rust_path: &str) -> bool {
         // Metadata records the ancestral spelling of an owner (`alloc::boxed::Box`); the source imported the `std`
         // one. Every re-export of one item is an alias of it, so the owner match must happen in the ancestral
@@ -2966,6 +2966,8 @@ impl TypeChecker {
                 .is_some_and(|base| incan_lang::interop::ancestral_rust_path(base) == owner),
             ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
                 incan_lang::interop::ancestral_rust_path(name) == owner
+                    || RustCollectionFamily::for_canonical_path(rust_path)
+                        .is_some_and(|family| RustCollectionFamily::for_type_name(name) == Some(family))
             }
             _ => false,
         }
@@ -2991,9 +2993,8 @@ impl TypeChecker {
             {
                 Some(expected.clone())
             }
-            ResolvedType::Generic(name, _) | ResolvedType::Named(name)
-                if incan_lang::interop::ancestral_rust_path(name)
-                    == incan_lang::interop::ancestral_rust_path(rust_path)
+            ResolvedType::Generic(_name, _) | ResolvedType::Named(_name)
+                if Self::contextual_type_matches_rust_owner(actual, rust_path)
                     && Self::contextual_type_matches_rust_owner(expected, rust_path) =>
             {
                 Some(expected.clone())
@@ -3057,10 +3058,7 @@ impl TypeChecker {
             }
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
-            ResolvedType::Generic(name, args)
-                if incan_lang::interop::ancestral_rust_path(name)
-                    == incan_lang::interop::ancestral_rust_path(rust_path) =>
-            {
+            ResolvedType::Generic(_name, args) if Self::contextual_type_matches_rust_owner(receiver, rust_path) => {
                 Some(args.clone())
             }
             ResolvedType::RustPath(display) => {
