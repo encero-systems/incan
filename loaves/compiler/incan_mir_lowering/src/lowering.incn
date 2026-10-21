@@ -1156,14 +1156,21 @@ def comparison_collection_place(
     value: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
-    """Select a checked collection owner or field only when Body IR retained its shared read; indexing stays separate."""
+    """Borrow a checked collection owner or materialize a literal or collection-valued projection once. A scalar
+    element stays on the scalar path, and existing owners still require Body IR's retained shared read."""
     match value:
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) => return Ok(Some(bytes_literal(builder, constant, span)?))
+                _ => return Ok(None)
         RustOperand.Place(read) =>
-            for projection in read.place.projection:
-                match projection:
-                    PlaceElem.Index(_index) => return Ok(None)
-                    PlaceElem.Slice(start=_start, end=_end, step=_step) => return Ok(None)
-                    _ => pass
+            if is_element_place(builder, read.place)?:
+                match equality_shape(element_place_type(builder, read.place)?):
+                    None => return Ok(None)
+                    Some(_shape) =>
+                        if read.fact != OwnershipFact.Borrow:
+                            return Err("unsupported Body IR collection equality without retained shared read")
+                        return Ok(Some(materialized_receiver(builder, read.place, span)?))
             match read.place.local_id():
                 None => return Ok(None)
                 Some(_local) => pass
@@ -1176,7 +1183,6 @@ def comparison_collection_place(
             if read.fact != OwnershipFact.Borrow:
                 return Err("unsupported Body IR collection equality without retained shared read")
             return Ok(Some(place))
-        _ => return Ok(None)
 
 
 def collection_equality(
@@ -5730,16 +5736,20 @@ def lower_enumerate_builtin(
         return Err("invalid Body IR enumerate arity")
     source_type = argument_type(builder, arguments, 0, span)?
     mut element_type = PlanType.String
-    if source_type not in [PlanType.String, PlanType.StringRef]:
-        leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate non-list or text source")?
-        element_type = list_element(leaf, depth)
+    byte_source = source_type in [PlanType.List(ListLeaf.U8, 1), PlanType.ListRef(ListLeaf.U8, 1), PlanType.ListMutRef(ListLeaf.U8, 1), PlanType.FrozenBytes]
+    if source_type not in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
+        if byte_source:
+            element_type = PlanType.Int
+        else:
+            leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate non-list or text source")?
+            element_type = list_element(leaf, depth)
     element = enumerated_element(element_type)?
     result = PlanType.List(ListLeaf.Tuple([TupleElement.Int, element]), 1)
     output = call_destination(builder, destination, result, span)?
     if place_type(builder.locals, output) != result:
         return Err("unsupported Body IR enumerate checked destination")
     drop_owned(builder, output.local, span)
-    if source_type in [PlanType.String, PlanType.StringRef]:
+    if source_type in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         reference = text_argument(builder, arguments, 0, span)?
         external_call(
             builder,
@@ -5752,6 +5762,11 @@ def lower_enumerate_builtin(
         )
         builder.owned.append(output.local)
     else:
+        if byte_source:
+            reference = enumerated_byte_argument(builder, arguments, source_type, span)?
+            external_call(builder, "incan_native_runtime::enumerate_bytes", [PlanType.ListRef(ListLeaf.U8, 1)], result, [reference], output, span)
+            builder.owned.append(output.local)
+            return Ok(None)
         receiver = argument_place(builder, arguments, 0, span)?
         leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate source layout")?
         reference = list_borrow(builder, receiver, false, span)?
@@ -5766,6 +5781,20 @@ def lower_enumerate_builtin(
             span,
         )
     return Ok(None)
+
+
+def enumerated_byte_argument(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow owned byte storage or a literal, materializing only a frozen wrapper's immutable bytes."""
+    if ty != PlanType.FrozenBytes:
+        return borrowed_list_argument(builder, arguments, 0, false, span)
+    source = argument_place(builder, arguments, 0, span)?
+    snapshot = sequence_read_storage(builder, source, span)?
+    return list_borrow(builder, snapshot, false, span)
 
 
 def lower_model_json_builtin(
@@ -8185,9 +8214,9 @@ def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
         Some(local) =>
             root = plan_place(int(local.index()) + 1 + builder.local_offset, span)
             root_type = place_type(builder.locals, root)
-            if root_type in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef] and len(source.projection) != 0:
+            if root_type in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes] and len(source.projection) != 0:
                 mut text = root
-                if root_type != PlanType.String:
+                if root_type in [PlanType.StringRef, PlanType.StringMutRef]:
                     text = Place(local=root.local, projection=Projection.Deref(PlanType.String), span=span)
                 return Ok(Some(projected_element_read(builder, source, text, 0, span)?))
             match place_type(builder.locals, root):
@@ -8228,7 +8257,7 @@ pub def projected_element_read(
     Each index clones its element, or the value its key selects in a dictionary, and each slice copies a new sequence, so
     the container stays whole; a field of a copied element is read from that copy.
     """
-    mut place = container
+    mut place = sequence_read_storage(builder, container, span)?
     for slot in range(start, len(source.projection)):
         match source.projection[slot]:
             PlaceElem.Slice(start=_start, end=_end, step=_step) =>
@@ -8244,6 +8273,19 @@ pub def projected_element_read(
     ty = place_type(builder.locals, place)
     owned = ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
     return Ok(read_place(place, owned, span))
+
+
+def sequence_read_storage(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Materialize immutable frozen text and bytes through their canonical runtime observations before a sequence read."""
+    ty = place_type(builder.locals, source)
+    if ty == PlanType.FrozenStr:
+        return display_plan_operand(builder, read_place(source, false, span), span)
+    if ty == PlanType.FrozenBytes:
+        output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
+        external_call(builder, "incan_native_runtime::copy_frozen_bytes", [ty], PlanType.List(ListLeaf.U8, 1), [read_place(source, false, span)], output, span)
+        builder.owned.append(output.local)
+        return Ok(output)
+    return Ok(source)
 
 
 def read_indexed_element(
@@ -9121,6 +9163,16 @@ def lower_list_method(
         None => pass
     if member == "List.iter":
         return lower_list_iter(builder, arguments, destination, span)
+    if member == "bytes.as_slice":
+        if len(arguments) != 1 or receiver_ty not in [PlanType.List(ListLeaf.U8, 1), PlanType.ListRef(ListLeaf.U8, 1), PlanType.ListMutRef(ListLeaf.U8, 1)]:
+            return Err("invalid Body IR bytes.as_slice receiver or arity")
+        match arguments[0].as_one():
+            Some(value) =>
+                reference = borrow_slice_operand(builder, value, [PlanType.U8], false, span)?
+                output = call_destination(builder, destination, PlanType.SliceRef([PlanType.U8]), span)?
+                builder.emit(plan_assign(output, RvalueKind.Use(reference), span))
+                return Ok(None)
+            None => return Err("invalid Body IR bytes.as_slice spread")
     if member == "List.contains":
         leaf, _depth = require_list_shape(receiver_ty, "unsupported Body IR List.contains receiver")?
         match leaf:

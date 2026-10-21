@@ -27,7 +27,7 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
         None => return Ok(false)
         Some(local) =>
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
-            if is_list(root) or is_collection(root) or root in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef]:
+            if is_list(root) or is_collection(root) or root in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Ok(true)
             match root:
                 PlanType.FrozenCollection(_name, _elements) => return Ok(true)
@@ -86,8 +86,10 @@ def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Re
             if is_collection(ty):
                 return dictionary_value_type(ty)
         PlaceElem.Slice(start=_start, end=_end, step=_step) =>
-            if ty == PlanType.String:
+            if ty in [PlanType.String, PlanType.FrozenStr]:
                 return Ok(PlanType.String)
+            if ty == PlanType.FrozenBytes:
+                return Ok(PlanType.List(ListLeaf.U8, 1))
             match list_shape(ty):
                 Some((leaf, depth)) => return Ok(PlanType.List(leaf, depth))
                 None => return Err("unsupported Body IR slicing non-list")

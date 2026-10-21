@@ -5177,7 +5177,8 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a slicing expression (`base[start:end:step]`) and return the sliced type.
+    /// Type-check a slicing expression (`base[start:end:step]`) and return the sliced type. Text and byte slices
+    /// produce owned values, including when the receiver is frozen; every bound is checked exactly once.
     pub(in crate::typechecker::check_expr) fn check_slice(
         &mut self,
         base: &Spanned<Expr>,
@@ -5228,23 +5229,19 @@ impl TypeChecker {
                 }
                 _ => ResolvedType::Unknown,
             },
-            ResolvedType::Str => {
-                // We typecheck each slice component once (above) and reuse the computed types here.
-                // This avoids re-walking the same expression multiple times and keeps error reporting
-                // anchored to the original component spans.
+            ty if matches!(ty, ResolvedType::Str | ResolvedType::Bytes)
+                || is_frozen_str(&ty)
+                || is_frozen_bytes(&ty) =>
+            {
+                // Reuse the already checked components so their diagnostics retain their original spans.
                 check_component(start_ty.as_ref(), slice.start.as_deref(), &mut self.errors);
                 check_component(end_ty.as_ref(), slice.end.as_deref(), &mut self.errors);
                 check_component(step_ty.as_ref(), slice.step.as_deref(), &mut self.errors);
-                ResolvedType::Str
-            }
-            ty if is_frozen_str(&ty) => {
-                // `FrozenStr` is the const-eval / deeply-immutable string type, but for indexing/slicing
-                // it behaves like `str`: indices must be int-like (or Unknown during inference).
-                // Reuse the exact same helper as `str` (the only difference is the receiver type).
-                check_component(start_ty.as_ref(), slice.start.as_deref(), &mut self.errors);
-                check_component(end_ty.as_ref(), slice.end.as_deref(), &mut self.errors);
-                check_component(step_ty.as_ref(), slice.step.as_deref(), &mut self.errors);
-                ResolvedType::Str
+                if matches!(ty, ResolvedType::Bytes) || is_frozen_bytes(&ty) {
+                    ResolvedType::Bytes
+                } else {
+                    ResolvedType::Str
+                }
             }
             _ => ResolvedType::Unknown,
         }
@@ -6799,6 +6796,12 @@ impl TypeChecker {
             }
         }
         if matches!(base_ty, ResolvedType::Bytes) && method == "as_slice" && args.is_empty() {
+            // The source bytes view keeps its exact borrowed native slice carrier for the executable boundary.
+            let native = self.native_rust_signature_type("&[u8]", "std");
+            self.type_info
+                .calls
+                .body_ir_call_result_types
+                .insert((span.start, span.end), native);
             return ResolvedType::Bytes;
         }
 

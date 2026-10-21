@@ -14,10 +14,8 @@ use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
 use crate::library_manifest::{LibraryManifest, resolved_type_from_manifest_type_ref};
-use crate::loaf_index::LoafEntry;
 use crate::symbols::{SymbolKind, TypeInfo};
 use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
-use incan_lang::lang::stdlib::STDLIB_ROOT;
 use incan_semantics_core::CanonicalSymbolId;
 
 impl TypeChecker {
@@ -42,14 +40,16 @@ impl TypeChecker {
     /// the declaring module and the declared name.
     ///
     /// An alias, public or private, is followed to its target as the module wrote it, through as many modules as the
-    /// chain crosses. A spelling that reaches no type or trait declaration of this package, such as an import from
-    /// another package, a function or a cycle, yields `None`.
-    /// An own standard namespace resolves through the selected Loaf's namespace grant, never its package name alone.
+    /// chain crosses. The selected Loaf's namespace grant authenticates same-package imports before its binding root
+    /// translates them to manifest paths; a matching package name alone grants no ownership.
+    /// A spelling that reaches no type or trait declaration of this package, such as an import from another package,
+    /// a function or a cycle, yields `None`.
     fn api_nominal_declaration_path(
+        &self,
+        library: &str,
         api: &CheckedApiMetadataPackage,
         module_path: &[String],
         name: &str,
-        entry: Option<&LoafEntry>,
     ) -> Option<(Vec<String>, String)> {
         let mut module_path = module_path.to_vec();
         let mut name = name.to_string();
@@ -73,13 +73,15 @@ impl TypeChecker {
                 | ApiDeclaration::Trait(_) => return Some((module_path, name)),
                 ApiDeclaration::Alias(alias) => {
                     let target = resolve_api_alias_target(&module_path, &alias.target_path);
-                    let target = if target.first().is_some_and(|root| root == STDLIB_ROOT)
-                        && entry.is_some_and(|entry| entry.owns(&target))
-                    {
-                        &target[1..]
-                    } else {
-                        target.as_slice()
-                    };
+                    let binding_root = self
+                        .loaves
+                        .entry(library)
+                        .filter(|entry| entry.owns(&target))
+                        .map(|entry| entry.binding_root());
+                    let target = binding_root
+                        .as_ref()
+                        .and_then(|root| target.strip_prefix(root.as_slice()))
+                        .unwrap_or(&target);
                     let (target_name, target_module) = target.split_last()?;
                     name = target_name.clone();
                     module_path = target_module.to_vec();
@@ -116,7 +118,7 @@ impl TypeChecker {
             for declaration in &module.declarations {
                 let name = Self::api_declaration_name(declaration);
                 let Some((declaring_module, declared_name)) =
-                    Self::api_nominal_declaration_path(api, &module.module_path, name, self.loaves.entry(library))
+                    self.api_nominal_declaration_path(library, api, &module.module_path, name)
                 else {
                     continue;
                 };

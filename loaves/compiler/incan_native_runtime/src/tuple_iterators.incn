@@ -47,6 +47,14 @@ pub def enumerate_list[T with Clone](values: &list[T]) -> list[tuple[int, T]]:
     return pairs
 
 
+pub def enumerate_bytes(values: &bytes) -> list[tuple[int, int]]:
+    """Expose byte enumeration items as source integers while preserving each byte's unsigned value and position."""
+    mut pairs: list[tuple[int, int]] = []
+    for index in range(len(values)):
+        pairs.append((index, int(values[index])))
+    return pairs
+
+
 pub def enumerate_text(values: &str) -> list[tuple[int, str]]:
     """Pair Unicode scalar strings with their zero-based positions, matching legacy text enumeration."""
     mut pairs: list[tuple[int, str]] = []

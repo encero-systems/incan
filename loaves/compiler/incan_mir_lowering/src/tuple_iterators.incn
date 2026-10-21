@@ -1,5 +1,6 @@
 """Checked flat-tuple zip polling and indexed builtin enumeration layouts."""
 
+from rust::incan_semantics_core import IncanType as RustType
 from pub::incan_mir_plan import (
     PlanType,
     TupleElement,
@@ -16,6 +17,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
 from frame import Builder, temporary, terminate_call, read_place, drop_owned
 from builtins import list_call
+from tuples import tuple_element
 
 
 pub def zip_shape(ty: PlanType) -> Option[tuple[TupleElement, TupleElement]]:
@@ -159,13 +161,4 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
 
 pub def enumerated_element(ty: PlanType) -> Result[TupleElement, str]:
     """Retain the checked item's full layout before constructing the builtin's indexed tuple, including nested lists, tuples and carriers."""
-    match ty:
-        PlanType.Int => return Ok(TupleElement.Int)
-        PlanType.Float => return Ok(TupleElement.Float)
-        PlanType.Bool => return Ok(TupleElement.Bool)
-        PlanType.String => return Ok(TupleElement.String)
-        PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
-        PlanType.Unit => return Ok(TupleElement.Unit)
-        PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
-        PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
-        _ => return Err("unsupported Body IR enumerate nested element layout")
+    return tuple_element(ty, RustType.Unknown)

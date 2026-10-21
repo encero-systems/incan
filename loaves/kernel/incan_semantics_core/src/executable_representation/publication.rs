@@ -418,6 +418,8 @@ struct PublicationAudit<'a> {
     /// Checked raw-value enum layouts authenticate compiler-generated getters without widening private publication.
     value_enum_declarations: &'a [crate::body_ir::ValueEnumDeclaration],
     nominal_declarations: &'a [crate::body_ir::NominalDeclaration],
+    /// Metadata-selected native storage uses the same item inventory as executable layout planning.
+    native_types: BTreeMap<String, CanonicalSymbolId>,
     used_nominal_types: BTreeMap<String, CanonicalSymbolId>,
     requirements: BTreeSet<CanonicalSymbolId>,
     /// Local storage referenced by retained parameter defaults, independent of implementation-only locals.
@@ -425,7 +427,8 @@ struct PublicationAudit<'a> {
 }
 
 impl<'a> PublicationAudit<'a> {
-    /// Combine source-local declarations with retained checked references, keeping conflicting evidence separate.
+    /// Combine source-local declarations, retained checked references and the executable native storage inventory,
+    /// keeping conflicting source identities separate and performing no new name resolution.
     fn new(
         module: &'a BodyIrModule,
         library: &'a str,
@@ -479,13 +482,18 @@ impl<'a> PublicationAudit<'a> {
             checked_nominal_types,
             value_enum_declarations: &module.value_enum_declarations,
             nominal_declarations: &module.nominal_declarations,
+            native_types: crate::body_ir::held_rust_items(std::slice::from_ref(module))
+                .into_iter()
+                .map(|declaration| (declaration.name, declaration.canonical))
+                .collect(),
             used_nominal_types: BTreeMap::new(),
             requirements: BTreeSet::new(),
             local_slots: BTreeSet::new(),
         }
     }
 
-    /// Rebase only producer-local origins; a foreign reexport retains its declaring package identity.
+    /// Rebase only producer-local origins; a foreign reexport retains its declaring package identity. Native items
+    /// require adapter validation against the selected Rust closure, never an Incan executable fragment.
     fn identity(&mut self, identity: &mut CanonicalSymbolId, required: bool) -> Result<(), CoverageReason> {
         if let SymbolOrigin::Module(module_path) = &identity.origin {
             identity.origin = SymbolOrigin::Package {
@@ -513,11 +521,15 @@ impl<'a> PublicationAudit<'a> {
                 Ok(())
             }
             SymbolOrigin::Builtin => Ok(()),
-            SymbolOrigin::RustCrate(_) | SymbolOrigin::Module(_) => Err(CoverageReason::UnsupportedConstruct),
+            // Native identities require no Incan fragment. Their exact storage and callable signatures remain
+            // subject to the adapter's metadata validation against the selected native closure.
+            SymbolOrigin::RustCrate(_) => Ok(()),
+            SymbolOrigin::Module(_) => Err(CoverageReason::UnsupportedConstruct),
         }
     }
 
     /// Admit concrete types and declared binders, retaining the canonical declaration behind each named type.
+    /// Native unsized text and slice referents remain structural types; this grants no owned frame for either.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
             IncanType::SelfType if self.trait_self => Ok(()),
@@ -525,11 +537,15 @@ impl<'a> PublicationAudit<'a> {
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
                 Ok(())
             }
+            // The native unsized text and slice carriers have no nominal declaration. Their surrounding references
+            // and type arguments retain the same storage distinction checked by executable layout planning.
+            IncanType::RustInteropPath(path) if path == "str" => Ok(()),
             IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
                 // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
                 if incan_lang::lang::types::collections::from_str(base).is_none()
                     && base != incan_lang::lang::types::UNION_TYPE_NAME
+                    && base != "[]"
                 {
                     self.named_type(base)?;
                 }
@@ -560,14 +576,19 @@ impl<'a> PublicationAudit<'a> {
         }
     }
 
-    /// Retain a named model or trait only when local declarations and checker bindings agree on its identity.
+    /// Retain a named model or trait only when local declarations and checker bindings agree on its identity, or
+    /// select an exact native identity already present in the executable storage inventory.
     fn named_type(&mut self, name: &str) -> Result<(), CoverageReason> {
         let local = self.nominal_types.get(name);
         let checked = self.checked_nominal_types.get(name);
         if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
             return Err(CoverageReason::UnresolvedReference);
         }
-        let mut identity = checked.or(local).cloned().ok_or(CoverageReason::UnresolvedReference)?;
+        let mut identity = checked
+            .or(local)
+            .or_else(|| self.native_types.get(name))
+            .cloned()
+            .ok_or(CoverageReason::UnresolvedReference)?;
         self.identity(&mut identity, true)?;
         self.used_nominal_types.insert(name.to_owned(), identity);
         Ok(())
