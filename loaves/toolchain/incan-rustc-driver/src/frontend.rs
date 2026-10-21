@@ -189,6 +189,8 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
 
 /// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
 /// The current package's declarations compile from this unit and never resolve through a dependency artifact.
+/// Trait-wide default inventories are not execution roots: unused adaptor bodies must not instantiate for every
+/// adopter. Native comparison bridges add their selected slots from checked Body IR in `complete_dependency_context`.
 fn required_loaf_identities(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
@@ -222,12 +224,6 @@ fn required_loaf_identities(
                 .iter()
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
                 .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.traits.default_method_identities.iter().cloned()),
         )
         .chain(
             modules
