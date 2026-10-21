@@ -580,11 +580,12 @@ fn has_checked_native_derives(
     })
 }
 
-/// Admit only the builtin `@staticmethod` and `@classmethod` method markers and `@rust.allow` lint suppressions.
+/// Admit builtin static/class method markers, checked `@rust.extern` delegation, and lint suppressions.
 ///
 /// Checking already reflects both markers in the method's facts: a static method has no receiver, and a
-/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Every other method decorator
-/// rebinds or wraps the method and stays refused.
+/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Extern validation excludes
+/// instance receivers and real bodies; Body IR retains its exact module/item delegation rather than executing the
+/// placeholder. Every other method decorator rebinds or wraps the method and stays refused.
 pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> bool {
     is_lint_suppression_decorator(decorator)
         || (decorator.args.is_empty()
@@ -594,6 +595,7 @@ pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> boo
                 Some(
                     incan_lang::lang::decorators::DecoratorId::StaticMethod
                         | incan_lang::lang::decorators::DecoratorId::ClassMethod
+                        | incan_lang::lang::decorators::DecoratorId::RustExtern
                 )
             ))
 }

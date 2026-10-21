@@ -1,9 +1,20 @@
-# behavior: an extern function bound to a stdlib Rust module is callable from a source wrapper, and calling it with a failing assertion aborts the run
+# behavior: extern functions and static methods delegate to their Rust module, and a failing native assertion aborts the run
 # expect-stdout:
+#   true
 #   before
 # expect-exit: 101
 
 rust.module("incan_std_testing")
+
+
+class NativeTesting:
+    """Expose a native module function through a static source method."""
+
+    @staticmethod
+    @rust.extern
+    def platform() -> str:
+        """Return the platform name from the native testing module."""
+        ...
 
 
 @rust.extern
@@ -17,6 +28,7 @@ def assert_true(value: bool) -> None:
 
 
 def main() -> None:
+    println(len(NativeTesting.platform()) > 0)
     assert_true(true)
     println("before")
     assert_true(false)
