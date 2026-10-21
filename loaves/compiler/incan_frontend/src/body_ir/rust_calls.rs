@@ -27,12 +27,18 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
         .argument_adjustments
         .iter()
         .flat_map(|(span, steps)| steps.iter().map(move |step| (span, step)));
+    let field_calls = facts
+        .rust
+        .field_adjustments
+        .iter()
+        .flat_map(|(span, steps)| steps.iter().map(move |step| (span, step)));
     let mut checked_calls = facts
         .rust
         .checked_calls
         .iter()
         .chain(&facts.rust.await_conversions)
         .chain(argument_calls)
+        .chain(field_calls)
         .map(|(span, call)| (*span, call))
         .chain(
             facts
@@ -89,8 +95,19 @@ impl BodyBuilder<'_, '_> {
             .argument_adjustments
             .get(&(expr.span.start, expr.span.end))?
             .clone();
+        Some(self.lower_native_adjustment_value(expr, &steps, scope, out))
+    }
+
+    /// Evaluate one checked native adjustment chain once, shared by borrowed arguments and public field bases.
+    fn lower_native_adjustment_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        steps: &[RustCheckedCall],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
         let mut value = self.lower_expr_to_operand(expr, scope, out);
-        for step in &steps {
+        for step in steps {
             if let bir::Operand::Place(read) = &mut value {
                 self.retain_argument_borrow(read, false);
             }
@@ -102,11 +119,39 @@ impl BodyBuilder<'_, '_> {
                 scope,
                 out,
             ) else {
-                return Some(Err("native argument adjustment without an identity".into()));
+                return Err("native adjustment without an identity".into());
             };
             value = adjusted;
         }
-        Some(Ok(value))
+        Ok(value)
+    }
+
+    /// Materialize the checked shared native field base before ordinary canonical field projection. Other fields
+    /// preserve their existing place path, and a missing adjustment identity remains an explicit unsupported operand.
+    pub(super) fn lower_checked_field_base(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Place {
+        let Some(steps) = self
+            .type_info
+            .rust
+            .field_adjustments
+            .get(&(span.start, span.end))
+            .cloned()
+        else {
+            return self.lower_expr_to_place(base, scope, out);
+        };
+        let value = match self.lower_native_adjustment_value(base, &steps, scope, out) {
+            Ok(value) => value,
+            Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
+        };
+        let ty = steps
+            .last()
+            .map_or(IncanType::Unknown, |step| self.checked_type(&step.return_type));
+        self.materialize_operand_to_place(value, ty, scope, hir_span(span), out)
     }
 
     /// Lower a metadata-selected Rust call through ordinary declared-slot binding and a named external target.

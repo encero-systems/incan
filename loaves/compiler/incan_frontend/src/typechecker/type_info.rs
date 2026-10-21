@@ -951,6 +951,9 @@ pub struct RustInteropArtifacts {
     /// Checked native dereference calls at source borrowed-argument boundaries, keyed by argument expression span.
     /// Body IR emits these steps before the source call and never infers a dereference from compatible types.
     pub argument_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Metadata-selected shared dereference steps before a native public field read, keyed by the field expression.
+    /// Field identity and payload remain in their ordinary checked-field facts.
+    pub field_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
     /// Exact native values of public field expressions before source collection and scalar projection.
     pub field_values: HashMap<(usize, usize), RustCheckedFieldValue>,
     /// Closed native iteration calls selected from IntoIterator and Iterator facts at the iterable's span.
