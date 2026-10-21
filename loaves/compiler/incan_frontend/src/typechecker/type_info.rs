@@ -844,6 +844,10 @@ pub struct ExpressionArtifacts {
     /// (`box.count = small` for an `i8` value and an `int` field). Lowering wraps such a value in the `Some` layers
     /// the destination adds and widens it to the numeric type the destination holds.
     pub value_destination_types: HashMap<(usize, usize), ResolvedType>,
+    /// Explicitly admitted numeric conversions keyed by the complete boundary expression span. Unlike ordinary
+    /// lossless destination adaptation, these facts authorize a source conversion that compatibility alone rejects.
+    /// Body IR materializes the selected destination through its ordinary numeric assignment machinery.
+    pub numeric_conversion_destinations: HashMap<(usize, usize), ResolvedType>,
     /// Spans of `dict.get(key)` calls whose result is only read, so no copy of the stored value is needed.
     ///
     /// `get` answers with `Option[V]` on every dict. A lookup whose result feeds a `match` or `if let` that only reads

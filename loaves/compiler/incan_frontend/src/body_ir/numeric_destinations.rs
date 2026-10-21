@@ -54,8 +54,9 @@ pub(super) fn collection_numeric_destination(source: &IncanType, collection: &In
 impl BodyBuilder<'_, '_> {
     /// Evaluate a boundary value once and retain a numeric conversion selected by its checked destination.
     ///
-    /// Explicit destination types belong to bindings and callable slots; otherwise the recorded value destination
-    /// covers field writes and constructor fields. Expressions without either fact retain their existing operand.
+    /// Explicit conversion decisions precede ordinary lossless destination adaptation. Destination types belong to
+    /// bindings and callable slots; otherwise the recorded value destination covers field writes and constructor
+    /// fields. Expressions without either fact retain their existing operand.
     pub(super) fn lower_boundary_value(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -64,6 +65,15 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let operand = self.lower_expr_to_operand(expr, scope, out);
+        if let Some(destination) = self
+            .type_info
+            .expressions
+            .numeric_conversion_destinations
+            .get(&(expr.span.start, expr.span.end))
+        {
+            let destination = self.checked_type(destination);
+            return self.push_assign_temp(bir::Rvalue::Use(operand), destination, scope, hir_span(expr.span), out);
+        }
         let recorded = self
             .type_info
             .value_destination_type(expr.span)

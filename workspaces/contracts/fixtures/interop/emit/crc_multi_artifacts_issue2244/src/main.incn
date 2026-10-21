@@ -1,5 +1,4 @@
 # behavior: a registry crate that also provides native library formats remains usable as a Rust dependency (#2244)
-# pending: #2244 the crc_fast registry crate is not available to this toolchain
 # expect-stdout:
 #   crc32 907060870
 

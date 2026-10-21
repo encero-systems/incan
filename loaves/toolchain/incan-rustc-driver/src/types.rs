@@ -205,7 +205,8 @@ fn scalar_reference_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType], mutable
     })
 }
 
-/// Resolve the dependency-owned immutable wrapper and preserve its exact static storage arguments.
+/// Resolve the explicitly bound dependency's immutable wrapper and preserve its exact static storage arguments.
+/// A transitive copy with the same crate name cannot replace the owner used by the AST declaration.
 pub fn frozen_collection_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     name: &str,
@@ -225,11 +226,7 @@ pub fn frozen_collection_type<'tcx>(
             "unsupported frozen collection {name} arity"
         )));
     }
-    let mut definition = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
-        .map(|krate| krate.as_def_id())
+    let mut definition = crate::native_crates::root(tcx, "incan_std_core")
         .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
     for segment in ["frozen", name] {
         definition = tcx
@@ -249,13 +246,10 @@ pub fn frozen_collection_type<'tcx>(
     Ok(Ty::new_adt(tcx, tcx.adt_def(definition), tcx.mk_args(&arguments)))
 }
 
-/// Resolve the legacy runtime's actual generator ADT from dependency metadata and retain its element type.
+/// Resolve the bound core dependency's actual generator ADT and retain its element type. Transitive copies do not
+/// replace the explicit crate alias used by the generator's declaration and runtime calls.
 pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
-    let mut definition = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
-        .map(|krate| krate.as_def_id())
+    let mut definition = crate::native_crates::root(tcx, "incan_std_core")
         .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
     for segment in ["iter", name] {
         definition = tcx
@@ -612,17 +606,13 @@ pub fn enum_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanEr
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
-/// Resolve the Incan runtime's lazy zip wrapper with its checked flat element arguments.
+/// Resolve the explicitly bound Incan runtime's lazy zip wrapper with its checked flat element arguments.
 fn zip_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     left: &crate::plan::TupleElement,
     right: &crate::plan::TupleElement,
 ) -> Result<Ty<'tcx>, PlanError> {
-    let root = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_native_runtime")
-        .map(|krate| krate.as_def_id())
+    let root = crate::native_crates::root(tcx, "incan_native_runtime")
         .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime".into()))?;
     let definition = tcx
         .module_children(root)
@@ -639,16 +629,13 @@ fn zip_type<'tcx>(
     ))
 }
 
-/// Resolve the existing SDK TypeToken carrier with its exact represented native type.
+/// Resolve the bound core dependency's TypeToken carrier with its exact represented native type. A same-named
+/// transitive core artifact cannot supply the carrier for the explicit SDK declaration.
 pub fn type_token_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
     let [element] = elements else {
         return Err(PlanError::UnknownCallee("unsupported TypeToken arity".into()));
     };
-    let mut definition = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
-        .map(|krate| krate.as_def_id())
+    let mut definition = crate::native_crates::root(tcx, "incan_std_core")
         .ok_or_else(|| PlanError::UnknownCallee("unsupported TypeToken SDK owner".into()))?;
     for segment in ["reflection", "TypeToken"] {
         definition = tcx
