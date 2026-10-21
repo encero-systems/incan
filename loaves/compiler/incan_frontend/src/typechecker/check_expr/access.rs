@@ -2438,24 +2438,27 @@ impl TypeChecker {
         }
     }
 
-    /// Resolve known fields on compiler-provided surface record types.
-    ///
-    /// This currently covers `std.reflection.FieldInfo` so callers can typecheck member access on values returned by
-    /// `__fields__()` without requiring an explicit `FieldInfo` import at the use site.
-    fn resolve_surface_type_field_type(&self, type_name: &str, field: &str) -> Option<ResolvedType> {
-        match surface_types::from_str(type_name) {
-            Some(SurfaceTypeId::FieldInfo) => match field {
-                "name" | "wire_name" | "type_name" => Some(ResolvedType::FrozenStr),
-                "alias" | "description" => Some(option_ty(ResolvedType::FrozenStr)),
-                "has_default" => Some(ResolvedType::Bool),
-                "extra" => Some(ResolvedType::FrozenDict(
-                    Box::new(ResolvedType::FrozenStr),
-                    Box::new(ResolvedType::FrozenStr),
-                )),
-                _ => None,
-            },
-            _ => None,
+    /// Resolve metadata fields from their published declaration and retain the exact selected member identity.
+    /// Generated `__fields__()` results need no explicit import; the SDK remains the single field schema authority.
+    fn resolve_surface_type_field_type(&mut self, type_name: &str, field: &str, span: Span) -> Option<ResolvedType> {
+        if surface_types::from_str(type_name) != Some(SurfaceTypeId::FieldInfo) {
+            return None;
         }
+        if self.lookup_symbol(type_name).is_some() && self.surface_type_identity(SurfaceTypeId::FieldInfo).is_none() {
+            return None;
+        }
+        let module = vec![stdlib::STDLIB_ROOT.to_owned(), stdlib::STDLIB_REFLECTION.to_owned()];
+        let (library, path) = self.loaf_module(&module)?;
+        let (SymbolKind::Type(TypeInfo::Class(info)), _) =
+            self.lookup_pub_library_module_symbol_member(&library, &path, type_name)?
+        else {
+            return None;
+        };
+        let selected = info.fields.get(field)?;
+        if let Some(identity) = selected.identity.clone() {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+        Some(selected.ty.clone())
     }
 
     /// Return the surface-level result type for built-in reflection magic methods.
@@ -2504,12 +2507,14 @@ impl TypeChecker {
     ///
     /// These methods do not have user-visible source declarations, so method-call checking uses this helper to expose
     /// their synthesized return types while preserving nominal receiver-specific field value typing.
-    fn reflection_magic_method_return_type(&self, receiver_ty: &ResolvedType, method: &str) -> Option<ResolvedType> {
+    fn reflection_magic_method_return_type(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        method: &str,
+    ) -> Option<ResolvedType> {
         match magic_methods::from_str(method) {
             Some(magic_methods::MagicMethodId::ClassName) => Some(ResolvedType::Str),
-            Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
-                ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
-            ))),
+            Some(magic_methods::MagicMethodId::Fields) => Some(self.reflection_metadata_type()),
             Some(magic_methods::MagicMethodId::FieldValue) => {
                 self.field_overlay_value_type_for_nominal(receiver_ty).map(option_ty)
             }
@@ -2521,18 +2526,31 @@ impl TypeChecker {
     }
 
     /// Return the receiver-independent reflection result type available through an inferred generic capability.
-    fn generic_reflection_magic_method_return_type(&self, method: &str) -> Option<ResolvedType> {
+    fn generic_reflection_magic_method_return_type(&mut self, method: &str) -> Option<ResolvedType> {
         match magic_methods::from_str(method) {
             Some(magic_methods::MagicMethodId::ClassName) => Some(ResolvedType::Str),
-            Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
-                ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
-            ))),
+            Some(magic_methods::MagicMethodId::Fields) => Some(self.reflection_metadata_type()),
             Some(magic_methods::MagicMethodId::FieldValue) => Some(option_ty(ResolvedType::Str)),
             Some(magic_methods::MagicMethodId::FieldItems) => {
                 Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Str, ResolvedType::Str])))
             }
             _ => None,
         }
+    }
+
+    /// Retain the published metadata carrier selected by a generated reflection call, without requiring a source
+    /// import. The SDK declaration supplies its identity and field layout; no consumer recreates the record by its
+    /// spelling.
+    fn reflection_metadata_type(&mut self) -> ResolvedType {
+        let name = surface_types::as_str(SurfaceTypeId::FieldInfo);
+        let module = vec![stdlib::STDLIB_ROOT.to_owned(), stdlib::STDLIB_REFLECTION.to_owned()];
+        if let Some(identity) = self.loaf_member_identity(&module, name) {
+            self.type_info
+                .declarations
+                .body_ir_native_type_identities
+                .insert(name.to_owned(), identity);
+        }
+        ResolvedType::FrozenList(Box::new(ResolvedType::Named(name.to_owned())))
     }
 
     /// Validate a reflection magic-method call.
@@ -2709,7 +2727,7 @@ impl TypeChecker {
         field: &str,
         span: Span,
     ) -> Option<ResolvedType> {
-        if let Some(surface_ty) = self.resolve_surface_type_field_type(type_name, field) {
+        if let Some(surface_ty) = self.resolve_surface_type_field_type(type_name, field, span) {
             return Some(surface_ty);
         }
         let type_info = self.lookup_semantic_type_info(type_name)?.clone();

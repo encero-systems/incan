@@ -2,15 +2,15 @@
 Reflection helpers for models and classes.
 """
 
-class FieldInfo:
+pub class FieldInfo:
     """
     Compiler-provided field metadata returned by __fields__().
     Instances are immutable and read-only.
     """
-    name: FrozenStr
-    alias: Option[FrozenStr]
-    description: Option[FrozenStr]
-    wire_name: FrozenStr
-    type_name: FrozenStr
-    has_default: bool
-    extra: FrozenDict[FrozenStr, FrozenStr]
+    pub name: FrozenStr
+    pub alias: Option[FrozenStr]
+    pub description: Option[FrozenStr]
+    pub wire_name: FrozenStr
+    pub type_name: FrozenStr
+    pub has_default: bool
+    pub extra: FrozenDict[FrozenStr, FrozenStr]

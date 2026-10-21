@@ -229,6 +229,18 @@ fn required_loaf_identities(
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
                 .flat_map(|info| info.traits.default_method_identities.iter().cloned()),
         )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.declarations.body_ir_native_type_identities.values().cloned()),
+        )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .filter_map(incan_frontend::body_ir::registry_description_helper_identity),
+        )
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
@@ -321,13 +333,13 @@ fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) 
     for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {
             if declaration.native_item.is_empty()
-                && let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical)
+                && let Some(item) = linked_type_item(&declaration.canonical, &declaration.type_parameters)
             {
                 declaration.native_item = item;
             }
         }
         for declaration in &mut module.enum_declarations {
-            if let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical) {
+            if let Some(item) = linked_type_item(&declaration.canonical, &declaration.type_parameters) {
                 declaration.native_item = item;
             }
         }
@@ -388,6 +400,17 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
         }
     }
     Ok(layouts.into_values().collect())
+}
+
+/// Select a linked native carrier or concrete compiled Loaf layout; source layouts with owner parameters stay governed.
+/// A generic source declaration has no single compiled concrete item; its checked fields specialize with its consumer.
+fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
+    incan_semantics_core::body_ir::native_nominal_item(identity).or_else(|| {
+        parameters
+            .is_empty()
+            .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
+            .flatten()
+    })
 }
 
 /// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
