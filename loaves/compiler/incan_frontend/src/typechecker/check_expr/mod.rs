@@ -578,7 +578,8 @@ impl TypeChecker {
     /// Resolve an imported callable together with the authored module path used by lowering and codegraph facts.
     ///
     /// A Loaf owns its public modules even when an export is missing: a member it does not publish is not answered
-    /// from anywhere else.
+    /// from anywhere else. During library compilation, its own source functions already carry the package origin;
+    /// that origin is local only when it matches the package the accepting checker is compiling.
     fn resolve_imported_module_function_member_with_source(
         &mut self,
         module_path: &[String],
@@ -595,8 +596,14 @@ impl TypeChecker {
             return None;
         }
         let identity = self.dependency_member_identity(&import_path, member)?;
-        let incan_semantics_core::SymbolOrigin::Module(source_module_path) = identity.origin else {
-            return None;
+        let source_module_path = match identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(path) => path,
+            incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                if self.symbols.package_identity() == Some(library.as_str()) =>
+            {
+                module_path
+            }
+            _ => return None,
         };
         Some((kind, source_module_path))
     }

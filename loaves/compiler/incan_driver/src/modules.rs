@@ -201,22 +201,28 @@ fn collect_modules_detailed_from_seeds(
             None => read_source_for_diagnostics(&file_path)?,
         };
         let file_path_obj = Path::new(&file_path);
-        let ast = match session.parse_source(file_path_obj, &source, true) {
-            Ok(a) => {
-                // Surface non-fatal parser warnings immediately, so they reach the user whichever command ran. They
-                // are collected for machine-readable reports later, off the retained AST, by the typecheck pass.
-                render_module_warnings(&file_path, &source, &a.warnings);
-                a
-            }
-            Err(errs) => {
-                return Err(CliDiagnosticFailure::from_errors(
-                    file_path,
-                    source,
-                    errs,
-                    diagnostics::DiagnosticPhase::Parse,
-                ));
-            }
-        };
+        let (ast, gated_exports) =
+            match session
+                .parse_source_unprojected(file_path_obj, &source, true)
+                .and_then(|unprojected| {
+                    let gated = incan_frontend::library_exports::gated_public_exports(&unprojected, &path_segments);
+                    session.project_parsed_program(unprojected).map(|ast| (ast, gated))
+                }) {
+                Ok((a, gated)) => {
+                    // Surface non-fatal parser warnings immediately, so they reach the user whichever command ran. They
+                    // are collected for machine-readable reports later, off the retained AST, by the typecheck pass.
+                    render_module_warnings(&file_path, &source, &a.warnings);
+                    (a, gated)
+                }
+                Err(errs) => {
+                    return Err(CliDiagnosticFailure::from_errors(
+                        file_path,
+                        source,
+                        errs,
+                        diagnostics::DiagnosticPhase::Parse,
+                    ));
+                }
+            };
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
@@ -262,6 +268,7 @@ fn collect_modules_detailed_from_seeds(
             file_path: PathBuf::from(&file_path),
             source,
             ast,
+            gated_exports,
         });
     }
 

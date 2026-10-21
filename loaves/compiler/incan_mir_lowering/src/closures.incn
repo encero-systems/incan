@@ -10,6 +10,7 @@ from rust::incan_semantics_core::body_ir import (
     Callee as RustCallee,
     CallableTarget as RustCallableTarget,
     NamedCallableTarget as RustNamedTarget,
+    LoafCallable,
     DecoratedBinding,
     DecoratedInitialization,
 )
@@ -29,6 +30,7 @@ from pub::incan_mir_plan import (
     Unwind,
     OperandKind,
     EnumDeclaration,
+    ExternalFunction,
 )
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
@@ -41,6 +43,7 @@ from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
 from type_parameters import Instance, instantiate, substitute
+from lowering import call_parameter_type
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
@@ -441,6 +444,7 @@ pub def source_function_item(
     module: &RustModule,
     mut builder: Builder,
     value: &RustRvalue,
+    span: SourceSpan,
 ) -> Result[Option[tuple[str, PlanType]], str]:
     """Select a function item only from the frontend's explicit named-read fact and canonical forwarding identity."""
     match value:
@@ -458,15 +462,16 @@ pub def source_function_item(
                 return Ok(None)
             if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 1:
                 return Err("invalid Body IR function-item forwarding computation")
-            return Ok(Some(checked_function_item(module, builder, parameters, closure.stmts[0].kind)?))
+            return Ok(Some(checked_function_item(module, builder, parameters, closure.stmts[0].kind, span)?))
         _ => return Ok(None)
 
 
 def checked_function_item(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     statement: &RustStatementKind,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Require the same checked declaration and signature as the named read's retained forwarding call."""
     match statement:
@@ -475,7 +480,7 @@ def checked_function_item(
                 RustCallee.Function(target) =>
                     match target:
                         RustCallableTarget.Named(named) =>
-                            return function_item_identity(module, builder, parameters, named)
+                            return function_item_identity(module, builder, parameters, named, span)
                         _ => return Err("invalid Body IR indirect function-item forwarding target")
                 _ => return Err("invalid Body IR nonfunction item forwarding target")
         _ => return Err("invalid Body IR function-item body")
@@ -512,9 +517,10 @@ def item_result(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
 
 def function_item_identity(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     target: &RustNamedTarget,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """A diagnostic source name becomes a plan item only after its canonical and physical identities agree."""
     if len(target.type_args) != 0:
@@ -524,12 +530,57 @@ def function_item_identity(
         Some(identity) =>
             match module.body_for_canonical_target(identity):
                 None =>
+                    for declaration in module.loaf_callables:
+                        if declaration.canonical == identity:
+                            return loaf_item_signature(builder, parameters, declaration, span)
                     index = imported_item_body(module, target)?
                     return item_signature(module, builder, parameters, module.bodies[index])
                 Some(body) =>
                     if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):
                         return Err("invalid Body IR function-item identity")
                     return item_signature(module, builder, parameters, body)
+
+
+def loaf_item_signature(
+    mut builder: Builder,
+    parameters: &list[RustParameter],
+    declaration: &LoafCallable,
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType], str]:
+    """Read a compiled function value's signature from its Loaf declaration, without requiring its implementation."""
+    if len(declaration.type_parameters) != 0 or len(declaration.native_type_arguments) != 0:
+        return Err("unsupported Body IR generic Loaf function item")
+    if len(parameters) != len(declaration.parameters):
+        return Err("invalid Body IR Loaf function-item parameter count")
+    mut signature: list[PlanType] = []
+    for index in range(len(parameters)):
+        parameter = parameters[index]
+        if parameter.ty != declaration.parameters[index]:
+            return Err("invalid Body IR Loaf function-item parameter contract")
+        component = item_component(builder, declaration.parameters[index])?
+        mut input = packed_input(component, parameter.kind, parameter.mutable)?
+        match declaration.declaration_frame.as_ref():
+            Some(boxed) =>
+                frame = boxed.as_ref()
+                input = call_parameter_type(builder, frame, frame.params[index])?
+            None => pass
+        signature.append(input)
+    mut result = item_result(builder, declaration.return_type)?
+    match declaration.declaration_frame.as_ref():
+        Some(boxed) => result = return_representation(boxed.as_ref(), result)?
+        None => pass
+    signature.append(result)
+    name = str(declaration.item)
+    builder.externals.append(ExternalFunction(path=name, parameters=signature[:-1], return_type=signature[-1], span=span))
+    return Ok((name, PlanType.FunctionItem(name, signature)))
+
+
+pub def function_item_callee(builder: Builder, name: str, span: SourceSpan) -> Callee:
+    """Use the registered external declaration for a Loaf item and the local declaration for a source item."""
+    for declaration in builder.externals:
+        if declaration.path == name and len(declaration.type_arguments) == 0:
+            return Callee(kind=CalleeKind.External(name), span=span)
+    return Callee(kind=CalleeKind.Planned(name), span=span)
 
 
 def imported_item_body(module: &RustModule, target: &RustNamedTarget) -> Result[int, str]:

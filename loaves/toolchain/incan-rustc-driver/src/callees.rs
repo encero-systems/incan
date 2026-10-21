@@ -130,7 +130,8 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
-/// Resolve a retained item through public module children, selecting the exact item kind the plan declared.
+/// Resolve a retained item through public module children, selecting the exact item kind the plan declared. A compiled
+/// layout may export an alias; only rustc's type metadata identifies the native ADT behind that alias.
 ///
 /// Each segment selects the public child of that name and the kind it must be: a module on the way, the declared
 /// kind at the end. A class with field defaults compiles a constructor function under its own name beside its struct,

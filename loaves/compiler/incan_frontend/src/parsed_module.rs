@@ -25,4 +25,6 @@ pub struct ParsedModule {
     pub source: String,
     /// The parsed program.
     pub ast: Program,
+    /// Public feature-gated names from the unprojected module, retained only for missing-feature diagnostics.
+    pub gated_exports: Vec<crate::library_manifest::ProviderFactRequirement>,
 }

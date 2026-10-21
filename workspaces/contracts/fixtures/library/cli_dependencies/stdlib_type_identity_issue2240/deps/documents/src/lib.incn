@@ -1,0 +1,6 @@
+from std.json import JsonValue
+
+
+pub def document() -> JsonValue:
+    """Return a standard-library value through a public signature."""
+    return JsonValue.array([])

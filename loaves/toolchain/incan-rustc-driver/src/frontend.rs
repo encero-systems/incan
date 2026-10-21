@@ -115,12 +115,7 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
-                .library_manifest(
-                    &modules,
-                    &modules[entry],
-                    &unit.version,
-                    &session.contract_model_bundles,
-                )
+                .library_manifest(&modules, &modules[entry], unit, &session.contract_model_bundles)
                 .map_err(|error| error.to_string())?;
             Some(manifest)
         }
@@ -217,8 +212,18 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
                 declaration.native_item = item;
             }
         }
+        let governed = module
+            .bodies
+            .iter()
+            .filter(|body| module.body_requires_instantiation(body))
+            .filter_map(|body| body.canonical.clone())
+            .collect::<std::collections::BTreeSet<_>>();
         module.bodies.retain(|body| {
-            if !body.type_parameters.is_empty() {
+            if body
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| governed.contains(identity))
+            {
                 return true;
             }
             match incan_semantics_core::body_ir::LoafCallable::from_body(body) {

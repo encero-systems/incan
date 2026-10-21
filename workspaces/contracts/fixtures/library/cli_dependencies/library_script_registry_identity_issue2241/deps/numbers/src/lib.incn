@@ -1,0 +1,6 @@
+from rust::serde_json import to_string
+
+
+pub def encoded() -> str:
+    """Use a registry crate from the public library entry point."""
+    return to_string(42).unwrap_or("serialization failed")

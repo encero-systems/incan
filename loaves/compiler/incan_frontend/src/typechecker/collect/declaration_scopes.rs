@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::{LibraryManifest, resolved_type_from_manifest_type_ref};
 use crate::symbols::{SymbolKind, TypeInfo};
 use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
 use incan_semantics_core::CanonicalSymbolId;
@@ -36,12 +36,12 @@ impl TypeChecker {
         canonical_public_library_type_name(library, &path)
     }
 
-    /// Follow the spelling `name` in the checked API module `module_path` to the model, class, enum or newtype it
-    /// declares, returning the declaring module and the declared name.
+    /// Follow the spelling `name` in the checked API module `module_path` to its type or trait declaration, returning
+    /// the declaring module and the declared name.
     ///
     /// An alias, public or private, is followed to its target as the module wrote it, through as many modules as the
-    /// chain crosses. A spelling that reaches no nominal declaration of this package, such as an import from another
-    /// package, a function or a cycle, yields `None`.
+    /// chain crosses. A spelling that reaches no type or trait declaration of this package, such as an import from
+    /// another package, a function or a cycle, yields `None`.
     fn api_nominal_declaration_path(
         api: &CheckedApiMetadataPackage,
         module_path: &[String],
@@ -64,7 +64,9 @@ impl TypeChecker {
                 ApiDeclaration::Model(_)
                 | ApiDeclaration::Class(_)
                 | ApiDeclaration::Enum(_)
-                | ApiDeclaration::Newtype(_) => return Some((module_path, name)),
+                | ApiDeclaration::Newtype(_)
+                | ApiDeclaration::TypeAlias(_)
+                | ApiDeclaration::Trait(_) => return Some((module_path, name)),
                 ApiDeclaration::Alias(alias) => {
                     let target = resolve_api_alias_target(&module_path, &alias.target_path);
                     let (target_name, target_module) = target.split_last()?;
@@ -129,7 +131,7 @@ impl TypeChecker {
     }
 
     /// Return the declaration scope of one checked API module of `library`, building the library's scopes once.
-    fn pub_library_declaration_scope(
+    pub(super) fn pub_library_declaration_scope(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -190,10 +192,8 @@ impl TypeChecker {
         };
         let graph = &manifest.contract_metadata.identity_graph;
         for module in &api.modules {
-            if is_package_root_module(&module.module_path) {
-                continue;
-            }
-            let scope = self.pub_library_declaration_scope(library, manifest, &module.module_path);
+            let mut scope = root_remapping.clone();
+            scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
             for declaration in &module.declarations {
                 if !matches!(
                     declaration,
@@ -201,7 +201,14 @@ impl TypeChecker {
                         | ApiDeclaration::Class(_)
                         | ApiDeclaration::Enum(_)
                         | ApiDeclaration::Newtype(_)
+                        | ApiDeclaration::TypeAlias(_)
+                        | ApiDeclaration::Trait(_)
                 ) {
+                    continue;
+                }
+                if is_package_root_module(&module.module_path)
+                    && !matches!(declaration, ApiDeclaration::TypeAlias(_) | ApiDeclaration::Trait(_))
+                {
                     continue;
                 }
                 let name = Self::api_declaration_name(declaration);
@@ -219,21 +226,60 @@ impl TypeChecker {
                 self.public_library_type_identities
                     .entry(key.clone())
                     .or_insert(identity);
-                if self.transitive_pub_types.contains_key(&key) {
-                    continue;
-                }
-                let Some(mut kind) = self.symbol_kind_from_api_declaration(Some(api), declaration) else {
-                    continue;
-                };
-                self.remap_symbol_kind_with_import_aliases(&mut kind, &scope);
-                self.remap_symbol_kind_with_import_aliases(&mut kind, root_remapping);
-                Self::mark_compiled_class_field_provider(&mut kind, library);
-                if let SymbolKind::Type(info) = kind
-                    && !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin)
+                if self.transitive_pub_types.contains_key(&key)
+                    || self.transitive_pub_traits.contains_key(&key)
+                    || self.type_aliases.contains_key(&key)
                 {
-                    self.transitive_pub_types.entry(key).or_default().push(info);
+                    continue;
                 }
+                self.cache_declared_library_type(library, manifest, key, declaration, &scope);
             }
+        }
+    }
+
+    /// Cache each type in its checked declaration scope, including transparent aliases referenced by signatures
+    /// without an explicit consumer import. Source aliases resolve through the same scope as fields and methods.
+    fn cache_declared_library_type(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+        key: String,
+        declaration: &ApiDeclaration,
+        scope: &HashMap<String, String>,
+    ) {
+        if let ApiDeclaration::TypeAlias(item) = declaration {
+            let mut target = resolved_type_from_manifest_type_ref(&item.type_alias.target);
+            Self::remap_resolved_type_with_import_aliases(&mut target, scope);
+            self.type_aliases.insert(
+                key,
+                crate::typechecker::TypeAliasTarget {
+                    nominal_identities: Default::default(),
+                    type_params: item
+                        .type_alias
+                        .type_params
+                        .iter()
+                        .map(|param| param.name.clone())
+                        .collect(),
+                    target,
+                },
+            );
+            return;
+        }
+        let Some(mut kind) =
+            self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+        else {
+            return;
+        };
+        self.remap_symbol_kind_with_import_aliases(&mut kind, scope);
+        Self::mark_compiled_class_field_provider(&mut kind, library);
+        match kind {
+            SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+                self.transitive_pub_types.entry(key).or_default().push(info);
+            }
+            SymbolKind::Trait(info) => {
+                self.transitive_pub_traits.entry(key).or_default().push(info);
+            }
+            _ => {}
         }
     }
 }

@@ -316,6 +316,30 @@ impl BodyIrModule {
         })
     }
 
+    /// Whether a body is governed by its own type parameters or by the checked parameters of its enclosing owner.
+    /// A receiver method need not repeat its owner's binders on the method declaration; it still requires caller
+    /// instantiation and must not become a compiled nongeneric Loaf callable.
+    pub fn body_requires_instantiation(&self, body: &Body) -> bool {
+        if !body.type_parameters.is_empty() {
+            return true;
+        }
+        let Some(identity) = &body.canonical else {
+            return false;
+        };
+        if identity.namespace != SymbolNamespace::Member {
+            return false;
+        }
+        self.nominal_declarations.iter().any(|owner| {
+            !owner.type_parameters.is_empty()
+                && owner.canonical.origin == identity.origin
+                && declares_member(&owner.canonical, identity)
+        }) || self.enum_declarations.iter().any(|owner| {
+            !owner.type_parameters.is_empty()
+                && owner.canonical.origin == identity.origin
+                && declares_member(&owner.canonical, identity)
+        })
+    }
+
     /// Whether a function, source Partial forwarding body, or retained nominal method or computed-property getter has
     /// its own canonical declaration identity and span-derived direct-call id. Methods and getters must belong to a
     /// retained nominal, normal enum or trait owner whose span contains them; an instance receiver must match that
@@ -464,10 +488,10 @@ impl BodyIrModule {
                 .all(|binding| is_closed_type(&binding.argument))
     }
 
-    /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
-    /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
-    /// native types rustc verifies. A selected native equality witness must be a member of its model; lowering
-    /// separately validates that body's executable ABI.
+    /// Whether a retained layout agrees with its canonical identities and physical declaration scope. A linked Loaf's
+    /// item must export that same canonical identity. Native layouts match a fixed carrier or extend an opaque skeleton
+    /// with public metadata-selected fields, whose exact types rustc verifies. A selected native equality witness must
+    /// be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
         if declaration.trait_adoptions.iter().enumerate().any(|(index, adoption)| {
             adoption.trait_identity.kind != SemanticSourceTargetKind::Trait
@@ -499,10 +523,11 @@ impl BodyIrModule {
                 return false;
             }
         }
-        if !declaration.native_item.is_empty()
-            && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
-                != Some(declaration.native_item.as_str())
-        {
+        let compiled_item = match &declaration.canonical.origin {
+            crate::SymbolOrigin::Package { .. } => crate::body_ir::loaf_item_path(&declaration.canonical),
+            _ => crate::body_ir::native_nominal_item(&declaration.canonical),
+        };
+        if !declaration.native_item.is_empty() && compiled_item.as_deref() != Some(declaration.native_item.as_str()) {
             return false;
         }
         if matches!(

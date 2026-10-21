@@ -1,0 +1,8 @@
+pub model Evidence:
+    """An element whose name is private to the consumer's import scope."""
+    pub name: str
+
+
+pub model Bundle:
+    """A public container that determines an empty list's element type."""
+    pub items: list[Evidence]

@@ -128,7 +128,14 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ClosureRef(signature) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
         }
-        PlanType::FunctionItem(name, _) => Ty::new_fn_def(tcx, crate::callees::planned(tcx, name)?, tcx.mk_args(&[])),
+        PlanType::FunctionItem(name, _) => {
+            let definition = if name.contains("::") {
+                crate::callees::external(tcx, name)?
+            } else {
+                crate::callees::planned(tcx, name)?
+            };
+            Ty::new_fn_def(tcx, definition, tcx.mk_args(&[]))
+        }
         PlanType::Unit => tcx.types.unit,
         PlanType::UnitFunction => Ty::new_fn_ptr(
             tcx,

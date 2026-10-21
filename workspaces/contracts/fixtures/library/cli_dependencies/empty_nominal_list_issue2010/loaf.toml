@@ -1,0 +1,9 @@
+[project]
+name = "empty_nominal_list_issue2010"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+records = { path = "deps/records" }

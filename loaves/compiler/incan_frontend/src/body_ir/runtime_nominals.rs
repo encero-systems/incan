@@ -145,6 +145,7 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         type_parameters: parameters,
         native_type_arguments: Vec::new(),
         parameter_defaults: Vec::new(),
+        declaration_frame: None,
     })
 }
 

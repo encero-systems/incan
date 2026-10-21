@@ -1,7 +1,7 @@
 """Validation of trait implementation records whose trait another module, the standard library or an SDK declares."""
 
 from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
-from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
+from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation, loaf_item_path
 from nominal_frames import closed_arguments
 
 
@@ -10,11 +10,11 @@ pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
     return not closed_arguments([binding.argument.clone() for binding in implementation.type_arguments])
 
 
-pub def is_well_formed_project_implementation(
+pub def validate_project_implementation(
     module: &BodyIrModule,
     implementation: &TraitImplementation,
     modules: &list[BodyIrModule],
-) -> bool:
+) -> Result[None, str]:
     """
     Validate one trait implementation record of `module` against every module of the project.
 
@@ -26,24 +26,22 @@ pub def is_well_formed_project_implementation(
     Matching spellings never establish any of these.
     """
     if module.is_well_formed_trait_implementation(implementation):
-        return true
-    if not is_imported_slot_record(module, implementation):
-        return false
+        return Ok(None)
+    if not module.trait_arguments_are_owner_bound(implementation):
+        return Err("invalid Body IR trait implementation arguments")
+    if not fills_its_slot(implementation):
+        return Err("invalid Body IR trait implementation slot filling")
+    if not retains_owner(module, implementation.owner):
+        return Err("invalid Body IR trait implementation owner")
     if is_protocol_slot(implementation.method):
-        return implementation.implementation == implementation.method or retains_body(
-            modules,
-            implementation.implementation,
-        )
+        if implementation.implementation == implementation.method or retains_body(modules, implementation.implementation):
+            return Ok(None)
+        return Err("invalid Body IR trait implementation without a retained declaration")
     if not declares_slot(modules, implementation.method):
-        return false
-    return retains_body(modules, implementation.implementation)
-
-
-def is_imported_slot_record(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
-    """Require closed or exact owner-bound arguments and a canonical slot filling for the retained adopter."""
-    if not module.trait_arguments_are_owner_bound(implementation) or not fills_its_slot(implementation):
-        return false
-    return retains_owner(module, implementation.owner)
+        return Err("invalid Body IR trait implementation without its declaring trait")
+    if not retains_body(modules, implementation.implementation):
+        return Err("invalid Body IR trait implementation without a retained declaration")
+    return Ok(None)
 
 
 def is_protocol_slot(slot: &CanonicalSymbolId) -> bool:
@@ -121,10 +119,20 @@ def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> 
 
 
 def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
-    """Whether one module retains the body of `identity` with its span-derived direct-call identity."""
+    """Whether one module retains a checked body or the exact compiled Loaf declaration that implements the slot."""
     for body in module.bodies:
         if body.canonical == Some(identity.clone()) and module.body_has_canonical_direct_call_id(body):
             return true
+    for declaration in module.loaf_callables:
+        if declaration.canonical != identity.clone():
+            continue
+        match loaf_item_path(identity):
+            Some(path) =>
+                if declaration.item == path and identity.namespace == SymbolNamespace.Member and identity.scope_discriminant == None and (
+                    identity.kind == SemanticSourceTargetKind.Method or identity.kind == SemanticSourceTargetKind.Property
+                ):
+                    return true
+            None => pass
     return false
 
 
