@@ -59,6 +59,9 @@ def declaration_identities(document: str) -> Result[list[str], str]:
 def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     """JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement."""
     original = document(incan, project, "json")?
+    check_identity_queries(incan, project, original)?
+    for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
+        return Err(f"graph inspection compiled an Incan library: {artifact.0}")
     check_rust_links(original)?
     jsonl = document(incan, project, "jsonl")?
     mut lines: list[JsonValue] = []
@@ -85,6 +88,24 @@ def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     if invalid.code == Some(0):
         failures.append("broken source reused a checked cached graph")
     return Ok(failures)
+
+
+def check_identity_queries(incan: str, project: Path, document: str) -> Result[None, str]:
+    """Unique short names and their full exported IDs must select the same checked callers, across package boundaries."""
+    records = parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    declarations = [record for record in records if string_field(record, "record") == "declaration"]
+    for declaration in declarations:
+        name = string_field(declaration, "name")
+        if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
+            continue
+        identifier = string_field(declaration, "id")
+        short = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", name], project)?
+        if short.stdout == "":
+            continue
+        full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
+        if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
+            return Err(f"full declaration ID and short name select different callers: {name}")
+    return Ok(None)
 
 
 def string_field(value: JsonValue, key: str) -> str:

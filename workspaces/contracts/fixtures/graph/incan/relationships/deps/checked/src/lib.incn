@@ -1,0 +1,6 @@
+"""A provider inspected from its checked source without requiring a native library."""
+
+
+pub def checked_helper() -> int:
+    """Return a value that the importing unit can check using the inspection interface."""
+    return 11

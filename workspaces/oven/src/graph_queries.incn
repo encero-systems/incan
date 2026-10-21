@@ -31,6 +31,16 @@ pub def identity(value: JsonValue) -> str:
         Some(_) => return stable.to_json().unwrap_or("")
 
 
+pub def canonical(value: JsonValue) -> str:
+    """Preserve exact checked identity equality within a source snapshot, including imported targets without signatures."""
+    if text(value, "canonical_key") != "":
+        return text(value, "canonical_key")
+    target = nested(value, "canonical_identity")
+    if target.is_null():
+        return ""
+    return target.to_json().unwrap_or("")
+
+
 pub def display(value: JsonValue) -> str:
     """Show the qualified semantic origin, with the declared name when the origin names only a module."""
     if text(value, "label") != "":
@@ -38,6 +48,15 @@ pub def display(value: JsonValue) -> str:
     stable = nested(value, "stable_identity")
     origin = nested(stable, "origin")
     mut segments: list[str] = []
+    if text(origin, "kind") == "package":
+        segments.append(text(origin, "library"))
+        match nested(origin, "module_path").as_array():
+            Some(items) =>
+                for item in items:
+                    match item.as_str():
+                        Some(part) => segments.append(part)
+                        None => pass
+            None => pass
     match nested(origin, "path").as_array():
         Some(items) =>
             for item in items:
@@ -82,6 +101,7 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
     """Select definitions and traverse only compiler-proven references, callers, callees or module imports."""
     mut selected: list[str] = []
     mut identities: list[str] = []
+    mut canonical_targets: list[str] = []
     mut modules: list[str] = []
     mut by_id: Dict[str, JsonValue] = {}
     for record in records:
@@ -98,6 +118,9 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
                 proved = identity(record)
                 if proved != "":
                     identities.append(proved)
+                checked = canonical(record)
+                if checked != "":
+                    canonical_targets.append(checked)
     mut hits: list[str] = []
     if kind != "defs" and len(selected) > 1:
         for identifier in selected:
@@ -117,7 +140,8 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
         target = text(record, "target_id")
         owner = text(record, "owner_id")
         proved = identity(record)
-        targets = target in selected or (proved != "" and (proved in identities or matches(record, term)))
+        checked = canonical(record)
+        targets = target in selected or (checked != "" and checked in canonical_targets) or (proved != "" and (proved in identities or matches(record, term)))
         mut hit = false
         mut label = display(record)
         if kind == "defs":

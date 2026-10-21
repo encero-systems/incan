@@ -19,6 +19,7 @@ from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
 from semver_req import compare_version_order, parse_version
 from json_fields import field, strings
+from graph_cache import publish
 
 
 @derive(Eq)
@@ -317,6 +318,13 @@ pub def build_rust(request: RustBuild) -> Result[list[str], str]:
     if len(reports) > 0:
         body = "\n\n".join(reports)
         return Err(f"{len(reports)} of {len(facets)} Rust units did not compile:\n\n{body}")
+    receipts: list[JsonValue] = [JsonValue.object({
+        "crate": JsonValue.string(built[key].crate_name),
+        "artifact": JsonValue.string(built[key].artifact),
+        "directory": JsonValue.string(built[key].directory),
+    }) for key in sorted([key for key in built.keys()])]
+    receipt = JsonValue.object({"schema": JsonValue.string("incan.rust-units/1"), "units": JsonValue.array(receipts)})
+    publish(output.joinpath("units.json"), receipt.to_json().map_err((error) => error.message())?)?
     return Ok(binaries)
 
 
@@ -397,7 +405,7 @@ pub def linking(facet: LocalFacet, request: RustBuild, built: Dict[str, BuiltUni
     return Ok(arguments)
 
 
-def compile_library(
+pub def compile_library(
     facet: LocalFacet,
     declared: RustFacet,
     output: Path,

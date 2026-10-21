@@ -73,7 +73,7 @@ def declaration(alias: str, value: TomlValue, index: int, group: str = "dependen
     ))
 
 
-pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
+pub def catalog(document: TomlValue, include_incan: bool = false) -> Result[RustDependencyCatalog, str]:
     """Build the existing activation catalog from converted Loaf declarations, including target alternatives."""
     root = document.as_table().map_err((e) => e.message())?
     mut dependencies: list[RustDependencyDeclaration] = []
@@ -85,7 +85,7 @@ pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
             value = table[alias]
             if group == "dependencies" and value.kind() == TomlKind.Table:
                 entry = value.as_table().map_err((e) => e.message())?
-                if "path" in entry and "loaf" not in entry:
+                if "path" in entry and "loaf" not in entry and not include_incan:
                     continue
             if value.kind() == TomlKind.Array:
                 for alternative in value.as_array().map_err((e) => e.message())?:
@@ -125,7 +125,7 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
     return result
 
 
-def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features: list[str], defaults: bool, substitutes: Dict[str, str] = {}) -> Result[LocalDemand, str]:
+def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features: list[str], defaults: bool, substitutes: Dict[str, str] = {}, include_incan: bool = false) -> Result[LocalDemand, str]:
     """Resolve an explicitly declared local path, checking its version and procedural-macro domain before selection."""
     mut relative = ""
     match declaration.source:
@@ -137,7 +137,12 @@ def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features:
     path = located.resolve().map_err((e) => f"{parent.project}: dependency `{declaration.alias}` at {located.0}: {e.message()}")?
     source = path.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((e) => e.message())?
     document = toml.parse(source).map_err((e) => e.message())?
-    if document.get[str]("project.name").map_err((e) => e.message())? != declaration.package:
+    mut named = true
+    if include_incan and declaration.field[0] == "dependencies":
+        parent_source = Path(parent.project).joinpath("loaf.toml").read_text("utf-8", "strict").map_err((e) => e.message())?
+        parent_document = toml.parse(parent_source).map_err((e) => e.message())?
+        named = parent_document.get_optional[str](f"dependencies.{declaration.alias}.loaf").map_err((e) => e.message())? is not None
+    if named and document.get[str]("project.name").map_err((e) => e.message())? != declaration.package:
         return Err(f"local dependency {declaration.alias} has a different Loaf identity")
     if let Some(requirement) = declaration.version_requirement:
         version = document.get[str]("project.version").map_err((e) => e.message())?
@@ -162,10 +167,10 @@ def request(declaration: RustDependencyDeclaration, features: list[str], default
     }))
 
 
-def predicates(document: TomlValue, configuration: TargetConfiguration, project: str) -> Result[list[JsonValue], str]:
+def predicates(document: TomlValue, configuration: TargetConfiguration, project: str, include_incan: bool = false) -> Result[list[JsonValue], str]:
     """Carry original local declaration positions through the registry lock's existing predicate wire format."""
     mut selected: list[JsonValue] = []
-    inputs = catalog(document)?
+    inputs = catalog(document, include_incan)?
     for edge in inputs.dependencies:
         if let Some(condition) = edge.target_condition:
             matched = target_matches(condition, configuration, project, edge.field).map_err((e) => e.message())?
@@ -212,6 +217,7 @@ pub def local_facets(
     configuration: TargetConfiguration,
     root_environment: Option[TomlValue] = None,
     substitutes: Dict[str, str] = {},
+    include_incan: bool = false,
 ) -> Result[list[LocalFacet], str]:
     """Select one shared graph of local facets. A canonically resolved environment replaces only the root's slots, and
     a substitute replaces the Loaf of its package name wherever the graph reaches it."""
@@ -227,24 +233,24 @@ pub def local_facets(
             mut environment: Option[TomlValue] = None
             if identity == key(root):
                 environment = root_environment
-            facet, children = facet_of(demand, configuration, environment, substitutes)?
+            facet, children = facet_of(demand, configuration, environment, substitutes, include_incan)?
             facets.append(facet)
             for child_demand in children:
                 demands = add(demands, child_demand)
     return Ok(facets)
 
 
-def activated(demand: LocalDemand, configuration: TargetConfiguration, environment: Option[TomlValue]) -> Result[Tuple[TomlValue, list[str], list[ActiveEdge]], str]:
+def activated(demand: LocalDemand, configuration: TargetConfiguration, environment: Option[TomlValue], include_incan: bool = false) -> Result[Tuple[TomlValue, list[str], list[ActiveEdge]], str]:
     """One facet's manifest, catalog, effective features and active edges with the features each requests."""
     path = Path(demand.project).joinpath("loaf.toml")
     source = path.read_text("utf-8", "strict").map_err((e) => e.message())?
     document = toml.parse(source).map_err((e) => e.message())?
-    mut inputs = catalog(document)?
+    mut inputs = catalog(document, include_incan)?
     mut authority: Option[RustDependencyCatalog] = None
     mut purpose = ActivationPurpose.Normal
     if let Some(selected) = environment:
         authority = Some(inputs)
-        inputs = catalog(selected)?
+        inputs = catalog(selected, include_incan)?
         purpose = ActivationPurpose.Test
     context = ActivationContext(host=configuration, target=configuration, purpose=purpose,
         domain=demand.domain, requested_features=demand.features, default_features=demand.defaults, build_unit_present=false)
@@ -257,9 +263,9 @@ def activated(demand: LocalDemand, configuration: TargetConfiguration, environme
     return Ok((document, activation.effective_features, active))
 
 
-def facet_of(demand: LocalDemand, configuration: TargetConfiguration, environment: Option[TomlValue], substitutes: Dict[str, str]) -> Result[Tuple[LocalFacet, list[LocalDemand]], str]:
+def facet_of(demand: LocalDemand, configuration: TargetConfiguration, environment: Option[TomlValue], substitutes: Dict[str, str], include_incan: bool = false) -> Result[Tuple[LocalFacet, list[LocalDemand]], str]:
     """One demand's facet, with its effective features and active edges, and the local demands its path edges make."""
-    document, features, active = activated(demand, configuration, environment)?
+    document, features, active = activated(demand, configuration, environment, include_incan)?
     mut local: list[LocalEdge] = []
     mut children: list[LocalDemand] = []
     mut registry: list[JsonValue] = []
@@ -270,7 +276,7 @@ def facet_of(demand: LocalDemand, configuration: TargetConfiguration, environmen
         defaults = active_edge.defaults
         match edge.source:
             RustDependencySource.Path(_, _) =>
-                selected = child(demand, edge, edge_features, defaults, substitutes)?
+                selected = child(demand, edge, edge_features, defaults, substitutes, include_incan)?
                 local.append(LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain))
                 children.append(selected)
             RustDependencySource.Registry(_) =>
@@ -279,7 +285,7 @@ def facet_of(demand: LocalDemand, configuration: TargetConfiguration, environmen
             _ => return Err(f"unsupported native local source for {edge.alias}")
     facet = LocalFacet(
         project=demand.project, domain=demand.domain, features=features,
-        target_predicates=predicates(document, configuration, demand.project)?,
+        target_predicates=predicates(document, configuration, demand.project, include_incan)?,
         local=local, registry=registry, registry_aliases=aliases,
     )
     return Ok((facet, children))

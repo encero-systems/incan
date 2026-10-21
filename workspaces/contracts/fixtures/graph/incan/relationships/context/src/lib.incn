@@ -1,0 +1,8 @@
+pub def contextual_helper() -> int:
+    """A checked declaration supplied by explicit inspection source context."""
+    return 13
+
+
+pub def contextual() -> int:
+    """Retain a checked call in a source project that the consumer does not link."""
+    return contextual_helper()

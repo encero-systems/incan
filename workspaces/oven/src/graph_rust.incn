@@ -2,30 +2,29 @@
 
 from rust::std::process import Command, id
 from std.fs import Path
-from std.toml import TomlValue
 from features import FeatureRequest
 from graph_cache import cache_file, compiler_digest, fingerprint, publish, tree_inputs
-from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from graph_dependencies import prepare_graph
+from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, BuiltUnit, binary_environment, build_dependencies, decoded, identity, library_arguments, linking, ordered, package_environment, read_registry_units, registry_features, rust_facet, target_configuration
-from toolchain import Toolchain, rust_compiler
-from unit_freshness import file_digest
+from rust_units import RustBuild, BuiltUnit, binary_environment, decoded, identity, library_arguments, linking, package_environment, registry_features, rust_facet
+from toolchain import Toolchain
 
 
 pub def inspect_rust(root: Path, profile: str, features: FeatureRequest, substitutes: Dict[str, str], toolchain: Toolchain) -> Result[list[Path], str]:
     """Cache one graph per Rust unit digest, including its dependency identities; unchanged graphs skip rustc entirely."""
-    rustc = rust_compiler(toolchain)
-    configuration = target_configuration(rustc)?
-    demand = LocalDemand(project=root.0, domain=DependencyDomain.Target, features=features.features, defaults=features.default_features)
-    facets = ordered(local_facets(demand, configuration, None, substitutes)?)?
-    request = RustBuild(project=root.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?, features=features.features, default_features=features.default_features, substitutes=substitutes)
+    prepared = prepare_graph(root, profile, features, substitutes, toolchain)?
+    facets = prepared.facets
+    request = prepared.request
     compiler = compiler_digest(root, toolchain.driver)?
     mut digests: Dict[str, str] = {}
     mut entries: Dict[str, Path] = {}
-    mut missing = false
     for facet in facets:
         key = f"{facet.project}@{facet.domain.value()}"
-        mut inputs = ["incan.codegraph.rust/1", compiler, toolchain.sysroot, identity(facet, profile)] + tree_inputs(Path(facet.project))?
+        mut inputs = ["incan.codegraph.rust/2", compiler, toolchain.sysroot, identity(facet, profile)] + tree_inputs(Path(facet.project))?
+        native_key = f"{facet.project}@{facet.domain.value()}"
+        if native_key in prepared.built:
+            inputs.append(compiler_digest(root, prepared.built[native_key].artifact)?)
         for edge in facet.local:
             inputs.append(digests[f"{edge.project}@{edge.domain.value()}"])
         for selected in facet.registry:
@@ -38,18 +37,15 @@ pub def inspect_rust(root: Path, profile: str, features: FeatureRequest, substit
         digests[key] = digest
         entry = cache_file(root, digest)?
         entries[key] = entry
-        if not entry.is_file():
-            missing = true
-    mut paths: list[Path] = []
-    mut built: Dict[str, BuiltUnit] = {}
-    if missing:
-        declared = rust_facet(root.0)?
-        built = build_dependencies(request, facets, len(declared.binaries) > 0)?
+    mut paths = prepared.paths
     for facet in facets:
         key = f"{facet.project}@{facet.domain.value()}"
+        declared = rust_facet(facet.project, false)?
+        if declared.kind == "" and len(declared.binaries) == 0:
+            continue
         path = entries[key]
         if not path.is_file():
-            export_facet(facet, root, path, request, built, toolchain)?
+            export_facet(facet, root, path, request, prepared.built, toolchain)?
         paths.append(path)
     return Ok(paths)
 

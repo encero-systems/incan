@@ -397,7 +397,12 @@ def parse_contract_models(root: Dict[str, TomlValue], manifest: str) -> Result[l
     if "incan" not in tool:
         return Ok([])
     incan = table(tool["incan"], manifest, ["tool", "incan"])?
-    allowed(incan, ["metadata"], manifest, ["tool", "incan"])?
+    allowed(incan, ["metadata", "codegraph"], manifest, ["tool", "incan"])?
+    if "codegraph" in incan:
+        codegraph = table(incan["codegraph"], manifest, ["tool", "incan", "codegraph"])?
+        allowed(codegraph, ["sources"], manifest, ["tool", "incan", "codegraph"])?
+        if "sources" in codegraph:
+            _ = string_list(codegraph["sources"], manifest, ["tool", "incan", "codegraph", "sources"])?
     if "metadata" not in incan:
         return Ok([])
     metadata = table(incan["metadata"], manifest, ["tool", "incan", "metadata"])?

@@ -24,3 +24,7 @@ path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
 sysroot_dependencies = ["rustc_driver"]
+
+# Native runtime code is linked by compiled programs rather than by the compiler binary.
+[tool.incan.codegraph]
+sources = ["../../compiler/incan_native_runtime"]

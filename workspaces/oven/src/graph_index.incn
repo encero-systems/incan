@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue, parse
 from graph_cache import publish
-from graph_queries import display, identity, nested, text
+from graph_queries import canonical, display, identity, nested, text
 from std.hash import sha256
 from std.encoding.hex import hexlify
 
@@ -19,7 +19,7 @@ pub def query_paths(paths: list[Path], kind: str) -> Result[list[Path], str]:
     """Reuse or build a compact unit projection so new queries avoid decoding signatures and complete source spans."""
     mut result: list[Path] = []
     for path in paths:
-        nodes = Path(f"{path.0}.queries-v3.nodes")
+        nodes = Path(f"{path.0}.queries-v5.nodes")
         if not nodes.is_file():
             build_index(path)?
         result.append(nodes)
@@ -31,7 +31,7 @@ pub def query_paths(paths: list[Path], kind: str) -> Result[list[Path], str]:
         elif kind == "imports":
             edge = "import"
         if edge != "":
-            result.append(Path(f"{path.0}.queries-v3.{edge}"))
+            result.append(Path(f"{path.0}.queries-v5.{edge}"))
     return Ok(result)
 
 
@@ -45,6 +45,7 @@ def compact(record: JsonValue) -> Result[str, str]:
     fields["label"] = JsonValue.string(display(record))
     fields["raw_id"] = JsonValue.string(text(record, "id"))
     fields["stable_key"] = JsonValue.string(key(identity(record)))
+    fields["canonical_key"] = JsonValue.string(key(canonical(record)))
     if text(record, "record") == "import":
         mut targets: list[str] = []
         match nested(record, "bindings").as_array():
@@ -94,6 +95,6 @@ def build_index(path: Path) -> Result[None, str]:
             imports.append(entry)
     groups: Dict[str, list[str]] = {"nodes": nodes, "reference": references, "call": calls, "import": imports}
     for group in ["reference", "call", "import", "nodes"]:
-        output = Path(f"{path.0}.queries-v3.{group}")
+        output = Path(f"{path.0}.queries-v5.{group}")
         publish(output, "\n".join(groups[group]) + "\n")?
     return Ok(None)

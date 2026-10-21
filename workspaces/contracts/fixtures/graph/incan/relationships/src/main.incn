@@ -1,17 +1,28 @@
-# behavior: Graph queries expose definitions, references, callers, callees and imports with stable cached answers.
+# behavior: Graph queries expose Incan definitions, references, callers, callees and imports across checked package interfaces without compiling libraries.
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper
 #   src/main.incn --query callees main
 #   src/main.incn --query refs helper
 #   src/main.incn --query imports main
+#   src/main.incn --query defs checked_helper
+#   src/main.incn --query callers checked_helper
+#   src/main.incn --query defs contextual_helper
+#   src/main.incn --query callers contextual_helper
 # expect-stdout-contains:
 #   declaration provider::helper src/provider.incn:1
-#   call main src/main.incn:17
-#   call provider::helper src/main.incn:17
-#   reference provider::helper src/main.incn:17
-#   import provider::helper src/main.incn:14
+#   call main src/main.incn:27
+#   call provider::helper src/main.incn:27
+#   reference provider::helper src/main.incn:27
+#   import provider::helper src/main.incn:22
+#   declaration graph_checked::main::checked_helper deps/checked/src/lib.incn:4
+#   call main src/main.incn:28
+#   declaration graph_context::main::contextual_helper context/src/lib.incn:1
+#   call graph_context::main::contextual context/src/lib.incn:8
 from provider import helper
+from pub::checked import checked_helper
+
 def main() -> None:
     """Call a provider whose definition lives in another module."""
     println(helper())
+    println(checked_helper())

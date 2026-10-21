@@ -7,7 +7,7 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | Module | Owns |
 | --- | --- |
 | `main.incn` | The `incan` command line: `run`, `check`, `test`, `describe-unit`, `build`, `fmt`, `inspect codegraph`. |
-| `graph_inspection.incn`, `graph_rust.incn`, `graph_cache.incn`, `graph_queries.incn` | Selecting inspection units, caching the compiler's graph records by input digest, and querying those records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
+| `graph_inspection.incn`, `graph_dependencies.incn`, `graph_incan.incn`, `graph_rust.incn`, `graph_cache.incn`, `graph_index.incn`, `graph_queries.incn` | Selecting inspection units, caching the compiler's graph records by input digest, and querying those records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
 | `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
@@ -44,8 +44,17 @@ Until a dev.8 toolchain builds itself, the frozen dev.7 compiler builds Oven: `i
 
 Run `incan inspect codegraph PATH --format jsonl` for a source file or project. `--format json` returns an array of the same records. A Rust source path selects its owning Loaf; a Rust project exports its local dependency closure and its root binary targets. Registry dependencies remain external references.
 
-Use `--query defs|refs|callers|callees|imports TERM` instead of `--format` to print one `kind identity file:line` line per hit. Terms match qualified declaration names by substring; imports match module names. For example, `incan inspect codegraph loaves/compiler/incan_frontend --query callers check_expr` lists calls whose checked target matches `check_expr`. Definitions carry span-free `stable_identity` values. Spans remain source anchors, independent of those identities.
+Use `--query defs|refs|callers|callees|imports TERM` instead of `--format` to print one `kind identity file:line` line per hit. A term is an exact short name, qualified declaration name or full exported graph ID; ambiguous short names include their matching declarations. Imports select module names. For example, `incan inspect codegraph loaves/toolchain/incan-rustc-driver --query callers resolve_rust_facts` finds callers across its local closure. Query locations are relative to the repository, or the owning project outside a repository. Queries default to 20 hits; `--limit N` accepts a nonnegative integer and appends `… N more` when hits are omitted. Definitions carry span-free `stable_identity` values. Spans remain source anchors, independent of those identities.
 
 Graphs are cached per unit under the selected project's `target/incan/codegraph/`. Source and dependency digests invalidate changed units. Cold export also prepares compact query projections; repeated exports and queries reuse completed responses keyed by the selected unit digests and arguments. A failed checked export publishes no reusable graph. Rust receiver types and signatures use canonical crate-qualified paths so a consumer's method target links to the defining crate's declaration. Rust call records with `kind: indirect` have no proved target; `virtual_method` names a trait requirement rather than a set of possible implementors. These records describe a lower bound on reachability, never proof that an unlisted implementation cannot be called.
 
-`--substitute NAME=DIR` explicitly selects a different local Loaf, as for `incan build`; that selected source participates in the cache identity. During bootstrap this can select the emitted lowering Loaf used to build the driver. Without such a selection, inspection refuses dependencies that Oven cannot compile rather than treating emitted Rust as the authored Incan source.
+Incan libraries are checked in dependency order. Each checking pass supplies both its source graph and a checking-only interface under the inspection cache; inspection produces no Incan rlib, executable body or native publication. Rust checking may need a native library for an Incan dependency: inspection uses an exact library recorded by the project's successful `incan build` in `target/incan/rust/<profile>/units.json`, or an explicitly installed toolchain extern, and refuses if neither is available. That artifact supplies Rust metadata only. The authored Incan graph comes from current source checking; these projections do not assert source/artifact equivalence.
+
+Projects can include source context that their binary does not statically link:
+
+```toml
+[tool.incan.codegraph]
+sources = ["relative/path/to/runtime"]
+```
+
+These projects contribute their checked Incan graphs without changing compilation dependencies. Paths resolve relative to the declaring project; a cycle is refused. The compiler uses this to include its native runtime's authored source. `--substitute NAME=DIR` remains an explicit build-graph selection, as for `incan build`; ordinary compiler inspection requires no substitution or `RUSTC` environment variable and uses the installed toolchain's rustc.
