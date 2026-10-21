@@ -1,7 +1,14 @@
-# behavior: named native enum payloads use metadata field identities and reject a text binding returned as an integer
+# behavior: named native enum payloads use metadata field identities, reject a text return as an integer, and require complete payload coverage
 # expect-diagnostic: INCAN-T0001
 
 from rust::messages import Message
+
+
+def incomplete_owned(value: Message) -> int:
+    """The first match in the unit must check complete native payload coverage too."""
+    match value:
+        Message.Record(count=0, text=_) => return 0
+        Message.Empty => return 0
 
 
 def inspect(value: &Message) -> int:
@@ -14,3 +21,10 @@ def inspect(value: &Message) -> int:
 def main() -> None:
     """Keep the rejected declaration in the checked unit."""
     pass
+
+
+def incomplete(value: &Message) -> int:
+    """Naming every native variant leaves nonzero record payloads uncovered."""
+    match value:
+        Message.Record(text=_, count=0) => return 0
+        Message.Empty => return 0

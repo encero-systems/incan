@@ -576,8 +576,8 @@ fn library_model_item(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) ->
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
-/// native metadata. Construction and matching address variants by index, so only ordinal isize discriminants are
-/// admitted. Generic templates never authorize storage.
+/// native metadata. Variant indices select rustc's own constructors and discriminants, including explicit tags.
+/// Generic templates never authorize storage.
 fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
         function: value.library_item.clone(),
@@ -600,14 +600,7 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
         let owner = rustc_middle::ty::Ty::new_adt(tcx, tcx.adt_def(def), arguments);
         callees::verify_bounds(tcx, callees::clone_method(tcx)?, tcx.mk_args(&[owner.into()]))?;
     }
-    for (slot, (variant, planned)) in declared.iter().zip(&value.variants).enumerate() {
-        let discriminant = owner.discriminant_for_variant(tcx, rustc_abi::VariantIdx::from_usize(slot));
-        let ordinal = u128::try_from(slot).map_err(|_| invalid("unsupported native enum variant ordinal"))?;
-        if discriminant.val != ordinal || discriminant.ty != tcx.types.isize {
-            return Err(invalid(
-                "unsupported native enum discriminant: matching requires ordinal isize tags",
-            ));
-        }
+    for (variant, planned) in declared.iter().zip(&value.variants) {
         if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
             return Err(invalid("unsupported stdlib enum variant differs from metadata"));
         }

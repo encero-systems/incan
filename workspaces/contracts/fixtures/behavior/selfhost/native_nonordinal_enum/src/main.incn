@@ -1,13 +1,12 @@
-# behavior: a native enum with nonordinal discriminants is refused before matching can select the wrong arm
-# expect-exit: 1
-# expect-stderr-contains:
-#   unsupported native enum discriminant: matching requires ordinal isize tags
+# behavior: a named native variant matches its explicit Rust discriminant instead of treating its tag as an index
+# expect-stdout:
+#   7
 
 from rust::tags import Message, message
 
 
 def main() -> None:
-    """Require a refusal instead of silently treating the explicit tag as a variant index."""
+    """Select the native variant using its actual explicit tag."""
     value = message()
     match value:
         Message.Record(value=number) => println(number)

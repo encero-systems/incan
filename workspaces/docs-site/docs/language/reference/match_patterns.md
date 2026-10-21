@@ -131,7 +131,7 @@ def kind_of(account: Account) -> str:
 - The subject is a Rust enum with a complete representable native layout. The form is `Enum.Variant(field=p, …)` for a Rust variant with named fields.
 - `Enum` resolves to the subject's native owner. Fields use their Rust names, independently of the order written in the pattern; an omitted field matches any value.
 - Each binding has its selected field's type. Reading a named binding as a source value copies or clones its field; a required native Clone implementation must exist. The subject stays alive while its payload is accessed.
-- Native enum layouts require ordinal `isize` discriminants. Compilation refuses an explicit nonordinal tag or a differently sized discriminant before matching.
+- Matching uses the Rust enum's actual discriminant values and widths, including explicit and negative tags.
 - Positional Rust variants retain their reference-binding types when the subject is borrowed. A native field without a representable type or binding is refused during compilation.
 
 Refused (`INCAN-T0001`): a named field that does not exist, a named field repeated in one pattern, a qualifier naming another native owner, and a use of a binding incompatible with its selected field's type.
@@ -228,8 +228,7 @@ The unguarded arms of a `match` cover its subject. A guarded arm never counts to
 | Subject type | The unguarded arms cover it when |
 | --- | --- |
 | `bool` | They match `true` and `false`. |
-| An Incan enum, `Option[T]`, or `Result[T, E]` | For each variant, the arms that name it cover every value of its payload. A generic enum's payload types are those of the subject's type arguments. |
-| A Rust enum outside the `Option` and `Result` carriers | An unguarded `_` or binding arm covers it. |
+| An Incan enum, a Rust enum with a complete representable native layout, `Option[T]`, or `Result[T, E]` | For each variant, the arms that name it cover every value of its payload. A generic enum's payload types are those of the subject's type arguments. |
 | A union | For each member type, the arms that name it cover every value of it. |
 | A tuple | They cover every combination of element values, element by element. |
 | A model or class | They cover every combination of field values, field by field. |

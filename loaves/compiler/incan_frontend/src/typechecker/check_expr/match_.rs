@@ -218,6 +218,8 @@ impl TypeChecker {
     /// a type mismatch. Each arm is written to the expected type directly when that type is numeric or an `Option`
     /// that holds no union, the adaptations lowering makes in an arm; otherwise the arms unify among themselves and
     /// the whole match is written to the place, since an arm is not made a union member or any other type in place.
+    /// Pattern checking retains native layouts before coverage reads them, so exhaustiveness never depends on an
+    /// earlier match having selected the same native enum.
     pub(in crate::typechecker::check_expr) fn check_match(
         &mut self,
         subject: &Spanned<Expr>,
@@ -236,8 +238,6 @@ impl TypeChecker {
         };
         let mut remaining_union_members = subject_ty.union_members().map(|members| members.to_vec());
         let view_param = self.pattern_view_param(subject);
-
-        self.check_match_exhaustiveness(&subject_ty, arms, _span);
 
         let mut arm_values = Vec::new();
 
@@ -296,6 +296,7 @@ impl TypeChecker {
                 self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
             }
         }
+        self.check_match_exhaustiveness(&subject_ty, arms, _span);
         self.note_dict_lookup_match(subject, arms);
 
         let arm_destination = expected
