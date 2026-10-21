@@ -80,7 +80,8 @@ struct CheckedProgram {
 /// without changing the ordinary reference graph. The unit's package is its registry package.
 ///
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
-/// from the same pass.
+/// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
+/// callables name their compiled items.
 fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
@@ -198,8 +199,8 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     }
     // ---- Loaf declarations: named, not compiled here (DD-0007) ----
     // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program
-    // calls the Loaf's compiled item. A governed body, one with type parameters, stays and is instantiated where it
-    // is called.
+    // calls the Loaf's compiled item. An open body, including a method on an owner with type parameters, stays for
+    // consumer instantiation.
     let mut loaf_callables = bodies
         .iter()
         .flat_map(|module| module.loaf_callables.iter().cloned())
@@ -217,18 +218,19 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
                 declaration.native_item = item;
             }
         }
-        module.bodies.retain(|body| {
-            if !body.type_parameters.is_empty() {
-                return true;
+        let declared_bodies = std::mem::take(&mut module.bodies);
+        for body in declared_bodies {
+            if module.body_requires_instantiation(&body) {
+                module.bodies.push(body);
+                continue;
             }
-            match incan_semantics_core::body_ir::LoafCallable::from_body(body) {
+            match incan_semantics_core::body_ir::LoafCallable::from_body(&body) {
                 Some(callable) => {
                     loaf_callables.push(callable);
-                    false
                 }
-                None => true,
+                None => module.bodies.push(body),
             }
-        });
+        }
     }
     // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
     let opaque = incan_semantics_core::body_ir::held_rust_items(&bodies);

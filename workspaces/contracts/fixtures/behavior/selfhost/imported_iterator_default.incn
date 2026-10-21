@@ -1,0 +1,18 @@
+# behavior: a function with type parameters can call an imported iterator model's adopted iter default
+# expect-stdout:
+#   checked
+
+from std.derives.collection import Iterator, ListIterator, ZipIterator
+from std.derives.copying import Clone
+
+
+def preserve[T with Clone, U with Clone](
+    values: ZipIterator[T, ListIterator[T], U, ListIterator[U]],
+) -> Iterator[tuple[T, U]]:
+    """Retain the iterator's state through its adopted default method."""
+    return values.iter()
+
+
+def main() -> None:
+    """Run after the function's iterator types have checked."""
+    println("checked")
