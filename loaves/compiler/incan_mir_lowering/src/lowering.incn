@@ -6893,12 +6893,21 @@ def lowered_plan(
     mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, kind == "library")?
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
+    # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
+    mut bridge_bodies: list[str] = []
+    for declaration in models:
+        bridge_bodies.extend(declaration.comparison_methods)
+    for declaration in enums:
+        bridge_bodies.extend(declaration.comparison_methods)
     mut functions = checked_functions
     functions.extend(conversion_functions)
     mut emitted_frames: list[RustBody] = []
     mut externals = checked_runtime
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
+    for body in context.bodies:
+        if is_default_body(context, body) and function_name(context, body) in bridge_bodies:
+            instances.append(Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false))
     for index in range(len(checked)):
         for body in context.bodies:
             if body_module_identity(body)? != str(checked[index].module_id.path()):

@@ -1042,8 +1042,15 @@ impl TypeChecker {
         manifest_bound_identifies_capability.then_some(capability)
     }
 
-    /// Resolve a bound spelling to its defining module path and trait name.
+    /// Resolve a bound spelling to its defining module path and trait name. A retained public Loaf identity already
+    /// names its provider module and must not be interpreted as a binding in the consumer's current module.
     pub(in crate::typechecker) fn resolve_bound_trait_path(&self, bound: &str) -> Option<(Vec<String>, String)> {
+        if let Some(qualified) = bound.strip_prefix("pub::") {
+            let (module, name) = qualified.rsplit_once("::")?;
+            let mut path = vec!["pub".to_string()];
+            path.extend(module.split("::").map(str::to_string));
+            return Some((path, name.to_string()));
+        }
         if let Some(path) = self.import_binding_path(bound)
             && path.len() >= 2
         {

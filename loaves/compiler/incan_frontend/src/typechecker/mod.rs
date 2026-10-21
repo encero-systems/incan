@@ -2957,7 +2957,8 @@ impl TypeChecker {
             .any(|(name, _)| self.trait_name_matches(name, supertrait_name))
     }
 
-    /// Return whether two visible trait spellings refer to the same source trait.
+    /// Return whether two visible trait spellings refer to the same source trait. Standard imports and retained
+    /// public Loaf paths compare through the owning manifest's declaration identity before their source paths.
     fn trait_name_matches(&self, candidate: &str, expected: &str) -> bool {
         if candidate == expected {
             return true;
@@ -2980,7 +2981,17 @@ impl TypeChecker {
             self.resolve_bound_trait_path(candidate),
             self.resolve_bound_trait_path(expected),
         ) {
-            (Some(candidate), Some(expected)) => candidate == expected,
+            (Some(candidate), Some(expected)) => {
+                match (
+                    self.loaf_member_identity(&candidate.0, &candidate.1)
+                        .or_else(|| self.package_trait_declaration(&candidate.0, &candidate.1)),
+                    self.loaf_member_identity(&expected.0, &expected.1)
+                        .or_else(|| self.package_trait_declaration(&expected.0, &expected.1)),
+                ) {
+                    (Some(candidate), Some(expected)) => candidate == expected,
+                    _ => candidate == expected,
+                }
+            }
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => {
                 candidate.rsplit('.').next().unwrap_or(candidate) == expected.rsplit('.').next().unwrap_or(expected)

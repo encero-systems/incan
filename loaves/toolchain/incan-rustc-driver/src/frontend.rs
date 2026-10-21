@@ -368,10 +368,6 @@ fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) 
                 .canonical
                 .as_ref()
                 .is_some_and(|identity| governed.contains(identity))
-                || body
-                    .locals
-                    .first()
-                    .is_some_and(|local| local.ty == incan_semantics_core::IncanType::SelfType)
             {
                 return true;
             }
