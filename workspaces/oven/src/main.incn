@@ -156,8 +156,8 @@ def test(arguments: list[str]) -> None:
 
 
 def tested(options: Options) -> Result[i32, str]:
-    """Describe a test unit with the same profile and feature options as an ordinary program."""
-    mut unit = describe(Path(options.path), options.profile, options.request)?
+    """Prepare a test unit's exact native dependencies with the same profile and feature options as a program."""
+    mut unit = describe_native(Path(options.path), options.profile, options.request)?
     unit.kind = "test"
     return run_tests(unit, load_toolchain()?)
 
