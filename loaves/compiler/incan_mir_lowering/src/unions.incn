@@ -5,6 +5,7 @@ from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
     NominalDeclaration,
+    NativeUnionDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     StaticInitializer,
 )
@@ -177,8 +178,35 @@ def union_name(members: list[PlanType]) -> Result[str, str]:
     return Ok("__IncanUnion" + suffix)
 
 
+pub def publish_unions(
+    module: &BodyIrModule,
+    intrinsics: list[EnumDeclaration],
+    mut published: list[NativeUnionDeclaration],
+) -> Result[None, str]:
+    """Publish the emitted wrapper and payload order, preserving the checker's semantic carrier and nominal owners."""
+    for ty in collect_unions(module):
+        for declaration in intrinsics:
+            if declaration.source_type != str(ty) or declaration.carrier != "" or declaration.library_item != "":
+                continue
+            mut members: list[RustType] = []
+            match ty:
+                RustType.Generic(base=_base, args=arguments) =>
+                    for variant in declaration.variants:
+                        for index in range(len(arguments)):
+                            argument = arguments[index]
+                            native = retained_source_type(module.nominal_declarations, module.enum_declarations, [], argument, intrinsics)?
+                            if variant.fields == [native]:
+                                members.append(argument.clone())
+                _ => return Err("invalid Body IR published union carrier")
+            if len(members) != len(declaration.variants):
+                return Err("invalid Body IR published union payloads")
+            native = NativeUnionDeclaration(ty=ty.clone(), rust_item=declaration.name, members=members)
+            published.append(native.clone())
+    return Ok(None)
+
+
 pub def require_native_union_signature(ty: &RustType, intrinsics: list[EnumDeclaration]) -> Result[None, str]:
-    """Require a retained SDK union owner before passing a semantic union across an external call boundary."""
+    """Require the selected Loaf's published union owner before crossing a compiled callable boundary."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
@@ -188,7 +216,7 @@ pub def require_native_union_signature(ty: &RustType, intrinsics: list[EnumDecla
             for declaration in intrinsics:
                 if declaration.source_type == str(ty) and declaration.library_item != "":
                     return Ok(None)
-            return Err("unsupported Body IR stdlib union without admitted native representation")
+            return Err("unsupported Body IR Loaf union without admitted native representation")
         RustType.Tuple(elements) =>
             for element in elements:
                 _ = require_native_union_signature(element, intrinsics)?
@@ -217,6 +245,8 @@ pub def lower_union_declaration(
     for declaration in module.native_union_declarations:
         if declaration.ty != ty.clone():
             continue
+        if native_item != "" and native_item != str(declaration.rust_item):
+            return Err("unsupported Body IR conflicting published native union owners")
         mut ordered: list[PlanType] = []
         for member in declaration.members:
             ordered.append(
@@ -231,7 +261,6 @@ pub def lower_union_declaration(
         native_item = str(declaration.rust_item)
         segments = native_item.split("::")
         name = segments[len(segments) - 1]
-        derives = []
     mut variants: list[EnumVariant] = []
     for index in range(len(members)):
         variants.append(EnumVariant(name=f"V{index}", fields=[members[index]]))
@@ -310,10 +339,10 @@ pub def union_test_slot(
     intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """A primitive target absent from the union is always false; source enum tests remain refused."""
-    ty = retained_union(enums, unions, owner, intrinsics)?
-    members = union_members(nominals, enums, ty, intrinsics)?
-    for slot in range(len(members)):
-        if members[slot] == member:
+    _ = retained_union(enums, unions, owner, intrinsics)?
+    variants = intrinsics[owner - len(enums)].variants
+    for slot in range(len(variants)):
+        if variants[slot].fields == [member]:
             return Ok(slot)
     return Ok(-1)
 
@@ -355,12 +384,13 @@ pub def union_test_slots(
     intrinsics: list[EnumDeclaration],
 ) -> Result[list[int], str]:
     """Match either string identity against both carriers while preserving exact construction and narrowing slots."""
-    ty = retained_union(enums, unions, owner, intrinsics)?
+    _ = retained_union(enums, unions, owner, intrinsics)?
     mut slots: list[int] = []
-    members = union_members(nominals, enums, ty, intrinsics)?
-    for slot in range(len(members)):
-        same_string_identity = member in [PlanType.String, PlanType.FrozenStr] and members[slot] in [PlanType.String, PlanType.FrozenStr]
-        if members[slot] == member or same_string_identity:
+    variants = intrinsics[owner - len(enums)].variants
+    for slot in range(len(variants)):
+        payload = variants[slot].fields
+        same_string_identity = member in [PlanType.String, PlanType.FrozenStr] and payload in [[PlanType.String], [PlanType.FrozenStr]]
+        if payload == [member] or same_string_identity:
             slots.append(slot)
     return Ok(slots)
 

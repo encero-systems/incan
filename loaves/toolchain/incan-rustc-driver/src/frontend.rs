@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
+use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationSession, RustFactsSetup};
 use incan_driver::unit::UnitDescription;
@@ -261,6 +261,7 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
     entry_module.string_conversion_contract = string_conversion_contract;
     entry_module.loaf_callables = loaf_callables;
+    entry_module.native_union_declarations = native_union_layouts(session.loaves());
     Ok(CheckedProgram {
         modules: bodies,
         sources,
@@ -298,6 +299,41 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
         }
     }
     Ok(layouts.into_values().collect())
+}
+
+/// Read each selected Loaf's published native union table, preserving its semantic carrier and physical variant
+/// order. The index already selects exact artifacts; the adapter subsequently verifies each layout against metadata.
+fn native_union_layouts(
+    loaves: &incan_frontend::loaf_index::LoafIndex,
+) -> Vec<incan_semantics_core::body_ir::NativeUnionDeclaration> {
+    use incan_frontend::library_manifest::resolved_type_from_manifest_type_ref;
+    use incan_frontend::typechecker::semantic_type_from_resolved;
+    loaves
+        .entries()
+        .flat_map(|entry| {
+            entry
+                .artifact
+                .manifest
+                .contract_metadata
+                .native_unions
+                .iter()
+                .filter_map(|native| {
+                    Some(incan_semantics_core::body_ir::NativeUnionDeclaration {
+                        ty: native.semantic_type.clone()?,
+                        rust_item: format!(
+                            "{}::{}",
+                            incan_semantics_core::body_ir::loaf_crate_name(&entry.artifact.manifest.name),
+                            native.rust_name
+                        ),
+                        members: native
+                            .members
+                            .iter()
+                            .map(|member| semantic_type_from_resolved(&resolved_type_from_manifest_type_ref(member)))
+                            .collect(),
+                    })
+                })
+        })
+        .collect()
 }
 
 /// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
@@ -789,12 +825,19 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         );
         write_refusal_report(&refusals)?;
     }
+    let mut published_unions = Vec::new();
     let plan = {
         tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let entry = program.entry.try_into()?;
         if dependencies.library {
-            Some(library_plan(&program.modules, program.sources, program.files, entry)?)
+            Some(library_plan(
+                &program.modules,
+                program.sources,
+                program.files,
+                entry,
+                &mut published_unions,
+            )?)
         } else {
             program_plan(&program.modules, program.sources, program.files, entry)?
         }
@@ -847,7 +890,8 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|error| error.to_string())?;
 
     // ---- The Loaf beside a library unit's rlib (DD-0007) ----
-    if let Some(manifest) = program.manifest {
+    if let Some(mut manifest) = program.manifest {
+        publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
         let directory = output.parent().ok_or("library output has no directory")?;
         let closure = LoafNativeClosure {
             externs: dependencies.externs.clone(),

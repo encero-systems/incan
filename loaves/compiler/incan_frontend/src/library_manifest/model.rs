@@ -1351,6 +1351,10 @@ pub struct NativeUnionExport {
     pub owner: NativeUnionOwnerExport,
     pub rust_name: String,
     pub members: Vec<TypeRef>,
+    /// Checked union carrier before native payload ordering, retained by the native Loaf publisher. Nominal leaves
+    /// already encode their canonical declaration identities; consumers never derive a carrier from a Rust name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_type: Option<incan_semantics_core::IncanType>,
     /// Producer-local nominal bindings captured from checked declarations, without a self artifact digest.
     ///
     /// Keys are the producer's actual lowered spellings. Admission validates every canonical declaration against

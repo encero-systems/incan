@@ -1,6 +1,7 @@
 """Public facade for the checked Body-IR-to-native-plan lowering Loaf."""
 
 from assertions import lower_assertion
+from rust::incan_semantics_core::body_ir import NativeUnionDeclaration
 from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
@@ -70,9 +71,10 @@ pub def library_plan(
     sources: list[str],
     files: list[str],
     entry: int,
+    mut published: list[NativeUnionDeclaration],
 ) -> Result[Plan, str]:
     """Lower a library Loaf's checked bodies through the canonical caller boundary; no `main` is required."""
-    return checked_library_plan(modules, sources, files, entry)
+    return checked_library_plan(modules, sources, files, entry, published)
 
 
 pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:

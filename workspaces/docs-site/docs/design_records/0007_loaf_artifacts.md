@@ -46,6 +46,8 @@ A consumer names a Loaf's declarations and never declares them again. A Loaf exp
 
 The `.incnbody` carries a declaration record for every public callable beside the governed bodies: its parameters with the computation each default reduces to, and its type parameters. The consumer's Body IR and lowering complete an omitted argument and check a call from that record. The driver checks the call against the rlib's metadata.
 
+The manifest's native union table records each locally compiled union's checked semantic carrier, public native item, and payloads in physical variant order. Nominal payloads retain canonical declaration identities. A consumer reads this representation from the selected Loaf and uses those variant slots for construction, narrowing, and tests; it never derives a replacement wrapper or payload order from its local import spellings. Conflicting native owners for the same semantic carrier are refused.
+
 Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
 
 ### The standard library
