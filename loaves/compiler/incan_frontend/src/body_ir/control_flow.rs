@@ -236,11 +236,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // same restoration for names declared in its body.
         let enclosing_bindings = self.bindings.clone();
         self.loop_break_targets.push(break_target);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
         lower_body(self, loop_scope, &mut body_stmts);
         self.insert_scope_drops(&mut body_stmts, loop_scope);
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         self.materialized_range_locals =
             intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
@@ -1029,6 +1031,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let loop_scope = self.new_scope(Some(scope), span);
         // `for` never produces a value from `break` (same reasoning as `while` -- see `Self::lower_while`).
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
@@ -1109,6 +1112,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             body_stmts.extend(actions.iter().cloned());
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
 
         out.push(bir::Statement {
@@ -1316,6 +1320,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // ---- Poll before each iteration body ----
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
@@ -1350,6 +1355,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn(self, loop_scope, &mut body_stmts);
         self.retain_in_place_iteration_bindings(&mut body_stmts, pattern_local);
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         // A builtin loop whose body changes its item in place iterates the list exclusively, as legacy's `iter_mut`.
         if !custom && !taking && self.body_changes_item_in_place(&body_stmts, pattern_local) {
@@ -1494,6 +1500,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
         ];
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
 
         // ---- Checked pattern bindings and source ownership ----
@@ -1504,6 +1511,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             borrow_iterable_exclusively(&mut out[initializer]);
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -1770,6 +1778,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.poll_zip_source(&left, first, loop_scope, span, &mut stmts);
         self.poll_zip_source(&right, second, loop_scope, span, &mut stmts);
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         let advances = self.zip_range_advances([&left, &right], loop_scope, span);
         self.loop_continue_actions.push(advances);
 
@@ -1788,6 +1797,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             stmts.extend(advances.iter().cloned());
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -1858,6 +1868,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
         ];
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
 
         // ---- Checked value bindings and mutable value storage ----
@@ -1868,6 +1879,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             borrow_iterable_exclusively(&mut stmts[1]);
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
