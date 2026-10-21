@@ -1,0 +1,11 @@
+# behavior: Equal string values retain their own single-line or triple-quoted spelling.
+# expect-formatted:
+#   const FIRST: str = "hello"
+#   const SECOND: str = '''hello'''
+#   const THIRD: str = "hello"
+#   const FOURTH: str = """hello"""
+
+const FIRST:str='hello'
+const SECOND:str='''hello'''
+const THIRD:str="hello"
+const FOURTH:str="""hello"""

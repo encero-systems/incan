@@ -1,0 +1,17 @@
+# behavior: Triple-quoted defaults and reassignment values retain Unicode and content indentation.
+# expect-formatted:
+#   def message(text: str = """héllo""") -> str:
+#       value = '''
+#       # Embedded text, not a comment.
+#         keep indentation
+#       '''
+#       value = """other"""
+#       return value
+
+def message(text:str="""héllo""")->str:
+    value='''
+    # Embedded text, not a comment.
+      keep indentation
+    '''
+    value="""other"""
+    return value

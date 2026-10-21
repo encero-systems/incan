@@ -26,19 +26,19 @@ impl Formatter {
     /// Write one formatted call argument.
     fn write_call_arg(&mut self, arg: &CallArg) {
         match arg {
-            CallArg::Positional(expr) => self.format_expr(&expr.node),
+            CallArg::Positional(expr) => self.format_spanned_expr(expr),
             CallArg::Named(name, expr) => {
                 self.writer.write(&name.node);
                 self.writer.write("=");
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
             }
             CallArg::PositionalUnpack(expr) => {
                 self.writer.write("*");
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
             }
             CallArg::KeywordUnpack(expr) => {
                 self.writer.write("**");
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
             }
         }
     }
@@ -47,7 +47,7 @@ impl Formatter {
     fn write_partial_arg(&mut self, arg: &PartialArg) {
         self.writer.write(&arg.name);
         self.writer.write("=");
-        self.format_expr(&arg.value.node);
+        self.format_spanned_expr(&arg.value);
     }
 
     /// Format the comma-separated keyword preset list in a partial callable template.
@@ -87,10 +87,10 @@ impl Formatter {
     }
 
     /// Format a parenthesized logical chain inline first, then wrap it if the line overflows.
-    fn format_parenthesized_logical_chain(&mut self, inner: &Expr) {
+    fn format_parenthesized_logical_chain(&mut self, inner: &Spanned<Expr>) {
         let checkpoint = self.writer.checkpoint();
         self.writer.write("(");
-        self.format_expr(inner);
+        self.format_spanned_expr(inner);
         self.writer.write(")");
         if self.writer.output_since_contains_newline(checkpoint) || !self.writer.line_length_exceeded() {
             return;
@@ -108,11 +108,16 @@ impl Formatter {
     }
 
     /// Emit one logical-chain operand per line with leading `and` / `or` operators after the first operand.
-    fn format_logical_chain_lines(&mut self, expr: &Expr, leading_op: Option<&BinaryOp>, wrote_line: &mut bool) {
-        match expr {
+    fn format_logical_chain_lines(
+        &mut self,
+        expr: &Spanned<Expr>,
+        leading_op: Option<&BinaryOp>,
+        wrote_line: &mut bool,
+    ) {
+        match &expr.node {
             Expr::Binary(left, op, right) if Self::is_logical_binary_op(op) => {
-                self.format_logical_chain_lines(&left.node, leading_op, wrote_line);
-                self.format_logical_chain_lines(&right.node, Some(op), wrote_line);
+                self.format_logical_chain_lines(left, leading_op, wrote_line);
+                self.format_logical_chain_lines(right, Some(op), wrote_line);
             }
             _ => {
                 if *wrote_line {
@@ -122,7 +127,7 @@ impl Formatter {
                     self.format_binary_op(op);
                     self.writer.write(" ");
                 }
-                self.format_expr(expr);
+                self.format_spanned_expr(expr);
                 *wrote_line = true;
             }
         }
@@ -206,6 +211,32 @@ impl Formatter {
         self.writer.write(")");
     }
 
+    /// Format a source expression, retaining triple-quoted literal spelling instead of reconstructing its value.
+    ///
+    /// Spans distinguish equal-valued literals with different spellings and remain stable during speculative layout.
+    pub(super) fn format_spanned_expr(&mut self, expr: &Spanned<Expr>) {
+        if matches!(expr.node, Expr::Literal(Literal::String(_))) && self.write_source_string(expr.span) {
+            return;
+        }
+        self.format_expr(&expr.node);
+    }
+
+    /// Write an original triple-quoted token verbatim, including content indentation, escapes and delimiters.
+    fn write_source_string(&mut self, span: Span) -> bool {
+        let Some(raw) = self
+            .source
+            .as_deref()
+            .and_then(|source| source.get(span.start..span.end))
+        else {
+            return false;
+        };
+        if !raw.starts_with("\"\"\"") && !raw.starts_with("'''") {
+            return false;
+        }
+        self.writer.write(raw);
+        true
+    }
+
     /// Format one expression node, preserving call/collection entry structure and surface-expression payload syntax.
     pub(super) fn format_expr(&mut self, expr: &Expr) {
         match expr {
@@ -213,18 +244,18 @@ impl Formatter {
             Expr::Literal(lit) => self.format_literal(lit),
             Expr::SelfExpr => self.writer.write("self"),
             Expr::Binary(left, op, right) => {
-                self.format_expr(&left.node);
+                self.format_spanned_expr(left);
                 self.writer.write(" ");
                 self.format_binary_op(op);
                 self.writer.write(" ");
-                self.format_expr(&right.node);
+                self.format_spanned_expr(right);
             }
             Expr::Unary(op, operand) => {
                 self.format_unary_op(op);
-                self.format_expr(&operand.node);
+                self.format_spanned_expr(operand);
             }
             Expr::Call(callee, type_args, args) => {
-                self.format_expr(&callee.node);
+                self.format_spanned_expr(callee);
                 if !type_args.is_empty() {
                     self.writer.write("[");
                     for (i, arg) in type_args.iter().enumerate() {
@@ -240,29 +271,29 @@ impl Formatter {
                 self.writer.write(")");
             }
             Expr::Index(base, index) => {
-                self.format_expr(&base.node);
+                self.format_spanned_expr(base);
                 self.writer.write("[");
-                self.format_expr(&index.node);
+                self.format_spanned_expr(index);
                 self.writer.write("]");
             }
             Expr::Slice(base, slice) => {
-                self.format_expr(&base.node);
+                self.format_spanned_expr(base);
                 self.writer.write("[");
                 if let Some(start) = &slice.start {
-                    self.format_expr(&start.node);
+                    self.format_spanned_expr(start);
                 }
                 self.writer.write(":");
                 if let Some(end) = &slice.end {
-                    self.format_expr(&end.node);
+                    self.format_spanned_expr(end);
                 }
                 if let Some(step) = &slice.step {
                     self.writer.write(":");
-                    self.format_expr(&step.node);
+                    self.format_spanned_expr(step);
                 }
                 self.writer.write("]");
             }
             Expr::Field(base, field) => {
-                self.format_expr(&base.node);
+                self.format_spanned_expr(base);
                 self.writer.write(".");
                 self.writer.write(field);
             }
@@ -273,13 +304,13 @@ impl Formatter {
                         type_args,
                         args,
                     };
-                    self.format_expr(&receiver.node);
+                    self.format_spanned_expr(receiver);
                     self.format_method_chain_segment(&segment);
                 }
             }
             Expr::Partial(partial) => {
                 self.writer.write("partial ");
-                self.format_expr(&partial.target.node);
+                self.format_spanned_expr(&partial.target);
                 if !partial.type_args.is_empty() {
                     self.writer.write("[");
                     for (i, arg) in partial.type_args.iter().enumerate() {
@@ -298,7 +329,7 @@ impl Formatter {
                 (SurfaceFeatureKey::SoftKeyword(id), SurfaceExprPayload::PrefixUnary(inner)) => {
                     self.writer.write(keywords::as_str(*id));
                     self.writer.write(" ");
-                    self.format_expr(&inner.node);
+                    self.format_spanned_expr(inner);
                 }
                 (_, SurfaceExprPayload::RaceFor(race)) => {
                     self.format_race_for_expr(race);
@@ -313,11 +344,11 @@ impl Formatter {
                     SurfaceFeatureKey::ScopedDslSurface { .. },
                     SurfaceExprPayload::ScopedGlyph { glyph, left, right, .. },
                 ) => {
-                    self.format_expr(&left.node);
+                    self.format_spanned_expr(left);
                     self.writer.write(" ");
                     self.writer.write(glyph);
                     self.writer.write(" ");
-                    self.format_expr(&right.node);
+                    self.format_spanned_expr(right);
                 }
                 (
                     SurfaceFeatureKey::ScopedDslSurface { .. },
@@ -333,12 +364,12 @@ impl Formatter {
             Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
             Expr::Embedded(fragment) => self.format_embedded_fragment(fragment),
             Expr::Try(inner) => {
-                self.format_expr(&inner.node);
+                self.format_spanned_expr(inner);
                 self.writer.write("?");
             }
             Expr::Match(value, arms) => {
                 self.writer.write("match ");
-                self.format_expr(&value.node);
+                self.format_spanned_expr(value);
                 self.writer.writeln(":");
                 self.writer.indent();
                 for arm in arms {
@@ -347,7 +378,7 @@ impl Formatter {
                 self.writer.dedent();
             }
             Expr::If(if_expr) => {
-                self.format_expr(&if_expr.condition.node);
+                self.format_spanned_expr(&if_expr.condition);
                 self.writer.write(" if ");
                 // Note: This handles ternary-style if expressions
             }
@@ -364,7 +395,7 @@ impl Formatter {
             }
             Expr::Generator(generator) => {
                 self.writer.write("(");
-                self.format_expr(&generator.expr.node);
+                self.format_spanned_expr(&generator.expr);
                 self.format_comprehension_clauses(&generator.clauses);
                 self.writer.write(")");
             }
@@ -372,7 +403,7 @@ impl Formatter {
                 self.writer.write("(");
                 self.format_closure_params(params);
                 self.writer.write(") => ");
-                self.format_expr(&body.node);
+                self.format_spanned_expr(body);
             }
             Expr::Tuple(items) => {
                 self.writer.write("(");
@@ -380,7 +411,7 @@ impl Formatter {
                     if i > 0 {
                         self.writer.write(", ");
                     }
-                    self.format_expr(&item.node);
+                    self.format_spanned_expr(item);
                 }
                 if items.len() == 1 {
                     self.writer.write(",");
@@ -394,10 +425,10 @@ impl Formatter {
                         self.writer.write(", ");
                     }
                     match item {
-                        ListEntry::Element(value) => self.format_expr(&value.node),
+                        ListEntry::Element(value) => self.format_spanned_expr(value),
                         ListEntry::Spread(value) => {
                             self.writer.write("*");
-                            self.format_expr(&value.node);
+                            self.format_spanned_expr(value);
                         }
                     }
                 }
@@ -411,13 +442,13 @@ impl Formatter {
                     }
                     match entry {
                         DictEntry::Pair(k, v) => {
-                            self.format_expr(&k.node);
+                            self.format_spanned_expr(k);
                             self.writer.write(": ");
-                            self.format_expr(&v.node);
+                            self.format_spanned_expr(v);
                         }
                         DictEntry::Spread(value) => {
                             self.writer.write("**");
-                            self.format_expr(&value.node);
+                            self.format_spanned_expr(value);
                         }
                     }
                 }
@@ -429,16 +460,16 @@ impl Formatter {
                     if i > 0 {
                         self.writer.write(", ");
                     }
-                    self.format_expr(&item.node);
+                    self.format_spanned_expr(item);
                 }
                 self.writer.write("}");
             }
             Expr::Paren(inner) => {
                 if Self::is_logical_binary_chain(&inner.node) {
-                    self.format_parenthesized_logical_chain(&inner.node);
+                    self.format_parenthesized_logical_chain(inner);
                 } else {
                     self.writer.write("(");
-                    self.format_expr(&inner.node);
+                    self.format_spanned_expr(inner);
                     self.writer.write(")");
                 }
             }
@@ -455,7 +486,7 @@ impl Formatter {
                         FStringPart::Literal(s) => self.writer.write(&escape_fstring_literal(s)),
                         FStringPart::Expr { expr, format } => {
                             self.writer.write("{");
-                            self.format_expr(&expr.node);
+                            self.format_spanned_expr(expr);
                             match format {
                                 FStringFormat::Display => {}
                                 FStringFormat::Debug => self.writer.write(":?"),
@@ -472,15 +503,15 @@ impl Formatter {
             }
             Expr::ListComp(comp) => {
                 self.writer.write("[");
-                self.format_expr(&comp.expr.node);
+                self.format_spanned_expr(&comp.expr);
                 self.format_comprehension_clauses(&comp.clauses);
                 self.writer.write("]");
             }
             Expr::DictComp(comp) => {
                 self.writer.write("{");
-                self.format_expr(&comp.key.node);
+                self.format_spanned_expr(&comp.key);
                 self.writer.write(": ");
-                self.format_expr(&comp.value.node);
+                self.format_spanned_expr(&comp.value);
                 self.format_comprehension_clauses(&comp.clauses);
                 self.writer.write("}");
             }
@@ -488,17 +519,17 @@ impl Formatter {
                 self.writer.write("yield");
                 if let Some(inner) = inner {
                     self.writer.write(" ");
-                    self.format_expr(&inner.node);
+                    self.format_spanned_expr(inner);
                 }
             }
             Expr::Range { start, end, inclusive } => {
-                self.format_expr(&start.node);
+                self.format_spanned_expr(start);
                 if *inclusive {
                     self.writer.write("..=");
                 } else {
                     self.writer.write("..");
                 }
-                self.format_expr(&end.node);
+                self.format_spanned_expr(end);
             }
         }
     }
@@ -511,12 +542,12 @@ impl Formatter {
         self.writer.indent();
         for arm in &race.arms {
             self.writer.write("await ");
-            self.format_expr(&arm.awaitable.node);
+            self.format_spanned_expr(&arm.awaitable);
             self.writer.write(" =>");
             match &arm.body {
                 RaceForBody::Expr(expr) => {
                     self.writer.write(" ");
-                    self.format_expr(&expr.node);
+                    self.format_spanned_expr(expr);
                     self.writer.newline();
                 }
                 RaceForBody::Block(stmts) => {
@@ -543,11 +574,11 @@ impl Formatter {
                     self.writer.write(" for ");
                     self.format_for_pattern(&pattern.node);
                     self.writer.write(" in ");
-                    self.format_expr(&iter.node);
+                    self.format_spanned_expr(iter);
                 }
                 ComprehensionClause::If(condition) => {
                     self.writer.write(" if ");
-                    self.format_expr(&condition.node);
+                    self.format_spanned_expr(condition);
                 }
             }
         }
@@ -673,19 +704,19 @@ impl Formatter {
         self.writer.blank_lines(arm.leading_blank_lines as usize);
         let arm = &arm.node;
 
-        self.format_pattern(&arm.pattern.node);
+        self.format_spanned_pattern(&arm.pattern);
         // A guard belongs to the arm, not to one of its two spellings, so it is written the same way before a `:`
         // and before a `=>`. Writing it only in `case` form used to be a workaround for the arrow form's parser
         // rejecting `<pattern> if <cond> =>`; that grammar gap is closed, so the arm keeps the shape it was
         // written in (#1401).
         if let Some(guard) = &arm.guard {
             self.writer.write(" if ");
-            self.format_expr(&guard.node);
+            self.format_spanned_expr(guard);
         }
         match &arm.body {
             MatchBody::Expr(expr) => {
                 self.writer.write(" => ");
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
                 self.writer.newline();
             }
             MatchBody::Block(stmts) => {
@@ -733,12 +764,12 @@ impl Formatter {
     /// `continue` requires an indented suite; collapsing it would make valid source unparseable.
     fn format_statement_inline(&mut self, stmt: &Statement) -> bool {
         match stmt {
-            Statement::Expr(expr) => self.format_expr(&expr.node),
+            Statement::Expr(expr) => self.format_spanned_expr(expr),
             Statement::Return(expr) => {
                 self.writer.write("return");
                 if let Some(e) = expr {
                     self.writer.write(" ");
-                    self.format_expr(&e.node);
+                    self.format_spanned_expr(e);
                 }
             }
             Statement::Pass => self.writer.write("pass"),
@@ -746,12 +777,20 @@ impl Formatter {
                 self.writer.write("break");
                 if let Some(expr) = value {
                     self.writer.write(" ");
-                    self.format_expr(&expr.node);
+                    self.format_spanned_expr(expr);
                 }
             }
             _ => return false,
         }
         true
+    }
+
+    /// Preserve source-sensitive literal patterns before emitting the pattern's structural syntax.
+    pub(super) fn format_spanned_pattern(&mut self, pattern: &Spanned<Pattern>) {
+        if matches!(pattern.node, Pattern::Literal(Literal::String(_))) && self.write_source_string(pattern.span) {
+            return;
+        }
+        self.format_pattern(&pattern.node);
     }
 
     /// Format a pattern in match-arm, `if let`, and nested constructor-pattern positions.
@@ -770,12 +809,12 @@ impl Formatter {
                         }
                         match p {
                             PatternArg::Positional(pat) => {
-                                self.format_pattern(&pat.node);
+                                self.format_spanned_pattern(pat);
                             }
                             PatternArg::Named(name, pat) => {
                                 self.writer.write(&name.node);
                                 self.writer.write("=");
-                                self.format_pattern(&pat.node);
+                                self.format_spanned_pattern(pat);
                             }
                         }
                     }
@@ -788,7 +827,7 @@ impl Formatter {
                     if i > 0 {
                         self.writer.write(", ");
                     }
-                    self.format_pattern(&p.node);
+                    self.format_spanned_pattern(p);
                 }
                 self.writer.write(")");
             }
@@ -797,7 +836,7 @@ impl Formatter {
                     self.format_grouped_or_pattern(patterns);
                 } else {
                     self.writer.write("(");
-                    self.format_pattern(&pattern.node);
+                    self.format_spanned_pattern(pattern);
                     self.writer.write(")");
                 }
             }
@@ -840,7 +879,7 @@ impl Formatter {
             if i > 0 {
                 self.writer.write("| ");
             }
-            self.format_pattern(&pattern.node);
+            self.format_spanned_pattern(pattern);
             self.writer.newline();
         }
         self.writer.dedent();
@@ -853,7 +892,7 @@ impl Formatter {
             if i > 0 {
                 self.writer.write(" | ");
             }
-            self.format_pattern(&pattern.node);
+            self.format_spanned_pattern(pattern);
         }
     }
 

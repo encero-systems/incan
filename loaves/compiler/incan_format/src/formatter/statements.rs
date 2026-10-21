@@ -12,7 +12,7 @@ impl Formatter {
         self.writer.blank_lines(stmt.leading_blank_lines as usize);
         match &stmt.node {
             Statement::Expr(expr) => {
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
                 if !self.writer.is_at_line_start() {
                     self.writer.newline();
                 }
@@ -26,16 +26,16 @@ impl Formatter {
                 self.format_assignment(assign);
             }
             Statement::FieldAssignment(assign) => {
-                self.format_expr(&assign.object.node);
+                self.format_spanned_expr(&assign.object);
                 self.writer.write(".");
                 self.writer.write(&assign.field);
                 self.format_assignment_value(&assign.value, assign.compound_op);
                 self.writer.newline();
             }
             Statement::IndexAssignment(assign) => {
-                self.format_expr(&assign.object.node);
+                self.format_spanned_expr(&assign.object);
                 self.writer.write("[");
-                self.format_expr(&assign.index.node);
+                self.format_spanned_expr(&assign.index);
                 self.writer.write("]");
                 self.format_assignment_value(&assign.value, assign.compound_op);
                 self.writer.newline();
@@ -45,14 +45,14 @@ impl Formatter {
                 self.writer.write(" ");
                 self.writer.write(assign.op.source_spelling());
                 self.writer.write(" ");
-                self.format_expr(&assign.value.node);
+                self.format_spanned_expr(&assign.value);
                 self.writer.newline();
             }
             Statement::Return(expr) => {
                 self.writer.write("return");
                 if let Some(e) = expr {
                     self.writer.write(" ");
-                    self.format_expr(&e.node);
+                    self.format_spanned_expr(e);
                 }
                 self.writer.newline();
             }
@@ -69,7 +69,7 @@ impl Formatter {
                         if idx > 0 {
                             self.writer.write(", ");
                         }
-                        self.format_expr(&arg.node);
+                        self.format_spanned_expr(arg);
                     }
                     self.writer.newline();
                 }
@@ -96,7 +96,7 @@ impl Formatter {
                 self.writer.write("break");
                 if let Some(value) = value {
                     self.writer.write(" ");
-                    self.format_expr(&value.node);
+                    self.format_spanned_expr(value);
                 }
                 self.writer.newline();
             }
@@ -116,7 +116,7 @@ impl Formatter {
                     self.writer.write(target);
                 }
                 self.writer.write(" = ");
-                self.format_expr(&ca.value.node);
+                self.format_spanned_expr(&ca.value);
                 self.writer.newline();
             }
         }
@@ -131,14 +131,15 @@ impl Formatter {
             self.writer.write(" ");
             self.writer.write(op.source_spelling());
             self.writer.write(" ");
-            self.format_expr(&rhs.node);
+            self.format_spanned_expr(rhs);
             return;
         }
 
         self.writer.write(" = ");
-        self.format_expr(&value.node);
+        self.format_spanned_expr(value);
     }
 
+    /// Write a binding or reassignment while retaining the right-hand expression's source spelling.
     fn format_assignment(&mut self, assign: &AssignmentStmt) {
         match assign.binding {
             BindingKind::Let => self.writer.write("let "),
@@ -151,7 +152,7 @@ impl Formatter {
             self.format_type(&ty.node);
         }
         self.writer.write(" = ");
-        self.format_expr(&assign.value.node);
+        self.format_spanned_expr(&assign.value);
         self.writer.newline();
     }
 
@@ -159,21 +160,21 @@ impl Formatter {
     fn format_assert(&mut self, assert_stmt: &AssertStmt) {
         self.writer.write("assert ");
         match &assert_stmt.kind {
-            AssertKind::Condition(condition) => self.format_expr(&condition.node),
+            AssertKind::Condition(condition) => self.format_spanned_expr(condition),
             AssertKind::IsPattern { value, pattern } => {
-                self.format_expr(&value.node);
+                self.format_spanned_expr(value);
                 self.writer.write(" is ");
-                self.format_pattern(&pattern.node);
+                self.format_spanned_pattern(pattern);
             }
             AssertKind::Raises { call, error_type } => {
-                self.format_expr(&call.node);
+                self.format_spanned_expr(call);
                 self.writer.write(" raises ");
                 self.format_type(&error_type.node);
             }
         }
         if let Some(message) = &assert_stmt.message {
             self.writer.write(", ");
-            self.format_expr(&message.node);
+            self.format_spanned_expr(message);
         }
         self.writer.newline();
     }
@@ -194,7 +195,7 @@ impl Formatter {
 
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
             self.writer.write("elif ");
-            self.format_expr(&elif_cond.node);
+            self.format_spanned_expr(elif_cond);
             self.writer.writeln(":");
             self.writer.indent();
             for stmt in elif_body {
@@ -252,7 +253,7 @@ impl Formatter {
         self.writer.write("for ");
         self.format_for_pattern(&for_stmt.pattern.node);
         self.writer.write(" in ");
-        self.format_expr(&for_stmt.iter.node);
+        self.format_spanned_expr(&for_stmt.iter);
         self.writer.writeln(":");
         self.writer.indent();
         for stmt in &for_stmt.body {
@@ -284,7 +285,7 @@ impl Formatter {
                 if i > 0 {
                     self.writer.write(", ");
                 }
-                self.format_pattern(&item.node);
+                self.format_spanned_pattern(item);
             }
         } else {
             self.format_pattern(pattern);
@@ -294,12 +295,12 @@ impl Formatter {
     /// Format a conditional expression.
     fn format_condition(&mut self, condition: &Condition) {
         match condition {
-            Condition::Expr(expr) => self.format_expr(&expr.node),
+            Condition::Expr(expr) => self.format_spanned_expr(expr),
             Condition::Let { pattern, value } => {
                 self.writer.write("let ");
-                self.format_pattern(&pattern.node);
+                self.format_spanned_pattern(pattern);
                 self.writer.write(" = ");
-                self.format_expr(&value.node);
+                self.format_spanned_expr(value);
             }
         }
     }
@@ -330,7 +331,7 @@ impl Formatter {
             self.writer.write(name);
         }
         self.writer.write(" = ");
-        self.format_tuple_statement_value(&unpack.value.node, layout);
+        self.format_tuple_statement_value(&unpack.value, layout);
         self.writer.newline();
     }
 
@@ -340,26 +341,26 @@ impl Formatter {
             if i > 0 {
                 self.writer.write(", ");
             }
-            self.format_expr(&target.node);
+            self.format_spanned_expr(target);
         }
         self.writer.write(" = ");
-        self.format_tuple_statement_value(&assign.value.node, layout);
+        self.format_tuple_statement_value(&assign.value, layout);
         self.writer.newline();
     }
 
     /// Write the right side of a tuple statement: a tuple of two or more elements without parentheses when `layout` is
     /// [`TupleValueLayout::Bare`]; an empty or one-element tuple, and every other value, as the expression it is.
-    fn format_tuple_statement_value(&mut self, value: &Expr, layout: TupleValueLayout) {
-        match value {
+    fn format_tuple_statement_value(&mut self, value: &Spanned<Expr>, layout: TupleValueLayout) {
+        match &value.node {
             Expr::Tuple(items) if layout == TupleValueLayout::Bare && items.len() >= 2 => {
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         self.writer.write(", ");
                     }
-                    self.format_expr(&item.node);
+                    self.format_spanned_expr(item);
                 }
             }
-            _ => self.format_expr(value),
+            _ => self.format_spanned_expr(value),
         }
     }
 }

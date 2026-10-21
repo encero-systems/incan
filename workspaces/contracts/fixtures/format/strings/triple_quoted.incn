@@ -1,0 +1,19 @@
+# behavior: Triple-quoted values preserve editable embedded text and its blank lines.
+# expect-formatted:
+#   def stylesheet() -> str:
+#       """The page stylesheet."""
+#       return """
+#   body { margin: 0; }
+#
+#
+#   .panel { padding: 8px; }
+#   """
+
+def stylesheet() -> str:
+    """The page stylesheet."""
+    return """
+body { margin: 0; }
+
+
+.panel { padding: 8px; }
+"""

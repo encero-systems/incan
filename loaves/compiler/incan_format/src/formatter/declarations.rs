@@ -92,6 +92,7 @@ impl Formatter {
         }
     }
 
+    /// Write a constant declaration with its annotation and source-sensitive initializer.
     fn format_const(&mut self, konst: &ConstDecl) {
         self.write_visibility(konst.visibility);
         self.writer.write("const ");
@@ -101,10 +102,11 @@ impl Formatter {
             self.format_type(&ty.node);
         }
         self.writer.write(" = ");
-        self.format_expr(&konst.value.node);
+        self.format_spanned_expr(&konst.value);
         self.writer.newline();
     }
 
+    /// Write a static declaration with its annotation and source-sensitive initializer.
     fn format_static(&mut self, static_decl: &StaticDecl) {
         self.write_visibility(static_decl.visibility);
         self.writer.write("static ");
@@ -112,7 +114,7 @@ impl Formatter {
         self.writer.write(": ");
         self.format_type(&static_decl.ty.node);
         self.writer.write(" = ");
-        self.format_expr(&static_decl.value.node);
+        self.format_spanned_expr(&static_decl.value);
         self.writer.newline();
     }
 
@@ -343,6 +345,7 @@ impl Formatter {
             .join(", ")
     }
 
+    /// Write the authored Rust crate version and feature selection after an import path.
     fn format_rust_import_spec(&mut self, version: &Option<String>, features: &[String]) {
         let Some(version) = version else {
             return;
@@ -366,6 +369,7 @@ impl Formatter {
         }
     }
 
+    /// Write a module path using its namespace's canonical separators.
     fn format_import_path(&mut self, path: &ImportPath) {
         let mut parts: Vec<&str> = Vec::new();
         if path.is_absolute {
@@ -568,7 +572,7 @@ impl Formatter {
 
         if let Some(description) = &cap.description {
             self.writer.write("description = ");
-            self.format_expr(&description.node);
+            self.format_spanned_expr(description);
             self.writer.newline();
         }
 
@@ -590,7 +594,7 @@ impl Formatter {
                 if index > 0 {
                     self.writer.write(", ");
                 }
-                self.format_expr(&entry.node);
+                self.format_spanned_expr(entry);
             }
             self.writer.writeln("]");
         }
@@ -598,6 +602,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Write a trait's declarations and methods with member spacing and docstrings.
     fn format_trait(&mut self, tr: &TraitDecl) {
         for dec in &tr.decorators {
             self.format_decorator(&dec.node);
@@ -728,6 +733,7 @@ impl Formatter {
         }
     }
 
+    /// Write an enum variant's name and optional tuple payload types.
     fn format_enum_variant(&mut self, variant: &VariantDecl) {
         self.writer.write(&variant.name);
         if !variant.fields.is_empty() {
@@ -799,6 +805,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Write a type alias and its type parameters without changing its target type.
     fn format_type_alias(&mut self, alias: &TypeAliasDecl) {
         self.write_visibility(alias.visibility);
         self.writer.write("type ");
@@ -880,7 +887,7 @@ impl Formatter {
         for rebinding in &nt.rebindings {
             self.writer.write(&rebinding.node.name);
             self.writer.write(" = ");
-            self.format_expr(&rebinding.node.target.node);
+            self.format_spanned_expr(&rebinding.node.target);
             self.writer.newline();
         }
         self.format_method_aliases(&nt.method_aliases);
@@ -905,7 +912,7 @@ impl Formatter {
                     InteropAdapterKind::Via => self.writer.write("via "),
                     InteropAdapterKind::Try => self.writer.write("try "),
                 }
-                self.format_expr(&edge.node.adapter.node);
+                self.format_spanned_expr(&edge.node.adapter);
                 self.writer.newline();
             }
             self.writer.dedent();
@@ -939,6 +946,7 @@ impl Formatter {
 
     // ---- Functions and methods ----
 
+    /// Separate a parsed leading string statement from the executable suite for docstring formatting.
     fn split_leading_docstring<'a>(
         &self,
         body: &'a [Spanned<Statement>],
@@ -1194,13 +1202,13 @@ impl Formatter {
                     self.writer.write(", ");
                 }
                 match arg {
-                    DecoratorArg::Positional(expr) => self.format_expr(&expr.node),
+                    DecoratorArg::Positional(expr) => self.format_spanned_expr(expr),
                     DecoratorArg::Named(name, value) => {
                         self.writer.write(name);
                         self.writer.write("=");
                         match value {
                             DecoratorArgValue::Type(ty) => self.format_type(&ty.node),
-                            DecoratorArgValue::Expr(expr) => self.format_expr(&expr.node),
+                            DecoratorArgValue::Expr(expr) => self.format_spanned_expr(expr),
                         }
                     }
                 }
@@ -1210,6 +1218,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Write a decorator path with the namespace separators accepted for decorator lookup.
     fn format_decorator_path(&mut self, path: &ImportPath) {
         let mut parts: Vec<&str> = Vec::new();
         if path.is_absolute {
@@ -1266,11 +1275,12 @@ impl Formatter {
         self.format_type(&field.ty.node);
         if let Some(default) = &field.default {
             self.writer.write(" = ");
-            self.format_expr(&default.node);
+            self.format_spanned_expr(default);
         }
         self.writer.newline();
     }
 
+    /// Write an inline parameter list, preserving each parameter's default expression spelling.
     pub(super) fn format_params(&mut self, params: &[Spanned<Param>]) {
         for (i, param) in params.iter().enumerate() {
             if i > 0 {
@@ -1295,12 +1305,13 @@ impl Formatter {
         self.format_type(&param.ty.node);
         if let Some(default) = &param.default {
             self.writer.write(" = ");
-            self.format_expr(&default.node);
+            self.format_spanned_expr(default);
         }
     }
 
     // ---- Type parameters and trait bounds ----
 
+    /// Write type parameters and their optional bounds in declaration order.
     fn format_type_params(&mut self, params: &[TypeParam]) {
         if !params.is_empty() {
             self.writer.write("[");
@@ -1329,6 +1340,7 @@ impl Formatter {
         }
     }
 
+    /// Write a trait bound and its type arguments using the parsed bound path.
     fn format_trait_bound(&mut self, bound: &TraitBound) {
         self.writer.write(&bound.name);
         if !bound.type_args.is_empty() {
@@ -1387,6 +1399,7 @@ fn escape_value_enum_string(s: &str) -> String {
     result
 }
 
+/// Remove at most the common docstring indentation while respecting UTF-8 boundaries.
 fn strip_common_indent(line: &str, indent: usize) -> &str {
     let mut chars_to_strip = indent;
     let mut start = 0usize;

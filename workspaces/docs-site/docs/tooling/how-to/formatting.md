@@ -45,6 +45,7 @@ The style guide is the canonical source for what Incan code should look like:
 - top-level double-blank-line spacing only where the style guide permits it
 - preservation of one authored readability gap inside ordinary code blocks
 - comment placement that remains same-scope and structure-aware
+- preservation of triple-quoted string values, including their delimiters, escapes, and content indentation
 - one trailing newline at end-of-file
 
 RFC 053 remains the historical design record for the vertical-spacing portion of that contract.
