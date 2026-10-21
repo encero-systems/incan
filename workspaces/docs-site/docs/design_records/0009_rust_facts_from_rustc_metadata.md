@@ -6,7 +6,7 @@ type: design-decision
 date: 2026-10-20
 review_target: v0.6
 sources:
-  - Maintainer decision, 2026-10-20 (dev.8, after a check-time spike)
+  - Maintainer decision, 2026-10-20
   - https://github.com/encero-systems/incan/issues/2256
   - DD-0004
   - DD-0006
@@ -20,48 +20,37 @@ sources:
 
 ## Context
 
-The checker types `rust::` imports from Rust facts. These cover:
-
-- a type's generics, public methods, fields and variants;
-- a function's signature;
-- a constant's type;
-- a trait's functions;
-- a module's children.
-
-The facts used to come from a rust-analyzer inspection of a generated Cargo workspace. 0.6.0-dev.8 removed that inspection together with Cargo. Without facts, every call into a Rust crate is untyped, and with it every standard package that wraps a Rust crate.
-
-The compiler is a rustc driver (DD-0004). rustc's own crate metadata therefore describes every compiled Rust crate exactly as the compilation will link it.
+The checker needs Rust facts for `rust::` imports: types, generics, methods, fields, variants, function signatures, constants, traits, and module children. Generated Cargo workspace inspection by rust-analyzer disappeared with dev.8; rustc metadata describes the compiled crates the native driver actually links (DD-0004).
 
 ## Decision
 
-1. **One extractor.** `incan-rustc-driver` reads Rust facts from rustc's crate metadata in one rustc session. The session runs over a stub crate that links the crates in question. Each requested path resolves through public module children. Each item is described in the checker's existing metadata shape (`RustItemMetadata`).
+1. **One extractor.** The native driver extracts facts from linked rustc metadata through public paths, using the checker's metadata shape; each nonstandard root requires one explicit extern artifact in the unit's closure, with missing/conflicting artifacts refused and search paths limited to transitive dependencies.
 2. **ABI caches are the primary source.**
    - **Contents:** an ABI cache holds the facts of every public item of one or more compiled Rust crates.
    - **Who writes them:** the same extractor, run as `incan-rustc-driver --rust-abi`, when a crate is compiled or a toolchain is installed.
    - **Coverage:** the toolchain ships the cache of `std`, `core` and `alloc`. A compiled Rust unit carries its own cache, from incan.pub's bake or Oven's build.
    - **How they reach the compiler:** Oven passes the caches with the unit's native closure (`--rust-abi`).
-3. **Check-time extraction is the fallback.** A path that neither a Loaf's shipped ABI nor any cache covers is read by the same extractor during checking, from the unit's own crates. This applies to crates without a cache, such as a local Rust crate Oven has not described yet. The lookup order is fixed: the Loaf, then the caches, then the fallback. A path a cache covers is never extracted again, so a crate never has two answers.
+3. **Check-time extraction is the fallback.** Lookup is ordered: the Loaf's shipped ABI, caches, then the same extractor over the unit's crates; covered paths are never re-extracted. Selected public layouts include transitive records through Options and collections, while method-signature expansion is independently bounded.
 4. **Storage.**
    - **Layout:** a cache uses `.incnbody`'s layout. A version comes first, then a postcard index of each path's payload range, then one postcard payload per item.
    - **Reading:** a reader decodes the index once, and decodes an item only when checking asks for it.
-   - **Shape:** the metadata types serialize field by field (no skipped fields), so JSON and the binary cache use one shape.
+   - **Shape:** JSON and binary storage serialize every metadata field identically, preserving native widths, references, owner binders, and enum payloads independently of source normalization. Facts retain conditional impl templates on owners and traits, associated definitions, function/supertrait projection predicates, edition-2024 prelude membership, callable inputs/output equalities, and opaque async futures' logical outputs. Extension traits supplement older owner caches without replacing them. Conditional impls remain candidates subject to rustc signature/predicate validation; callable predicates never authorize guessed closure signatures.
+5. **Clients without rustc use caches only.** Editor analysis shares checking's compilation context and shipped caches without an in-process fallback; missing declared dependency caches are extracted by the installed toolchain's own driver using exact extern aliases and transitive search paths, never an independently selected rustc. Per-unit caches belong to that toolchain and are keyed by layout version, driver/shipped-cache contents, sysroot path, extern aliases/artifact contents, and search paths; unchanged identities permit reuse, while rebuilt dependencies invalidate it. Extraction is serialized per identity and publication is atomic and limited to complete, decodable caches; failure produces document diagnostics rather than untyped acceptance.
 
 ## Consequences
 
 - Checking `rust::` imports needs neither rust-analyzer nor Cargo. Every fact matches the crate rustc links.
-- Measured on aarch64-apple-darwin with rustc 1.98.0:
-  - **`std`, `core` and `alloc` cache:** 24,661 items, 5.3 MB, about 570 KB compressed, written in 1.5 s.
-  - **Fallback extraction:** 15 to 30 ms for a unit's handful of imports.
+- Indexed caches avoid decoding unused items; fallback extraction adds work only for uncovered paths.
 - Registry Loaves gain an ABI cache asset beside each compiled unit. incan.pub's existing `[[rust.facts]]` remain build facts (cfg and features).
 
 ## Non-goals
 
-- Receiver contracts (returned borrows) and a type's implemented traits are not extracted yet. A missing contract authorizes no inferred borrowing.
+- Receiver contracts (returned borrows); a missing contract authorizes no inferred borrowing.
 - How calls on Rust values lower to the plan is DD-0006's.
 
 ## Revisit condition
 
-Revisit when the cache layout changes. A reader refuses a cache of another layout version. Also revisit when checking needs facts the extractor does not yet provide.
+Revisit when the cache layout changes or checking needs additional facts; readers refuse other layout versions, requiring cache regeneration.
 
 ## Provenance
 

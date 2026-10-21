@@ -95,6 +95,8 @@ pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, s
         PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
         PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
         PlanType.FunctionPointer(signature) => return Ok(TupleElement.FunctionPointer(signature))
+        PlanType.ScalarRef(elements) => return Ok(TupleElement.Reference(false, elements))
+        PlanType.ScalarMutRef(elements) => return Ok(TupleElement.Reference(true, elements))
         _ => return Err(f"unsupported Body IR tuple element type {type_name(source)}")
 
 

@@ -10,11 +10,53 @@ use incan_semantics_core::CanonicalSymbolId;
 
 use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 
+/// Retain selected public native layouts using their checked field identities and type binders. The adapter verifies
+/// the complete instantiated foreign layout; these facts never authorize a guessed partial field projection.
+pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
+    let mut layouts: Vec<_> = facts.rust.checked_layouts.iter().collect();
+    layouts.sort_by_key(|(path, _)| *path);
+    layouts
+        .into_iter()
+        .filter_map(|(path, layout)| {
+            let identity = bir::rust_item_identity(path)?;
+            let mut declaration = bir::native_opaque_nominal(&identity, layout.type_parameters.len())?;
+            declaration.type_parameters = layout.type_parameters.clone();
+            declaration.fields = layout.fields.iter().filter_map(|field| field.name.clone()).collect();
+            declaration.field_identities = layout.field_identities.clone();
+            declaration.field_types = layout
+                .fields
+                .iter()
+                .map(|field| super::parameter_types::checked_parameter_type(&field.ty, facts, &layout.type_parameters))
+                .collect();
+            declaration.field_public = vec![true; declaration.fields.len()];
+            Some(declaration)
+        })
+        .collect()
+}
+
 /// Project a Rust type display onto the opaque nominal of its item, or `None` when the display names no Rust item
 /// (`dyn` objects, references and function types keep their Rust spelling and refuse where they are laid out).
 pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
     if let Some(checked) = checked_name(display.trim(), facts) {
         return Some(checked);
+    }
+    if display.contains('<') {
+        let resolved = crate::typechecker::TypeChecker::new().resolved_type_from_rust_display(display);
+        if !matches!(resolved, crate::symbols::ResolvedType::RustPath(_)) {
+            return Some(super::runtime_nominals::project_type(
+                semantic_type_from_resolved(&resolved),
+                facts,
+            ));
+        }
+    }
+    if let Some((base, inner)) = display.trim().split_once('<')
+        && let Some(IncanType::Named(base)) = checked_name(base, facts)
+    {
+        let args = incan_lang::interop::split_top_level_rust_args(inner.strip_suffix('>')?)
+            .into_iter()
+            .map(|argument| argument_type(argument, facts))
+            .collect();
+        return Some(IncanType::Generic { base, args });
     }
     let (identity, arguments) = rust_item(display, facts)?;
     let name = bir::native_opaque_name(&identity)?;
@@ -50,6 +92,10 @@ fn rust_item<'a>(display: &'a str, facts: &TypeCheckInfo) -> Option<(CanonicalSy
     let path = facts.rust.item_public_paths.get(path).map_or(path, String::as_str);
     let identity = bir::rust_item_identity(path)?;
     bir::native_opaque_nominal(&identity, arguments.len())?;
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| !crate::typechecker::TypeChecker::rust_generic_arg_is_lifetime(argument))
+        .collect();
     Some((identity, arguments))
 }
 

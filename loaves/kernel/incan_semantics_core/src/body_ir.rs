@@ -81,8 +81,8 @@ pub struct BodyIrModule {
     /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
     #[serde(default)]
     pub enum_declarations: Vec<EnumDeclaration>,
-    /// The callables of the linked Loaves this module calls, as their declaration records state them (DD-0007).
-    /// A call of one names the Loaf's compiled item.
+    /// External callables: linked Loaf declarations (DD-0007) and checker-selected Rust instantiations (DD-0006).
+    /// Each record names the exact compiled item and signature the native adapter must verify.
     #[serde(default)]
     pub loaf_callables: Vec<LoafCallable>,
     /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
@@ -278,15 +278,15 @@ pub struct NativeUnionDeclaration {
     pub members: Vec<IncanType>,
 }
 
-/// A callable a linked Loaf declares, as its declaration record states it (DD-0007). A consumer calls the Loaf's
-/// compiled item; the driver checks the signature recorded here against the rlib's metadata.
+/// An external callable: a linked Loaf declaration (DD-0007) or a checker-selected Rust instantiation (DD-0006).
+/// The driver verifies its recorded signature against the exact compiled item's metadata.
 ///
 /// Every field is encoded, including empty vectors, because the executable representation uses positional records.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoafCallable {
     /// Exact declaration identity selected by checking, independent of the caller's spelling.
     pub canonical: CanonicalSymbolId,
-    /// The compiled item, `<crate>::<encoded identity>` ([`loaf_item_path`]).
+    /// The compiled item: a Loaf's encoded identity ([`loaf_item_path`]) or the checked public Rust item path.
     pub item: String,
     /// Declaration-order parameter types; argument binding still belongs to the call site.
     pub parameters: Vec<IncanType>,
@@ -296,9 +296,10 @@ pub struct LoafCallable {
     /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
     #[serde(default)]
     pub type_parameters: Vec<String>,
-    /// Declaration-owned native instantiation for an explicit trait implementation, Self first and then the trait's
-    /// arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the function or
-    /// owner-binder instantiation; consumers must not reconstruct these arguments from names.
+    /// Native instantiation for an explicit trait implementation, or a checker-selected Rust call. Trait arguments
+    /// start with Self and close owner placeholders through `type_parameters`. A Rust call has an already-instantiated
+    /// signature and retains the impl's native arguments before the method's arguments. Consumers must not reconstruct
+    /// these arguments from names.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
@@ -828,14 +829,18 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
     })
 }
 
-/// The opaque nominals of the Rust items the modules hold as values (DD-0006): every Rust item a laid-out type names
-/// (a local, a parameter, a result, a field or a static), with the number of arguments it is written with. A Rust
-/// item a program only calls or constructs through (`Rc.new`) is not held. An item held with two different argument
-/// counts has no single layout and is left out; its uses refuse.
+/// The opaque nominals required by storage and checked external signatures (DD-0006), including their native type
+/// arguments. Each item retains its written argument count; a callee's item path alone requires no value layout.
+/// An item held with two different argument counts has no single layout and is left out; its uses refuse.
 pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
     let mut arities = std::collections::BTreeMap::<String, Option<usize>>::new();
     let mut record = |ty: &IncanType| record_held_rust_items(ty, &mut arities);
     for module in modules {
+        for callable in &module.loaf_callables {
+            callable.parameters.iter().for_each(&mut record);
+            callable.native_type_arguments.iter().for_each(&mut record);
+            record(&callable.return_type);
+        }
         for body in &module.bodies {
             record(&body.return_type);
             body.locals.iter().for_each(|local| record(&local.ty));
@@ -1853,6 +1858,8 @@ pub enum Constant {
     None,
     /// A checked immutable sized-integer newtype value with its exact constructor and complete numeric payload.
     NumericNewtype(Box<NumericNewtypeConstant>),
+    /// A metadata-selected public Rust constant, evaluated by rustc with its exact checked carrier.
+    RustItem(String, IncanType),
 }
 
 /// Pure newtype data accepted by the declaring const checker, without a runtime call or module initialization.
@@ -1982,6 +1989,7 @@ impl Constant {
     /// text, so a snapshot can never read a `bytes` constant as the `str` constant it is not.
     fn render_snapshot(&self) -> String {
         match self {
+            Self::RustItem(path, ty) => format!("const<rust::{path}: {ty}>"),
             Self::FrozenAggregate(ty, values) => format!("const<{ty}>({values:?})"),
             Self::TypeToken(ty) => format!("const<Type[{ty}]>"),
             Self::Int(v) => format!("const({v})"),

@@ -54,6 +54,8 @@ use super::calls::PublicModuleConstructorContext;
 
 use super::{GenericPartialTarget, TypeChecker};
 
+mod rust_traits;
+
 /// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
 const HASH_DUNDER: &str = "__hash__";
 
@@ -140,6 +142,7 @@ struct RustPathMethodCall<'a> {
     /// The import binding the receiver expression names, when the receiver is a bare imported Rust item such as
     /// the `Mac` in `Mac.update(handle, data)`; `None` for value receivers.
     receiver_binding: Option<&'a str>,
+    receiver_expr: &'a Spanned<Expr>,
     type_args: &'a [Spanned<Type>],
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
@@ -193,24 +196,34 @@ impl TypeChecker {
     /// type arguments, exactly as a field read does. A fast cache entry can carry only nominal metadata, so a missing
     /// field upgrades to complete semantic metadata before the checker rejects it. Field access and field assignment
     /// resolve through this one lookup, so a field that can be read can also be assigned.
-    pub(in crate::typechecker) fn rust_path_field_type(&self, path: &str, field: &str) -> Option<ResolvedType> {
+    pub(in crate::typechecker) fn rust_path_field_type(
+        &mut self,
+        path: &str,
+        field: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
         // Field reads pass the value's path straight to the metadata lookup, which owns the `rust::` and generic
         // normalization; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
-        let metadata = self.rust_item_metadata_for_path(path)?;
+        let mut metadata = self.rust_item_metadata_for_path(path)?;
+        if matches!(&metadata.kind, RustItemKind::Type(info) if Self::rust_field_for_source_name(&info.fields, field).is_none())
+        {
+            metadata = self.rust_item_metadata_for_complete_type(path)?;
+        }
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let rust_field = match Self::rust_field_for_source_name(&info.fields, field) {
-            Some(rust_field) => rust_field.clone(),
-            None => {
-                let complete = self.rust_item_metadata_for_complete_type(path)?;
-                let RustItemKind::Type(complete_info) = &complete.kind else {
-                    return None;
-                };
-                Self::rust_field_for_source_name(&complete_info.fields, field)?.clone()
-            }
-        };
-        Some(self.resolved_rust_field_type(path, &rust_field))
+        let rust_field = Self::rust_field_for_source_name(&info.fields, field)?;
+        self.retain_rust_layout(path, info);
+        self.type_info
+            .record_rust_field_access_name(span, rust_field.name.clone());
+        let base = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
+        if let Some(owner) = incan_semantics_core::body_ir::rust_item_identity(base) {
+            self.type_info.record_resolved_identity(
+                span,
+                Self::synthetic_member_identity(&owner, &rust_field.name, SemanticSourceTargetKind::Field),
+            );
+        }
+        Some(self.resolved_rust_field_type(path, rust_field))
     }
 
     /// Resolve a Rust field type from its display string against the owning Rust type.
@@ -220,7 +233,17 @@ impl TypeChecker {
     /// into another Rust boundary. The structural shape remains useful for broad semantic classification and older
     /// metadata entries whose display cannot be resolved.
     fn resolved_rust_field_type(&self, owner_path: &str, field: &RustFieldInfo) -> ResolvedType {
-        let display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
+        let mut display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
+        if let Some((base, arguments)) = Self::rust_generic_base_and_args(owner_path)
+            && let Some(metadata) = self.rust_item_metadata_for_path(base)
+            && let RustItemKind::Type(info) = &metadata.kind
+        {
+            let arguments = arguments
+                .into_iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .collect::<Vec<_>>();
+            display = Self::substitute_rust_display_params(&display, &info.type_params, &arguments);
+        }
         let resolved = self.resolved_type_from_rust_display(display.as_str());
         if matches!(resolved, ResolvedType::Unknown) {
             self.resolved_type_from_rust_shape(&field.type_shape)
@@ -2014,7 +2037,7 @@ impl TypeChecker {
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
-    fn synthetic_member_identity(
+    pub(in crate::typechecker::check_expr) fn synthetic_member_identity(
         owner: &CanonicalSymbolId,
         member: &str,
         kind: SemanticSourceTargetKind,
@@ -2567,11 +2590,14 @@ impl TypeChecker {
         }
     }
 
-    /// Return the canonical Rust path for a receiver type.
+    /// Return the receiver's Rust item path, keeping instantiated arguments on the checked receiver type.
+    /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
     fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
-            ResolvedType::RustPath(path) => Some(path.clone()),
+            ResolvedType::RustPath(path) => {
+                Some(Self::rust_generic_base_and_args(path).map_or_else(|| path.clone(), |(base, _)| base.to_owned()))
+            }
             ResolvedType::Named(name) => self.rust_canonical_path_for_nominal_receiver(name, None),
             ResolvedType::Generic(name, args) => {
                 self.rust_canonical_path_for_nominal_receiver(name, Some(args.as_slice()))
@@ -2625,6 +2651,7 @@ impl TypeChecker {
                     type_info.methods.iter().any(|candidate| candidate.name == method)
                         || type_info.metadata_completeness.has_methods()
                 }
+                RustItemKind::Constant { .. } => false,
                 _ => true,
             };
             if is_authoritative {
@@ -3032,13 +3059,38 @@ impl TypeChecker {
     }
 
     /// Apply checked Rust type substitutions to one inspected signature.
-    fn specialize_rust_signature(
+    pub(in crate::typechecker::check_expr) fn specialize_rust_signature(
         sig: &RustFunctionSig,
         substitutions: &HashMap<&str, String>,
         receiver_display: &str,
     ) -> RustFunctionSig {
         RustFunctionSig {
             receiver_contract: sig.receiver_contract,
+            bounds: sig
+                .bounds
+                .iter()
+                .map(|bound| incan_lang::interop::RustTraitBound {
+                    self_type: Self::substitute_rust_owner_display(&bound.self_type, substitutions, receiver_display),
+                    path: bound.path.clone(),
+                    type_arguments: bound
+                        .type_arguments
+                        .iter()
+                        .map(|argument| Self::substitute_rust_owner_display(argument, substitutions, receiver_display))
+                        .collect(),
+                    associated_type_bindings: bound
+                        .associated_type_bindings
+                        .iter()
+                        .map(|binding| incan_lang::interop::RustAssociatedTypeBinding {
+                            name: binding.name.clone(),
+                            value_path: Self::substitute_rust_owner_display(
+                                &binding.value_path,
+                                substitutions,
+                                receiver_display,
+                            ),
+                        })
+                        .collect(),
+                })
+                .collect(),
             type_params: sig.type_params.clone(),
             params: sig
                 .params
@@ -3056,6 +3108,38 @@ impl TypeChecker {
             is_async: sig.is_async,
             is_unsafe: sig.is_unsafe,
         }
+    }
+
+    /// Whether written owner arguments leave only defaulted type parameters, independently of impl method binders.
+    fn rust_owner_arity_admits(owner: &incan_lang::interop::RustTypeInfo, written: usize) -> bool {
+        written <= owner.type_params.len()
+            && (written..owner.type_params.len())
+                .all(|index| owner.type_param_defaults.get(index).is_some_and(Option::is_some))
+    }
+
+    /// Fill omitted owner parameters from metadata, substituting earlier arguments into each dependent default.
+    fn complete_rust_owner_arguments(
+        &self,
+        owner: &incan_lang::interop::RustTypeInfo,
+        arguments: &mut Vec<ResolvedType>,
+    ) -> bool {
+        if !Self::rust_owner_arity_admits(owner, arguments.len()) {
+            return false;
+        }
+        while arguments.len() < owner.type_params.len() {
+            let index = arguments.len();
+            let Some(default) = owner.type_param_defaults.get(index).and_then(Option::as_deref) else {
+                return false;
+            };
+            let displays = arguments
+                .iter()
+                .map(render_resolved_type_as_rust_arg)
+                .collect::<Vec<_>>();
+            let displays = displays.iter().map(String::as_str).collect::<Vec<_>>();
+            let default = Self::substitute_rust_display_params(default, &owner.type_params[..index], &displays);
+            arguments.push(self.resolved_type_from_rust_display(&default));
+        }
+        true
     }
 
     /// Specialize one inspected associated-function signature with its receiver's concrete type arguments.
@@ -3103,6 +3187,111 @@ impl TypeChecker {
         Self::specialize_rust_signature(sig, &substitutions, rust_path)
     }
 
+    /// Retain an inherent Rust callee using the impl's declared native binders, rather than the owner's arity.
+    /// Receiver references are explicit checked parameter types; no downstream consumer guesses a borrow from a name.
+    #[allow(clippy::too_many_arguments)]
+    fn retain_checked_rust_method(
+        &mut self,
+        method: &incan_lang::interop::RustMethodSig,
+        owner: &incan_lang::interop::RustTypeInfo,
+        path: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        receiver: Option<&ResolvedType>,
+        result: &ResolvedType,
+        span: Span,
+    ) {
+        if method.signature.is_async || method.signature.is_unsafe || owner.has_const_params {
+            return;
+        }
+        let native_parameters = method
+            .impl_type_params
+            .iter()
+            .chain(&method.signature.type_params)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut bindings = self.infer_rust_signature_bindings(
+            &method.signature,
+            path,
+            &native_parameters,
+            args,
+            arg_types,
+            Some(result),
+        );
+        if let (Some(receiver), Some(template)) = (receiver, method.impl_self_type.as_deref()) {
+            let template = self.resolved_type_from_rust_display(template);
+            self.infer_type_param_bindings(
+                &self.rust_inference_type(&template, &native_parameters),
+                &self.rust_inference_type(receiver, &[]),
+                &mut bindings,
+            );
+        }
+        let arguments = native_parameters
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                    .cloned()
+                    .or_else(|| {
+                        let index = owner.type_params.iter().position(|name| name == parameter)?;
+                        Some(self.resolved_type_from_rust_display(owner.type_param_defaults.get(index)?.as_deref()?))
+                    })
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(type_arguments) = arguments else {
+            return;
+        };
+        for (parameter, argument) in native_parameters.iter().zip(&type_arguments) {
+            bindings.entry(parameter.clone()).or_insert_with(|| argument.clone());
+        }
+        let mut parameters = self.type_info.call_site_callable_params(span).unwrap_or(&[]).to_vec();
+        let ordinary = if Self::rust_signature_has_receiver(&method.signature) {
+            &method.signature.params[1..]
+        } else {
+            &method.signature.params
+        };
+        for (parameter, declared) in parameters.iter_mut().zip(ordinary) {
+            let template = self.native_rust_signature_type(&declared.type_display, path);
+            parameter.ty = self.instantiate_rust_signature_type(&template, &native_parameters, &bindings);
+        }
+        if let Some(receiver) = receiver {
+            let display = method
+                .signature
+                .params
+                .first()
+                .map(|parameter| parameter.type_display.trim())
+                .unwrap_or("");
+            let referent = match receiver {
+                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+                other => other,
+            };
+            let ty = match Self::rust_display_borrow_kind(display) {
+                Some((true, _)) => ResolvedType::RefMut(Box::new(referent.clone())),
+                Some((false, _)) => ResolvedType::Ref(Box::new(referent.clone())),
+                None if display == "self" || display == "Self" => receiver.clone(),
+                None => return,
+            };
+            parameters.insert(0, CallableParam::positional(ty));
+        }
+        let native_result = self.instantiate_rust_signature_type(
+            &self.native_rust_signature_type(&method.signature.return_type, path),
+            &native_parameters,
+            &bindings,
+        );
+        self.type_info.rust.checked_calls.insert(
+            (span.start, span.end),
+            crate::typechecker::type_info::RustCheckedCall {
+                path: format!("{path}::{}", method.name),
+                type_arguments,
+                parameters,
+                return_type: native_result,
+                result_item_path: self.rust_result_item_path(&method.signature.return_type, path),
+                has_receiver: receiver.is_some(),
+            },
+        );
+    }
+
     /// Resolve and validate a method call on a rust-inspect-backed path.
     ///
     /// Returns:
@@ -3114,6 +3303,7 @@ impl TypeChecker {
             method,
             receiver_metadata,
             receiver_binding,
+            receiver_expr,
             type_args,
             args,
             arg_types,
@@ -3150,6 +3340,7 @@ impl TypeChecker {
                     method,
                     receiver_metadata,
                     receiver_binding,
+                    receiver_expr,
                     type_args,
                     args,
                     arg_types,
@@ -3176,15 +3367,36 @@ impl TypeChecker {
             self.preserve_unresolved_rust_call_argument_returns(args);
             return None;
         };
+        if let RustItemKind::Type(info) = &metadata.kind
+            && !info.methods.iter().any(|candidate| candidate.name == method)
+            && let Some(result) = self.resolve_retained_rust_trait_call(
+                RustPathMethodCall {
+                    rust_path,
+                    method,
+                    receiver_metadata,
+                    receiver_binding,
+                    receiver_expr,
+                    type_args,
+                    args,
+                    arg_types,
+                    receiver_span,
+                    expected_return_ty,
+                    span,
+                },
+                info,
+            )
+        {
+            return Some(result);
+        }
         match &metadata.kind {
             RustItemKind::Type(type_info) => {
-                let Some(sig) = metadata_free_method_signature(rust_path, method).or_else(|| {
-                    type_info
-                        .methods
-                        .iter()
-                        .find(|candidate| candidate.name == method)
-                        .map(|candidate| candidate.signature.clone())
-                }) else {
+                let Some(sig) = type_info
+                    .methods
+                    .iter()
+                    .find(|candidate| candidate.name == method)
+                    .map(|candidate| candidate.signature.clone())
+                    .or_else(|| metadata_free_method_signature(rust_path, method))
+                else {
                     // `T.default()` is Rust's prelude-provided associated constructor. rust-inspect records
                     // inherent methods on `T`, not the `Default` trait member, but the call's result still has the
                     // concrete receiver type needed to resolve a following inherent call such as
@@ -3219,6 +3431,7 @@ impl TypeChecker {
                             method,
                             receiver_metadata,
                             receiver_binding,
+                            receiver_expr,
                             type_args,
                             args,
                             arg_types,
@@ -3242,6 +3455,15 @@ impl TypeChecker {
                     Some(IdentKind::TypeName | IdentKind::RustImport)
                 );
                 let specializes_receiver = receiver_is_type_name && !type_info.type_params.is_empty();
+                if !receiver_is_type_name
+                    && Self::rust_signature_has_receiver(&sig)
+                    && sig.params.first().is_some_and(|parameter| {
+                        Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
+                    })
+                {
+                    self.refuse_write_through_read_only_binding(receiver_expr, span);
+                    self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, receiver_expr);
+                }
                 let declared_type_params = if specializes_receiver {
                     type_info.type_params.as_slice()
                 } else {
@@ -3254,10 +3476,17 @@ impl TypeChecker {
                             .push(errors::rust_receiver_const_generics_not_supported(rust_path, span));
                         return Some(ResolvedType::Unknown);
                     }
-                    if !self.validate_rust_method_type_arg_arity(method, declared_type_params, type_args, span) {
+                    let defaults_admit =
+                        specializes_receiver && Self::rust_owner_arity_admits(type_info, type_args.len());
+                    if !defaults_admit
+                        && !self.validate_rust_method_type_arg_arity(method, declared_type_params, type_args, span)
+                    {
                         return Some(ResolvedType::Unknown);
                     }
                     resolved_type_args = type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+                    if specializes_receiver && !self.complete_rust_owner_arguments(type_info, &mut resolved_type_args) {
+                        return Some(ResolvedType::Unknown);
+                    }
                     self.type_info
                         .calls
                         .call_site_monomorph_type_args
@@ -3279,28 +3508,40 @@ impl TypeChecker {
                         return Some(ResolvedType::Unknown);
                     }
                     if let Some(mut contextual_args) = self.rust_owner_type_args(receiver, rust_path) {
-                        // A generic owner may carry defaulted trailing parameters the display never spells —
-                        // `Box<T, A = Global>` reads as `Box<T>`. Those are not arguments the context has to
-                        // supply: fill them from the recorded defaults so one inferred `T` still specializes the
-                        // owner instead of being discarded for not matching the declared arity.
-                        let declared = type_info.type_params.len();
-                        if contextual_args.len() < declared {
-                            let trailing_defaults = (contextual_args.len()..declared)
-                                .map(|index| {
+                        if self.complete_rust_owner_arguments(type_info, &mut contextual_args) {
+                            resolved_type_args = contextual_args;
+                        }
+                    }
+                }
+                if specializes_receiver && resolved_type_args.is_empty() {
+                    let inferred = self.infer_rust_signature_bindings(
+                        &sig,
+                        rust_path,
+                        &type_info.type_params,
+                        args,
+                        arg_types,
+                        expected_return_ty,
+                    );
+                    let arguments = type_info
+                        .type_params
+                        .iter()
+                        .enumerate()
+                        .map(|(index, parameter)| {
+                            inferred
+                                .get(parameter)
+                                .filter(|ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                                .cloned()
+                                .or_else(|| {
                                     type_info
                                         .type_param_defaults
                                         .get(index)
                                         .and_then(|default| default.as_deref())
                                         .map(|default| self.resolved_type_from_rust_display(default))
                                 })
-                                .collect::<Option<Vec<_>>>();
-                            if let Some(defaults) = trailing_defaults {
-                                contextual_args.extend(defaults);
-                            }
-                        }
-                        if contextual_args.len() == declared {
-                            resolved_type_args = contextual_args;
-                        }
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(arguments) = arguments {
+                        resolved_type_args = arguments;
                     }
                 }
                 if specializes_receiver && resolved_type_args.is_empty() {
@@ -3333,6 +3574,28 @@ impl TypeChecker {
                 } else {
                     sig.clone()
                 };
+                let effective_sig = if !receiver_is_type_name {
+                    self.type_info
+                        .expr_type(receiver_span)
+                        .and_then(|receiver| self.rust_owner_type_args(receiver, rust_path))
+                        .map(|arguments| {
+                            self.specialize_rust_owner_signature(
+                                &effective_sig,
+                                rust_path,
+                                &type_info.type_params,
+                                &arguments,
+                            )
+                        })
+                        .unwrap_or(effective_sig)
+                } else {
+                    effective_sig
+                };
+                if !resolved_type_args.is_empty() {
+                    self.type_info
+                        .calls
+                        .call_site_monomorph_type_args
+                        .insert((span.start, span.end), resolved_type_args.clone());
+                }
                 if Self::rust_signature_has_receiver(&sig)
                     && sig.params[1..].iter().any(|param| {
                         let normalized = Self::compact_rust_display(&param.type_display);
@@ -3362,10 +3625,39 @@ impl TypeChecker {
                 // path: `Box.new(v)` checked against `Box<T>` is a `Box<T>`, and the bare `std::boxed::Box` that
                 // the path-only substitution produced could never unify with the specialized expectation that
                 // drove the reconciliation in the first place.
-                Some(match contextual_receiver.as_ref() {
+                let result = match contextual_receiver.as_ref() {
                     Some(receiver) => Self::substitute_rust_self_type_with_resolved(ret, receiver),
                     None => Self::substitute_rust_self_type(ret, rust_path),
-                })
+                };
+                if let Some(selected) = type_info.methods.iter().find(|candidate| candidate.name == method) {
+                    let receiver = (!receiver_is_type_name && Self::rust_signature_has_receiver(&sig))
+                        .then(|| self.type_info.expr_type(receiver_span).cloned())
+                        .flatten();
+                    self.retain_checked_rust_method(
+                        selected,
+                        type_info,
+                        rust_path,
+                        args,
+                        arg_types,
+                        receiver.as_ref(),
+                        &result,
+                        span,
+                    );
+                }
+                Some(result)
+            }
+            RustItemKind::Module(_) => {
+                let path = format!("{rust_path}::{method}");
+                let selected = self.rust_item_metadata_for_path(&path)?;
+                let RustItemKind::Function(signature) = selected.kind else {
+                    return None;
+                };
+                if !type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(span));
+                    return Some(ResolvedType::Unknown);
+                }
+                Some(self.validate_rust_function_call_with_expected(&path, &signature, args, span, expected_return_ty))
             }
             RustItemKind::Unsupported { description } => {
                 self.errors.push(errors::rust_item_shape_not_supported(
@@ -3387,7 +3679,7 @@ impl TypeChecker {
                     span,
                 }))
             }
-            // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
+            // Function, Trait, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => {
                 self.preserve_unresolved_rust_call_argument_returns(args);
@@ -3705,6 +3997,7 @@ impl TypeChecker {
             method,
             receiver_metadata: _,
             receiver_binding: _,
+            receiver_expr: _,
             type_args,
             args,
             arg_types,
@@ -3865,9 +4158,10 @@ impl TypeChecker {
         }
         let trait_suffix = Self::rust_trait_path_suffix(&import.trait_path);
         let implemented = type_info.implemented_traits.iter().any(|implemented| {
-            implemented.path == import.trait_path
-                || Some(implemented.path.as_str()) == import.definition_path.as_deref()
-                || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix
+            implemented.is_unconditional()
+                && (implemented.path == import.trait_path
+                    || Some(implemented.path.as_str()) == import.definition_path.as_deref()
+                    || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix)
         });
         implemented.then(|| Self::rust_trait_method_signature(import, method))
     }
@@ -5452,7 +5746,20 @@ impl TypeChecker {
                         incan_lang::interop::RustModuleChildKind::Function => {
                             ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
                         }
-                        incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                        incan_lang::interop::RustModuleChildKind::Constant => {
+                            let selected = format!("{path}::{field}");
+                            let Some(metadata) = self.rust_item_metadata_for_path(&selected) else {
+                                return ResolvedType::Unknown;
+                            };
+                            let RustItemKind::Constant { type_display } = metadata.kind else {
+                                return ResolvedType::Unknown;
+                            };
+                            self.type_info
+                                .rust
+                                .checked_constants
+                                .insert((span.start, span.end), selected);
+                            self.resolved_type_from_rust_display(&type_display)
+                        }
                     };
                 }
                 // Module membership from rust-analyzer is authoritative.
@@ -5470,16 +5777,10 @@ impl TypeChecker {
                     }
                     return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                 }
-                if let RustItemKind::Type(info) = &meta.kind
-                    && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
-                {
-                    self.type_info
-                        .record_rust_field_access_name(span, rust_field.name.clone());
-                    return self.resolved_rust_field_type(path, rust_field);
-                }
                 // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
                 // Stay permissive when no exact field surface is available.
-                ResolvedType::Unknown
+                self.rust_path_field_type(path, field, span)
+                    .unwrap_or(ResolvedType::Unknown)
             }
             RustItemKind::Unsupported { description } => {
                 self.errors
@@ -6470,7 +6771,9 @@ impl TypeChecker {
         // Rust callable bounds are not available until receiver metadata selects the method signature below. Defer
         // direct closures on Rust receivers so the selected `Fn`/`FnMut` bound can contextually type them once, rather
         // than first checking their parameters as unknowns and retaining spurious errors from that incomplete pass.
-        let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty);
+        let rust_receiver_path = self
+            .rust_canonical_path_for_receiver_type(&base_ty)
+            .or_else(|| self.rust_value_item_path(base));
         let defer_rust_closures = rust_receiver_path.is_some();
 
         // `Enum.Variant(payload)` reaches this shared method-call path, and this is the only place its arguments are
@@ -6592,6 +6895,7 @@ impl TypeChecker {
                 method,
                 receiver_metadata: self.rust_metadata_for_receiver_expr(base).as_ref(),
                 receiver_binding: self.rust_import_binding_for_receiver_expr(base),
+                receiver_expr: base,
                 type_args,
                 args,
                 arg_types: &arg_types,
@@ -7277,6 +7581,7 @@ impl TypeChecker {
                             method: resolved_method,
                             receiver_metadata: None,
                             receiver_binding: None,
+                            receiver_expr: base,
                             type_args,
                             args,
                             arg_types: &arg_types,
@@ -7392,6 +7697,7 @@ impl TypeChecker {
                                 method: resolved_method,
                                 receiver_metadata: None,
                                 receiver_binding: None,
+                                receiver_expr: base,
                                 type_args,
                                 args,
                                 arg_types: &arg_types,

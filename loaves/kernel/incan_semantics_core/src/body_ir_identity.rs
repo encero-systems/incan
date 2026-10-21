@@ -440,9 +440,10 @@ impl BodyIrModule {
                 .all(|binding| is_closed_type(&binding.argument))
     }
 
-    /// Whether a retained source/SDK layout agrees with its canonical identities, or a native carrier exactly
-    /// matches the ABI whitelist and its dedicated physical declaration scope. A selected native equality witness
-    /// must be a member of its model; lowering separately validates that body's executable ABI.
+    /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
+    /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
+    /// native types rustc verifies. A selected native equality witness must be a member of its model; lowering
+    /// separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
         if declaration.trait_adoptions.iter().enumerate().any(|(index, adoption)| {
             adoption.trait_identity.kind != SemanticSourceTargetKind::Trait
@@ -487,7 +488,7 @@ impl BodyIrModule {
             let exact = crate::body_ir::native_carrier_nominal(&declaration.canonical).or_else(|| {
                 crate::body_ir::native_opaque_nominal(&declaration.canonical, declaration.type_parameter_count)
             });
-            return exact.as_ref() == Some(declaration)
+            return (exact.as_ref() == Some(declaration) || self.is_well_formed_native_struct_layout(declaration))
                 && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
                     == Some(self.module_id.path());
         }
@@ -579,6 +580,44 @@ impl BodyIrModule {
                             || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Validate the identity shape of a retained public native struct layout. Only ordered public fields and native
+    /// binders may extend the opaque declaration; rustc separately verifies completeness, visibility and exact types.
+    fn is_well_formed_native_struct_layout(&self, declaration: &NominalDeclaration) -> bool {
+        if !matches!(declaration.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+            || declaration.fields.is_empty()
+            || declaration.fields.len() != declaration.field_types.len()
+            || declaration.fields.len() != declaration.field_identities.len()
+            || declaration.field_public != vec![true; declaration.fields.len()]
+            || declaration.fields.iter().any(String::is_empty)
+            || declaration.fields.iter().collect::<BTreeSet<_>>().len() != declaration.fields.len()
+            || declaration.type_parameters.len() != declaration.type_parameter_count
+            || declaration.type_parameters.iter().any(String::is_empty)
+            || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
+        {
+            return false;
+        }
+        for (name, field) in declaration.fields.iter().zip(&declaration.field_identities) {
+            let mut expected = declaration.canonical.clone();
+            expected.namespace = SymbolNamespace::Member;
+            expected.kind = SemanticSourceTargetKind::Field;
+            expected.declaration_name = name.clone();
+            if *field != expected {
+                return false;
+            }
+        }
+        let Some(mut opaque) =
+            crate::body_ir::native_opaque_nominal(&declaration.canonical, declaration.type_parameter_count)
+        else {
+            return false;
+        };
+        opaque.fields = declaration.fields.clone();
+        opaque.field_types = declaration.field_types.clone();
+        opaque.field_identities = declaration.field_identities.clone();
+        opaque.field_public = declaration.field_public.clone();
+        opaque.type_parameters = declaration.type_parameters.clone();
+        opaque == *declaration
     }
 
     /// Validate a bounded local class edge and complete ancestor-slot mapping without recursively validating bodies.

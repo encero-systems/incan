@@ -1,0 +1,12 @@
+# behavior: a registry crate that also provides native library formats remains usable as a Rust dependency (#2244)
+# pending: #2244 the crc_fast registry crate is not available to this toolchain
+# expect-stdout:
+#   crc32 907060870
+
+from rust::crc_fast import CrcAlgorithm, checksum
+
+
+def main() -> None:
+    """Compute the issue's checksum through the public dependency API."""
+    value = checksum(CrcAlgorithm.Crc32IsoHdlc, b"hello")
+    println(f"crc32 {value}")

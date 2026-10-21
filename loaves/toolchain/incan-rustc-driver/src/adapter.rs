@@ -70,6 +70,60 @@ fn refuse(tcx: TyCtxt<'_>, error: PlanError) -> ! {
     tcx.dcx().fatal(message)
 }
 
+/// Supply native aliases' exact metadata types, independently of their placeholder AST declarations. Erased native
+/// lifetimes carry no layout or source binder; ordinary source aliases keep rustc's provider.
+fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::ty::EarlyBinder<'tcx, Ty<'tcx>> {
+    if tcx.def_kind(def) != rustc_hir::def::DefKind::TyAlias || !tcx.parent(def.to_def_id()).is_crate_root() {
+        return (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.type_of)(tcx, def);
+    }
+    let plan = match active_plan() {
+        Ok(plan) => plan,
+        Err(error) => tcx.dcx().fatal(error.to_string()),
+    };
+    let name = tcx.item_name(def.to_def_id());
+    let record = plan
+        .models
+        .iter()
+        .filter(|model| !model.library_item.is_empty())
+        .map(|model| {
+            (
+                &model.name,
+                &model.library_item,
+                &model.library_type_arguments,
+                rustc_hir::def::DefKind::Struct,
+            )
+        })
+        .chain(
+            plan.enums
+                .iter()
+                .filter(|value| !value.library_item.is_empty())
+                .map(|value| {
+                    (
+                        &value.name,
+                        &value.library_item,
+                        &value.library_type_arguments,
+                        rustc_hir::def::DefKind::Enum,
+                    )
+                }),
+        )
+        .find(|(alias, _, _, _)| name.as_str() == alias.as_str());
+    let Some((_, path, types, kind)) = record else {
+        return (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.type_of)(tcx, def);
+    };
+    let native = match callees::library_item(tcx, path, kind) {
+        Ok(def) => def,
+        Err(error) => refuse(tcx, error),
+    };
+    let arguments = match callees::arguments(tcx, native, types) {
+        Ok(arguments) => arguments,
+        Err(error) => refuse(tcx, error),
+    };
+    rustc_middle::ty::EarlyBinder::bind(
+        tcx,
+        tcx.type_of(native).instantiate(tcx, arguments).skip_normalization(),
+    )
+}
+
 /// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
 fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>> {
     let plan = match active_plan() {
@@ -156,7 +210,10 @@ impl rustc_driver::Callbacks for Callbacks {
             name: FileName::Custom(self.plan.span.file.clone()),
             input: String::new(),
         };
-        config.override_queries = Some(|_session, providers| providers.queries.mir_built = mir_built);
+        config.override_queries = Some(|_session, providers| {
+            providers.queries.mir_built = mir_built;
+            providers.queries.type_of = native_alias_type;
+        });
     }
 
     /// Add function signatures and load the declared external crates, without parsing generated source.
@@ -417,9 +474,9 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
     }
 }
 
-/// Check a stdlib layout against its crate's metadata at the plan's explicit type arguments, including their bounds.
-/// Fields keep their names and instantiated types in order. An opaque layout records no fields, so the plan never
-/// projects one.
+/// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
+/// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
+/// An opaque layout records no fields and grants no projection.
 fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
@@ -441,7 +498,10 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if declared.len() != model.fields.len() {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
-    for (field, planned) in declared.iter().zip(&model.fields) {
+    for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {
+        if model.field_public.get(slot) == Some(&true) && !field.vis.is_public() {
+            return Err(invalid("public native field is private in metadata"));
+        }
         if field.name.as_str() != planned.name
             || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
         {
@@ -459,7 +519,7 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
         reason: reason.into(),
     };
     let def = callees::library_item(tcx, &value.library_item, rustc_hir::def::DefKind::Enum)?;
-    if tcx.generics_of(def).count() != value.library_type_arguments.len() {
+    if !callees::arity_admits(tcx, def, value.library_type_arguments.len()) {
         return Err(invalid(
             "unsupported stdlib enum type argument count differs from metadata",
         ));
@@ -639,9 +699,9 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
             || generics
                 .own_params
                 .iter()
-                .any(|parameter| !matches!(&parameter.kind, rustc_middle::ty::GenericParamDefKind::Type { .. }))
+                .any(|parameter| matches!(&parameter.kind, rustc_middle::ty::GenericParamDefKind::Const { .. }))
         {
-            Some("stdlib layout generic parameter is not a type")
+            Some("native const arguments require a retained value contract")
         } else {
             None
         };

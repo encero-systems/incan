@@ -1,0 +1,14 @@
+# behavior: a Rust generic function executes at each inferred type argument
+# expect-stdout:
+#   7
+#   leaf
+
+"""Call one Rust generic function at two concrete instantiations."""
+
+from rust::std::convert import identity
+
+
+def main() -> None:
+    """Observe the selected integer and string results."""
+    println(identity(7))
+    println(identity("leaf"))

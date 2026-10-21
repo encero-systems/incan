@@ -940,6 +940,16 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Public native field layouts selected during checking. Hidden fields remain absent from metadata and the
+    /// adapter refuses incomplete layouts before any construction or projection is emitted.
+    pub checked_layouts: HashMap<String, RustCheckedLayout>,
+    /// Public Rust constants selected from metadata, keyed by their complete value-expression span.
+    pub checked_constants: HashMap<(usize, usize), String>,
+    /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
+    /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
+    pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
+    /// Native result item selected for each local binding, even when its source type projects to str or a collection.
+    pub value_item_paths: HashMap<CanonicalSymbolId, String>,
     /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
     /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
     pub(crate) body_ir_diverging_import_calls: HashMap<(usize, usize), Vec<String>>,
@@ -1037,6 +1047,34 @@ pub struct RustInteropArtifacts {
     pub async_call_realizations: HashSet<(usize, usize)>,
 }
 
+/// A metadata-selected native struct layout, generic over its declaring type parameters.
+#[derive(Debug, Clone)]
+pub struct RustCheckedLayout {
+    /// Declared type binders; lifetime arguments carry no layout and are absent.
+    pub type_parameters: Vec<String>,
+    /// Ordered public field names and exact native type templates.
+    pub fields: Vec<CallableParam>,
+    /// Canonical field targets minted with the same owner as the retained layout.
+    pub field_identities: Vec<CanonicalSymbolId>,
+}
+
+/// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustCheckedCall {
+    /// Public item path of the selected free function or associated function.
+    pub path: String,
+    /// Native type arguments in the Rust declaration's order, including impl arguments for a method.
+    pub type_arguments: Vec<ResolvedType>,
+    /// Instantiated parameters; a method's receiver is first, including its reference mode.
+    pub parameters: Vec<CallableParam>,
+    /// The checked instantiated result type.
+    pub return_type: ResolvedType,
+    /// Native result's nominal item before source scalar or collection projection, when metadata names one.
+    pub result_item_path: Option<String>,
+    /// Whether the source receiver is a value passed in the first parameter slot.
+    pub has_receiver: bool,
+}
+
 /// Reference leaves selected for one generic argument of a mutable imported Rust type.
 ///
 /// An empty path borrows the argument itself. A non-empty path selects a nested tuple leaf, letting one foreign
@@ -1079,10 +1117,9 @@ pub struct DeclarationArtifacts {
     ///
     /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
     pub class_adoption_derives: HashMap<String, Vec<String>>,
-    /// Source models whose `@rust.derive(...)` decorators name only Rust builtin derives, all of which
-    /// [`model_derives`](Self::model_derives) includes. A model naming any other derive macro is absent: that macro's
-    /// expansion is not part of its retained derives.
-    pub rust_builtin_derive_models: HashSet<String>,
+    /// Source types whose `@rust.derive(...)` decorators are completely covered by their retained native selections.
+    /// Builtins and the supported serde derives retain their canonical targets; arbitrary macro expansions are absent.
+    pub rust_native_derive_types: HashSet<String>,
     /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
     /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
@@ -2001,6 +2038,7 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    checked_rust_call: Option<RustCheckedCall>,
     body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
     body_ir_string_slice_member: Option<CanonicalSymbolId>,
     inferred_constructor_type: Option<ResolvedType>,
@@ -3333,6 +3371,7 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            checked_rust_call: self.rust.checked_calls.remove(&key),
             body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
             body_ir_string_slice_member: self.calls.body_ir_string_slice_members.remove(&key),
             inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
@@ -3357,6 +3396,7 @@ impl TypeCheckInfo {
     /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = (span.start, span.end);
+        self.rust.checked_calls.remove(&key);
         self.calls.body_ir_reexport_calls.remove(&key);
         self.calls.body_ir_string_slice_members.remove(&key);
         self.calls.body_ir_constructor_types.remove(&key);
@@ -3386,6 +3426,7 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(&mut self.rust.checked_calls, key, facts.checked_rust_call);
         put(&mut self.calls.body_ir_reexport_calls, key, facts.body_ir_reexport_call);
         put(
             &mut self.calls.body_ir_string_slice_members,

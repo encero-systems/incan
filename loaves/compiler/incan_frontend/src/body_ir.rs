@@ -160,6 +160,7 @@ pub fn build_body_ir_module(
         .collect::<HashMap<_, _>>();
     let local_receiver_methods = collect_local_receiver_methods(program, type_info);
     let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
+    nominal_declarations.extend(rust_values::declarations(type_info));
     newtype_string_conversion::finalize_candidates(&mut nominal_declarations);
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
@@ -316,7 +317,7 @@ pub fn build_body_ir_module(
             &enum_declarations,
         ),
         enum_declarations,
-        loaf_callables: Vec::new(),
+        loaf_callables: rust_calls::declarations(type_info, &nominal_declarations),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
@@ -518,21 +519,20 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
     has_checked_native_derives(
         &model.decorators,
         type_info.declarations.body_ir_model_derives.get(&model.name),
-        type_info.declarations.rust_builtin_derive_models.contains(&model.name),
+        type_info.declarations.rust_native_derive_types.contains(&model.name),
     ) && has_direct_replacement_model_shape(model, Some(type_info))
 }
 
-/// Admit a model or class whose decorators are all the bare builtin `derive` and whose checked native selection
-/// names only derives the direct runtime retains.
+/// Admit a source nominal whose derive decorators are completely described by its checked native selection.
 ///
 /// Checking has already resolved module-qualified JSON protocol derives to their canonical serde paths, so the
 /// selection, not the decorator spelling, decides admission. A declaration without a checked selection stays refused.
-/// `rust_builtins` also admits `@rust.derive(...)` when checking recorded that it names only Rust builtin derives,
-/// which the selection then already contains.
+/// `rust_derives` also admits `@rust.derive(...)` when checking recorded that its complete native selection is
+/// retained, including supported serde derives.
 fn has_checked_native_derives(
     decorators: &[ast::Spanned<ast::Decorator>],
     selection: Option<&Vec<String>>,
-    rust_builtins: bool,
+    rust_derives: bool,
 ) -> bool {
     let Some(names) = selection else {
         return false;
@@ -542,8 +542,7 @@ fn has_checked_native_derives(
         is_lint_suppression_decorator(derive)
             || (derive.name == "derive"
                 && derive.type_args.is_empty()
-                && (derive.path.segments == ["derive"]
-                    || (rust_builtins && derive.path.segments == ["rust", "derive"])))
+                && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"])))
     }) && names.iter().all(|name| {
         matches!(
             name.as_str(),
@@ -753,7 +752,11 @@ pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_in
         return false;
     }
     !newtype.is_rusttype
-        && has_checked_native_derives(&newtype.decorators, selections.as_ref(), false)
+        && has_checked_native_derives(
+            &newtype.decorators,
+            selections.as_ref(),
+            type_info.declarations.rust_native_derive_types.contains(&newtype.name),
+        )
         && newtype.rebindings.iter().all(|rebinding| {
             matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
                 if newtype.methods.iter().any(|method| method.node.name == *target))
@@ -1993,6 +1996,7 @@ mod calls;
 mod constructor_carriers;
 pub(crate) mod runtime_nominals;
 mod runtime_storage;
+mod rust_calls;
 mod rust_values;
 mod source_comparison;
 mod type_metadata;

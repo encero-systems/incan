@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::metadata::RustItemMetadata;
 
 /// The cache layout's version; a reader refuses any other.
-pub const RUST_ABI_CACHE_VERSION: u32 = 1;
+pub const RUST_ABI_CACHE_VERSION: u32 = 3;
 
 /// One item's payload range within the cache.
 #[derive(Serialize, Deserialize)]

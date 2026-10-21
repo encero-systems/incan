@@ -1,0 +1,13 @@
+# behavior: a Rust associated function infers its owner argument and creates a Rust value
+# expect-stdout:
+#   allocated
+
+"""Construct and release a generic Rust allocation."""
+
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    """Keep the inferred Rust allocation alive until the function returns."""
+    value = Rc.new(7)
+    println("allocated")

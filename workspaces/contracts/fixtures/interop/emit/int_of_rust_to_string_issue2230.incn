@@ -1,0 +1,13 @@
+# behavior: int parses the string returned by a Rust value's to_string method (#2230)
+# pending: #2230 NonZeroI64 construction leaves an unknown Body IR frame type
+# expect-stdout:
+#   42
+
+from rust::std::num import NonZeroI64
+
+
+def main() -> None:
+    """Parse a Rust display result as text instead of casting it."""
+    match NonZeroI64.new(42):
+        Some(value) => println(int(value.to_string()))
+        None => println("missing")

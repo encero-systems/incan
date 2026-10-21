@@ -3,6 +3,13 @@
 from rust::incan_semantics_core import IncanType as RustType
 
 
+pub def model_symbol(name: str) -> str:
+    """Keep source carrier names and encode opaque Rust path keys as native identifiers."""
+    if "::" not in name:
+        return name
+    return "__incan_rust" + symbol_component(name)
+
+
 pub def symbol_component(value: str) -> str:
     """Encode one length-delimited UTF-8 component without admitting punctuation into a native identifier."""
     encoded = value.encode()

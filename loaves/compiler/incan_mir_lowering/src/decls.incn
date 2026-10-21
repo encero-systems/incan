@@ -28,6 +28,7 @@ from marker_traits import checked_marker_traits
 from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments
 from string_conversion_contracts import conversion_name, conversion_trait
+from symbols import model_symbol
 
 
 pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -172,7 +173,7 @@ pub def lower_model_declarations(
             markers = checked_marker_traits(declaration)?
         models.append(
             ModelDeclaration(
-                name=str(declaration.name),
+                name=model_symbol(str(declaration.name)),
                 public=declaration.public or item != "",
                 fields=fields,
                 field_public=field_public,

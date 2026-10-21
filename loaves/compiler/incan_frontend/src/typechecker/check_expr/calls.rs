@@ -37,6 +37,8 @@ mod builtins;
 mod constructors;
 mod generic_bounds;
 mod rust_boundary;
+mod rust_callable_bounds;
+mod rust_layouts;
 mod task_arguments;
 
 pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;
@@ -2218,14 +2220,12 @@ impl TypeChecker {
         let is_default = |path: &str| {
             traits::rust_paths(TraitId::Default).contains(&path) || path == traits::as_str(TraitId::Default)
         };
-        type_info
-            .implemented_traits
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.is_unconditional() && !implemented.mutable_reference && is_default(implemented.path.as_str())
+        }) || type_info
+            .expanded_derive_traits
             .iter()
-            .any(|implemented| !implemented.mutable_reference && is_default(implemented.path.as_str()))
-            || type_info
-                .expanded_derive_traits
-                .iter()
-                .any(|implemented| is_default(implemented.path.as_str()))
+            .any(|implemented| is_default(implemented.path.as_str()))
     }
 
     /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.
@@ -2320,10 +2320,18 @@ impl TypeChecker {
         }
 
         if !has_shape_error {
+            let retained = if omitted_fields {
+                None
+            } else {
+                self.retain_rust_construction(path, type_info, args, &selected_fields, span)
+            };
             self.type_info
                 .record_rust_named_field_constructor_fields(span, selected_fields);
             if omitted_fields {
                 self.type_info.record_rust_named_field_constructor_fills_defaults(span);
+            }
+            if let Some(result) = retained {
+                return result;
             }
         }
         ResolvedType::RustPath(path.to_string())

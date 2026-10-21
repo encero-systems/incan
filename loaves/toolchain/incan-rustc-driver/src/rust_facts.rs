@@ -6,13 +6,13 @@
 //! trait's functions; a module's children. The nominal types a described signature names are described too, to
 //! `depth` steps, so the checker can call on a call's result.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use incan_lang::interop::{
-    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild,
-    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape,
-    RustVariantInfo, RustVisibility,
+    RustAssociatedTypeBinding, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
+    RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitBound,
+    RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -61,17 +61,37 @@ pub struct RustcFacts {
 }
 
 impl incan_driver::session::RustFactsSource for RustcFacts {
+    /// Read uncovered paths from exactly the unit's declared native artifacts.
     fn facts(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
         let started = std::time::Instant::now();
-        let facts = extract(RustFactsRequest {
+        let (linked, unavailable): (BTreeSet<_>, BTreeSet<_>) = paths.iter().cloned().partition(|path| {
+            let root = path.split("::").next().unwrap_or(path);
+            matches!(root, "std" | "core" | "alloc") || self.externs.iter().any(|(name, _)| name == root)
+        });
+        let mut facts = extract(RustFactsRequest {
             sysroot: &self.sysroot,
             externs: &self.externs,
             search: &self.search,
             scope: RustFactsScope::Paths {
-                paths: paths.clone(),
+                paths: linked,
                 depth: 1,
             },
         })?;
+        // Keep missing-artifact refusals at the imported item, so they do not mask independent source diagnostics.
+        for path in unavailable {
+            let root = path.split("::").next().unwrap_or(&path);
+            let description =
+                format!("Rust facts require an explicit --extern {root}=RLIB in the unit's native closure");
+            facts.insert(
+                path.clone(),
+                RustItemMetadata {
+                    canonical_path: path,
+                    definition_path: None,
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Unsupported { description },
+                },
+            );
+        }
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
                 "rust facts: {} uncovered paths, {} items in {:?}",
@@ -86,9 +106,19 @@ impl incan_driver::session::RustFactsSource for RustcFacts {
 
 /// Describe what `request.scope` names, keyed by path.
 pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
-    let stub = request
-        .scope
-        .roots()
+    let roots = request.scope.roots();
+    for root in &roots {
+        let mut artifacts = request.externs.iter().filter(|(name, _)| name == root);
+        let Some((_, artifact)) = artifacts.next() else {
+            return Err(format!(
+                "Rust facts require an explicit --extern {root}=RLIB in the unit's native closure"
+            ));
+        };
+        if artifacts.any(|(_, other)| other != artifact) {
+            return Err(format!("Rust facts received conflicting --extern artifacts for {root}"));
+        }
+    }
+    let stub = roots
         .iter()
         .map(|root| format!("extern crate {root};\n"))
         .collect::<String>();
@@ -110,10 +140,10 @@ pub fn extract(request: RustFactsRequest<'_>) -> Result<BTreeMap<String, RustIte
         args.push("--extern".to_owned());
         args.push(format!("{name}={}", path.display()));
     }
-    // The stub names each root crate by `extern crate`, which a search directory answers only as a crate path.
+    // Direct roots come only from --extern; directories locate their hash-qualified transitive dependencies.
     for directory in request.search {
         args.push("-L".to_owned());
-        args.push(directory.display().to_string());
+        args.push(format!("dependency={}", directory.display()));
     }
     let mut callbacks = FactsCallbacks {
         stub,
@@ -178,6 +208,7 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
 fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<String, RustItemMetadata> {
     let mut facts = BTreeMap::new();
     let mut named = HashSet::new();
+    let mut described = HashMap::new();
     for name in crates {
         let Some(krate) = tcx
             .crates(())
@@ -187,9 +218,22 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             continue;
         };
         for (path, def) in public_items(tcx, krate.as_def_id(), name) {
-            let metadata = describe(tcx, def, &path, &mut named);
+            let template = described
+                .entry(def)
+                .or_insert_with(|| describe(tcx, def, &path, &mut named));
+            let mut metadata = template.clone();
+            metadata.canonical_path = path.clone();
+            let definition = visible_path(tcx, def);
+            metadata.definition_path = (definition != path).then_some(definition);
             facts.insert(path, metadata);
         }
+    }
+    // Trait references use definition identities, including traits reached through a public re-export.
+    for def in named.into_iter().filter(|def| tcx.def_kind(*def) == DefKind::Trait) {
+        let path = visible_path(tcx, def);
+        facts
+            .entry(path.clone())
+            .or_insert_with(|| describe(tcx, def, &path, &mut HashSet::new()));
     }
     facts
 }
@@ -306,7 +350,8 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
     }
 }
 
-/// A struct, enum or union: its type parameters and their defaults, public inherent methods, fields and variants.
+/// A struct, enum or union: type parameters and defaults, inherent methods with native impl binders and self types,
+/// public fields and variants. Method binders remain distinct from the owner's potentially defaulted parameters.
 fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
     let generics = tcx.generics_of(def);
     let parameters = generics
@@ -333,6 +378,22 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         .map(|item| RustMethodSig {
             name: tcx.item_name(item).to_string(),
             signature: signature(tcx, item, named),
+            impl_type_params: tcx
+                .generics_of(item)
+                .parent
+                .map(|parent| {
+                    tcx.generics_of(parent)
+                        .own_params
+                        .iter()
+                        .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
+                        .map(|parameter| parameter.name.to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            impl_self_type: tcx
+                .generics_of(item)
+                .parent
+                .map(|parent| display(tcx.type_of(parent).instantiate_identity().skip_normalization())),
         })
         .collect();
     let adt = tcx.adt_def(def);
@@ -364,6 +425,7 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         type_params: parameters.iter().map(|parameter| parameter.name.to_string()).collect(),
         type_param_defaults,
         methods,
+        implemented_traits: trait_impls(tcx, def, named),
         fields,
         variants,
         ..RustTypeInfo::default()
@@ -406,12 +468,135 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
     RustFunctionSig {
         // No receiver contract: a missing fact authorizes no inferred borrowing.
         receiver_contract: None,
+        bounds: trait_bounds(tcx, def),
         type_params,
         params,
         return_type: display(signature.output()),
         is_async: tcx.asyncness(def).is_async(),
         is_unsafe: signature.safety().is_unsafe(),
     }
+}
+
+/// Preserve trait predicates and projection equalities without flattening Fn inputs or inventing an output.
+fn trait_bounds(tcx: TyCtxt<'_>, def: DefId) -> Vec<RustTraitBound> {
+    let predicates = tcx.predicates_of(def).instantiate_identity(tcx).predicates;
+    let mut bounds = Vec::new();
+    for clause in &predicates {
+        let Some(predicate) = clause.as_trait_clause() else {
+            continue;
+        };
+        let reference = predicate.skip_binder().trait_ref;
+        bounds.push(RustTraitBound {
+            self_type: display(reference.self_ty()),
+            path: visible_path(tcx, reference.def_id),
+            type_arguments: reference.args.types().skip(1).map(display).collect(),
+            associated_type_bindings: Vec::new(),
+        });
+    }
+    for clause in &predicates {
+        let Some(projection) = clause.skip_normalization().as_projection_clause() else {
+            continue;
+        };
+        let projection = projection.skip_binder();
+        let Some(value) = projection.term.as_type() else {
+            continue;
+        };
+        let Some(name) = tcx.opt_item_name(projection.def_id()) else {
+            continue;
+        };
+        let path = visible_path(tcx, projection.trait_def_id(tcx));
+        let self_type = display(projection.self_ty());
+        let arguments = projection
+            .projection_term
+            .args
+            .types()
+            .skip(1)
+            .map(display)
+            .collect::<Vec<_>>();
+        let binding = RustAssociatedTypeBinding {
+            name: name.to_string(),
+            value_path: display(value),
+        };
+        if let Some(bound) = bounds
+            .iter_mut()
+            .find(|bound| bound.path == path && bound.self_type == self_type && bound.type_arguments == arguments)
+        {
+            bound.associated_type_bindings.push(binding);
+        } else {
+            bounds.push(RustTraitBound {
+                self_type,
+                path,
+                type_arguments: arguments,
+                associated_type_bindings: vec![binding],
+            });
+        }
+    }
+    bounds
+}
+
+/// Retain candidate impl templates once per nominal owner. Predicates remain explicit: a blanket impl is never
+/// unconditional trait evidence, and rustc verifies the selected closed trait reference before native emission.
+fn trait_impls(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> Vec<RustImplementedTrait> {
+    let owner = tcx.type_of(def).instantiate_identity().skip_normalization();
+    let mut implementations = HashSet::new();
+    for trait_id in tcx
+        .all_traits_including_private()
+        .filter(|id| tcx.visibility(*id).is_public())
+    {
+        tcx.for_each_relevant_impl(trait_id, owner, |implementation| {
+            implementations.insert(implementation);
+        });
+    }
+    let mut implementations = implementations.into_iter().collect::<Vec<_>>();
+    implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
+    implementations
+        .into_iter()
+        .filter_map(|implementation| {
+            if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive {
+                return None;
+            }
+            let reference = tcx
+                .impl_trait_ref(implementation)
+                .instantiate_identity()
+                .skip_normalization();
+            if tcx
+                .generics_of(implementation)
+                .own_params
+                .iter()
+                .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Const { .. }))
+            {
+                return None;
+            }
+            let associated_type_bindings = tcx
+                .associated_item_def_ids(implementation)
+                .iter()
+                .copied()
+                .filter(|item| tcx.def_kind(*item) == DefKind::AssocTy)
+                .filter_map(|item| {
+                    Some(RustAssociatedTypeBinding {
+                        name: tcx.opt_item_name(item)?.to_string(),
+                        value_path: display(tcx.type_of(item).instantiate_identity().skip_normalization()),
+                    })
+                })
+                .collect();
+            named.insert(reference.def_id);
+            Some(RustImplementedTrait {
+                path: visible_path(tcx, reference.def_id),
+                mutable_reference: matches!(reference.self_ty().kind(), ty::Ref(_, _, ty::Mutability::Mut)),
+                self_type: display(reference.self_ty()),
+                type_params: tcx
+                    .generics_of(implementation)
+                    .own_params
+                    .iter()
+                    .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
+                    .map(|parameter| parameter.name.to_string())
+                    .collect(),
+                type_arguments: reference.args.types().skip(1).map(display).collect(),
+                bounds: trait_bounds(tcx, implementation),
+                associated_type_bindings,
+            })
+        })
+        .collect()
 }
 
 /// A method receiver as written: `&self`, `&mut self`, or `self` (and a typed receiver as its type).
@@ -438,14 +623,31 @@ fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
 /// A trait's associated functions and their signatures.
 fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTraitInfo {
     RustTraitInfo {
+        type_params: tcx
+            .generics_of(def)
+            .own_params
+            .iter()
+            .filter(|parameter| parameter.index != 0 && matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
+            .map(|parameter| parameter.name.to_string())
+            .collect(),
         items: tcx
             .associated_item_def_ids(def)
             .iter()
             .copied()
-            .filter(|item| tcx.def_kind(*item) == DefKind::AssocFn)
-            .map(|item| RustTraitAssoc::Function {
-                name: tcx.item_name(item).to_string(),
-                signature: signature(tcx, item, named),
+            .filter_map(|item| {
+                let name = tcx.opt_item_name(item)?.to_string();
+                match tcx.def_kind(item) {
+                    DefKind::AssocFn => Some(RustTraitAssoc::Function {
+                        name,
+                        signature: signature(tcx, item, named),
+                    }),
+                    DefKind::AssocTy => Some(RustTraitAssoc::TypeAlias { name }),
+                    DefKind::AssocConst { .. } => Some(RustTraitAssoc::Constant {
+                        name,
+                        type_display: display(tcx.type_of(item).instantiate_identity().skip_normalization()),
+                    }),
+                    _ => None,
+                }
             })
             .collect(),
         derive_macro: None,

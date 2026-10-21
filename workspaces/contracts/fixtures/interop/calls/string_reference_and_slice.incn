@@ -1,0 +1,18 @@
+# behavior: Rust generic references borrow an owned String while literal str parameters receive its text slice
+# expect-stdout:
+#   true
+#   leaf
+#   ea
+
+"""Distinguish a generic reference to owned text from a native str slice."""
+
+from rust::std::mem import size_of_val
+from rust::incan_std_core::strings import str_slice_byte_range
+
+
+def main() -> None:
+    """Keep the owner usable after both reference forms cross Rust boundaries."""
+    text = "leaf"
+    println(size_of_val(text) == size_of_val("leaf"))
+    println(text)
+    println(str_slice_byte_range(text, 1, 3))

@@ -200,7 +200,10 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program
     // calls the Loaf's compiled item. A governed body, one with type parameters, stays and is instantiated where it
     // is called.
-    let mut loaf_callables = Vec::new();
+    let mut loaf_callables = bodies
+        .iter()
+        .flat_map(|module| module.loaf_callables.iter().cloned())
+        .collect::<Vec<_>>();
     for module in bodies.iter_mut().take(loaf_modules) {
         for declaration in &mut module.nominal_declarations {
             if declaration.native_item.is_empty()
@@ -228,7 +231,22 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
         });
     }
     // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
-    let held = rust_value_modules(incan_semantics_core::body_ir::held_rust_items(&bodies));
+    let opaque = incan_semantics_core::body_ir::held_rust_items(&bodies);
+    let layouts = take_rust_layouts(&mut bodies)?;
+    let owners: std::collections::HashSet<_> = layouts
+        .iter()
+        .map(|declaration| declaration.canonical.clone())
+        .collect();
+    let held = rust_value_modules(
+        layouts
+            .into_iter()
+            .chain(
+                opaque
+                    .into_iter()
+                    .filter(|declaration| !owners.contains(&declaration.canonical)),
+            )
+            .collect(),
+    );
     let held_modules = held.len();
     files.splice(
         loaf_modules..loaf_modules,
@@ -248,6 +266,35 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
         own: loaf_modules + held_modules,
         manifest,
     })
+}
+
+/// Move metadata-selected native layouts to their physical declaration scopes, deduplicating identical selections
+/// across source modules. Conflicting layouts cannot authorize construction or projection.
+fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclaration>, String> {
+    let mut layouts = std::collections::BTreeMap::<String, NominalDeclaration>::new();
+    for module in modules {
+        for declaration in std::mem::take(&mut module.nominal_declarations) {
+            if !matches!(
+                declaration.canonical.origin,
+                incan_semantics_core::SymbolOrigin::RustCrate(_)
+            ) || declaration.fields.is_empty()
+            {
+                module.nominal_declarations.push(declaration);
+                continue;
+            }
+            if let Some(previous) = layouts.get(&declaration.native_item) {
+                if previous != &declaration {
+                    return Err(format!(
+                        "conflicting native field layouts for {}",
+                        declaration.native_item
+                    ));
+                }
+            } else {
+                layouts.insert(declaration.native_item.clone(), declaration);
+            }
+        }
+    }
+    Ok(layouts.into_values().collect())
 }
 
 /// Declare each Rust item the program holds in a declaration-only module under the item's native module: the

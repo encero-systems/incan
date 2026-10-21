@@ -1240,7 +1240,7 @@ impl TypeChecker {
     ///
     /// Rust metadata may qualify an inferred lifetime through the owner module (for example, `crate::'_`). Preserve
     /// real type arguments while eliding both plain and qualified lifetime placeholders before nominal comparison.
-    fn rust_generic_arg_is_lifetime(arg: &str) -> bool {
+    pub(crate) fn rust_generic_arg_is_lifetime(arg: &str) -> bool {
         let candidate = arg.trim().rsplit("::").next().unwrap_or(arg.trim());
         let Some(name) = candidate.strip_prefix('\'') else {
             return false;
@@ -2163,13 +2163,9 @@ impl TypeChecker {
 
     /// Resolve a Rust-origin associated function signature (must not take `self`) from cached metadata.
     pub fn rust_associated_function_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-        // Stable metadata-free contracts override a degraded rust-analyzer display. This particularly matters for
-        // sysroot APIs such as `Path::new<S: AsRef<OsStr> + ?Sized>(&S)`, where preserving the source borrow shape is
-        // required for generated Rust to compile even when the inspector inferred a concrete owned value.
-        if let Some(signature) = metadata_free_method_signature(rust_path, method) {
-            return Some(signature);
-        }
-        let sig = self.rust_method_signature(rust_path, method)?;
+        let sig = self
+            .rust_method_signature(rust_path, method)
+            .or_else(|| metadata_free_method_signature(rust_path, method))?;
         if Self::rust_signature_has_receiver(&sig) {
             return None;
         }
@@ -2221,6 +2217,16 @@ impl TypeChecker {
         if rust_display_is_owned_string(normalized.as_str()) {
             return ResolvedType::Str;
         }
+        if let Some(inner) = display.strip_prefix('(').and_then(|inner| inner.strip_suffix(')'))
+            && inner.contains(',')
+        {
+            return ResolvedType::Tuple(
+                Self::split_top_level_generic_args(inner)
+                    .into_iter()
+                    .map(|element| self.resolved_type_from_rust_display(element))
+                    .collect(),
+            );
+        }
         match normalized.as_str() {
             "{unknown}" => ResolvedType::Unknown,
             "bool" => ResolvedType::Bool,
@@ -2242,7 +2248,7 @@ impl TypeChecker {
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
             _ if normalized.ends_with('>') => {
-                if let Some((base, args)) = Self::rust_generic_base_and_args(normalized.as_str()) {
+                if let Some((base, args)) = Self::rust_generic_base_and_args(display.as_str()) {
                     let tail = base.rsplit("::").next().unwrap_or(base);
                     match collection_type_id(tail) {
                         Some(CollectionTypeId::Option) => {
@@ -2279,7 +2285,7 @@ impl TypeChecker {
                         _ => {}
                     }
                     if let Some(structural) = self
-                        .resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+                        .resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
                             checker.resolved_type_from_rust_display(arg)
                         })
                     {
@@ -2289,7 +2295,7 @@ impl TypeChecker {
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
                 } else {
-                    ResolvedType::RustPath(normalized)
+                    ResolvedType::RustPath(display)
                 }
             }
             _ if !normalized.is_empty() => {
@@ -2359,12 +2365,12 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
-        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+        if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
             checker.resolved_param_type_from_rust_display(arg)
         }) {
             return structural;
         }
-        self.resolved_type_from_rust_display(normalized.as_str())
+        self.resolved_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust parameter display into a resolved type after expanding crate-relative paths for its owner.
@@ -2386,18 +2392,16 @@ impl TypeChecker {
     pub fn resolved_rust_boundary_target_from_param_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
-        let normalized = Self::compact_rust_display(&display);
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
         }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
-            let inner_normalized = Self::compact_rust_display(inner);
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
                 "[u8]" => ResolvedType::Bytes,
                 "String" | "std::string::String" | "alloc::string::String" => ResolvedType::RustPath(inner.to_string()),
                 "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" => ResolvedType::RustPath(inner.to_string()),
-                _ => self.resolved_type_from_rust_display(inner_normalized.as_str()),
+                _ => self.resolved_type_from_rust_display(inner),
             };
             return if is_mut {
                 ResolvedType::RefMut(Box::new(inner_ty))
@@ -2405,12 +2409,12 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
-        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+        if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
             checker.resolved_rust_boundary_target_from_param_display(arg)
         }) {
             return structural;
         }
-        self.resolved_param_type_from_rust_display(normalized.as_str())
+        self.resolved_param_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust boundary target after expanding crate-relative paths for its owner.
@@ -3534,6 +3538,12 @@ impl TypeChecker {
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
             let mut explicit_derives = info.derives.clone();
             Self::append_implied_derives(&mut explicit_derives);
+            if self.append_native_rust_derives(&name, &mut explicit_derives) {
+                self.type_info
+                    .declarations
+                    .rust_native_derive_types
+                    .insert(name.clone());
+            }
             // Legacy forwards a std.serde.json protocol the newtype adopts into its derives after the explicit ones.
             for derive in self.adopted_json_derives(&info.trait_adoptions) {
                 if !explicit_derives.iter().any(|existing| existing == derive) {
@@ -5831,10 +5841,11 @@ impl TypeChecker {
         let RustItemKind::Type(type_info) = &metadata.kind else {
             return false;
         };
-        type_info
-            .implemented_traits
-            .iter()
-            .any(|implemented| implemented.path == required_trait && implemented.mutable_reference == mutable_reference)
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.is_unconditional()
+                && implemented.path == required_trait
+                && implemented.mutable_reference == mutable_reference
+        })
     }
 
     /// Match local type derivations and adoptions to an exact inspected Rust trait identity.
@@ -7065,6 +7076,11 @@ impl TypeChecker {
                 .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
             if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path) {
                 paths.entry(definition).or_insert_with(|| public.clone());
+            }
+            if self.lookup_symbol(&symbol.name).is_some_and(
+                |selected| matches!(&selected.kind, SymbolKind::RustItem(selected) if selected.path == info.path),
+            ) {
+                paths.insert(symbol.name.clone(), public.clone());
             }
             paths.insert(public.clone(), public);
         }

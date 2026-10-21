@@ -1,0 +1,16 @@
+# behavior: generic Rust receiver methods use the receiver's instantiated owner type
+# expect-stdout:
+#   7
+#   8
+
+"""Use a generic Rust value through its shared inherent methods."""
+
+from rust::std::cell import Cell
+
+
+def main() -> None:
+    """Read and update a cell without losing its element type."""
+    value = Cell.new(7)
+    println(value.get())
+    value.set(8)
+    println(value.get())
