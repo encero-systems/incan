@@ -188,7 +188,7 @@ from generator_adapters import is_generator_adapter, generator_adapter, iterator
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
-from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments
+from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions, string_conversion_callee
 from string_conversion_contracts import validate_conversion_placement
@@ -1823,6 +1823,12 @@ def lower_local_assignment(
         PlanType.SetRef(_leaf) => return iterator_assignment(builder, target, value, span)
         PlanType.DictRef(_key, _value) => return iterator_assignment(builder, target, value, span)
         PlanType.ListRef(_leaf, _depth) => return iterator_assignment(builder, target, value, span)
+        PlanType.FrozenCollection(name, _elements) =>
+            match value:
+                RustRvalue.Aggregate(kind, _items) =>
+                    if name == "FrozenList" and kind == RustAggregateKind.List:
+                        return frozen_list_assignment(builder, target, value, span)
+                _ => pass
         _ => pass
     if is_collection(place_type(builder.locals, target)):
         return collection_assignment(builder, target, value, span)
@@ -3995,7 +4001,8 @@ def lower_static_method_body(
     result = return_representation(body, declared_result)?
     if not numeric_carrier(result):
         match result:
-            (PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_)) => pass
+            # An owned model (a registry's new entry) moves out of the call; it borrows nothing from the storage.
+            (PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_) | PlanType.Model(_, _)) => pass
             _ => return Err("unsupported Body IR global method borrowed or unproven result")
     operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
     initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
@@ -4196,7 +4203,7 @@ def library_receiver_arguments(
     if names == ["Self"]:
         if len(arguments) == 0:
             return Ok([RustType.Named(str(declaration.name))])
-        concrete: RustType = generic(str(declaration.canonical.declaration_name), arguments)
+        concrete: RustType = generic(template_base(declaration), arguments)
         return Ok([concrete])
     if len(arguments) == len(names):
         return Ok(arguments)
@@ -8012,6 +8019,33 @@ pub def append_list_value(
         unit,
         span,
     )
+    return Ok(None)
+
+
+def frozen_list_assignment(mut builder: Builder, target: Place, value: &RustRvalue, span: SourceSpan) -> Result[None, str]:
+    """
+    Freeze a list literal: build the list, then keep it for the program as the frozen list's storage.
+
+    Only a computed constant's initializer constructs a frozen list of values that are not literals, and it runs once.
+    """
+    ty = place_type(builder.locals, target)
+    snapshot = frozen_list_snapshot_type(ty)?
+    values = temporary(builder, snapshot, span)
+    list_assignment(builder, values, value, span)?
+    match ty:
+        PlanType.FrozenCollection(_name, elements) =>
+            instantiated_external_call(
+                builder,
+                "incan_native_runtime::freeze_list",
+                elements,
+                [snapshot],
+                ty,
+                [read_place(values, true, span)],
+                target,
+                span,
+            )?
+        _ => return Err("unsupported Body IR frozen list assignment")
+    forget_owned(builder, values.local)
     return Ok(None)
 
 

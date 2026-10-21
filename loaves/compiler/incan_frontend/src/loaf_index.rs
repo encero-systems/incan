@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use incan_lang::interop::RustItemMetadata;
+use incan_lang::interop::{RustAbiCache, RustItemMetadata};
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 use sha2::{Digest, Sha256};
@@ -210,6 +210,11 @@ pub enum LoafIndexError {
 #[derive(Debug, Clone, Default)]
 pub struct LoafIndex {
     entries: BTreeMap<String, LoafEntry>,
+    /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
+    /// unit's.
+    rust_abi_caches: Vec<Arc<RustAbiCache>>,
+    /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
+    rust_facts: BTreeMap<String, RustItemMetadata>,
 }
 
 impl LoafIndex {
@@ -222,7 +227,21 @@ impl LoafIndex {
                 return Err(LoafIndexError::DuplicateKey { key });
             }
         }
-        Ok(Self { entries: indexed })
+        Ok(Self {
+            entries: indexed,
+            rust_abi_caches: Vec::new(),
+            rust_facts: BTreeMap::new(),
+        })
+    }
+
+    /// Add the ABI cache of linked Rust crates; it answers after the Loaves' own shipped ABI.
+    pub fn add_rust_abi_cache(&mut self, cache: Arc<RustAbiCache>) {
+        self.rust_abi_caches.push(cache);
+    }
+
+    /// Add Rust facts read from rustc's crate metadata for paths no cache holds; they answer last.
+    pub fn add_rust_facts(&mut self, facts: BTreeMap<String, RustItemMetadata>) {
+        self.rust_facts.extend(facts);
     }
 
     /// The entry for one dependency, read from its artifact directory.
@@ -325,6 +344,8 @@ impl LoafIndex {
             .values()
             .filter_map(|entry| entry.artifact.manifest.rust_abi.as_ref())
             .find_map(|abi| abi.get(canonical_path).cloned())
+            .or_else(|| self.rust_abi_caches.iter().find_map(|cache| cache.get(canonical_path)))
+            .or_else(|| self.rust_facts.get(canonical_path).cloned())
     }
 
     /// Keyword registrations the indexed Loaves export, keyed by Loaf, for the consumer's parser.

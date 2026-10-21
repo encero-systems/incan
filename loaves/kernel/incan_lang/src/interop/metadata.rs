@@ -56,7 +56,7 @@ pub struct RustItemMetadata {
     /// Canonical path as Incan already models it, e.g. `std::collections::HashMap`.
     pub canonical_path: String,
     /// Underlying Rust definition path after resolving re-exports, when rust-analyzer can provide one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub definition_path: Option<String>,
     pub visibility: RustVisibility,
     pub kind: RustItemKind,
@@ -517,7 +517,7 @@ pub struct RustImplementedTrait {
     /// Canonical Rust trait path, for example `std::fmt::Display`.
     pub path: String,
     /// Whether the implementation is proven for `&mut Self` instead of `Self`.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub mutable_reference: bool,
 }
 
@@ -536,7 +536,7 @@ pub struct RustExpandedDeriveTrait {
     /// Canonical Rust trait path implemented by the expansion.
     pub path: String,
     /// Concrete associated-type values declared by the generated implementation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
 }
 
@@ -548,7 +548,7 @@ pub struct RustMacroInfo {
     /// A derive macro may emit more than one implementation, so this remains a collection rather than assuming the
     /// macro shares a name or canonical path with a single trait. The generated-Rust build remains authoritative for
     /// any input-sensitive behavior or predicates attached to those implementations on the real Incan-authored type.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub expanded_traits: Vec<RustExpandedDeriveTrait>,
 }
 
@@ -1347,16 +1347,16 @@ pub struct RustMutableReferenceTypeParam {
     /// Name of the owner generic parameter, for example `T` in `Foreign<T: ForeignData>`.
     pub type_param: String,
     /// Unparameterized trait paths the supplied argument can satisfy without adding a reference.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub direct_trait_bounds: Vec<String>,
     /// Mutable-reference implementations admitted by the owner's direct trait bounds.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mutable_reference_candidates: Vec<RustMutableReferenceCandidate>,
     /// Tuple arities for which the direct owner trait composes element-by-element.
     ///
     /// Consumers may recurse into tuple leaves only when the foreign trait itself declares the corresponding
     /// structural implementation. An empty list keeps composite arguments fail-closed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub tuple_composition_arities: Vec<usize>,
 }
 
@@ -1364,16 +1364,16 @@ pub struct RustMutableReferenceTypeParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMutableReferenceCandidate {
     /// Trait paths the inner `T` must satisfy for this `&mut T` implementation to apply.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub required_traits: Vec<String>,
     /// Canonical associated-type equalities represented by this metadata record.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub required_associated_type_bindings: Vec<RustAssociatedTypeRequirement>,
     /// Whether the complete source predicate set is represented by `required_traits` and associated-type bindings.
     ///
     /// False is deliberately fail-closed: a direct consumer must defer to the Rust trait solver instead of reducing
     /// an unsupported generic, const, lifetime, or higher-ranked predicate to a trait-name match.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub fallback_is_complete: bool,
 }
 
@@ -1385,20 +1385,20 @@ pub struct RustTypeInfo {
     /// These belong to the Rust type declaration, not to one method. Associated calls such as
     /// `Fft.new[f32](...)` specialize this receiver surface while method-level generic parameters remain recorded on
     /// [`RustFunctionSig`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub type_params: Vec<String>,
     /// Declared default type argument for each source type parameter, aligned with [`Self::type_params`].
     ///
     /// The vector is empty when no type parameter has a default. Otherwise `None` preserves a required parameter that
     /// precedes a later default, while `Some` carries the canonical Rust type display used when source omits that
     /// argument.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub type_param_defaults: Vec<Option<String>>,
     /// Source-owned rules for generic parameters that admit a mutable-reference implementation.
     ///
     /// They let the frontend distinguish an owned foreign argument from a mutable-reference alternative without
     /// provider-specific matching. Complete foreign obligation checking remains with rustc.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mutable_reference_type_params: Vec<RustMutableReferenceTypeParam>,
     /// Exact unconditional trait implementations emitted by successfully expanded Rust derive macros.
     ///
@@ -1406,38 +1406,33 @@ pub struct RustTypeInfo {
     /// resolves the generated `impl` syntax through HIR and records its actual trait identity plus concrete
     /// associated-type values here. Derive macro names and unexpanded source attributes supply no implementation
     /// evidence; conditional generated implementations remain solver-only.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub expanded_derive_traits: Vec<RustExpandedDeriveTrait>,
     /// Whether the declaration contains const parameters that occupy Rust turbofish positions.
     ///
     /// Incan v0.5 can specialize type-only receivers. Retaining this fact makes const-bearing owners fail closed
     /// rather than shifting a later type argument into a const slot.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub has_const_params: bool,
     /// Pretty-printed target type when this item is a Rust `type` alias.
     ///
     /// Ordinary structs, enums, traits, and builtins leave this empty. Alias targets are metadata, not a substitute
     /// type identity: callers should use them only when the alias itself is the expected surface and the target shape
     /// is needed for contextual typing or boundary planning.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alias_target: Option<String>,
     /// Completeness of the recorded type surface.
-    #[serde(default, skip_serializing_if = "RustTypeMetadataCompleteness::is_complete")]
+    #[serde(default)]
     pub metadata_completeness: RustTypeMetadataCompleteness,
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
     /// Trait implementations rust-inspect can prove for this Rust type.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub implemented_traits: Vec<RustImplementedTrait>,
     /// Public fields for struct/union-like types.
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
     pub variants: Vec<RustVariantInfo>,
-}
-
-/// Return whether a serialized compatibility flag is disabled.
-fn bool_is_false(value: &bool) -> bool {
-    !value
 }
 
 /// Whether Rust type metadata came from a full HIR extraction or from a partial syntax fallback.
@@ -1506,7 +1501,7 @@ pub struct RustTraitInfo {
     ///
     /// Rust permits a trait and derive macro to share a spelling. Keeping the macro expansion separate prevents an
     /// ordinary trait-namespace lookup from hiding a macro that implements a differently named trait.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub derive_macro: Option<RustMacroInfo>,
 }
 

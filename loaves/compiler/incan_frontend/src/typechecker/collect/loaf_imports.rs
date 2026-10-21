@@ -35,7 +35,7 @@ use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions as surface_functions;
 use incan_lang::lang::surface::types as surface_types;
-use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey};
+use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey, SymbolOrigin};
 
 /// One import that reaches a compiled Loaf: the Loaf's index key and the public module path inside its manifest.
 pub(in crate::typechecker) struct LoafImport {
@@ -158,25 +158,71 @@ impl TypeChecker {
             return;
         }
         let module = vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_REGISTRY.to_string()];
-        let Some((library, rest)) = self.loaf_module(&module) else {
-            return;
+        let standard = if self.owns_standard_module(&module) {
+            self.own_standard_registry_types(&module)
+        } else {
+            self.loaf_standard_registry_types(&module)
         };
+        if let Some(standard) = standard {
+            self.type_info.registry.standard = Some(standard);
+        }
+    }
+
+    /// Whether `local_name` already binds the declaration `item` of the Loaf module `module` names (the builtin `Error`
+    /// trait, imported explicitly from `std.traits.error`): binding it again changes nothing, so it is no collision.
+    fn rebinds_same_declaration(&self, local_name: &str, module: &[String], item: &str) -> bool {
+        let Some(symbol) = self.symbols.lookup_local(local_name) else {
+            return false;
+        };
+        match self.symbols.identity_of(symbol) {
+            Some(existing) if !matches!(existing.origin, SymbolOrigin::Builtin) => {
+                self.loaf_member_identity(module, item).as_ref() == Some(existing)
+            }
+            // A compiler-owned builtin trait carries no Loaf identity; its declaring module names it.
+            _ => {
+                local_name == item
+                    && matches!(
+                        self.symbols.get(symbol).map(|found| &found.kind),
+                        Some(SymbolKind::Trait(_))
+                    )
+                    && incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
+                        == Some(module.join(".").as_str())
+            }
+        }
+    }
+
+    /// The standard `Registry` declarations of the package that declares `std.registry`: its own checked modules.
+    fn own_standard_registry_types(&self, module: &[String]) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let path = ImportPath {
+            parent_levels: 0,
+            is_absolute: false,
+            segments: module.to_vec(),
+        };
+        let Some(SymbolKind::Type(TypeInfo::Class(registry_class))) =
+            self.dependency_member_symbol_for_path(&path, "Registry")
+        else {
+            return None;
+        };
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.dependency_member_identity(&path, "Registry")?,
+            registry_class,
+            entry: self.dependency_member_identity(&path, "RegistryEntry")?,
+        })
+    }
+
+    /// The standard `Registry` declarations, read from the standard Loaf that owns `std.registry`.
+    fn loaf_standard_registry_types(&mut self, module: &[String]) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let (library, rest) = self.loaf_module(module)?;
         let Some((SymbolKind::Type(TypeInfo::Class(registry_class)), _)) =
             self.lookup_pub_library_module_symbol_member(&library, &rest, "Registry")
         else {
-            return;
+            return None;
         };
-        let (Some(registry), Some(entry)) = (
-            self.loaf_member_identity(&module, "Registry"),
-            self.loaf_member_identity(&module, "RegistryEntry"),
-        ) else {
-            return;
-        };
-        self.type_info.registry.standard = Some(crate::typechecker::StandardRegistryTypes {
-            registry,
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.loaf_member_identity(module, "Registry")?,
             registry_class,
-            entry,
-        });
+            entry: self.loaf_member_identity(module, "RegistryEntry")?,
+        })
     }
 
     /// The standard declaration of the builtin trait `name` (`Eq`, `Ord`, …), read once from the standard package
@@ -185,7 +231,13 @@ impl TypeChecker {
         if let Some(info) = self.standard_traits.get(name) {
             return Some(info.clone());
         }
-        let segments = stdlib::trait_method_module_segments(name)?;
+        // The derive-method table names a derivable trait's module; every other builtin trait (`TryFrom`, `Error`)
+        // names its declaring module itself.
+        let segments = stdlib::trait_method_module_segments(name).or_else(|| {
+            incan_lang::lang::traits::from_str(name)
+                .and_then(incan_lang::lang::traits::source_module)
+                .map(|module| module.split('.').map(str::to_string).collect())
+        })?;
         let info = self.loaf_trait(&segments, name)?;
         self.standard_traits.insert(name.to_string(), info.clone());
         Some(info)
@@ -308,6 +360,11 @@ impl TypeChecker {
             }
             self.validate_root_namespace(&local_name, span);
             if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
+                let mut module = root.clone();
+                module.extend(path.iter().cloned());
+                if self.rebinds_same_declaration(&local_name, &module, &item.name) {
+                    continue;
+                }
                 self.errors.push(errors::pub_library_import_name_collision(
                     &local_name,
                     existing_kind,

@@ -84,12 +84,31 @@ impl CompilationAnalysis {
     }
 }
 
+/// Rust facts: the checker's view of the Rust items a unit imports, keyed by path.
+pub type RustFacts = BTreeMap<String, incan_lang::interop::RustItemMetadata>;
+
+/// Where a session reads the Rust facts no ABI cache holds: the compiler's own rustc, over the unit's crates. The
+/// caches answer first; a source is asked only for the paths they leave uncovered, so a crate never has two answers.
+pub trait RustFactsSource: std::fmt::Debug + Send + Sync {
+    /// Facts for `paths`.
+    fn facts(&self, paths: &BTreeSet<String>) -> Result<RustFacts, String>;
+}
+
+/// Where one session's Rust facts come from: the ABI caches of the crates the unit links, then the source.
+#[derive(Debug, Clone, Default)]
+pub struct RustFactsSetup {
+    pub caches: Vec<PathBuf>,
+    pub source: Option<Arc<dyn RustFactsSource>>,
+}
+
 /// Shared source-analysis context for the pinned driver, the compiler's commands and the language server.
 ///
 /// The session owns the unit-level inputs that affect parsing and checking, so no stage re-derives the Loaves,
 /// vocabulary or checked contract metadata.
 #[derive(Debug, Clone)]
 pub struct CompilationSession {
+    /// Where Rust facts no ABI cache holds come from, when the compiler can read them.
+    rust_facts_source: Option<Arc<dyn RustFactsSource>>,
     /// Vocabulary module map shared across cloned sessions; fresh source and guest state remain local.
     pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::WasmDesugarerRuntime>>>,
     /// The unit as the Oven describes it.
@@ -132,6 +151,7 @@ impl CompilationSession {
         let contract_model_bundles = read_project_model_bundles(&unit.project_root, &unit.contract_models)
             .map_err(|error| CliError::failure(error.to_string()))?;
         Ok(Self {
+            rust_facts_source: None,
             vocab_runtime: Arc::default(),
             source_root: unit.source_root.clone(),
             library_imported_vocab: loaves.imported_vocab(),
@@ -154,6 +174,39 @@ impl CompilationSession {
     /// The compiled Loaves the program imports from.
     pub fn loaves(&self) -> &Arc<LoafIndex> {
         &self.loaves
+    }
+
+    /// Read the Rust facts of the unit's crates from their ABI caches and ask the setup's source for any path they
+    /// leave uncovered.
+    pub fn with_rust_facts(mut self, setup: &RustFactsSetup) -> CliResult<Self> {
+        for cache in &setup.caches {
+            let bytes = std::fs::read(cache).map_err(|error| {
+                CliError::failure(format!("cannot read the ABI cache {}: {error}", cache.display()))
+            })?;
+            let decoded = incan_lang::interop::RustAbiCache::decode(&bytes)
+                .map_err(|error| CliError::failure(format!("{}: {error}", cache.display())))?;
+            Arc::make_mut(&mut self.loaves).add_rust_abi_cache(Arc::new(decoded));
+        }
+        self.rust_facts_source = setup.source.clone();
+        Ok(self)
+    }
+
+    /// Before checking: the facts of the Rust paths `modules` import that neither a Loaf nor an ABI cache holds, from
+    /// the session's source. Without a source, an uncovered path keeps no facts and its uses refuse where checked.
+    pub fn resolve_rust_facts(&mut self, modules: &[ParsedModule]) -> CliResult<()> {
+        let Some(source) = self.rust_facts_source.clone() else {
+            return Ok(());
+        };
+        let uncovered = imported_rust_paths(modules)
+            .into_iter()
+            .filter(|path| self.loaves.rust_abi_item(path).is_none())
+            .collect::<BTreeSet<_>>();
+        if uncovered.is_empty() {
+            return Ok(());
+        }
+        let facts = source.facts(&uncovered).map_err(CliError::failure)?;
+        Arc::make_mut(&mut self.loaves).add_rust_facts(facts);
+        Ok(())
     }
 
     /// The standard package the program is, when it is one.
@@ -345,4 +398,38 @@ impl CompilationSession {
             }
         }
     }
+}
+
+/// The Rust paths a unit's modules import (`rust::…`), whose facts its checking reads.
+fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
+    use incan_frontend::ast::{Declaration, ImportKind};
+    let mut paths = BTreeSet::new();
+    for module in modules {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::RustCrate { crate_name, path, .. } => {
+                    let segments = std::iter::once(crate_name.clone()).chain(path.iter().cloned());
+                    paths.insert(segments.collect::<Vec<_>>().join("::"));
+                }
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    items,
+                    ..
+                } => {
+                    for item in items {
+                        let segments = std::iter::once(crate_name.clone())
+                            .chain(path.iter().cloned())
+                            .chain(std::iter::once(item.name.clone()));
+                        paths.insert(segments.collect::<Vec<_>>().join("::"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    paths
 }

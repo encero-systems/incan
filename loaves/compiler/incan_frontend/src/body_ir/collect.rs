@@ -276,6 +276,40 @@ pub(super) fn collect_statics(
         .collect()
 }
 
+/// Retain every `const` the checker did not evaluate to a retained constant (a list of model values, for one) as
+/// read-only computed storage beside the module's statics: reads of it are its global place.
+pub(super) fn collect_computed_constants(
+    program: &ast::Program,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+    retained: &[bir::ConstantDeclaration],
+) -> Vec<bir::StaticDeclaration> {
+    let type_info = lowering_facts.type_info;
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Const(item) = &declaration.node else {
+                return None;
+            };
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            if retained.iter().any(|constant| constant.canonical == canonical) {
+                return None;
+            }
+            let ty = semantic_type_from_resolved(type_info.expr_type(item.value.span)?);
+            let body = lower_constant_initializer_body(item, declaration.span, &canonical, &ty, lowering_facts);
+            Some(bir::StaticDeclaration {
+                canonical,
+                ty,
+                initial: bir::StaticInitializer::Computed(Box::new(body)),
+            })
+        })
+        .collect()
+}
+
 /// Recognize the empty `Set()` constructor only from the checker's canonical constructor fact; every other
 /// initializer must be a literal.
 fn static_initializer(

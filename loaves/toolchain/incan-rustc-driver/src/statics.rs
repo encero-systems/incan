@@ -72,6 +72,8 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
             elements.as_slice(),
             [PlanType::Int | PlanType::Float | PlanType::Bool | PlanType::String]
         ),
+        // A frozen collection is a view of `'static` storage: it borrows nothing from the guarded cell.
+        PlanType::FrozenCollection(..) => true,
         PlanType::List(leaf, depth) => *depth > 0 && guard_owned_leaf(plan, leaf, visiting),
         PlanType::Tuple(elements) => elements
             .iter()

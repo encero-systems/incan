@@ -1,0 +1,14 @@
+# behavior: a static trait method called through a bounded type parameter returns its declared Result
+# expect-accepted:
+
+from std.traits.convert import TryFrom
+
+
+def parse[T with TryFrom[str]](text: str) -> Option[T]:
+    match T.try_from(text):
+        Ok(value) => return Some(value)
+        Err(_) => return None
+
+
+def main() -> None:
+    println("checked")

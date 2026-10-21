@@ -1,0 +1,15 @@
+# behavior: importing a prelude trait explicitly from its declaring module binds the same trait, so it checks
+# expect-accepted:
+
+from std.traits.error import Error
+
+
+model Failure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+
+def main() -> None:
+    println(Failure(detail="x").message())

@@ -1,13 +1,15 @@
 //! Rust interop vocabulary shared across compiler stages (RFC 005 / RFC 041).
 //!
-//! Host-specific extraction (rust-analyzer, Cargo) lives in the `rust_inspect` crate (wired by `incan` behind the
-//! `rust_inspect` feature); this module holds only portable data shapes.
+//! The compiler reads Rust facts from rustc's crate metadata (`incan-rustc-driver`); this module holds only portable
+//! data shapes and the ABI cache they are stored in.
 
+pub mod abi_cache;
 pub mod capabilities;
 pub mod coercions;
 mod extension_traits;
 pub mod metadata;
 
+pub use abi_cache::{RUST_ABI_CACHE_VERSION, RustAbiCache, encode_rust_abi_cache};
 pub use capabilities::{
     RUST_CALLABLE_CAPABILITY_BOUNDS, RUST_CAPABILITY_BOUNDS, RUST_FUTURE_CAPABILITY_BOUNDS,
     is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound,

@@ -367,6 +367,29 @@ impl LoafCallable {
 }
 
 impl BodyIrModule {
+    /// A module that only declares, filled by its caller: a Loaf module's resolved declarations, or the Rust items a
+    /// program holds (DD-0006). It has no bodies, storage or effects of its own.
+    pub fn declarations_only(owner: String) -> Self {
+        Self {
+            string_conversion_contract: StringConversionContract::Unselected,
+            decorated_bindings: Vec::new(),
+            entrypoint_effects: Vec::new(),
+            constant_declarations: Vec::new(),
+            type_alias_declarations: Vec::new(),
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
+            module_id: CompilerNodeId::module(owner),
+            loaf_callables: Vec::new(),
+            native_union_declarations: Vec::new(),
+            enum_declarations: Vec::new(),
+            static_declarations: Vec::new(),
+            nominal_declarations: Vec::new(),
+            fieldless_enum_declarations: Vec::new(),
+            value_enum_declarations: Vec::new(),
+            bodies: Vec::new(),
+        }
+    }
+
     /// Resolve a canonical callable identity to the body that declares it, when this module owns the declaration.
     ///
     /// This is the consumer seam for [`CanonicalSymbolId`]: a backend asks *which declaration was selected* and gets
@@ -751,8 +774,18 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     })
 }
 
+/// The name a Rust item's opaque nominal is laid out under, and the name a held value's type carries: the item's
+/// path (`std::fs::File`). No Incan name can spell it, so a Rust item never shares a name with an Incan declaration.
+pub fn native_opaque_name(identity: &CanonicalSymbolId) -> Option<String> {
+    let crate::SymbolOrigin::RustCrate(path) = &identity.origin else {
+        return None;
+    };
+    Some(path.join("::"))
+}
+
 /// Opaque storage of a Rust item a program holds as a value (DD-0006): the item itself, with `arity` written type
-/// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into.
+/// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into. It is named
+/// [`native_opaque_name`].
 ///
 /// Web carriers keep their payload shape through [`native_carrier_nominal`]; every other Rust item uses this one.
 pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Option<NominalDeclaration> {
@@ -772,7 +805,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
         native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical: identity.clone(),
-        name: identity.declaration_name.clone(),
+        name: native_opaque_name(identity)?,
         fields: Vec::new(),
         field_identities: Vec::new(),
         field_types: Vec::new(),
@@ -793,6 +826,73 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
         type_parameters,
         type_parameter_count: arity,
     })
+}
+
+/// The opaque nominals of the Rust items the modules hold as values (DD-0006): every Rust item a laid-out type names
+/// (a local, a parameter, a result, a field or a static), with the number of arguments it is written with. A Rust
+/// item a program only calls or constructs through (`Rc.new`) is not held. An item held with two different argument
+/// counts has no single layout and is left out; its uses refuse.
+pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
+    let mut arities = std::collections::BTreeMap::<String, Option<usize>>::new();
+    let mut record = |ty: &IncanType| record_held_rust_items(ty, &mut arities);
+    for module in modules {
+        for body in &module.bodies {
+            record(&body.return_type);
+            body.locals.iter().for_each(|local| record(&local.ty));
+            body.params.iter().for_each(|param| record(&param.ty));
+        }
+        for declaration in &module.nominal_declarations {
+            declaration.field_types.iter().for_each(&mut record);
+        }
+        for storage in &module.static_declarations {
+            record(&storage.ty);
+            if let StaticInitializer::Computed(body) = &storage.initial {
+                record(&body.return_type);
+                body.locals.iter().for_each(|local| record(&local.ty));
+            }
+        }
+    }
+    arities
+        .into_iter()
+        .filter_map(|(path, arity)| native_opaque_nominal(&rust_item_identity(&path)?, arity?))
+        .collect()
+}
+
+/// Record the Rust items `ty` names anywhere inside it: a type a Rust value carries is named by its item's path.
+fn record_held_rust_items(ty: &IncanType, arities: &mut std::collections::BTreeMap<String, Option<usize>>) {
+    match ty {
+        IncanType::Named(name) => note_held_rust_item(name, 0, arities),
+        IncanType::Generic { base, args } => {
+            note_held_rust_item(base, args.len(), arities);
+            args.iter().for_each(|arg| record_held_rust_items(arg, arities));
+        }
+        IncanType::Tuple(items) => items.iter().for_each(|item| record_held_rust_items(item, arities)),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .for_each(|param| record_held_rust_items(&param.ty, arities));
+            record_held_rust_items(return_type, arities);
+        }
+        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+            record_held_rust_items(inner, arities);
+        }
+        _ => {}
+    }
+}
+
+/// Note one Rust item a type names with its written argument count; a second, different count unsets it.
+fn note_held_rust_item(path: &str, arity: usize, arities: &mut std::collections::BTreeMap<String, Option<usize>>) {
+    if rust_item_identity(path).is_none() {
+        return;
+    }
+    arities
+        .entry(path.to_owned())
+        .and_modify(|known| {
+            if *known != Some(arity) {
+                *known = None;
+            }
+        })
+        .or_insert(Some(arity));
 }
 
 /// The canonical identity of a Rust item named by its path (`std::sync::Arc`), as a program's Rust import records it.

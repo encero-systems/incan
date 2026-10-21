@@ -22,7 +22,7 @@ use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
-use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::public_identities::public_executable_identities;
@@ -256,7 +256,9 @@ fn resolve_from_catalog(
         let declaration = surface.read(package, &identity, offset, length)?;
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
-        let module = modules.entry(owner.clone()).or_insert_with(|| empty_module(owner));
+        let module = modules
+            .entry(owner.clone())
+            .or_insert_with(|| BodyIrModule::declarations_only(owner));
         retain_declaration(module, declaration);
         resolved.decoded_declarations += 1;
         resolved.payload_bytes_read += length;
@@ -269,28 +271,6 @@ fn resolve_from_catalog(
     }
     resolved.modules = modules.into_values().collect();
     Ok(resolved)
-}
-
-/// Assemble only selected fragments under their checked canonical module owner, without source reconstruction.
-fn empty_module(owner: String) -> BodyIrModule {
-    BodyIrModule {
-        string_conversion_contract: incan_semantics_core::body_ir::StringConversionContract::Unselected,
-        decorated_bindings: Vec::new(),
-        entrypoint_effects: Vec::new(),
-        constant_declarations: Vec::new(),
-        type_alias_declarations: Vec::new(),
-        trait_declarations: Vec::new(),
-        trait_implementations: Vec::new(),
-        module_id: CompilerNodeId::module(owner),
-        loaf_callables: Vec::new(),
-        native_union_declarations: Vec::new(),
-        enum_declarations: Vec::new(),
-        static_declarations: Vec::new(),
-        nominal_declarations: Vec::new(),
-        fieldless_enum_declarations: Vec::new(),
-        value_enum_declarations: Vec::new(),
-        bodies: Vec::new(),
-    }
 }
 
 /// Retain the selected payload's original declaration kind and associated checked trait or enum context.

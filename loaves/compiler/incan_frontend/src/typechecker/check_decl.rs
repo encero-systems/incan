@@ -1498,9 +1498,13 @@ impl TypeChecker {
                     info,
                 });
         }
-        let root = self
-            .lookup_trait_adoption_info(adoption)
-            .cloned()
+        // A compiler-owned builtin trait (`TryFrom`) is declared by a standard package: its methods come from that
+        // declaration, not from the root table's builtin entry.
+        let standard = (adoption.module_path.is_none() && incan_lang::lang::traits::from_str(&adoption.name).is_some())
+            .then(|| self.standard_trait(&adoption.name))
+            .flatten();
+        let root = standard
+            .or_else(|| self.lookup_trait_adoption_info(adoption).cloned())
             .or_else(|| {
                 let module_path = adoption.module_path.as_ref()?;
                 let source_name = adoption

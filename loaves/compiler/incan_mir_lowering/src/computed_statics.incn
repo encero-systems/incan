@@ -148,8 +148,10 @@ pub def module_initializer(statics: list[StaticDeclaration], key: int, span: Sou
 pub def enters_module_initialization(body: &Body) -> bool:
     """
     Report whether a body initializes its module's statics on entry: every function and method does, as in legacy,
-    but a computed static's own initializer does not, because the module's initialization is what runs it.
+    but a computed static's or constant's own initializer does not, because the module's initialization is what runs
+    it.
     """
     match body.canonical:
-        Some(identity) => return identity.kind != SemanticSourceTargetKind.Static
+        Some(identity) =>
+            return identity.kind != SemanticSourceTargetKind.Static and identity.kind != SemanticSourceTargetKind.Const
         None => return true

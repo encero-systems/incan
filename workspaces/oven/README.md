@@ -8,7 +8,7 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | --- | --- |
 | `main.incn` | The `incan` command line: `run`, `check`, `describe-unit`, `build`. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, a library or a standard package: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
-| `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, and the native closure every compiled unit links. |
+| `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
 | `incan_units.incn` | Checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`). |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, one `rustc` per unit against compiled registry units (`incan build`). A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
 | `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |

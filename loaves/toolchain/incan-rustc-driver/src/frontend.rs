@@ -6,13 +6,13 @@ use sha2::{Digest, Sha256};
 
 use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
-use incan_driver::session::CompilationSession;
+use incan_driver::session::{CompilationSession, RustFactsSetup};
 use incan_driver::unit::UnitDescription;
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
@@ -81,16 +81,21 @@ struct CheckedProgram {
 ///
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass.
-fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgram, String> {
+fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
-    let session = CompilationSession::new(unit).map_err(|error| error.to_string())?;
+    let mut session = CompilationSession::new(unit)
+        .and_then(|session| session.with_rust_facts(rust))
+        .map_err(|error| error.to_string())?;
     let modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
     } else {
         collect_modules_detailed_with_session(path.clone(), &session)
     }
     .map_err(|failure| failure.render_human())?;
+    session
+        .resolve_rust_facts(&modules)
+        .map_err(|error| error.to_string())?;
     let package_identity = unit.package.as_str();
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
@@ -222,6 +227,16 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
             }
         });
     }
+    // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
+    let held = rust_value_modules(incan_semantics_core::body_ir::held_rust_items(&bodies));
+    let held_modules = held.len();
+    files.splice(
+        loaf_modules..loaf_modules,
+        held.iter().map(|module| module.module_id.path().to_owned()),
+    );
+    sources.splice(loaf_modules..loaf_modules, held.iter().map(|_| String::new()));
+    bodies.splice(loaf_modules..loaf_modules, held);
+    let entry = entry + held_modules;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
     entry_module.string_conversion_contract = string_conversion_contract;
     entry_module.loaf_callables = loaf_callables;
@@ -230,9 +245,26 @@ fn checked_modules(unit: &UnitDescription, library: bool) -> Result<CheckedProgr
         sources,
         files,
         entry,
-        own: loaf_modules,
+        own: loaf_modules + held_modules,
         manifest,
     })
+}
+
+/// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
+/// lowering lays a value of it out as the item itself.
+fn rust_value_modules(held: Vec<NominalDeclaration>) -> Vec<BodyIrModule> {
+    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
+    for declaration in held {
+        let Some(owner) = incan_semantics_core::body_ir::native_nominal_module(&declaration.canonical) else {
+            continue;
+        };
+        owners
+            .entry(owner.clone())
+            .or_insert_with(|| BodyIrModule::declarations_only(owner))
+            .nominal_declarations
+            .push(declaration);
+    }
+    owners.into_values().collect()
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
@@ -348,7 +380,12 @@ fn validate_declarations(
                 validate_generic_adoptions(&newtype.traits, program, type_info)?;
                 continue;
             }
-            Declaration::Newtype(_) => "nonplain Newtype",
+            Declaration::Newtype(newtype) => {
+                return Err(format!(
+                    "unsupported source nonplain Newtype {} on the native route",
+                    newtype.name
+                ));
+            }
             Declaration::Alias(_) => continue,
             Declaration::Partial(_) => continue,
             // Type aliases have no runtime declaration; checked Body IR carries their resolved uses.
@@ -556,19 +593,37 @@ fn validate_generic_adoptions(
 }
 
 /// Exact caller-declared native libraries and their dependency search directories.
-struct Dependencies {
-    externs: Vec<(String, PathBuf)>,
-    directories: Vec<PathBuf>,
+pub(crate) struct Dependencies {
+    pub(crate) externs: Vec<(String, PathBuf)>,
+    pub(crate) directories: Vec<PathBuf>,
+    /// The ABI caches of the linked Rust crates (`--rust-abi`): the toolchain's standard crates and each compiled
+    /// unit's.
+    pub(crate) rust_abi: Vec<PathBuf>,
     /// Compile a library unit (`--library`): an rlib with the entry module's public names, no `main` required.
     library: bool,
     /// Arguments the Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
 }
 
+impl Dependencies {
+    /// The unit's Rust facts: its crates' ABI caches, then rustc's crate metadata for paths they leave uncovered.
+    pub(crate) fn rust_facts(&self, sysroot: &Path) -> RustFactsSetup {
+        RustFactsSetup {
+            caches: self.rust_abi.clone(),
+            source: Some(std::sync::Arc::new(crate::rust_facts::RustcFacts {
+                sysroot: sysroot.to_path_buf(),
+                externs: self.externs.clone(),
+                search: self.directories.clone(),
+            })),
+        }
+    }
+}
+
 /// Parse declared native externs, search directories and rustc arguments; no ambient crate discovery is performed.
-fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
+pub(crate) fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
     let mut externs = Vec::new();
     let mut directories = Vec::new();
+    let mut rust_abi = Vec::new();
     let mut library = false;
     let mut rustc_args = Vec::new();
     let mut remaining = arguments.iter();
@@ -584,6 +639,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
                 externs.push((name.to_owned(), PathBuf::from(path)));
             }
             "--search" => directories.push(PathBuf::from(value)),
+            "--rust-abi" => rust_abi.push(PathBuf::from(value)),
             "--rustc-arg" => rustc_args.push(value.clone()),
             _ => return Err(format!("unknown native source option {option}")),
         }
@@ -591,6 +647,7 @@ fn dependencies(arguments: &[String]) -> Result<Dependencies, String> {
     Ok(Dependencies {
         externs,
         directories,
+        rust_abi,
         library,
         rustc_args,
     })
@@ -615,10 +672,11 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let output = Path::new(&arguments[2]);
     let dependencies = dependencies(&arguments[4..])?;
     let checked_library = dependencies.library;
+    let rust = dependencies.rust_facts(Path::new(&arguments[3]));
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, checked_library)
+        checked_modules(&unit, checked_library, &rust)
     });
     let program = match checked {
         Ok(program) => program,

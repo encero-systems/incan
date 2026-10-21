@@ -38,6 +38,7 @@ mod identity;
 mod library_exports;
 mod marker_traits;
 mod plan;
+mod rust_facts;
 mod shared_callables;
 mod spans;
 mod statics;
@@ -53,10 +54,12 @@ use std::path::Path;
 use incan_cli::commands::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
-const USAGE: &str =
-    "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT [--format text|json]";
+const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
+                     text|json] [OPTIONS] | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]\n\
+                     OPTIONS: --extern CRATE=RLIB, --search DIR, --rust-abi CACHE, --rustc-arg ARG, --library";
 
-/// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote.
+/// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
+/// ABI cache of Rust crates (`--rust-abi`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,20 +68,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--check") => check(&args[1..]),
+        Some("--rust-abi") => rust_abi(&args[1..]),
         _ => Err(USAGE.into()),
     }
 }
 
-/// Check one unit and exit with the check's status; the report goes to stdout, a refusal's message to stderr.
-fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let (path, format) = match arguments {
-        [path] => (path, DiagnosticOutputFormat::Text),
-        [path, flag, format] if flag == "--format" && format == "text" => (path, DiagnosticOutputFormat::Text),
-        [path, flag, format] if flag == "--format" && format == "json" => (path, DiagnosticOutputFormat::Json),
-        _ => return Err(USAGE.into()),
+/// Write the ABI cache of the named Rust crates: every public item, described from rustc's crate metadata.
+fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [sysroot, output, rest @ ..] = arguments else {
+        return Err(USAGE.into());
     };
+    let mut crates = std::collections::BTreeSet::new();
+    let mut externs = Vec::new();
+    let mut search = Vec::new();
+    let mut remaining = rest.iter();
+    while let Some(argument) = remaining.next() {
+        match argument.as_str() {
+            "--extern" => {
+                let value = remaining.next().ok_or(USAGE)?;
+                let (name, path) = value.split_once('=').ok_or("--extern takes CRATE=RLIB")?;
+                externs.push((name.to_owned(), std::path::PathBuf::from(path)));
+            }
+            "--search" => search.push(std::path::PathBuf::from(remaining.next().ok_or(USAGE)?)),
+            name => {
+                crates.insert(name.to_owned());
+            }
+        }
+    }
+    let facts = rust_facts::extract(rust_facts::RustFactsRequest {
+        sysroot: Path::new(sysroot),
+        externs: &externs,
+        search: &search,
+        scope: rust_facts::RustFactsScope::Crates(crates),
+    })?;
+    std::fs::write(output, incan_lang::interop::encode_rust_abi_cache(&facts)?)?;
+    Ok(())
+}
+
+/// Check one unit and exit with the check's status; the report goes to stdout, a refusal's message to stderr. The
+/// unit's crates and their ABI caches supply its Rust facts, as for `--unit`.
+fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [path, sysroot, rest @ ..] = arguments else {
+        return Err(USAGE.into());
+    };
+    let (format, options) = match rest {
+        [flag, format, options @ ..] if flag == "--format" => match format.as_str() {
+            "text" => (DiagnosticOutputFormat::Text, options),
+            "json" => (DiagnosticOutputFormat::Json, options),
+            _ => return Err(USAGE.into()),
+        },
+        options => (DiagnosticOutputFormat::Text, options),
+    };
+    let rust = frontend::dependencies(options)?.rust_facts(Path::new(sysroot));
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
-    if let Err(error) = incan_cli::commands::check(&unit, format) {
+    if let Err(error) = incan_cli::commands::check(&unit, &rust, format) {
         if !error.message.is_empty() {
             eprintln!("{}", error.message);
         }

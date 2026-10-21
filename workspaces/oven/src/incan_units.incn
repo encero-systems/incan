@@ -23,9 +23,10 @@ pub def crate_name(unit: UnitDescription) -> str:
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
-    """Check the unit; the compiler prints the report. Returns the check's exit code."""
+    """Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code."""
     path = write_unit(unit, crate_name(unit))?
-    return run_compiler(toolchain, ["--check", path.0, "--format", format])
+    arguments = ["--check", path.0, toolchain.sysroot, "--format", format] + native_arguments(unit, toolchain)?
+    return run_compiler(toolchain, arguments)
 
 
 pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path, library: bool) -> Result[i32, str]:
@@ -65,6 +66,8 @@ def native_arguments(unit: UnitDescription, toolchain: Toolchain) -> Result[list
         arguments = arguments + ["--extern", f"{native.name}={native.path}"]
     for directory in toolchain.search:
         arguments = arguments + ["--search", directory]
+    for cache in toolchain.rust_abi:
+        arguments = arguments + ["--rust-abi", cache]
     for loaf in unit.loaves:
         linked = loaf.name.replace("-", "_")
         library = Path(loaf.dir).joinpath(f"lib{linked}.rlib")
