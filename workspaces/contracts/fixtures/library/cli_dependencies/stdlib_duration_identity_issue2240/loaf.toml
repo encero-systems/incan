@@ -1,0 +1,9 @@
+[project]
+name = "stdlib_duration_identity_issue2240"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+intervals = { path = "deps/intervals" }
