@@ -742,6 +742,41 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
+/// Admit a transparent rusttype only when checking retained its underlying storage and it authors no executable
+/// members, conversions, or trait implementations. It introduces no wrapper layout or constructor.
+pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
+    let alias = if newtype.type_params.is_empty() {
+        IncanType::Named(newtype.name.clone())
+    } else {
+        IncanType::Generic {
+            base: newtype.name.clone(),
+            args: newtype
+                .type_params
+                .iter()
+                .map(|parameter| IncanType::TypeVar(parameter.name.clone()))
+                .collect(),
+        }
+    };
+    newtype.is_rusttype
+        && newtype
+            .decorators
+            .iter()
+            .all(|decorator| is_lint_suppression_decorator(&decorator.node))
+        && newtype.traits.is_empty()
+        && newtype.methods.is_empty()
+        && newtype.rebindings.is_empty()
+        && newtype.method_aliases.is_empty()
+        && newtype.method_partials.is_empty()
+        && newtype.associated_types.is_empty()
+        && newtype.interop_edges.is_empty()
+        && type_info.rust.storage_types.get(&alias).is_some_and(|storage| {
+            !matches!(
+                storage,
+                IncanType::Unknown | IncanType::Unsupported(_) | IncanType::RustInteropPath(_)
+            )
+        })
+}
+
 /// Admit raw tuple wrappers with checked native derives, owner and method parameters, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Integer primitive

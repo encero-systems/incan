@@ -132,6 +132,7 @@ struct RustTraitQualifiedCall<'a> {
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
     preserves_lookup_arg_shape: bool,
+    expected_return_ty: Option<&'a ResolvedType>,
     span: Span,
 }
 
@@ -2674,11 +2675,20 @@ impl TypeChecker {
     /// Return the receiver's Rust item path, keeping instantiated arguments on the checked receiver type.
     /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
     pub(in crate::typechecker) fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
+        if let Some(target) = self.rusttype_native_target(ty) {
+            return self.rust_canonical_path_for_receiver_type(&target);
+        }
         match ty {
             ResolvedType::Generic(base, arguments) if base == "[]" && arguments.len() == 1 => Some(base.clone()),
             ResolvedType::Generic(base, _) if base.contains("::") => Some(base.clone()),
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
             ResolvedType::RustPath(path) => {
+                if path.starts_with("dyn ") {
+                    let object = self.native_rust_signature_type(path, "");
+                    return (object != *ty)
+                        .then(|| self.rust_canonical_path_for_receiver_type(&object))
+                        .flatten();
+                }
                 Some(Self::rust_generic_base_and_args(path).map_or_else(|| path.clone(), |(base, _)| base.to_owned()))
             }
             ResolvedType::Named(name) => self.rust_canonical_path_for_nominal_receiver(name, None),
@@ -3085,6 +3095,9 @@ impl TypeChecker {
         receiver: &ResolvedType,
         rust_path: &str,
     ) -> Option<Vec<ResolvedType>> {
+        if let Some(target) = self.rusttype_native_target(receiver) {
+            return self.rust_owner_type_args(&target, rust_path);
+        }
         let native_vec =
             incan_lang::interop::ancestral_rust_path(rust_path) == incan_lang::interop::ancestral_rust_path("Vec");
         match receiver {
@@ -3496,6 +3509,7 @@ impl TypeChecker {
             args,
             arg_types,
             preserves_lookup_arg_shape,
+            expected_return_ty: _,
             span,
         } = call;
         let Some(sig) = trait_info.items.iter().find_map(|item| match item {
@@ -3508,19 +3522,9 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         };
         if !Self::rust_signature_has_receiver(sig) {
-            // `Deserialize.deserialize(input)` has no receiver: Rust infers `Self` from the destination, which the
-            // checker learns only later, so the result stays permissive while the arguments are still validated.
-            return self.validate_rust_trait_method_call(RustTraitMethodCall {
-                rust_path,
-                method,
-                sig,
-                type_args,
-                args,
-                arg_types,
-                preserves_lookup_arg_shape,
-                self_type: Some(&ResolvedType::Unknown),
-                span,
-            });
+            return self
+                .resolve_rust_trait_associated_call(&call, sig)
+                .unwrap_or_else(|| self.refuse_missing_rust_method_signature(rust_path, method, span));
         }
 
         // ---- The explicit receiver argument takes the declared receiver mode ----
@@ -6468,7 +6472,8 @@ impl TypeChecker {
         let source_list_method = matches!(&base_ty, ResolvedType::Generic(name, _)
             if collection_type_id(name) == Some(CollectionTypeId::List) && list_methods::from_str(method).is_some());
         let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty).or_else(|| {
-            if source_list_method {
+            let source_string_method = base_ty == ResolvedType::Str && string_methods::from_str(method).is_some();
+            if source_list_method || source_string_method {
                 return None;
             }
             self.rust_value_item_path(base)

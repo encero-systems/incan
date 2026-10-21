@@ -481,10 +481,7 @@ fn display(ty: Ty<'_>) -> String {
 fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>) -> RustItemMetadata {
     let kind = match tcx.def_kind(def) {
         DefKind::Struct | DefKind::Enum | DefKind::Union => RustItemKind::Type(type_info(tcx, def, named)),
-        DefKind::TyAlias => RustItemKind::Type(RustTypeInfo {
-            alias_target: Some(display(tcx.type_of(def).instantiate_identity().skip_normalization())),
-            ..RustTypeInfo::default()
-        }),
+        DefKind::TyAlias => RustItemKind::Type(alias_info(tcx, def, named)),
         DefKind::Fn | DefKind::Ctor(_, rustc_hir::def::CtorKind::Fn) => {
             RustItemKind::Function(signature(tcx, def, named))
         }
@@ -522,23 +519,7 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
 /// A struct, enum or union: type parameters and defaults, inherent methods with native impl binders and self types,
 /// public fields and variants. Method binders remain distinct from the owner's potentially defaulted parameters.
 fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
-    let generics = tcx.generics_of(def);
-    let parameters = generics
-        .own_params
-        .iter()
-        .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
-        .collect::<Vec<_>>();
-    let type_param_defaults = parameters
-        .iter()
-        .map(|parameter| match parameter.kind {
-            ty::GenericParamDefKind::Type { has_default: true, .. } => Some(display(
-                tcx.type_of(parameter.def_id)
-                    .instantiate_identity()
-                    .skip_normalization(),
-            )),
-            _ => None,
-        })
-        .collect();
+    let (type_params, type_param_defaults) = type_parameters(tcx, def);
     let methods = inherent_methods(tcx, tcx.inherent_impls(def), named);
     let adt = tcx.adt_def(def);
     let fields = if adt.is_struct() {
@@ -594,7 +575,7 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         Vec::new()
     };
     RustTypeInfo {
-        type_params: parameters.iter().map(|parameter| parameter.name.to_string()).collect(),
+        type_params,
         type_param_defaults,
         methods,
         implemented_traits: trait_impls(tcx, tcx.type_of(def).instantiate_identity().skip_normalization(), named),
@@ -602,6 +583,46 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         variants,
         ..RustTypeInfo::default()
     }
+}
+
+/// Retain alias binders and candidate implementations on its actual target. An alias introduces no new native
+/// owner; the checker expands it for selection while executable storage may keep the public alias identity.
+fn alias_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
+    let target = tcx.type_of(def).instantiate_identity().skip_normalization();
+    note_named(target, named);
+    let (type_params, type_param_defaults) = type_parameters(tcx, def);
+    RustTypeInfo {
+        type_params,
+        type_param_defaults,
+        alias_target: Some(display(target)),
+        implemented_traits: trait_impls(tcx, target, named),
+        ..RustTypeInfo::default()
+    }
+}
+
+/// Extract type binders and their declaration-order defaults identically for nominal owners and aliases.
+fn type_parameters(tcx: TyCtxt<'_>, def: DefId) -> (Vec<String>, Vec<Option<String>>) {
+    let generics = tcx.generics_of(def);
+    let parameters = generics
+        .own_params
+        .iter()
+        .filter(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Type { .. }))
+        .collect::<Vec<_>>();
+    let type_param_defaults = parameters
+        .iter()
+        .map(|parameter| match parameter.kind {
+            ty::GenericParamDefKind::Type { has_default: true, .. } => Some(display(
+                tcx.type_of(parameter.def_id)
+                    .instantiate_identity()
+                    .skip_normalization(),
+            )),
+            _ => None,
+        })
+        .collect();
+    (
+        parameters.iter().map(|parameter| parameter.name.to_string()).collect(),
+        type_param_defaults,
+    )
 }
 
 /// Read public inherent methods through one extractor for nominal and primitive impl owners. Impl binders and Self
@@ -935,13 +956,21 @@ fn receiver_display(input: Ty<'_>) -> String {
     }
 }
 
-/// The nominal types a signature names, for the next extraction step.
+/// Retain the nominal types and dynamic trait principals a signature names for the next extraction step.
 fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
     for argument in ty.walk() {
-        if let Some(inner) = argument.as_type()
-            && let ty::Adt(adt, _) = inner.kind()
-        {
-            named.insert(adt.did());
+        if let Some(inner) = argument.as_type() {
+            match inner.kind() {
+                ty::Adt(adt, _) => {
+                    named.insert(adt.did());
+                }
+                ty::Dynamic(predicates, _) => {
+                    if let Some(principal) = predicates.principal() {
+                        named.insert(principal.skip_binder().def_id);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

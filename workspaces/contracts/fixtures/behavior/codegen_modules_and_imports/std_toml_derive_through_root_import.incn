@@ -1,4 +1,4 @@
-# behavior: the std toml derive bundle reached through a std root import, plain and aliased, lets a model serialize to TOML (#1434)
+# behavior: root TOML imports preserve derived model round trips and table snapshot entries (#1434, #2256)
 # expect-stdout:
 #   demo
 #   name = "demo"
@@ -25,7 +25,17 @@ def show(encoded: Result[str, toml.TomlError]) -> str:
 
 
 def main() -> None:
+    """Round-trip source models and inspect a table snapshot while preserving the serialized output contract."""
     project = Project(name="demo")
     println(project.name)
     println(show(toml.serialize(project)))
     println(show(manifest.serialize(Other(name="other"))))
+    match toml.deserialize[Project]("name = \"demo\""):
+        Ok(decoded) => assert decoded.name == "demo"
+        Err(_error) => assert false
+    match manifest.parse("name = \"demo\""):
+        Ok(document) =>
+            match document.as_table():
+                Ok(table) => assert len(table) == 1
+                Err(_error) => assert false
+        Err(_error) => assert false

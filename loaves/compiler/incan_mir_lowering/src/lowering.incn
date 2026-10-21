@@ -652,9 +652,23 @@ def reference_value_read(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Read an explicitly reference-typed slot as its reference, never its referent. Shared references can copy;
-    exclusive references transfer only under a checked Move. Borrowed storage for source receivers is ineligible."""
+    """Read an explicitly reference-typed slot or structural tuple field as its reference, never its referent.
+    Shared references can copy; exclusive references transfer only under a checked Move. Borrowed storage for
+    source receivers is ineligible."""
     if len(value.projection) != 0:
+        for projection in value.projection:
+            match projection:
+                PlaceElem.Field(name=_name, canonical=_canonical, structural=structural) =>
+                    if not structural:
+                        return Ok(None)
+                _ => return Ok(None)
+        target = scalar_place(builder, value, span)?
+        match place_type(builder.locals, target):
+            (PlanType.StrRef | PlanType.ScalarRef(_) | PlanType.ModelRef(_, _) | PlanType.SliceRef(_) | PlanType.StringRef | PlanType.EnumRef(_, _)) =>
+                if fact == OwnershipFact.Unknown or fact == OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR projected reference without a checked read")
+                return Ok(Some(read_place(target, false, span)))
+            _ => pass
         return Ok(None)
     match value.local_id():
         None => return Ok(None)
@@ -5230,8 +5244,8 @@ pub def call_argument_operand(
         text = display_operand(builder, value, span)?
         return Ok(read_place(text, true, span))
     match ty:
-        PlanType.ModelRef(_owner, _name) => return shared_model_argument(builder, value, ty, span)
-        PlanType.EnumRef(_owner, _name) => return shared_model_argument(builder, value, ty, span)
+        PlanType.ModelRef(_owner, _name) => return shared_nominal_argument(builder, value, ty, span)
+        PlanType.EnumRef(_owner, _name) => return shared_nominal_argument(builder, value, ty, span)
         PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
         PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
         PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
@@ -5242,7 +5256,7 @@ pub def call_argument_operand(
     return function_argument(builder, ty, coerced, span)
 
 
-def shared_model_argument(
+def shared_nominal_argument(
     mut builder: Builder,
     value: &RustOperand,
     ty: PlanType,
@@ -5271,10 +5285,13 @@ def shared_model_argument(
                 PlanType.Model(owner, name) =>
                     if ty != PlanType.ModelRef(owner, name):
                         return Err(f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}")
-                    reference = temporary(builder, ty, span)
-                    builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
-                    return Ok(read_place(reference, false, span))
+                PlanType.Enum(owner, name) =>
+                    if ty != PlanType.EnumRef(owner, name):
+                        return Err(f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}")
                 _ => return Err("unsupported Body IR shared receiver outside its nominal frame")
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+            return Ok(read_place(reference, false, span))
         _ => return Err("unsupported Body IR shared receiver without a place")
 
 

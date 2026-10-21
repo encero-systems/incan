@@ -34,6 +34,8 @@ Rust interop compiles on the direct route from checked facts alone. The facts co
 
 Source models and newtypes may derive builtin traits or a dependency's inspected exported derive macro through `@rust.derive` or its `rust.module` facade. Rustc expands the selected macro on the actual declaration against the exact dependency artifacts; macro names grant no predicted layout, methods, or trait implementations.
 
+Native trait objects retain their principal identity, arguments, and declaration-ordered associated equalities. Rustc verifies object safety; auto traits require their own retained facts.
+
 ## Consequences
 
 - Programs using `from rust::... import ...` compile on the only remaining route, beyond the stdlib facets and Incan-declared externs.

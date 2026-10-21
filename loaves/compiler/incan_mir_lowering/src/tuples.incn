@@ -89,6 +89,9 @@ pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, s
         PlanType.Bool => return Ok(TupleElement.Bool)
         PlanType.Unit => return Ok(TupleElement.Unit)
         PlanType.String => return Ok(TupleElement.String)
+        PlanType.StrRef => return Ok(TupleElement.Reference(false, [PlanType.NativeStr]))
+        PlanType.StringRef => return Ok(TupleElement.Reference(false, [PlanType.String]))
+        PlanType.StringMutRef => return Ok(TupleElement.Reference(true, [PlanType.String]))
         PlanType.FrozenStr => return Ok(TupleElement.FrozenStr)
         PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
         PlanType.Model(owner, name) => return Ok(TupleElement.Model(owner, name))
@@ -99,9 +102,11 @@ pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, s
         PlanType.ScalarMutRef(elements) => return Ok(TupleElement.Reference(true, elements))
         PlanType.ModelRef(index, name) => return Ok(TupleElement.ModelRef(index, name))
         PlanType.ModelMutRef(index, name) => return Ok(TupleElement.ModelMutRef(index, name))
+        PlanType.EnumRef(index, name) => return Ok(TupleElement.Reference(false, [PlanType.Enum(index, name)]))
+        PlanType.EnumMutRef(index, name) => return Ok(TupleElement.Reference(true, [PlanType.Enum(index, name)]))
         PlanType.SliceRef(elements) => return Ok(TupleElement.SliceRef(elements))
         PlanType.SliceMutRef(elements) => return Ok(TupleElement.SliceMutRef(elements))
-        _ => return Err(f"unsupported Body IR tuple element type {type_name(source)}")
+        _ => return Err(f"unsupported Body IR tuple element type {type_name(source)} with carrier {ty:?}")
 
 
 pub def is_tuple_type(ty: PlanType) -> bool:

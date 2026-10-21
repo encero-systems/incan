@@ -146,6 +146,13 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
         Ok(def) => def,
         Err(error) => refuse(tcx, error),
     };
+    if tcx.def_kind(native) == rustc_hir::def::DefKind::Trait {
+        let object = match types::native_trait_object(tcx, native, types) {
+            Ok(object) => object,
+            Err(error) => refuse(tcx, error),
+        };
+        return rustc_middle::ty::EarlyBinder::bind(tcx, object);
+    }
     let arguments = match callees::arguments(tcx, native, types) {
         Ok(arguments) => arguments,
         Err(error) => refuse(tcx, error),
@@ -553,6 +560,14 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         reason: reason.into(),
     };
     let def = library_model_item(tcx, model)?;
+    if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
+        types::native_trait_object(tcx, def, &model.library_type_arguments)?;
+        return if model.fields.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid("native trait object grants no field layout"))
+        };
+    }
     if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
         return Err(invalid(
             "unsupported stdlib layout type argument count differs from metadata",
@@ -590,7 +605,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
 }
 
 /// Select the public carrier kind once for every layout and generic-profile validation pass.
-/// Only an opaque declaration admits enums and type aliases; any retained fields require a struct.
+/// Only an opaque declaration admits enums, aliases and trait principals; retained fields require a struct.
 fn library_model_item(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<DefId, PlanError> {
     if model.fields.is_empty() {
         return callees::native_type_item(tcx, &model.library_item);
@@ -787,6 +802,10 @@ pub fn compile(
 fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
     for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
         let def = library_model_item(tcx, model)?;
+        if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
+            types::native_trait_object(tcx, def, &model.library_type_arguments)?;
+            continue;
+        }
         let generics = tcx.generics_of(def);
         let reason = if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
             Some("stdlib layout type argument count differs from metadata")
@@ -813,6 +832,9 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
             continue;
         }
         let def = library_model_item(tcx, model)?;
+        if tcx.def_kind(def) == rustc_hir::def::DefKind::Trait {
+            continue;
+        }
         let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
         callees::verify_bounds(tcx, def, arguments)?;
     }

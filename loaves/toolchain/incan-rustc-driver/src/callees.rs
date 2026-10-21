@@ -146,12 +146,13 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
 }
 
 /// Resolve an opaque carrier's public type item without granting field or variant projections. An alias keeps its
-/// own metadata parameters; field-bearing layout queries use [`library_item`] to select the underlying ADT instead.
+/// own metadata parameters; field-bearing queries use [`library_item`] to select the underlying ADT. A trait principal
+/// requires the native object constructor rather than a nominal `type_of` query and grants no field projection.
 pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     public_item(
         tcx,
         path,
-        &[DefKind::Struct, DefKind::Enum, DefKind::TyAlias],
+        &[DefKind::Struct, DefKind::Enum, DefKind::TyAlias, DefKind::Trait],
         "Loaf layout names no public type",
     )
 }

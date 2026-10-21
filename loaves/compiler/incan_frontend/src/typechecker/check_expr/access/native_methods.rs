@@ -40,6 +40,13 @@ impl TypeChecker {
         match &metadata.kind {
             RustItemKind::Type(owner) => self.resolve_native_type_method(call, &metadata, owner, preserves_shape),
             RustItemKind::Module(_) => self.resolve_native_module_function(call),
+            RustItemKind::Trait(trait_info) if call.receiver_binding.is_none() => self.resolve_rust_object_method(
+                RustPathMethodCall {
+                    receiver_metadata: Some(&metadata),
+                    ..call
+                },
+                trait_info,
+            ),
             RustItemKind::Trait(trait_info) if call.receiver_binding.is_some() => {
                 Some(self.resolve_rust_trait_qualified_call(RustTraitQualifiedCall {
                     rust_path: call.rust_path,
@@ -49,6 +56,7 @@ impl TypeChecker {
                     args: call.args,
                     arg_types: call.arg_types,
                     preserves_lookup_arg_shape: preserves_shape,
+                    expected_return_ty: call.expected_return_ty,
                     span: call.span,
                 }))
             }
@@ -240,6 +248,13 @@ impl TypeChecker {
             &result,
             call.span,
         );
+        let result = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&(call.span.start, call.span.end))
+            .map(|checked| self.rust_source_result_type(&checked.return_type, &result))
+            .unwrap_or(result);
         Some(result)
     }
 
