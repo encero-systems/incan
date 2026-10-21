@@ -450,6 +450,9 @@ impl rustc_driver::Callbacks for Callbacks {
         if let Err(error) = crate::cloneable_closures::verify_captures(tcx, &self.plan) {
             refuse(tcx, error);
         }
+        if let Err(error) = crate::statics::verify_method_results(tcx, &self.plan) {
+            refuse(tcx, error);
+        }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
                 Ok(def) => def,
