@@ -11,15 +11,15 @@ use std::path::{Path, PathBuf};
 
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
-    RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitBound,
-    RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
+    RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustPayloadCarrier, RustTraitAssoc,
+    RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_interface::interface;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::Input;
-use rustc_span::FileName;
+use rustc_span::{FileName, sym};
 
 /// What one extraction reads: what to describe, and the crates and directories that resolve it.
 pub struct RustFactsRequest<'a> {
@@ -423,10 +423,14 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
     let fields = if adt.is_struct() {
         adt.all_fields()
             .filter(|field| field.vis.is_public())
-            .map(|field| RustFieldInfo {
-                name: field.name.to_string(),
-                type_display: display(tcx.type_of(field.did).instantiate_identity().skip_normalization()),
-                type_shape: RustTypeShape::Unknown,
+            .map(|field| {
+                let ty = tcx.type_of(field.did).instantiate_identity().skip_normalization();
+                note_named(ty, named);
+                RustFieldInfo {
+                    name: field.name.to_string(),
+                    type_display: display(ty),
+                    type_shape: type_shape(tcx, ty),
+                }
             })
             .collect()
     } else {
@@ -435,10 +439,26 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
     let variants = if adt.is_enum() {
         adt.variants()
             .iter()
-            .map(|variant| RustVariantInfo {
-                name: variant.name.to_string(),
-                fields: variant.fields.iter().map(|_| RustTypeShape::Unknown).collect(),
-                field_carriers: Vec::new(),
+            .map(|variant| {
+                let (fields, field_carriers) = variant
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let ty = tcx.type_of(field.did).instantiate_identity().skip_normalization();
+                        note_named(ty, named);
+                        match ty.kind() {
+                            ty::Adt(owner, args) if owner.is_box() => {
+                                (type_shape(tcx, args.type_at(0)), RustPayloadCarrier::Boxed)
+                            }
+                            _ => (type_shape(tcx, ty), RustPayloadCarrier::Direct),
+                        }
+                    })
+                    .unzip();
+                RustVariantInfo {
+                    name: variant.name.to_string(),
+                    fields,
+                    field_carriers,
+                }
             })
             .collect()
     } else {
@@ -452,6 +472,46 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         fields,
         variants,
         ..RustTypeInfo::default()
+    }
+}
+
+/// Project a metadata-selected field type into the checker's structural carrier without parsing its display.
+/// Nominal paths and type parameters stay distinct; references retain the payload's semantic type for matching.
+/// Sized primitives keep their native names; only Rust's i64 and f64 use the Incan scalar shapes.
+fn type_shape<'tcx>(tcx: TyCtxt<'tcx>, field: Ty<'tcx>) -> RustTypeShape {
+    match field.kind() {
+        ty::Never => RustTypeShape::Never,
+        ty::Bool => RustTypeShape::Bool,
+        ty::Int(ty::IntTy::I64) => RustTypeShape::Int,
+        ty::Float(ty::FloatTy::F64) => RustTypeShape::Float,
+        ty::Int(_) | ty::Uint(_) | ty::Float(_) => RustTypeShape::RustPath {
+            path: display(field),
+            args: Vec::new(),
+        },
+        ty::Str => RustTypeShape::Str,
+        ty::Param(parameter) => RustTypeShape::TypeParam(parameter.name.to_string()),
+        ty::Ref(_, inner, _) => RustTypeShape::Ref(Box::new(type_shape(tcx, *inner))),
+        ty::Tuple(elements) if elements.is_empty() => RustTypeShape::Unit,
+        ty::Tuple(elements) => RustTypeShape::Tuple(elements.iter().map(|element| type_shape(tcx, element)).collect()),
+        ty::Slice(element) if *element == tcx.types.u8 => RustTypeShape::Bytes,
+        ty::Adt(owner, _) if Some(owner.did()) == tcx.lang_items().string() => RustTypeShape::Str,
+        ty::Adt(owner, arguments) if Some(owner.did()) == tcx.lang_items().option_type() => {
+            RustTypeShape::Option(Box::new(type_shape(tcx, arguments.type_at(0))))
+        }
+        ty::Adt(owner, arguments) if tcx.is_diagnostic_item(sym::Result, owner.did()) => RustTypeShape::Result(
+            Box::new(type_shape(tcx, arguments.type_at(0))),
+            Box::new(type_shape(tcx, arguments.type_at(1))),
+        ),
+        ty::Adt(owner, arguments)
+            if tcx.is_diagnostic_item(sym::Vec, owner.did()) && arguments.type_at(0) == tcx.types.u8 =>
+        {
+            RustTypeShape::Bytes
+        }
+        ty::Adt(owner, arguments) => RustTypeShape::RustPath {
+            path: visible_path(tcx, owner.did()),
+            args: arguments.types().map(|argument| type_shape(tcx, argument)).collect(),
+        },
+        _ => RustTypeShape::Unknown,
     }
 }
 

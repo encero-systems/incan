@@ -122,14 +122,29 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
 /// kind at the end. A class with field defaults compiles a constructor function under its own name beside its struct,
 /// one in the value namespace and one in the type namespace, so a name alone does not select the layout.
 pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId, PlanError> {
+    let reason = match kind {
+        DefKind::Enum => "Loaf layout names no public enum",
+        DefKind::Const { .. } => "Rust value names no public constant",
+        _ => "Loaf layout names no public struct",
+    };
+    public_item(tcx, path, &[kind], reason)
+}
+
+/// Resolve an opaque carrier's public type item without granting any field or variant projections.
+pub fn library_type(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    public_item(
+        tcx,
+        path,
+        &[DefKind::Struct, DefKind::Enum, DefKind::TyAlias],
+        "Loaf layout names no public type",
+    )
+}
+
+/// Walk one public module path, selecting a final item only from the caller's admitted namespace kinds.
+fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> Result<DefId, PlanError> {
     let unknown = || PlanError::Invalid {
         function: path.into(),
-        reason: match kind {
-            DefKind::Enum => "Loaf layout names no public enum",
-            DefKind::Const { .. } => "Rust value names no public constant",
-            _ => "Loaf layout names no public struct",
-        }
-        .into(),
+        reason: reason.into(),
     };
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(unknown)?;
@@ -138,16 +153,24 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
         if tcx.def_kind(current) != DefKind::Mod {
             return Err(unknown());
         }
-        let wanted = if segments.peek().is_some() { DefKind::Mod } else { kind };
+        let last = segments.peek().is_none();
         current = tcx
             .module_children(current)
             .iter()
             .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
             .filter_map(|child| child.res.opt_def_id())
-            .find_map(|child| layout_definition(tcx, child, wanted))
+            .find_map(|child| {
+                if !last {
+                    return (tcx.def_kind(child) == DefKind::Mod).then_some(child);
+                }
+                if kinds.contains(&tcx.def_kind(child)) {
+                    return Some(child);
+                }
+                kinds.iter().find_map(|kind| layout_definition(tcx, child, *kind))
+            })
             .ok_or_else(unknown)?;
     }
-    if tcx.def_kind(current) != kind {
+    if !kinds.contains(&tcx.def_kind(current)) {
         return Err(unknown());
     }
     Ok(current)
