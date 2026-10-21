@@ -82,10 +82,16 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
     """
     Hand the eagerly evaluated first source to the chain as an owned generator.
 
-    A list yields its snapshot, and builtin `zip` over lists yields its snapshot's pairs.
+    Lists and sets yield their owned snapshots, and builtin `zip` over lists yields its snapshot's pairs.
     """
     ty = value_type(builder, value)?
     match ty:
+        PlanType.Set(leaf) =>
+            result = PlanType.Generator(leaf, 0)
+            output = temporary(builder, result, span)
+            generator_runtime_call(builder, "set_generator", generator_element(leaf, 0), [ty], result, [value], output, span)
+            builder.owned.append(output.local)
+            return Ok(read_place(output, true, span))
         PlanType.ZipIterator(left, right) =>
             result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
             output = temporary(builder, result, span)

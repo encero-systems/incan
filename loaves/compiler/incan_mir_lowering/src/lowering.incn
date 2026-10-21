@@ -2612,10 +2612,13 @@ def lower_later_clause(
 
 
 def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
-    """Snapshot an owned list or zip source per item, or move a generator the step built."""
+    """Snapshot a list, set or zip source per item, or move a generator the step built."""
     place = plan_place(slot, span)
     ty = builder.locals[slot].ty
     match ty:
+        PlanType.Set(_leaf) =>
+            snapshot = cloned_collection(builder, place, span)?
+            return source_generator(builder, snapshot, span)
         PlanType.ZipIterator(_left, _right) =>
             snapshot = clone_zip(builder, place, span)?
             return source_generator(builder, snapshot, span)
