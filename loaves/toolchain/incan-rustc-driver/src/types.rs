@@ -74,7 +74,8 @@ pub(crate) fn native_trait_object<'tcx>(
     Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_erased))
 }
 
-/// Translate admitted scalar, model, collection, and callable types to their canonical native representations.
+/// Translate admitted scalar, model, collection, callable, and uninhabited types to their canonical native
+/// representations.
 ///
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
