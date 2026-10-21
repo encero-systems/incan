@@ -167,7 +167,8 @@ fn lower_declaration_statements(
 /// never joins the module's bodies; a consumer runs it at most once, where legacy initializes the static.
 /// A sole local registry with checked literal method descriptions retains its registrations on this same value before
 /// publication. No intermediate source computation can observe that bounded profile, so initialization remains
-/// once-only.
+/// once-only. Scope cleanup may follow the terminal return; registrations precede that return without discarding
+/// its trailing drop facts.
 pub(super) fn lower_static_initializer_body(
     program: &ast::Program,
     storage: &ast::StaticDecl,
@@ -198,16 +199,18 @@ pub(super) fn lower_static_initializer_body(
         storage.value.span,
     )];
     let (mut stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
-    if let Some(bir::Statement {
-        kind: bir::StatementKind::Return { value: Some(value) },
-        ..
-    }) = stmts.last()
+    let terminal = stmts
+        .iter()
+        .rposition(|statement| !matches!(statement.kind, bir::StatementKind::Drop { .. }));
+    if let Some(index) = terminal
+        && let bir::StatementKind::Return { value: Some(value) } = &stmts[index].kind
     {
         let value = value.clone();
-        if let Some(returned) = stmts.pop() {
-            registry_descriptions::append_registrations(&mut builder, program, storage, &value, root_scope, &mut stmts);
-            stmts.push(returned);
-        }
+        let returned = stmts.remove(index);
+        let mut cleanup = stmts.split_off(index);
+        registry_descriptions::append_registrations(&mut builder, program, storage, &value, root_scope, &mut stmts);
+        stmts.push(returned);
+        stmts.append(&mut cleanup);
     }
     finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
 }

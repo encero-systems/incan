@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use super::metadata::RustItemMetadata;
 
-/// The cache layout's version; a reader refuses any other.
-pub const RUST_ABI_CACHE_VERSION: u32 = 6;
+/// The cache layout's version; a reader refuses any other. Version 7 combines exact native enum payload templates
+/// with the integrated trait implementation and supertrait predicate records.
+pub const RUST_ABI_CACHE_VERSION: u32 = 7;
 
 /// One item's payload range within the cache.
 #[derive(Serialize, Deserialize)]
