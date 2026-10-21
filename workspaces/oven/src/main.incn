@@ -22,8 +22,7 @@ from home import TOOLCHAIN, dependency_artifact_dir
 from unit_rust import describe_native
 from incan_units import check_unit, compile_unit, crate_name, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
-from toolchain import load_toolchain
-from std.environ import get_or
+from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths
 from testing import run_tests
 
@@ -231,7 +230,7 @@ def build_project(options: Options) -> Result[list[str], str]:
     request = RustBuild(
         project=options.path,
         profile=options.profile,
-        rustc=get_or("RUSTC", Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0),
+        rustc=rust_compiler(toolchain),
         registry=registry,
         features=options.request.features,
         default_features=options.request.default_features,

@@ -39,6 +39,11 @@ pub model Toolchain:
     pub registry_units: str
 
 
+pub def rust_compiler(toolchain: Toolchain) -> str:
+    """Select the installed toolchain's Rust compiler for every Rust facet operation."""
+    return Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
+
+
 pub def load_toolchain() -> Result[Toolchain, str]:
     """The description of this Oven's toolchain, from its home directory."""
     path = home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("toolchain.json")
