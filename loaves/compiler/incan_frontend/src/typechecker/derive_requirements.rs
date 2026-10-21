@@ -14,10 +14,10 @@
 //!   method whose body hashes its parameter, a requirement inferred into its signature by `hash_key_inference`
 //!   (`INCAN-T0114`, #1758).
 //!
-//! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type, a
-//! `rusttype`, a runtime type the registry records nothing for, and a derive of a type declared in another module that
-//! its manifest does not list, since a manifest may not list every derive. The refusals never refuse on an unknown
-//! answer.
+//! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type without
+//! an unconditional native Clone proof, a `rusttype`, a runtime type the registry records nothing for, and a derive of
+//! a type declared in another module that its manifest does not list, since a manifest may not list every derive. The
+//! refusals never refuse on an unknown answer.
 
 use std::collections::HashMap;
 
@@ -32,6 +32,7 @@ use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceDeriveSupport, SurfaceTypeId};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
 use incan_semantics_core::CanonicalSymbolId;
@@ -247,15 +248,38 @@ impl TypeChecker {
                 }
                 self.declared_derive_support(ty, name, args, derive, assumed, visiting)
             }
+            ResolvedType::RustPath(_) => self.native_derive_support(ty, derive),
             ResolvedType::Never
             | ResolvedType::Unknown
             | ResolvedType::CallSiteInfer
-            | ResolvedType::RustPath(_)
             | ResolvedType::Function(_, _)
             | ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
             | ResolvedType::TypeToken(_)
             | ResolvedType::SelfType => DeriveSupport::Unknown,
+        }
+    }
+
+    /// Admit native Clone only from a complete metadata record's unconditional implementation. Conditional templates
+    /// and absent facts remain unknown; a type name or the presence of a similarly named method is never proof.
+    fn native_derive_support(&self, ty: &ResolvedType, derive: DeriveId) -> DeriveSupport {
+        if derive != DeriveId::Clone {
+            return DeriveSupport::Unknown;
+        }
+        let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
+            return DeriveSupport::Unknown;
+        };
+        let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
+            return DeriveSupport::Unknown;
+        };
+        let proven = builtin_traits::rust_paths(TraitId::Clone).iter().any(|path| {
+            let definition = self.rust_definition_for_path(path);
+            Self::rust_type_metadata_implements_trait(&metadata, path, definition.as_deref())
+        });
+        if proven {
+            DeriveSupport::Supported
+        } else {
+            DeriveSupport::Unknown
         }
     }
 

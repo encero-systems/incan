@@ -95,9 +95,16 @@ pub(in crate::typechecker) enum TupleShape {
 /// underdetermined, and `T` can be instantiated as `int`. Incan's bounds are trait-based, so no caller can promise
 /// a tuple shape. This does not affect `tuple[K, V]`, whose *elements* are type variables but whose shape is
 /// known; that takes the [`TupleShape::Tuple`] arm above.
+/// A shared tuple reference binds a shared reference to each component, preserving the native iterator's borrow.
 pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleShape {
     match ty {
         ResolvedType::Tuple(types) => TupleShape::Tuple(types.clone()),
+        ResolvedType::Ref(inner) => match classify_tuple_shape(inner) {
+            TupleShape::Tuple(types) => {
+                TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::Ref(Box::new(ty))).collect())
+            }
+            _ => TupleShape::NotTuple,
+        },
         ResolvedType::Generic(name, args)
             if matches!(collection_type_id(name.as_str()), Some(CollectionTypeId::Tuple)) =>
         {

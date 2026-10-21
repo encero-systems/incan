@@ -1,0 +1,13 @@
+# behavior: a Rust value with a proven Clone implementation can be copied into a list
+# expect-stdout:
+#   1
+
+from rust::std::time import Duration
+
+
+def main() -> None:
+    """Append a native Clone value while retaining its source binding."""
+    value = Duration.from_secs(1)
+    mut values: list[Duration] = []
+    values.append(value)
+    println(len(values))
