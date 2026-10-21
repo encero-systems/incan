@@ -986,10 +986,10 @@ fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
     }
 }
 
-/// A trait's associated functions and their signatures.
+/// Retain a trait's bounds and associated signatures in the same named-dependency closure as ordinary functions.
 fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTraitInfo {
     RustTraitInfo {
-        bounds: trait_bounds(tcx, def),
+        bounds: trait_bounds(tcx, def, named),
         implementations: trait_implementations(tcx, def, named),
         is_in_prelude: resolve(tcx, "std::prelude::rust_2024", false).is_some_and(|prelude| {
             tcx.module_children(prelude)
