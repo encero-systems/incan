@@ -2324,6 +2324,12 @@ impl TypeChecker {
         if !matches!(elem_ty, ResolvedType::Unknown) || matches!(iter_ty, ResolvedType::Unknown) {
             return elem_ty;
         }
+        if let Some(item) = self.retain_rust_iteration_hooks(iter_expr, iter_ty) {
+            if let Expr::Ident(name) = &iter_expr.node {
+                self.consumed_iterator_bindings.insert(name.clone(), iter_expr.span);
+            }
+            return item;
+        }
         if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::Iterator", "Item") {
             return item;
         }

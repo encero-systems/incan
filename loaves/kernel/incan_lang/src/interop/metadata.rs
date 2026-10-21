@@ -1907,6 +1907,7 @@ const STD_REEXPORT_ROOTS: &[(&str, &str)] = &[
     ("std::string::", "alloc::string::"),
     ("std::rc::", "alloc::rc::"),
     ("std::cell::", "core::cell::"),
+    ("std::iter::", "core::iter::"),
     // Only the `alloc`-defined items of `std::sync`; `Mutex`, `RwLock`, and friends are `std`'s own.
     ("std::sync::Arc", "alloc::sync::Arc"),
     ("std::sync::Weak", "alloc::sync::Weak"),
