@@ -32,6 +32,14 @@ rustc's internal interface changes between releases. Incan already pins its Rust
 
 The lowering belongs in the compiler ring; the driver executable belongs in the toolchain ring. Oven locates it through the compiler's provider facet.
 
+### Driver identity
+
+Before checking a compilation unit, the driver refuses an inherited `RUSTC_BOOTSTRAP`, a sysroot other than its canonical build-bound sysroot, a compiler whose complete `rustc -vV` identity differs from its pinned build identity, or a loaded `rustc_driver` library whose canonical path differs from the build-bound library within that sysroot. The native adapter receives this proven identity; it does not repeat startup verification.
+
+Library byte equivalence is established by SHA-256 against the build-bound digest. An installed driver may retain that proof in its toolchain home's own small `driver-library.proof` file, beside `toolchain.json`. Reuse requires an exact match of the library's canonical path, device, inode, size, modification time with nanosecond precision, change time with nanosecond precision, and expected digest. Any changed key requires hashing again. The file descriptor and path must retain their state across verification, and only a matching digest permits atomic publication of a complete private proof. A missing, malformed or unreadable proof causes hashing; an unwritable proof store does not prevent compilation after successful hashing. Uninstalled drivers hash without retaining a proof.
+
+This optimization trusts the toolchain home as installation state, with the same owner authority as the driver executable. It does not attest against forged proof files or forged filesystem metadata. Sysroot, compiler identity, loaded-library path and bootstrap checks remain mandatory on every compilation invocation, including a library-proof hit.
+
 ## Consequences
 
 The compiler's dependence on rustc's unstable interface is concentrated in one adapter. Each Rust upgrade requires verifying and, where necessary, updating that adapter. The front end remains usable independently for checking and editor analysis.

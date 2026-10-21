@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use sha2::{Digest, Sha256};
+mod library_proof;
 
 /// Startup refusals distinguish missing build evidence from a mismatched runtime.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +31,8 @@ pub struct DriverIdentity {
     pub toolchain: String,
     /// Host target reported by that exact pinned compiler.
     pub target: String,
+    /// Prevent other modules from constructing an identity without verification.
+    _verified: (),
 }
 
 /// Dynamic loader metadata for the library owning the embedded rustc entry point (Unix ABI).
@@ -88,6 +90,8 @@ fn loaded_library() -> Result<PathBuf, IdentityError> {
 /// These values must be recorded in the Oven unit identity and supplied as declared compile-time environment;
 /// an arbitrary ambient path or a matching version label alone cannot authorize the driver.
 pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::verify_identity").entered();
     if std::env::var_os("RUSTC_BOOTSTRAP").is_some() {
         return Err(IdentityError::Bootstrap);
     }
@@ -127,9 +131,11 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
             "the process loaded a different rustc_driver shared library".into(),
         ));
     }
-    if hex::encode(Sha256::digest(fs::read(&library)?)) != built_digest {
+    let proof = proof_path();
+    if !library_proof::verify(&library, built_digest, proof.as_deref())? {
         return Err(IdentityError::Mismatch(
-            "rustc_driver shared-library bytes differ from the build identity".into(),
+            "rustc_driver shared-library bytes differ from the build identity or its file state changed during verification"
+                .into(),
         ));
     }
     let target = compiler
@@ -140,5 +146,18 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
         sysroot: root,
         toolchain: compiler.into_owned(),
         target,
+        _verified: (),
     })
+}
+
+/// Keep the optional proof beside the installed toolchain manifest, independent of ambient home overrides.
+/// Uninstalled binaries retain full verification without persisting a proof in a build directory.
+fn proof_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let bin = executable.parent()?;
+    let home = bin.parent()?;
+    if bin.file_name()? != "bin" || !home.join("toolchain.json").is_file() {
+        return None;
+    }
+    Some(home.join("driver-library.proof"))
 }
