@@ -1260,7 +1260,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let protocol = self.type_info.protocol_iteration(iter_expr.span).cloned();
         let fallible = protocol.as_ref().is_some_and(|p| p.fallible_error_type.is_some());
         // The private hook table also covers opaque SDK Iterator returns whose legacy view stays builtin.
-        let custom = protocol.is_some()
+        let custom = self
+            .type_info
+            .rust
+            .iteration_hooks
+            .contains_key(&(iter_expr.span.start, iter_expr.span.end))
+            || protocol.is_some()
             || self
                 .type_info
                 .protocols

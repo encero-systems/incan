@@ -21,11 +21,24 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
         }
     }
     let mut calls = Vec::new();
-    let mut checked_calls = facts.rust.checked_calls.iter().collect::<Vec<_>>();
-    checked_calls.sort_by_key(|(span, _)| **span);
+    let mut checked_calls = facts
+        .rust
+        .checked_calls
+        .iter()
+        .map(|(span, call)| (*span, call))
+        .chain(
+            facts
+                .rust
+                .iteration_hooks
+                .iter()
+                .flat_map(|(span, hooks)| [(*span, &hooks.iter), (*span, &hooks.next)]),
+        )
+        .collect::<Vec<_>>();
+    checked_calls.sort_by_key(|(span, _)| *span);
     for call in checked_calls
         .into_iter()
-        .flat_map(|(_, call)| call.receiver_adjustments.iter().chain(std::iter::once(call)))
+        .map(|(_, call)| call)
+        .flat_map(|call| call.receiver_adjustments.iter().chain(std::iter::once(call)))
     {
         let Some(canonical) = bir::rust_item_identity(&call.path) else {
             continue;
@@ -101,7 +114,7 @@ impl BodyBuilder<'_, '_> {
     }
 
     /// Emit an already bound call through the shared canonical external target; no method resolution occurs here.
-    fn emit_checked_rust_call(
+    pub(super) fn emit_checked_rust_call(
         &mut self,
         call: &RustCheckedCall,
         operands: Vec<bir::ArgumentElement>,

@@ -2,7 +2,7 @@
 
 use super::args::DeclaredSlot;
 use super::primitives::{collection_member_types, result_error_type};
-use super::{BodyBuilder, HirSourceSpan, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, ast, bir};
+use super::{BodyBuilder, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir};
 use crate::symbols::canonical_builtin_constructor_identity;
 use crate::typechecker::BodyIrProtocolCallInfo;
 use incan_lang::lang::surface::constructors::ConstructorId;
@@ -24,6 +24,23 @@ impl BodyBuilder<'_, '_> {
     ) -> Result<(bir::LocalId, usize, bool), String> {
         let iterable = self.lower_expr_to_place(expression, scope, out);
         let initializer = out.len();
+        if let Some(hooks) = self
+            .type_info
+            .rust
+            .iteration_hooks
+            .get(&(protocol_span.start, protocol_span.end))
+            .cloned()
+        {
+            let result = self.native_iteration_call(&hooks.iter, iterable, scope, span, out)?;
+            return match result {
+                bir::Operand::Place(read) => read
+                    .place
+                    .local_id()
+                    .map(|local| (local, initializer, false))
+                    .ok_or_else(|| "native iteration initializer without a local result".into()),
+                _ => Err("native iteration initializer without a place result".into()),
+            };
+        }
         if custom {
             let hooks = self
                 .type_info
@@ -62,6 +79,39 @@ impl BodyBuilder<'_, '_> {
             span,
         });
         Ok((iterator, initializer, taking))
+    }
+
+    /// Emit a retained native hook against the owned iteration frame, preserving its exact receiver mode.
+    fn native_iteration_call(
+        &mut self,
+        call: &crate::typechecker::RustCheckedCall,
+        receiver: bir::Place,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        let parameter = call
+            .parameters
+            .first()
+            .ok_or("native iteration hook without a receiver")?;
+        let fact = match parameter.ty {
+            crate::symbols::ResolvedType::RefMut(_) => bir::OwnershipFact::MutBorrow,
+            crate::symbols::ResolvedType::Ref(_) => bir::OwnershipFact::Borrow,
+            _ => bir::OwnershipFact::Move,
+        };
+        self.emit_checked_rust_call(
+            call,
+            vec![bir::ArgumentElement::One(bir::Operand::place(
+                receiver,
+                fact,
+                fact == bir::OwnershipFact::Move,
+            ))],
+            bir::ArgumentBinding::resolved_positional(1),
+            ast::Span::new(span.start, span.end),
+            scope,
+            out,
+        )
+        .ok_or_else(|| "native iteration hook without a canonical identity".into())
     }
 
     /// Emit one retained hook through the ordinary checked argument planner and canonical call contract.
@@ -133,15 +183,30 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Result<(), String> {
         // ---- Checked result carrier ----
-        let hook = self
+        let native = self
             .type_info
-            .protocols
-            .body_ir_iterations
+            .rust
+            .iteration_hooks
             .get(&(protocol_span.start, protocol_span.end))
-            .ok_or("iteration poll without retained checked hooks")?
-            .next
-            .clone();
-        let returned = self.checked_type(&hook.return_type);
+            .cloned();
+        let (returned, polled) = if let Some(hooks) = native {
+            self.native_enum_payload_bindings.insert(item);
+            let returned = self.checked_type(&hooks.next.return_type);
+            let polled = self.native_iteration_call(&hooks.next, bir::Place::from_local(iterator), scope, span, out)?;
+            (returned, polled)
+        } else {
+            let hook = self
+                .type_info
+                .protocols
+                .body_ir_iterations
+                .get(&(protocol_span.start, protocol_span.end))
+                .ok_or("iteration poll without retained checked hooks")?
+                .next
+                .clone();
+            let returned = self.checked_type(&hook.return_type);
+            let polled = self.checked_protocol_call(&hook, bir::Place::from_local(iterator), scope, span, out)?;
+            (returned, polled)
+        };
         let option_type = if fallible {
             match &returned {
                 IncanType::Generic { base, args } if base == "Result" && args.len() == 2 => &args[0],
@@ -155,7 +220,6 @@ impl BodyBuilder<'_, '_> {
         }
 
         // ---- Poll and preserve the error channel ----
-        let polled = self.checked_protocol_call(&hook, bir::Place::from_local(iterator), scope, span, out)?;
         let option = if fallible {
             self.propagate_iteration_poll(polled, &returned, scope, span, out)?
         } else {
@@ -163,12 +227,14 @@ impl BodyBuilder<'_, '_> {
         };
 
         // ---- Own the produced item or exit on exhaustion ----
+        let item_type = self.locals[item.index()].ty.clone();
+        let payload = self.new_temp(item_type, scope, span);
         let some = bir::Pattern::Enum {
             canonical: Some(canonical_builtin_constructor_identity(ConstructorId::Some)),
             name: "Option".into(),
             variant: "Some".into(),
             fields: vec![bir::Pattern::Var(bir::PatternBinding {
-                local: item,
+                local: payload,
                 fact: bir::OwnershipFact::Move,
                 last_use: true,
             })],
@@ -179,7 +245,7 @@ impl BodyBuilder<'_, '_> {
                 guard_stmts: Vec::new(),
                 guard: None,
                 body_stmts: Vec::new(),
-                result: bir::Operand::Constant(bir::Constant::Unit),
+                result: bir::Operand::place(bir::Place::from_local(payload), bir::OwnershipFact::Move, true),
             },
             bir::MatchArm {
                 pattern: bir::Pattern::Wildcard,
@@ -192,16 +258,18 @@ impl BodyBuilder<'_, '_> {
                 result: bir::Operand::Constant(bir::Constant::Unit),
             },
         ];
-        self.push_assign_temp(
-            bir::Rvalue::Match {
-                scrutinee: option,
-                arms,
+        // The match result transfers the arm-local payload into the loop item. Binding the loop item inside an arm
+        // would let ordinary arm cleanup drop it before the rest of the loop body reads it.
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(item),
+                rvalue: bir::Rvalue::Match {
+                    scrutinee: option,
+                    arms,
+                },
             },
-            IncanType::Primitive(IncanPrimitiveType::Unit),
-            scope,
             span,
-            out,
-        );
+        });
         Ok(())
     }
 

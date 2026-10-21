@@ -948,6 +948,8 @@ pub struct RustInteropArtifacts {
     /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
     /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
     pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
+    /// Closed native iteration calls selected from IntoIterator and Iterator facts at the iterable's span.
+    pub iteration_hooks: HashMap<(usize, usize), RustIterationHooks>,
     /// Native result item selected for each local binding, even when its source type projects to str or a collection.
     pub value_item_paths: HashMap<CanonicalSymbolId, String>,
     /// Native carriers of Rust-derived local values before source reference and collection projection.
@@ -1077,6 +1079,15 @@ pub struct RustCheckedCall {
     pub result_item_path: Option<String>,
     /// Whether the source receiver is a value passed in the first parameter slot.
     pub has_receiver: bool,
+}
+
+/// Native iteration retains both calls independently of the written expression's call facts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustIterationHooks {
+    /// Consuming conversion that materializes iterator storage once.
+    pub iter: RustCheckedCall,
+    /// Exclusive poll whose Option payload defines the loop item's carrier.
+    pub next: RustCheckedCall,
 }
 
 /// Reference leaves selected for one generic argument of a mutable imported Rust type.
