@@ -10313,10 +10313,6 @@ def lower_enum_match(
         PlanType.Enum(_owner, _name) => pass
         _ => return lower_structural_match(module, builder, target, source, arms, span)
     owner = enum_owner(place_type(builder.locals, source))?
-    raw_tag = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
-    builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
-    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     join = builder.new_block(span)
     mut owners = builder.owned
     mut arm_ends: list[int] = []
@@ -10331,7 +10327,7 @@ def lower_enum_match(
             builder.current = selected
             builder.owned = bound
         else:
-            slot = dispatch_enum_arm(builder, source, owner, tag, arm.pattern, selected, missed, span)?
+            slot = dispatch_enum_arm(builder, source, owner, arm.pattern, selected, missed, span)?
             builder.current = selected
             builder.owned = owners
             bind_enum_payload(builder, source, slot, arm.pattern, span)?
@@ -10366,7 +10362,6 @@ def dispatch_enum_arm(
     mut builder: Builder,
     source: Place,
     owner: int,
-    tag: Place,
     pattern: &RustPattern,
     selected: int,
     rejected: int,
@@ -10375,7 +10370,7 @@ def dispatch_enum_arm(
     """
     Branch to `selected` when an arm's pattern matches the scrutinee and to `rejected` otherwise; return the variant.
 
-    A plain variant pattern compares the tag the match already read. A pattern with a literal or nested payload, or an
+    A plain variant pattern tests its checked native variant. A pattern with a literal or nested payload, or an
     alternation, runs the full pattern tests in source order. A wildcard selects every value (-1), and an alternation
     names no single variant to bind (-2).
     """
@@ -10388,15 +10383,8 @@ def dispatch_enum_arm(
     if slot < 0:
         builder.finish(TerminatorKind.Goto(selected), span)
         return Ok(slot)
-    condition = temporary(builder, PlanType.Bool, span)
-    builder.emit(
-        plan_assign(
-            condition,
-            RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)),
-            span,
-        ),
-    )
-    builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), rejected, selected), span)
+    condition = variant_condition(builder, source, slot, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, rejected, selected), span)
     return Ok(slot)
 
 

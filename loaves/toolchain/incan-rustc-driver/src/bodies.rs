@@ -9,18 +9,20 @@ use rustc_index::IndexVec;
 use rustc_middle::mir;
 use rustc_middle::ty::TyCtxt;
 
-/// Translate one statement after all local and expression references have passed preflight validation.
+/// Translate a validated statement, expanding native variant tests into a private discriminant read and comparison.
 fn statement<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
     function: &Function,
     value: &Statement,
-) -> Result<mir::Statement<'tcx>, PlanError> {
-    let location = match &value.kind {
-        StatementKind::Assign(_, value) => &value.span,
-        _ => &value.span,
-    };
-    let span = sources.span(location)?;
+    locals: &mut IndexVec<mir::Local, mir::LocalDecl<'tcx>>,
+) -> Result<Vec<mir::Statement<'tcx>>, PlanError> {
+    let span = sources.span(&value.span)?;
+    if let StatementKind::Assign(destination, rvalue) = &value.kind
+        && let crate::plan::RvalueKind::IsVariant(source, variant) = &rvalue.kind
+    {
+        return variant_test(tcx, function, span, destination, source, *variant, locals);
+    }
     let kind = match &value.kind {
         StatementKind::Assign(destination, value) => {
             let ty = match &destination.projection {
@@ -50,7 +52,62 @@ fn statement<'tcx>(
             mir::StatementKind::StorageDead(mir::Local::from_usize(values::index(*index)?))
         }
     };
-    Ok(mir::Statement::new(mir::SourceInfo::outermost(span), kind))
+    Ok(vec![mir::Statement::new(mir::SourceInfo::outermost(span), kind)])
+}
+
+/// Compare an enum's discriminant in its own native representation, using rustc's selected variant value. The
+/// internal temporary never crosses the plan boundary; source enums, intrinsic carriers and foreign enums share it.
+fn variant_test<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    function: &Function,
+    span: rustc_span::Span,
+    destination: &crate::plan::Place,
+    source: &crate::plan::Place,
+    variant: i64,
+    locals: &mut IndexVec<mir::Local, mir::LocalDecl<'tcx>>,
+) -> Result<Vec<mir::Statement<'tcx>>, PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: function.name.clone(),
+        reason: reason.into(),
+    };
+    let source = values::place(tcx, source)?;
+    let rustc_middle::ty::Adt(owner, _) = source.ty(locals, tcx).ty.kind() else {
+        return Err(invalid("variant test requires native enum storage"));
+    };
+    let index = rustc_abi::VariantIdx::from_usize(values::index(variant)?);
+    if owner.variants().get(index).is_none() {
+        return Err(invalid("variant test index exceeds native enum layout"));
+    }
+    let discriminant = owner.discriminant_for_variant(tcx, index);
+    let layout = tcx
+        .layout_of(rustc_middle::ty::TypingEnv::fully_monomorphized().as_query_input(discriminant.ty))
+        .map_err(|_| invalid("variant discriminant has no native layout"))?;
+    let raw = locals.push(mir::LocalDecl::new(discriminant.ty, span));
+    let expected = mir::Operand::Constant(Box::new(mir::ConstOperand {
+        span,
+        user_ty: None,
+        const_: mir::Const::Val(
+            mir::ConstValue::Scalar(mir::interpret::Scalar::from_uint(discriminant.val, layout.size)),
+            discriminant.ty,
+        ),
+    }));
+    let info = mir::SourceInfo::outermost(span);
+    Ok(vec![
+        mir::Statement::new(
+            info,
+            mir::StatementKind::Assign(Box::new((mir::Place::from(raw), mir::Rvalue::Discriminant(source)))),
+        ),
+        mir::Statement::new(
+            info,
+            mir::StatementKind::Assign(Box::new((
+                values::place(tcx, destination)?,
+                mir::Rvalue::BinaryOp(
+                    mir::BinOp::Eq,
+                    Box::new((mir::Operand::Copy(mir::Place::from(raw)), expected)),
+                ),
+            ))),
+        ),
+    ])
 }
 
 /// Supply a function's complete MIR body at the `mir_built` boundary.
@@ -79,15 +136,15 @@ pub fn body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, function: &Function) -> Re
             Ok(declaration)
         })
         .collect::<Result<Vec<_>, PlanError>>()?;
+    let mut locals = IndexVec::from_raw(locals);
     let blocks = function
         .blocks
         .iter()
         .map(|block| {
-            let statements = block
-                .statements
-                .iter()
-                .map(|value| statement(tcx, &sources, function, value))
-                .collect::<Result<_, _>>()?;
+            let mut statements = Vec::new();
+            for value in &block.statements {
+                statements.extend(statement(tcx, &sources, function, value, &mut locals)?);
+            }
             Ok(mir::BasicBlockData::new_stmts(
                 statements,
                 Some(terminators::terminator(tcx, &sources, function, &block.terminator)?),
@@ -106,7 +163,7 @@ pub fn body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, function: &Function) -> Re
         mir::MirSource::item(def.to_def_id()),
         IndexVec::from_raw(blocks),
         scopes,
-        IndexVec::from_raw(locals),
+        locals,
         IndexVec::new(),
         function.parameters.len(),
         vec![],

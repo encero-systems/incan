@@ -158,7 +158,8 @@ pub fn build_body_ir_module(
     let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
     let local_nongeneric_functions = collect_local_nongeneric_function_identities(program, type_info);
-    let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    enum_declarations.extend(rust_values::enum_declarations(type_info));
     let local_enum_declarations = enum_declarations
         .iter()
         .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
@@ -306,7 +307,8 @@ pub fn build_body_ir_module(
     for body in &mut bodies {
         representation_facts::retain(body);
     }
-    let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    enum_declarations.extend(rust_values::enum_declarations(type_info));
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
     let mut module = bir::BodyIrModule {
@@ -1824,8 +1826,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Emit explicit `Drop` statements, in reverse declaration order, for every non-Copy `UserBinding`/`Parameter`
-    /// local declared directly in `scope` that was never moved out. This is scoped to locals declared *directly* in
+    /// Emit explicit `Drop` statements in reverse declaration order for every non-Copy owned binding, parameter or
+    /// temporary declared directly in `scope` that was never moved out. A native borrow guard must be released before
+    /// an earlier owner binding, rather than waiting for the final temporary cleanup after that owner's explicit drop.
+    /// This is scoped to locals declared *directly* in
     /// this block — it does not attempt cross-branch or early-return/break drop-obligation dataflow, which needs
     /// full control-flow analysis out of scope for v0 (see [`incan_semantics_core::body_ir`] module docs).
     fn insert_scope_drops(&mut self, stmts: &mut Vec<bir::Statement>, scope: bir::ScopeId) {
@@ -1838,7 +1842,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .filter(|local| {
                 matches!(
                     local.origin,
-                    bir::LocalOrigin::UserBinding | bir::LocalOrigin::Parameter
+                    bir::LocalOrigin::UserBinding | bir::LocalOrigin::Parameter | bir::LocalOrigin::Temporary
                 )
             })
             .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())

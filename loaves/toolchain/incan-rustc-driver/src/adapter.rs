@@ -375,7 +375,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .plan
             .externals
             .iter()
-            .filter_map(|external| external.path.split("::").next())
+            .filter_map(|external| crate::native_crates::callee_root(&external.path))
             .chain(
                 self.plan
                     .models
@@ -407,7 +407,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     | crate::plan::CalleeKind::FutureMethod(path, _) => Some(path),
                     _ => None,
                 };
-                if let Some(root) = path.and_then(|path| path.split("::").next()) {
+                if let Some(root) = path.and_then(|path| crate::native_crates::callee_root(path)) {
                     roots.insert(root);
                 }
             }

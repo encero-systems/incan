@@ -106,7 +106,7 @@ impl TypeChecker {
                 return None;
             }
             steps.push((owner, target.clone()));
-            let path = self.rust_canonical_path_for_receiver_type(&target)?;
+            let path = self.rust_adjusted_owner_path(&target)?;
             let metadata = self.rust_item_metadata_for_path(&path)?;
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
@@ -194,7 +194,7 @@ impl TypeChecker {
         let mut owner = source.clone();
         let mut steps = Vec::new();
         for _ in 0..12 {
-            let path = self.rust_trait_receiver_path(&owner)?;
+            let path = self.rust_adjusted_owner_path(&owner)?;
             let metadata = self.rust_item_metadata_for_path(&path)?;
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
@@ -242,19 +242,19 @@ impl TypeChecker {
         None
     }
 
-    /// Select source list storage only at an explicit Rust trait boundary. This grants no native method priority to
-    /// ordinary source lists and leaves their checked source types unchanged throughout generic inference.
-    fn rust_trait_receiver_path(&self, owner: &ResolvedType) -> Option<String> {
+    /// Recover an already selected native dereference or trait owner, including source collection and Option
+    /// carriers. Source list storage is admitted only at this native boundary, never as ordinary method priority.
+    fn rust_adjusted_owner_path(&self, owner: &ResolvedType) -> Option<String> {
         if let Some(path) = self.rust_canonical_path_for_receiver_type(owner) {
             return Some(path);
         }
         match owner {
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_trait_receiver_path(inner),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_adjusted_owner_path(inner),
             ResolvedType::Generic(base, _) if collection_type(base) == Some(CollectionTypeId::List) => {
                 Some("std::vec::Vec".into())
             }
             ResolvedType::Bytes => Some("std::vec::Vec".into()),
-            _ => None,
+            _ => self.rust_result_item_path(&render_resolved_type_as_rust_arg(owner), ""),
         }
     }
 

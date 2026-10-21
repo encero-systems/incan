@@ -338,8 +338,11 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             validate_model_type(plan, ty)?;
         }
         let segments: Vec<_> = external.path.split("::").collect();
-        if segments.len() < 2
-            || !segments.iter().all(|segment| identifier(segment))
+        if incan_semantics_core::body_ir::rust_item_identity(&external.path).is_none()
+            || !segments
+                .iter()
+                .filter(|segment| **segment != "[]")
+                .all(|segment| identifier(segment))
             || !paths.insert((
                 external.path.clone(),
                 external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
@@ -938,6 +941,20 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
                 return Err(invalid(function, "discriminant requires an enum"));
             }
             Ok(Scalar::EnumTag)
+        }
+        RvalueKind::IsVariant(value, variant) => {
+            let Scalar::Enum(owner) = place(plan, function, value)? else {
+                return Err(invalid(function, "variant test requires an enum"));
+            };
+            let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown tested enum"))?;
+            if usize::try_from(*variant)
+                .ok()
+                .and_then(|index| declaration.variants.get(index))
+                .is_none()
+            {
+                return Err(invalid(function, "unknown tested variant"));
+            }
+            Ok(Scalar::Bool)
         }
         RvalueKind::TagToInt(value) => {
             require(

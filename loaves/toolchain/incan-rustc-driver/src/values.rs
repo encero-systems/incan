@@ -327,6 +327,11 @@ pub fn rvalue<'tcx>(
             )
         }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::IsVariant(..) => {
+            return Err(PlanError::UnknownCallee(
+                "variant test requires statement expansion".into(),
+            ));
+        }
         RvalueKind::FrozenText(text) => frozen_text(tcx, sources, text)?,
         RvalueKind::FrozenBytes(values) => frozen_bytes(tcx, values, rustc_span::DUMMY_SP)?,
         RvalueKind::FrozenCollection(ty, values) => crate::frozen_values::construct(tcx, ty, values)?,

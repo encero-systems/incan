@@ -862,7 +862,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
 }
 
 /// The opaque nominals required by storage and checked external signatures (DD-0006), including their native type
-/// arguments. Each item retains its written argument count; a callee's item path alone requires no value layout.
+/// arguments. Each item retains its checked argument count; a callee's item path alone requires no value layout.
 /// An item held with two different argument counts has no single layout and is left out; its uses refuse.
 pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
     let mut arities = std::collections::BTreeMap::<String, Option<usize>>::new();
@@ -880,6 +880,11 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         }
         for declaration in &module.nominal_declarations {
             declaration.field_types.iter().for_each(&mut record);
+        }
+        for declaration in &module.enum_declarations {
+            for variant in &declaration.variants {
+                variant.fields.iter().for_each(&mut record);
+            }
         }
         for storage in &module.static_declarations {
             record(&storage.ty);
@@ -932,11 +937,18 @@ fn note_held_rust_item(path: &str, arity: usize, arities: &mut std::collections:
         .or_insert(Some(arity));
 }
 
-/// The canonical identity of a Rust item named by its path (`std::sync::Arc`), as a program's Rust import records it.
+/// The canonical identity of a metadata-selected Rust item (`std::sync::Arc`). Native slice methods use the internal
+/// `[]::method` owner because slices have no nominal item path; no other nonidentifier segment is admitted.
 pub fn rust_item_identity(path: &str) -> Option<CanonicalSymbolId> {
     let segments = path.split("::").map(str::to_owned).collect::<Vec<_>>();
     let name = segments.last()?.clone();
-    if segments.len() < 2 || segments.iter().any(|segment| !is_rust_identifier(segment)) {
+    let slice_method = segments.len() == 2 && segments[0] == "[]";
+    if segments.len() < 2
+        || segments
+            .iter()
+            .enumerate()
+            .any(|(index, segment)| !(slice_method && index == 0) && !is_rust_identifier(segment))
+    {
         return None;
     }
     Some(CanonicalSymbolId {
@@ -1037,7 +1049,7 @@ pub struct FieldlessEnumDeclaration {
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
 }
 
-/// Canonical payload layout of a checked source or SDK enum; generic templates retain their ordered binders.
+/// Canonical payload layout of a checked source, SDK or native enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
     /// The compiled item a linked Loaf declares this enum as (DD-0007); empty for an enum this compilation declares.
@@ -1059,7 +1071,7 @@ pub struct EnumDeclaration {
     /// layout instead; only an SDK package owner and native metadata validation authorize this alias representation.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
-    /// Source-ordered variants; native discriminants use these exact indices.
+    /// Declaration-ordered variants; each index selects rustc's actual discriminant value for native matching.
     pub variants: Vec<EnumVariantDeclaration>,
     /// Explicit and automatic derives selected by the checker.
     pub derives: Vec<String>,
@@ -1079,6 +1091,59 @@ pub struct EnumVariantDeclaration {
     pub name: String,
     /// Checked payload types in declaration order.
     pub fields: Vec<IncanType>,
+}
+
+/// Canonical member identity and physical declaration coordinate for a selected native enum variant. Native items
+/// have no source span, so the owner path and variant name supply the unique declaration scope instead.
+pub fn native_enum_variant(path: &str, name: &str) -> Option<(CanonicalSymbolId, CompilerNodeId)> {
+    let owner = rust_item_identity(path)?;
+    if !is_rust_identifier(name) {
+        return None;
+    }
+    let module = native_nominal_module(&owner)?;
+    let mut identity = owner;
+    identity.namespace = crate::SymbolNamespace::Member;
+    identity.kind = crate::SemanticSourceTargetKind::Variant;
+    identity.declaration_name = name.to_owned();
+    Some((
+        identity,
+        CompilerNodeId::declaration_span(&format!("{module}::variant::{name}"), 0, 0),
+    ))
+}
+
+/// Retain a complete metadata-selected Rust enum through the ordinary enum vocabulary. The native item and exact
+/// variant identities authorize an alias only after the adapter verifies the instantiated foreign payload layout.
+pub fn native_enum_declaration(
+    path: &str,
+    type_parameters: Vec<String>,
+    variants: Vec<(String, Vec<IncanType>)>,
+) -> Option<EnumDeclaration> {
+    let canonical = rust_item_identity(path)?;
+    let module = native_nominal_module(&canonical)?;
+    let variants = variants
+        .into_iter()
+        .map(|(name, fields)| {
+            let (canonical, direct_declaration_id) = native_enum_variant(path, &name)?;
+            Some(EnumVariantDeclaration {
+                direct_declaration_id,
+                canonical,
+                name,
+                fields,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(EnumDeclaration {
+        native_item: path.to_owned(),
+        direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
+        canonical,
+        name: path.to_owned(),
+        public: true,
+        type_parameters,
+        native_type_arguments: Vec::new(),
+        variants,
+        derives: Vec::new(),
+        named_type_identities: Default::default(),
+    })
 }
 
 /// One canonical zero-payload member of a retained fieldless normal enum.

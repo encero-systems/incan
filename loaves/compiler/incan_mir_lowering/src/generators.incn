@@ -171,6 +171,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.Model(owner, values) => return RvalueKind.Model(owner, swap_operands(values, handle))
         RvalueKind.Enum(owner, variant, values) => return RvalueKind.Enum(owner, variant, swap_operands(values, handle))
         RvalueKind.Discriminant(place) => return RvalueKind.Discriminant(swap_place(place, handle))
+        RvalueKind.IsVariant(place, slot) => return RvalueKind.IsVariant(swap_place(place, handle), slot)
         RvalueKind.TagToInt(value) => return RvalueKind.TagToInt(swap_operand(value, handle))
         RvalueKind.Borrow(place) => return RvalueKind.Borrow(swap_place(place, handle))
         RvalueKind.MutBorrow(place) => return RvalueKind.MutBorrow(swap_place(place, handle))

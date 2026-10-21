@@ -3,6 +3,14 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
+/// The crate a retained callee needs loaded. A slice method's internal owner is not a crate; its primitive impl
+/// bucket belongs to the always-linked standard closure. Full path and signature validation remain separate.
+pub(crate) fn callee_root(path: &str) -> Option<&str> {
+    path.split("::")
+        .next()
+        .map(|root| if root == "[]" { "core" } else { root })
+}
+
 /// Find an explicitly imported alias before considering a unique canonical crate name. Renamed dependencies and
 /// multiple versions must retain rustc's binding rather than selecting the first crate with a matching package name.
 /// The reserved `crate` root identifies local HIR definitions rather than an external dependency.
