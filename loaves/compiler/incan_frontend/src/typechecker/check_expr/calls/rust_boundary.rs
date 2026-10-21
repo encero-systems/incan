@@ -543,6 +543,8 @@ impl TypeChecker {
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
                 receiver_adjustments: Vec::new(),
                 path: path.trim_start_matches("rust::").to_owned(),
                 type_arguments: arguments,

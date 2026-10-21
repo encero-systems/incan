@@ -4775,7 +4775,9 @@ def lower_loaf_call(
                     continue
                 match identity.origin:
                     SymbolOrigin.RustCrate(_path) =>
-                        if target.type_args != callable.native_type_arguments:
+                        written = checked_type_arguments(builder, target.type_args)?
+                        retained = checked_type_arguments(builder, callable.native_type_arguments)?
+                        if written != retained:
                             continue
                     _ => pass
         return lower_delegated_call(builder, callable, target, arguments, destination, span)
@@ -4796,6 +4798,7 @@ def lower_delegated_call(
     A generic crate item takes the call's checked type arguments for its declared type parameters, in order, and the
     driver instantiates the item with them before checking its signature.
     An associated SDK trait function closes Self from its checked type receiver before its method arguments.
+    A retained Rust signature also closes the enclosing source declaration's binders before native type admission.
     """
     mut names: list[str] = []
     for name in delegation.type_parameters:
@@ -4819,14 +4822,19 @@ def lower_delegated_call(
             Some(_receiver) => pass
     if len(closed) != len(names) or (not checked_rust and len(names) == 0 and len(target.type_args) != 0):
         return Err("unsupported Body IR nonlocal function with type parameters")
+    mut signature_names = names
+    mut signature_arguments = closed
+    if checked_rust:
+        signature_names = builder.type_parameters
+        signature_arguments = builder.type_arguments
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
-        instantiated: RustType = substitute(parameter, names, closed)?
+        instantiated: RustType = substitute(parameter, signature_names, signature_arguments)?
         _ = require_native_union_signature(instantiated, builder.intrinsics)?
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
-    returned: RustType = substitute(delegation.return_type, names, closed)?
+    returned: RustType = substitute(delegation.return_type, signature_names, signature_arguments)?
     _ = require_native_union_signature(returned, builder.intrinsics)?
     result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     mut type_arguments: list[PlanType] = []

@@ -1,0 +1,7 @@
+"""The first owner of Item."""
+
+
+pub model Item:
+    """A one-field source value."""
+
+    pub value: int

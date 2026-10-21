@@ -1,25 +1,12 @@
 //! Checked Rust callees projected into the existing external callable and named-call machinery (DD-0006).
 
 use super::args::DeclaredSlot;
-use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span, nominal_carriers, parameter_types};
+use super::{BodyBuilder, TypeCheckInfo, ast, bir, hir_span};
 use crate::typechecker::RustCheckedCall;
 
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
-/// The signature is already instantiated by checking. Source-local declarations supply the canonical carrier for an
-/// inferred model argument even when no annotation introduced that name into the checker's type-position map.
-pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclaration]) -> Vec<bir::LoafCallable> {
-    let mut identities = parameter_types::retained_type_identities(facts);
-    for declaration in locals {
-        let name = declaration.canonical.declaration_name.clone();
-        if identities
-            .get(&name)
-            .is_some_and(|identity| identity != &declaration.canonical)
-        {
-            identities.remove(&name);
-        } else {
-            identities.insert(name, declaration.canonical.clone());
-        }
-    }
+/// Signatures and nominal argument owners are already structural and fully qualified in the accepting checker.
+pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
     let mut calls = Vec::new();
     let mut checked_calls = facts
         .rust
@@ -43,19 +30,14 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
         let Some(canonical) = bir::rust_item_identity(&call.path) else {
             continue;
         };
-        let checked = |ty| {
-            let mut projected = parameter_types::checked_semantic_type(ty, facts);
-            nominal_carriers::retain_checked_type(&mut projected, ty, facts);
-            nominal_carriers::retain_declared_type(&mut projected, &identities);
-            projected
-        };
+        let Some(storage) = &call.storage else { continue };
         let declaration = bir::LoafCallable {
             canonical,
             item: call.path.clone(),
-            parameters: call.parameters.iter().map(|parameter| checked(&parameter.ty)).collect(),
-            return_type: checked(&call.return_type),
+            parameters: storage.parameters.clone(),
+            return_type: storage.return_type.clone(),
             type_parameters: Vec::new(),
-            native_type_arguments: call.type_arguments.iter().map(checked).collect(),
+            native_type_arguments: storage.type_arguments.clone(),
             parameter_defaults: Vec::new(),
         };
         if !calls.contains(&declaration) {
@@ -77,6 +59,7 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let call = self.type_info.rust.checked_calls.get(&(span.start, span.end))?.clone();
+        let storage = call.storage.as_ref()?;
         if !call.receiver_adjustments.is_empty() {
             let (receiver, args) = if call.has_receiver {
                 (receiver?, args)
@@ -101,8 +84,9 @@ impl BodyBuilder<'_, '_> {
         let slots = call
             .parameters
             .iter()
-            .map(|parameter| DeclaredSlot {
-                ty: self.checked_type(&parameter.ty),
+            .zip(&storage.parameters)
+            .map(|(parameter, ty)| DeclaredSlot {
+                ty: ty.clone(),
                 ..DeclaredSlot::from_checked_param(parameter)
             })
             .collect();
@@ -124,12 +108,9 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let canonical = bir::rust_item_identity(&call.path)?;
-        let type_args = call
-            .type_arguments
-            .iter()
-            .map(|argument| self.checked_type(argument))
-            .collect();
-        let result: IncanType = self.checked_type(&call.return_type);
+        let storage = call.storage.as_ref()?;
+        let type_args = storage.type_arguments.clone();
+        let result = storage.return_type.clone();
         Some(self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 name: call.path.clone(),
@@ -165,7 +146,13 @@ impl BodyBuilder<'_, '_> {
             .and_then(|step| step.parameters.first())
             .ok_or("native receiver adjustment without an input")?;
         let slot = DeclaredSlot {
-            ty: self.checked_type(&initial.ty),
+            ty: call
+                .receiver_adjustments
+                .first()
+                .and_then(|step| step.storage.as_ref())
+                .and_then(|storage| storage.parameters.first())
+                .ok_or("native receiver adjustment without checked storage")?
+                .clone(),
             ..DeclaredSlot::from_checked_param(initial)
         };
         let (mut inputs, _) = self.bind_declared_args(
@@ -192,9 +179,16 @@ impl BodyBuilder<'_, '_> {
         let slots = call
             .parameters
             .iter()
+            .zip(
+                &call
+                    .storage
+                    .as_ref()
+                    .ok_or("native method without checked storage")?
+                    .parameters,
+            )
             .skip(1)
-            .map(|parameter| DeclaredSlot {
-                ty: self.checked_type(&parameter.ty),
+            .map(|(parameter, ty)| DeclaredSlot {
+                ty: ty.clone(),
                 ..DeclaredSlot::from_checked_param(parameter)
             })
             .collect();

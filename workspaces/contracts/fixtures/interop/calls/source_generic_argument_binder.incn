@@ -1,0 +1,26 @@
+# behavior: a Rust generic call retains a source function's type parameter at each instantiation
+# expect-stdout:
+#   8
+#   16
+
+"""Use the native size query inside a source function with a named type parameter."""
+
+from rust::std::mem import size_of_val
+
+
+model Pair:
+    """Two integer fields with a distinct native size."""
+
+    first: int
+    second: int
+
+
+def measure[Payload](value: Payload) -> int:
+    """Query the size of the instantiated source value without moving it."""
+    return size_of_val(value)
+
+
+def main() -> None:
+    """Instantiate the same native call with scalar and model arguments."""
+    println(measure(1))
+    println(measure(Pair(first=2, second=3)))
