@@ -15,6 +15,7 @@ from tuples import tuple_element
 from enums import enum_type
 from closures import semantic_input
 from decls import library_enum_item
+from lists import exclusive_reference, list_parameter_type
 
 
 pub def native_source_type(
@@ -37,10 +38,7 @@ pub def native_source_type(
                 return Ok(PlanType.StrRef)
             return shared_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
         RustType.RefMut(inner) =>
-            match native_source_type(nominals, enums, unions, inner, intrinsics)?:
-                PlanType.Model(index, name) => return Ok(PlanType.ModelMutRef(index, name))
-                PlanType.Int => return Ok(PlanType.ScalarMutRef([PlanType.Int]))
-                _ => return Err("unsupported Body IR mutable callable receiver outside a nominal layout")
+            return mutable_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
@@ -94,15 +92,28 @@ def is_native_str(ty: &RustType) -> bool:
 
 
 pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
-    """Borrow the exact retained nominal, text or scalar carrier; other shared source layouts remain refused."""
+    """Borrow the exact retained nominal, text, scalar or collection carrier through the ordinary parameter layout."""
     match ty:
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.String => return Ok(PlanType.StringRef)
         _ => pass
+    collection = list_parameter_type(ty, false)
+    if collection != ty:
+        return Ok(collection)
     if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes]:
         return Ok(PlanType.ScalarRef([ty]))
     return Err("unsupported Body IR shared SDK receiver carrier")
+
+
+pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
+    """Reuse exclusive source parameter storage for native references, retaining scalar reference carriers explicitly."""
+    match exclusive_reference(ty):
+        Some(reference) => return Ok(reference)
+        None => pass
+    match shared_receiver_type(ty)?:
+        PlanType.ScalarRef(elements) => return Ok(PlanType.ScalarMutRef(elements))
+        _ => return Err("unsupported Body IR mutable callable receiver carrier")
 
 
 pub def callable_parameter_type(
