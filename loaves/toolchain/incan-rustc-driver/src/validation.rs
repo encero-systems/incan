@@ -2483,6 +2483,8 @@ fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::EnumDeclara
 }
 
 /// Reject malformed enum layouts and unsupported derives; validate exact forward references before size-cycle checks.
+/// Native Option/Result carriers and library enums retain their checked borrowed payloads; source-owned enum fields
+/// remain limited to source signature types.
 fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan
         .functions
@@ -2553,7 +2555,8 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             }
             for field in &variant.fields {
                 validate_model_type(plan, field)?;
-                if !source_signature_type(&scalar(field)) {
+                let native = !declaration.carrier.is_empty() || !declaration.library_item.is_empty();
+                if !(source_signature_type(&scalar(field)) || (native && external_signature_type(&scalar(field)))) {
                     return Err(error());
                 }
             }

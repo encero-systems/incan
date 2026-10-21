@@ -50,9 +50,9 @@ The compiler is a rustc driver (DD-0004). rustc's own crate metadata therefore d
 ## Consequences
 
 - Checking `rust::` imports needs neither rust-analyzer nor Cargo. Every fact matches the crate rustc links.
-- Measured on aarch64-apple-darwin with rustc 1.98.0:
-  - **`std`, `core` and `alloc` cache:** 24,661 items, 5.3 MB, about 570 KB compressed, written in 1.5 s.
-  - **Fallback extraction:** 15 to 30 ms for a unit's handful of imports.
+- Local measurements on aarch64-apple-darwin with rustc 1.98.0:
+  - **Layout-4 `std`, `core` and `alloc` cache:** 13,099,666 bytes, written in 0.52 s in a measured run on 2026-10-21. This includes trait impl templates, associated types, callable predicates and prelude membership; timings depend on host load.
+  - **Fallback extraction:** an earlier measurement took 15 to 30 ms for a unit's handful of imports.
 - Registry Loaves gain an ABI cache asset beside each compiled unit. incan.pub's existing `[[rust.facts]]` remain build facts (cfg and features).
 
 ## Non-goals

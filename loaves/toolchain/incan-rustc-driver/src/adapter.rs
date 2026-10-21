@@ -68,8 +68,9 @@ fn refuse(tcx: TyCtxt<'_>, error: PlanError) -> ! {
     tcx.dcx().fatal(message)
 }
 
-/// Supply native aliases' exact metadata types, independently of their placeholder AST declarations. Erased native
-/// lifetimes carry no layout or source binder; ordinary source aliases keep rustc's provider.
+/// Supply native aliases' exact metadata types, independently of their placeholder AST declarations. Concrete
+/// Option/Result aliases also use retained payload types, including erased native references that cannot be spelled
+/// as a source-owned alias lifetime. Ordinary source aliases keep rustc's provider.
 fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::ty::EarlyBinder<'tcx, Ty<'tcx>> {
     if tcx.def_kind(def) != rustc_hir::def::DefKind::TyAlias || !tcx.parent(def.to_def_id()).is_crate_root() {
         return (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.type_of)(tcx, def);
@@ -79,6 +80,34 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
     let name = tcx.item_name(def.to_def_id());
+    if let Some(carrier) = plan
+        .enums
+        .iter()
+        .find(|value| !value.carrier.is_empty() && name.as_str() == value.name)
+    {
+        let path = if carrier.carrier == "Option" {
+            "std::option::Option"
+        } else {
+            "std::result::Result"
+        };
+        let native = match callees::library_item(tcx, path, rustc_hir::def::DefKind::Enum) {
+            Ok(native) => native,
+            Err(error) => refuse(tcx, error),
+        };
+        let fields = carrier
+            .variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter().cloned())
+            .collect::<Vec<_>>();
+        let arguments = match callees::arguments(tcx, native, &fields) {
+            Ok(arguments) => arguments,
+            Err(error) => refuse(tcx, error),
+        };
+        return rustc_middle::ty::EarlyBinder::bind(
+            tcx,
+            tcx.type_of(native).instantiate(tcx, arguments).skip_normalization(),
+        );
+    }
     let record = plan
         .models
         .iter()
