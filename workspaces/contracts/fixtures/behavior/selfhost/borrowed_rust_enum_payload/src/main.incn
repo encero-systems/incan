@@ -1,4 +1,4 @@
-# behavior: native enum payloads retain identities through borrowed named fields and boxed variant construction (#2256)
+# behavior: native enum payloads retain identities through borrowed fields, boxed construction and nested re-exported variants (#2256)
 # expect-stdout:
 #   checked
 #   7
@@ -11,6 +11,8 @@
 #   native message
 #   Record { count: 7, text: "native", ready: false }
 #   Wrapped(Record { count: 7, text: "native", ready: false })
+#   category
+#   missing category
 #   7
 #   Record { count: 7, text: "native", ready: false }
 #   native result
@@ -21,7 +23,8 @@
 #   true
 #   Wrapped(Record { count: 7, text: "native", ready: false })
 
-from rust::messages import CopyNumber, Message, message, boxed_message, message_envelope, wrapped_message
+from rust::messages import CopyNumber, Message, category, message, boxed_message, message_envelope, wrapped_message
+from rust::messages::category import Kind as Category
 from rust::std::net import IpAddr
 from copying import borrowed_copy
 
@@ -90,6 +93,12 @@ def main() -> None:
     println(f"{value:?}")
     constructed = Message.Wrapped(message())
     println(f"{constructed:?}")
+    match category(true):
+        Some(Category.Present) => println("category")
+        _ => println("wrong category")
+    match category(false):
+        Some(Category.Missing) => println("missing category")
+        _ => println("wrong category")
     inspect_positional(constructed)
     values: list[Message] = [message()]
     copied = values[0].clone()

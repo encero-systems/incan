@@ -1202,7 +1202,8 @@ impl TypeChecker {
 
     /// Select a native variant from complete metadata and retain its exact storage layout once. Positional payloads
     /// inherit the subject's reference binding mode; named payloads keep their native storage type for checked
-    /// copy/clone reads. Written field order and public reexport spellings never establish a second layout.
+    /// copy/clone reads. Signatures and patterns share the checked public owner, so written field order and reexport
+    /// spellings never establish a second layout or identity.
     fn rust_enum_constructor_payload_types(
         &mut self,
         expected_ty: &ResolvedType,
@@ -1255,9 +1256,10 @@ impl TypeChecker {
             );
             return Some(RustEnumPatternResolution::payloads(fields));
         }
-        let (identity, _) = incan_semantics_core::body_ir::native_enum_variant(&path, variant)?;
+        let public_path = self.rust_public_type_path(&path);
+        let (identity, _) = incan_semantics_core::body_ir::native_enum_variant(&public_path, variant)?;
         self.type_info.record_resolved_identity(span, identity);
-        self.type_info.rust.checked_enums.insert(path, layout);
+        self.type_info.rust.checked_enums.insert(public_path, layout);
         Some(RustEnumPatternResolution::PayloadTypes { fields, names })
     }
 

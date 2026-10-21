@@ -93,3 +93,22 @@ impl CopyNumber {
         self.value
     }
 }
+
+/// The declaration path differs from the public path used by the consumer's pattern.
+pub mod category {
+    /// A fieldless native enum retained through a public re-export and an optional return type.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Kind {
+        /// The first branch of the native function.
+        Present,
+        /// The other branch proves that both selected variants retain their identities.
+        Missing,
+    }
+}
+
+pub use category::Kind;
+
+/// Return the re-exported native carrier inside a structural Option.
+pub fn category(present: bool) -> Option<Kind> {
+    Some(if present { Kind::Present } else { Kind::Missing })
+}

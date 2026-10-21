@@ -381,7 +381,8 @@ impl TypeChecker {
     fn native_coverage_constructors(&self, column: &ResolvedType) -> Option<Vec<CoverageConstructor>> {
         let (column, _) = borrowed_pattern_subject(column);
         let path = self.rust_canonical_path_for_receiver_type(column)?;
-        let layout = self.type_info.rust.checked_enums.get(&path)?;
+        let public_path = self.rust_public_type_path(&path);
+        let layout = self.type_info.rust.checked_enums.get(&public_path)?;
         let arguments = self.rust_owner_type_args(column, &path)?;
         let substitution = type_param_subst_map(&layout.type_parameters, &arguments);
         Some(

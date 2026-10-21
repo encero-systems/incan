@@ -12,6 +12,16 @@ use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedCall, RustCheckedEnum, RustCheckedLayout};
 
 impl TypeChecker {
+    /// Select the checked public binding shared by native signatures, constructors, patterns and coverage. A
+    /// definition path never creates a second carrier when metadata already binds it through a public reexport.
+    pub(in crate::typechecker::check_expr) fn rust_public_type_path(&self, path: &str) -> String {
+        self.type_info
+            .rust
+            .item_public_paths
+            .get(path)
+            .map_or_else(|| path.to_owned(), Clone::clone)
+    }
+
     /// Read a complete native enum template for both construction and matching. Exact field displays retain Box and
     /// reference storage; named slots follow metadata order. Neither caller may invent a partial executable layout.
     pub(in crate::typechecker::check_expr) fn checked_rust_enum_layout(
@@ -76,11 +86,12 @@ impl TypeChecker {
                 crate::symbols::canonical_builtin_constructor_identity(constructor),
             );
         } else {
-            let Some((identity, _)) = body_ir::native_enum_variant(path, variant) else {
+            let public_path = self.rust_public_type_path(path);
+            let Some((identity, _)) = body_ir::native_enum_variant(&public_path, variant) else {
                 return;
             };
             self.type_info.record_resolved_identity(span, identity);
-            self.type_info.rust.checked_enums.insert(path.to_owned(), layout);
+            self.type_info.rust.checked_enums.insert(public_path, layout);
         }
         let Some(carriers) = self.rust_variant_payload_carriers(path, variant) else {
             return;
