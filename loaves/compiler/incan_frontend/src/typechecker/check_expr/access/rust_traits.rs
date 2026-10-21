@@ -626,7 +626,8 @@ impl TypeChecker {
     }
 
     /// Match a closed native input signature using exact carriers and the already admitted borrowed views. The cost
-    /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation.
+    /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation. An already borrowed
+    /// argument matches its complete target before considering an automatic borrow of an owned value.
     fn rust_trait_input_borrow_cost(
         &self,
         signature: &RustFunctionSig,
@@ -643,6 +644,9 @@ impl TypeChecker {
         let mut cost = 0;
         for (parameter, argument) in ordinary.iter().zip(call.arg_types) {
             let target = self.native_rust_signature_type(&parameter.type_display, call.rust_path);
+            if self.rust_trait_carriers_match(&target, argument) {
+                continue;
+            }
             let target = match &target {
                 ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
                     cost += 1;

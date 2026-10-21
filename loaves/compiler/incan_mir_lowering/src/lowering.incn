@@ -11853,7 +11853,7 @@ def lower_union_isinstance(
     target: &RustType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
-    """Inspect carrier tags or compare a retained newtype's exact identity without consuming its storage."""
+    """Inspect carrier tags or a statically known nominal identity without consuming storage; distinct class tests remain refused."""
     source_ty = isinstance_source_type(builder, value, ty, span)?
     member = native_source_type(builder.nominals, builder.enums, builder.unions, target, builder.intrinsics)?
     match source_ty:
@@ -11865,6 +11865,8 @@ def lower_union_isinstance(
         PlanType.FrozenStr =>
             return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
         PlanType.Model(owner, _name) =>
+            if source_ty == member:
+                return Ok(RvalueKind.Use(literal(Constant.Bool(true), span)))
             if owner < 0 or owner >= len(builder.nominals) or builder.nominals[owner].canonical.kind != SemanticSourceTargetKind.Newtype:
                 return Err("unsupported Body IR isinstance over a non-newtype nominal")
             return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))

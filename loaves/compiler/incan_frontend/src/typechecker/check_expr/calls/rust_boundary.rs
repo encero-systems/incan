@@ -838,7 +838,7 @@ impl TypeChecker {
     /// Classify whether an Incan argument type can satisfy a Rust parameter boundary.
     ///
     /// This first tries builtin coercion-matrix matches, then resolved-type compatibility, then rusttype-specific
-    /// boundary adapters.
+    /// boundary adapters. Nested borrows keep their token boundaries throughout type resolution.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let display = Self::rust_display_without_lifetimes(rust_param_ty);
         let normalized = Self::compact_rust_display(&display);
@@ -878,7 +878,7 @@ impl TypeChecker {
         let borrowed_shared = matches!(Self::rust_display_borrow_kind(display.as_str()), Some((false, _)));
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
             let inner_normalized = Self::compact_rust_display(inner);
-            let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
+            let target_inner_ty = self.resolved_type_from_rust_display(inner);
             if matches!(arg_ty, ResolvedType::RefMut(existing) if self.types_compatible(existing, &target_inner_ty))
                 || (!is_mut
                     && matches!(arg_ty, ResolvedType::Ref(existing) if self.types_compatible(existing, &target_inner_ty)))
@@ -910,7 +910,7 @@ impl TypeChecker {
             && Self::is_builtin_rust_boundary_display(normalized.as_str())
         {
             if Self::rust_display_borrow_kind(display.as_str()).is_none() {
-                let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+                let target_ty = self.resolved_type_from_rust_display(display.as_str());
                 if self.types_compatible(arg_ty, &target_ty) {
                     return RustArgBoundaryMatch::Exact;
                 }
@@ -921,7 +921,8 @@ impl TypeChecker {
                 None => RustArgBoundaryMatch::NoMatch,
             };
         }
-        let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+        // Keep token boundaries inside native arguments: compacting `&mut T` into `&mutT` changes its referent.
+        let target_ty = self.resolved_type_from_rust_display(display.as_str());
         let should_try_exact_type_match = !borrowed_shared || Self::incan_boundary_type_display(arg_ty).is_none();
         if should_try_exact_type_match && self.types_compatible(arg_ty, &target_ty) {
             return RustArgBoundaryMatch::Exact;

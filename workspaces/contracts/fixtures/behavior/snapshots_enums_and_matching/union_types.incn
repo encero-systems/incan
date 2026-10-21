@@ -1,4 +1,4 @@
-# behavior: union-typed values narrow through isinstance chains, type patterns and None checks to the branch for their runtime type (RFC 029)
+# behavior: union-typed values narrow through isinstance chains, type patterns and None checks, including a final nominal member (RFC 029, #2256)
 # expect-stdout:
 #   number FALLBACK
 #   42 FALLBACK
@@ -9,6 +9,20 @@
 #   bool int float WIDE
 #   bool:true 3 2.5 WIDE
 #   number missing OPT
+#   text 9
+
+model Count:
+    """Carry the nominal alternative of a closed union."""
+    value: int
+
+
+def describe_count(value: str | Count) -> str:
+    """Test the final nominal alternative after text has been excluded."""
+    if isinstance(value, str):
+        return value
+    elif isinstance(value, Count):
+        return str(value.value)
+    return "missing"
 
 pub def parse_value(flag: bool) -> int | str:
     if flag:
@@ -117,3 +131,4 @@ def main() -> None:
     println(f"{describe_wide_chain(true)} {describe_wide_chain(1)} {describe_wide_chain(2.5)} {describe_wide_chain("wide")}")
     println(f"{describe_wide_match(true)} {describe_wide_match(3)} {describe_wide_match(2.5)} {describe_wide_match("wide")}")
     println(f"{describe_optional_narrow(1)} {describe_optional_narrow(None)} {describe_optional_narrow("opt")}")
+    println(f"{describe_count("text")} {describe_count(Count(value=9))}")
