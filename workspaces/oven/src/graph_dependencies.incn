@@ -88,7 +88,7 @@ pub def prepare_graph(root: Path, profile: str, features: FeatureRequest, substi
     facets = ordered(local_facets(demand, target_configuration(rustc)?, None, substitutes, true)?)?
     request = RustBuild(project=root.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?, features=features.features, default_features=features.default_features, substitutes=substitutes)
     built = native_units(root, facets, request, toolchain)?
-    checked_paths, interfaces = checked_units(facets, built, toolchain)?
+    checked_paths, interfaces = checked_units(facets, built, request, toolchain)?
     mut paths = checked_paths
     manifest = root.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
     document = toml.parse(manifest).map_err((error) => error.message())?
@@ -131,7 +131,7 @@ def build_native_units(root: Path, facets: list[LocalFacet], request: RustBuild,
     return Ok(built)
 
 
-pub def unit_natives(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Dict[str, NativeCrate]:
+pub def unit_natives(facet: LocalFacet, built: Dict[str, BuiltUnit], request: RustBuild) -> Result[Dict[str, NativeCrate], str]:
     """Bind exact native libraries under their crate names and this unit's declared local aliases."""
     mut natives: Dict[str, NativeCrate] = {}
     for key in sorted([key for key in built.keys()]):
@@ -140,8 +140,16 @@ pub def unit_natives(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Dict[str
     for edge in facet.local:
         key = f"{edge.project}@{edge.domain.value()}"
         if key in built:
-            natives[edge.alias] = NativeCrate(name=edge.alias, path=built[key].artifact)
-    return natives
+            alias = edge.alias.replace("-", "_")
+            natives[alias] = NativeCrate(name=alias, path=built[key].artifact)
+    for index in range(len(facet.registry)):
+        selected = facet.registry[index]
+        loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        artifact = request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?
+        alias = facet.registry_aliases[index].replace("-", "_")
+        natives[alias] = NativeCrate(name=alias, path=artifact)
+    return Ok(natives)
 
 
 pub def unit_loaves(facet: LocalFacet, interfaces: Dict[str, Path]) -> Result[list[UnitLoaf], str]:
@@ -154,7 +162,7 @@ pub def unit_loaves(facet: LocalFacet, interfaces: Dict[str, Path]) -> Result[li
     return Ok(loaves)
 
 
-def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], toolchain: Toolchain) -> Result[Tuple[list[Path], Dict[str, Path]], str]:
+def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request: RustBuild, toolchain: Toolchain) -> Result[Tuple[list[Path], Dict[str, Path]], str]:
     """Check every authored Incan library after its dependencies and retain the interfaces its consumers need."""
     mut paths: list[Path] = []
     mut interfaces: Dict[str, Path] = {}
@@ -162,7 +170,7 @@ def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], toolcha
         source = Path(facet.project).joinpath("src").joinpath("lib.incn")
         if not source.is_file():
             continue
-        natives = unit_natives(facet, built)
+        natives = unit_natives(facet, built, request)?
         path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, unit_loaves(facet, interfaces)?)?
         interfaces[rust_facet(facet.project, false)?.package] = interface_directory(path)
         paths.append(path)

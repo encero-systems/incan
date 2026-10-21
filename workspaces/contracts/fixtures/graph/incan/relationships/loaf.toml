@@ -8,5 +8,8 @@ main = "src/main.incn"
 [dependencies]
 checked = { path = "deps/checked" }
 
+[rust-dependencies]
+serde_json = "1.0"
+
 [tool.incan.codegraph]
 sources = ["context"]

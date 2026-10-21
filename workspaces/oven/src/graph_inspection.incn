@@ -158,7 +158,7 @@ def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, st
                 return Ok(paths)
             for facet in prepared.facets:
                 if facet.project == root.0 and facet.domain.value() == "target":
-                    paths.append(inspect_incan(source, toolchain, unit_natives(facet, prepared.built), prepared.interfaces, facet.features, false, unit_loaves(facet, prepared.interfaces)?)?)
+                    paths.append(inspect_incan(source, toolchain, unit_natives(facet, prepared.built, prepared.request)?, prepared.interfaces, facet.features, false, unit_loaves(facet, prepared.interfaces)?)?)
                     return Ok(paths)
             return Err("inspection selected no source unit")
 
