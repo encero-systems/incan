@@ -63,9 +63,9 @@ impl TypeChecker {
     /// Return whether one trait spelling names the `std.serde.json` `protocol` trait.
     ///
     /// The spelling is resolved to its declaring module and source name as a bound is
-    /// ([`Self::trait_bound_module_path`], [`Self::trait_bound_source_name`]); a known spelling of the stdlib trait
-    /// (`Serialize`, `json.Serialize`) also counts, so a facade re-export the resolution does not follow is never
-    /// taken for a missing trait.
+    /// ([`Self::trait_bound_module_path`], [`Self::trait_bound_source_name`]). A proven module owner is authoritative:
+    /// a source marker merely named `Serialize` or `Deserialize` grants no JSON protocol. A known stdlib spelling
+    /// remains a compatibility fallback only when no declaring module is known.
     fn names_json_protocol(
         &self,
         spelling: &str,
@@ -80,10 +80,10 @@ impl TypeChecker {
             .map(str::to_string)
             .or_else(|| self.trait_bound_source_name(spelling))
             .unwrap_or_else(|| spelling.to_string());
-        let by_identity = module_path
-            .as_deref()
-            .and_then(|path| stdlib::stdlib_json_trait_id_for_identity(path, &source_name));
-        by_identity == Some(protocol) || stdlib::stdlib_json_trait_id(spelling) == Some(protocol)
+        match module_path {
+            Some(path) => stdlib::stdlib_json_trait_id_for_identity(&path, &source_name) == Some(protocol),
+            None => stdlib::stdlib_json_trait_id(spelling) == Some(protocol),
+        }
     }
 
     /// Return whether a type's trait adoptions, which include what its derives adopt, provide the `std.serde.json`

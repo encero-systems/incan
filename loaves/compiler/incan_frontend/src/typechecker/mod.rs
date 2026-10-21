@@ -271,7 +271,7 @@ impl ResolvedDependencyMember {
     }
 }
 
-/// Canonical nominal identity for one type exported through a compiled public-library dependency.
+/// Canonical identity for one type or trait exported through a compiled public-library dependency.
 ///
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
 /// by their exact selected instance and canonical declaration. Legacy metadata without canonical evidence retains
@@ -1565,7 +1565,7 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Return the canonical public-library identity and generic arguments carried by one named type spelling.
+    /// Return the canonical public-library identity and generic arguments carried by one named type or trait spelling.
     fn public_library_type_identity_for_type<'a>(
         &'a self,
         ty: &'a ResolvedType,
@@ -1585,9 +1585,9 @@ impl TypeChecker {
 
     /// Compare provider-qualified public-library identities before ordinary nominal spelling equality.
     ///
-    /// Returning `None` leaves non-provider types on the ordinary compatibility path. When both sides carry compiled
-    /// provider identity, the dependency and source declaration must match and generic arguments are compared
-    /// recursively through the same compatibility rules.
+    /// Returning `None` leaves non-provider types and distinct trait-related declarations on the ordinary compatibility
+    /// path, where adoption and supertrait relations are checked. Equal provider identities compare their generic
+    /// arguments recursively; distinct nominal owners remain incompatible.
     fn public_library_type_identities_compatible(
         &self,
         actual: &ResolvedType,
@@ -1595,7 +1595,18 @@ impl TypeChecker {
     ) -> Option<bool> {
         let (actual_identity, actual_args) = self.public_library_type_identity_for_type(actual)?;
         let (expected_identity, expected_args) = self.public_library_type_identity_for_type(expected)?;
-        if actual_identity != expected_identity || actual_args.len() != expected_args.len() {
+        if actual_identity != expected_identity {
+            if [actual_identity, expected_identity].iter().any(|identity| {
+                identity
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|canonical| canonical.kind == SemanticSourceTargetKind::Trait)
+            }) {
+                return None;
+            }
+            return Some(false);
+        }
+        if actual_args.len() != expected_args.len() {
             return Some(false);
         }
         Some(

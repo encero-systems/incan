@@ -878,7 +878,8 @@ impl TypeChecker {
         remapping
     }
 
-    /// Define one declaration imported through a derived public module namespace.
+    /// Define one declaration imported through a derived public module namespace, retaining provider identity for
+    /// both nominal types and trait types so an imported alias matches its declaring-module signature spelling.
     pub(super) fn define_pub_module_import_symbol(
         &mut self,
         library: &str,
@@ -952,6 +953,7 @@ impl TypeChecker {
         if matches!(
             kind,
             SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+                | SymbolKind::Trait(_)
         ) {
             let mut source_path = source_module_path;
             source_path.push(source_name);
