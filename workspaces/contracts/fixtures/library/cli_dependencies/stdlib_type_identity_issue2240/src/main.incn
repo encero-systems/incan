@@ -1,5 +1,5 @@
 # behavior: JsonValue returned by a library is accepted as the consumer's own JsonValue (#2240)
-# pending: #2240 the library dependency's compiled artifact and data standard package are not prepared
+# pending: #2240 data standard package compilation is refused by ambiguous Rust registry artifacts
 # expect-stdout:
 #   0
 

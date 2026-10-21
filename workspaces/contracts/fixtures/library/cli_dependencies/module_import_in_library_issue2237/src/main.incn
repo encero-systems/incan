@@ -1,5 +1,5 @@
 # behavior: a library can call a sibling module through a bare module import (#2237)
-# pending: #2237 the library dependency's compiled artifact is not prepared
+# pending: #2237 the root facade function and its same-named module are reported as ambiguous
 # expect-stdout:
 #   hello world
 

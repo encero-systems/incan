@@ -944,8 +944,9 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(expected)
         }
         RvalueKind::FunctionItem(callee) => {
-            let CalleeKind::Planned(name) = &callee.kind else {
-                return Err(invalid(function, "function item requires a planned source declaration"));
+            let name = match &callee.kind {
+                CalleeKind::Planned(name) | CalleeKind::External(name) => name,
+                _ => return Err(invalid(function, "function item requires a retained declaration")),
             };
             let (mut parameters, result) = signature(plan, function, callee)?;
             parameters.push(result);
@@ -2163,23 +2164,13 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
     }
     if let PlanType::FunctionItem(name, signature) = ty {
-        let function = plan
-            .functions
-            .iter()
-            .find(|function| function.name == *name)
-            .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
         let actual: Vec<_> = signature.iter().map(scalar).collect();
-        let expected: Vec<_> = function
-            .parameters
-            .iter()
-            .map(|parameter| scalar(&parameter.ty))
-            .chain(std::iter::once(scalar(&function.return_type)))
-            .collect();
+        let expected = declared_function_item_signature(plan, name)?;
         if actual != expected {
-            return Err(invalid(
-                function,
-                "function item signature differs from its declaration",
-            ));
+            return Err(PlanError::Invalid {
+                function: name.clone(),
+                reason: "function item signature differs from its declaration".into(),
+            });
         }
     }
     if let PlanType::Closure(signature)
@@ -2222,6 +2213,30 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
     }
     Ok(())
+}
+
+/// Read the exact signature of a retained local or compiled function item. External declarations undergo the same
+/// metadata verification as ordinary calls before MIR construction; a missing declaration grants no item type.
+fn declared_function_item_signature(plan: &Plan, name: &str) -> Result<Vec<Scalar>, PlanError> {
+    if let Some(function) = plan.functions.iter().find(|function| function.name == name) {
+        return Ok(function
+            .parameters
+            .iter()
+            .map(|parameter| scalar(&parameter.ty))
+            .chain(std::iter::once(scalar(&function.return_type)))
+            .collect());
+    }
+    let external = plan
+        .externals
+        .iter()
+        .find(|external| external.path == name && external.type_arguments.is_empty())
+        .ok_or_else(|| PlanError::UnknownCallee(name.into()))?;
+    Ok(external
+        .parameters
+        .iter()
+        .map(scalar)
+        .chain(std::iter::once(scalar(&external.return_type)))
+        .collect())
 }
 
 /// Require static data to match every retained storage argument before native allocation or declaration injection.

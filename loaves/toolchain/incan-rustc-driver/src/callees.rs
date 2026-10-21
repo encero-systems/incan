@@ -115,7 +115,8 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
-/// Resolve a retained item through public module children, selecting the exact item kind the plan declared.
+/// Resolve a compiled layout through public module children. Its exported item may be an alias of the native ADT;
+/// only rustc's type metadata can identify the struct or enum behind that alias.
 ///
 /// Each segment selects the public child of that name and the kind it must be: a module on the way, the declared
 /// kind at the end. A class with field defaults compiles a constructor function under its own name beside its struct,
@@ -143,13 +144,33 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
             .iter()
             .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
             .filter_map(|child| child.res.opt_def_id())
-            .find(|child| tcx.def_kind(*child) == wanted)
+            .find_map(|child| layout_definition(tcx, child, wanted))
             .ok_or_else(unknown)?;
     }
     if tcx.def_kind(current) != kind {
         return Err(unknown());
     }
     Ok(current)
+}
+
+/// Read a public layout item's exact ADT definition, following a type alias through metadata without interpreting
+/// the export's spelling. A module segment and a nonalias ADT must retain their declared kind.
+fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> Option<DefId> {
+    if tcx.def_kind(definition) == expected {
+        return Some(definition);
+    }
+    if tcx.def_kind(definition) != DefKind::TyAlias || !matches!(expected, DefKind::Struct | DefKind::Enum) {
+        return None;
+    }
+    let rustc_middle::ty::Adt(adt, _) = tcx
+        .type_of(definition)
+        .instantiate_identity()
+        .skip_normalization()
+        .kind()
+    else {
+        return None;
+    };
+    (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.

@@ -22,6 +22,34 @@ use crate::symbols::{
 use crate::typechecker::{PartialProjectionTargetKind, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+/// Retain feature requirements for public names before projection removes inactive declarations. These records
+/// explain an unavailable export; they grant no declaration identity or executable body to an inactive item.
+pub fn gated_public_exports(
+    program: &Program,
+    module_path: &[String],
+) -> Vec<crate::library_manifest::ProviderFactRequirement> {
+    program
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            !declaration.required_features.is_empty() && crate::typechecker::is_public_decl(declaration)
+        })
+        .filter_map(|declaration| {
+            let name = crate::typechecker::declaration_name(declaration)?;
+            Some(crate::library_manifest::ProviderFactRequirement {
+                kind: crate::library_manifest::ProviderFactKind::Export,
+                identity: module_path
+                    .iter()
+                    .map(String::as_str)
+                    .chain(std::iter::once(name))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                required_features: declaration.required_features.iter().cloned().collect(),
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy)]
 struct DefaultPathContext<'a> {
     checker: &'a TypeChecker,

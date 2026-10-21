@@ -169,6 +169,9 @@ pub struct LoopContext {
 pub struct TypeAliasTarget {
     pub type_params: Vec<String>,
     pub target: ResolvedType,
+    /// Nominal leaves accepted in the alias's declaring scope. Importing the alias retains these owners even when
+    /// the consumer never imports the member types themselves.
+    pub nominal_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// Source member categories registered through the RFC 120 member-name authority.
@@ -5274,8 +5277,60 @@ impl TypeChecker {
             .map(|param| param.name.clone())
             .collect::<Vec<_>>();
         let target = self.resolve_type_checked(&alias.target);
-        self.type_aliases
-            .insert(alias.name.clone(), TypeAliasTarget { type_params, target });
+        let mut nominal_identities = std::collections::BTreeMap::new();
+        self.retain_alias_nominal_identities(&target, &mut nominal_identities);
+        self.type_aliases.insert(
+            alias.name.clone(),
+            TypeAliasTarget {
+                type_params,
+                target,
+                nominal_identities,
+            },
+        );
+    }
+
+    /// Snapshot alias leaves while their declaration's lexical bindings are active. A consumer must not look up an
+    /// expanded alias's unimported member in its own scope or infer its owner from a project-wide spelling search.
+    fn retain_alias_nominal_identities(
+        &self,
+        ty: &ResolvedType,
+        identities: &mut std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ) {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                if let Some(identity) = self.named_type_reference_identity(name) {
+                    identities.insert(name.clone(), identity);
+                }
+                if let ResolvedType::Generic(_, arguments) = ty {
+                    for argument in arguments {
+                        self.retain_alias_nominal_identities(argument, identities);
+                    }
+                }
+            }
+            ResolvedType::Tuple(items) => {
+                for item in items {
+                    self.retain_alias_nominal_identities(item, identities);
+                }
+            }
+            ResolvedType::Function(parameters, result) => {
+                for parameter in parameters {
+                    self.retain_alias_nominal_identities(&parameter.ty, identities);
+                }
+                self.retain_alias_nominal_identities(result, identities);
+            }
+            ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner) => {
+                self.retain_alias_nominal_identities(inner, identities);
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                self.retain_alias_nominal_identities(key, identities);
+                self.retain_alias_nominal_identities(value, identities);
+            }
+            _ => {}
+        }
     }
 
     /// Expand transparent source type aliases inside a resolved type.
@@ -7209,6 +7264,32 @@ impl TypeChecker {
                     .entry(symbol.name.clone())
                     .or_insert_with(|| identity.clone());
             }
+        }
+        let mut ambiguous = HashSet::new();
+        for (name, alias) in &self.type_aliases {
+            let active_alias = self.symbols.lookup(name).and_then(|id| self.symbols.get(id));
+            if !active_alias.is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::TypeAlias))) {
+                continue;
+            }
+            for (leaf, identity) in &alias.nominal_identities {
+                if identities.get(leaf).is_some_and(|bound| bound != identity) {
+                    ambiguous.insert(leaf.clone());
+                } else {
+                    identities.insert(leaf.clone(), identity.clone());
+                }
+            }
+        }
+        for name in ambiguous {
+            identities.remove(&name);
+        }
+        let carriers = identities
+            .values()
+            .filter_map(|identity| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (key, identity.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (key, identity) in carriers {
+            identities.entry(key).or_insert(identity);
         }
         identities
     }
@@ -9283,7 +9364,7 @@ impl Default for TypeChecker {
 }
 
 /// Return whether a declaration participates in public module import collection.
-fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
+pub(crate) fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
     match &decl.node {
         Declaration::Capability(c) => matches!(c.visibility, Visibility::Public),
         Declaration::Const(c) => matches!(c.visibility, Visibility::Public),
@@ -9305,7 +9386,7 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
 }
 
 /// Return the root symbol name declared by a declaration, when it has one.
-fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
+pub(crate) fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
     match &decl.node {
         Declaration::Capability(c) => Some(c.name.as_str()),
         Declaration::Const(c) => Some(c.name.as_str()),

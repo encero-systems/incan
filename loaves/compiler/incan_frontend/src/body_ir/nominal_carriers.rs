@@ -13,95 +13,6 @@ type Identities = BTreeMap<String, CanonicalSymbolId>;
 
 mod constructor_arguments;
 
-/// Supplement a private Body IR snapshot with the nominal leaves of exact checked imported aliases.
-/// Only already qualified, canonically backed context aliases supply proof. Competing source, native or alias
-/// owners leave the original binding unchanged; the legacy checker snapshot is never mutated.
-pub(super) fn project_imported_alias_identities(facts: &mut TypeCheckInfo, context: &[bir::BodyIrModule]) {
-    let mut candidates: BTreeMap<String, Vec<CanonicalSymbolId>> = BTreeMap::new();
-    for imported in facts.declarations.resolved_import_identities.values() {
-        if imported.kind != super::SemanticSourceTargetKind::TypeAlias {
-            continue;
-        }
-        let mut aliases = context
-            .iter()
-            .flat_map(|module| &module.type_alias_declarations)
-            .filter(|alias| &alias.canonical == imported);
-        let Some(alias) = aliases.next() else { continue };
-        if aliases.any(|other| other != alias) {
-            continue;
-        }
-        let mut leaves = Vec::new();
-        super::named_leaf_paths(&alias.ty, &mut Vec::new(), &mut leaves);
-        for (_, leaf) in leaves {
-            let super::RetainedTypeLeaf::Named(key) = leaf else {
-                continue;
-            };
-            let Some(owner) = alias
-                .named_type_identities
-                .get(&key)
-                .filter(|owner| nominal_carrier_key(owner).as_ref() == Some(&key))
-            else {
-                continue;
-            };
-            let owners = candidates.entry(owner.declaration_name.clone()).or_default();
-            if !owners.contains(owner) {
-                owners.push(owner.clone());
-            }
-        }
-    }
-    for (name, owners) in candidates {
-        let [owner] = owners.as_slice() else { continue };
-        if facts
-            .declarations
-            .named_type_identities
-            .get(&name)
-            .is_some_and(|checked| checked != owner)
-            || facts
-                .declarations
-                .body_ir_native_type_identities
-                .get(&name)
-                .is_some_and(|checked| checked != owner)
-            || facts
-                .body_ir_runtime_types
-                .get(&name)
-                .is_some_and(|checked| checked != owner)
-        {
-            continue;
-        }
-        let conflicts = facts
-            .declarations
-            .named_type_identities
-            .values()
-            .chain(facts.declarations.body_ir_native_type_identities.values())
-            .chain(facts.body_ir_runtime_types.values())
-            .any(|checked| checked.declaration_name == name && checked != owner);
-        if conflicts {
-            continue;
-        }
-        let Some(key) = nominal_carrier_key(owner) else {
-            continue;
-        };
-        if facts
-            .declarations
-            .named_type_identities
-            .get(&key)
-            .is_some_and(|checked| checked != owner)
-        {
-            continue;
-        }
-        facts
-            .declarations
-            .named_type_identities
-            .entry(name)
-            .or_insert_with(|| owner.clone());
-        facts
-            .declarations
-            .named_type_identities
-            .entry(key)
-            .or_insert_with(|| owner.clone());
-    }
-}
-
 /// Retain the exact checked pattern target before projection erases its source alias or package-qualified spelling.
 /// A wildcard has no payload local from which a later pass could recover this declaration-owned identity.
 pub(super) fn retain_checked_site_type(ty: &mut IncanType, span: ast::Span, facts: &TypeCheckInfo) {
@@ -145,12 +56,6 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
     let returns = return_carriers(module, context);
     let constructors = constructor_arguments::collect(module, context);
     for declaration in &mut module.nominal_declarations {
-        retain_identities(&mut declaration.named_type_identities);
-        if let Some(key) = nominal_carrier_key(&declaration.canonical) {
-            declaration
-                .named_type_identities
-                .insert(key, declaration.canonical.clone());
-        }
         for ty in &mut declaration.field_types {
             qualify_type(ty, None, &declaration.named_type_identities);
         }
@@ -162,7 +67,6 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
         }
     }
     for alias in &mut module.type_alias_declarations {
-        retain_identities(&mut alias.named_type_identities);
         qualify_type(&mut alias.ty, None, &alias.named_type_identities);
     }
     for body in &mut module.bodies {
@@ -177,15 +81,6 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
             storage.ty = body.return_type.clone();
         }
     }
-}
-
-/// Add a machine carrier key only beside the canonical identity that checking retained for that nominal.
-fn retain_identities(identities: &mut Identities) {
-    let additions: Vec<_> = identities
-        .values()
-        .filter_map(|identity| nominal_carrier_key(identity).map(|key| (key, identity.clone())))
-        .collect();
-    identities.extend(additions);
 }
 
 /// Use the original checked leaf where projection erased its qualified name; otherwise keep the retained type.
@@ -238,7 +133,6 @@ fn retain_body(
     returns: &ReturnCarriers,
     constructors: &ConstructorCarriers,
 ) {
-    retain_identities(&mut body.named_type_identities);
     retain_selected_returns(
         &body.block.stmts,
         &mut body.locals,

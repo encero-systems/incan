@@ -13,6 +13,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::error::{CliError, CliResult};
+use crate::unit::UnitDescription;
 use exports::{LibraryReexportResolver, module_key};
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
@@ -97,7 +98,7 @@ impl PublicationFacts {
         mut self,
         modules: &[ParsedModule],
         entry: &ParsedModule,
-        version: &str,
+        unit: &UnitDescription,
         model_bundles: &[CanonicalModelBundle],
     ) -> CliResult<LibraryManifest> {
         materialize_api_alias_projections(&mut self.api_modules);
@@ -133,7 +134,8 @@ impl PublicationFacts {
                     .collect::<String>();
                 CliError::failure(rendered.trim_end())
             })?;
-        let mut manifest = LibraryManifest::from_checked_exports(&self.package, version, &selected);
+        let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
+        retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
             model_bundles
                 .iter()
@@ -147,7 +149,7 @@ impl PublicationFacts {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: Some(CheckedApiPackageIdentity {
                 name: self.package.clone(),
-                version: Some(version.to_string()),
+                version: Some(unit.version.clone()),
             }),
             modules: self.api_modules,
             public_namespaces: Vec::new(),
@@ -173,12 +175,30 @@ impl PublicationFacts {
             schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,
             package: Some(CheckedRegistryPackageIdentity {
                 name: self.package.clone(),
-                version: Some(version.to_string()),
+                version: Some(unit.version.clone()),
             }),
             modules: self.registry_modules,
         });
         Ok(manifest)
     }
+}
+
+/// Retain the selected feature projection and source-gated export requirements for consumer diagnostics. Inactive
+/// names supply remedies only; they remain absent from the checked public exports and executable publication.
+fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[ParsedModule], unit: &UnitDescription) {
+    let provider = &mut manifest.contract_metadata.provider;
+    provider.active_features = unit.active_features.clone();
+    provider.public_features = unit
+        .declared_features
+        .iter()
+        .map(|name| (name.clone(), Default::default()))
+        .collect();
+    provider.fact_requirements = modules
+        .iter()
+        .flat_map(|module| module.gated_exports.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
 }
 
 /// Write a Loaf's files beside its rlib in `dir`: `<name>.incnbody`, the executable representation of `bodies` (the

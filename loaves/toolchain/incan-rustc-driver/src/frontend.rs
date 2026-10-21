@@ -120,12 +120,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
-                .library_manifest(
-                    &modules,
-                    &modules[entry],
-                    &unit.version,
-                    &session.contract_model_bundles,
-                )
+                .library_manifest(&modules, &modules[entry], unit, &session.contract_model_bundles)
                 .map_err(|error| error.to_string())?;
             Some(manifest)
         }
@@ -222,19 +217,28 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
                 declaration.native_item = item;
             }
         }
-        let declared_bodies = std::mem::take(&mut module.bodies);
-        for body in declared_bodies {
-            if module.body_requires_instantiation(&body) {
-                module.bodies.push(body);
-                continue;
+        let governed = module
+            .bodies
+            .iter()
+            .filter(|body| module.body_requires_instantiation(body))
+            .filter_map(|body| body.canonical.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        module.bodies.retain(|body| {
+            if body
+                .canonical
+                .as_ref()
+                .is_some_and(|identity| governed.contains(identity))
+            {
+                return true;
             }
-            match incan_semantics_core::body_ir::LoafCallable::from_body(&body) {
+            match incan_semantics_core::body_ir::LoafCallable::from_body(body) {
                 Some(callable) => {
                     loaf_callables.push(callable);
+                    false
                 }
-                None => module.bodies.push(body),
+                None => true,
             }
-        }
+        });
     }
     // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
     let opaque = incan_semantics_core::body_ir::held_rust_items(&bodies);

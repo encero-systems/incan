@@ -7,6 +7,7 @@ from rust::incan_semantics_core::body_ir import (
     Body,
     CallableParamDefault,
     MethodTarget,
+    LoafCallable,
     Operand as RustOperand,
 )
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
@@ -112,8 +113,9 @@ pub def default_arguments(
 
 
 pub def library_default_arguments(
+    module: &BodyIrModule,
     mut builder: Builder,
-    defaults: list[CallableParamDefault],
+    declaration: &LoafCallable,
     binding: &ArgumentBinding,
     elements: &list[ArgumentElement],
     types: list[PlanType],
@@ -121,11 +123,20 @@ pub def library_default_arguments(
     parameter_offset: int,
 ) -> Result[list[Operand], str]:
     """
-    Fill a stdlib crate call's slots, passing the constant its record holds for each omitted one.
+    Fill a compiled Loaf call's slots from its declaration-owned defaults, evaluating statements in their own frame.
 
-    `defaults` follows the record's parameters, so a method's receiver comes first and a `parameter_offset` of one skips
-    it, as for a source method. The crate item takes every argument owned.
+    Defaults follow the record's parameters, so a method's receiver comes first and a `parameter_offset` of one skips
+    it, as for a source method. A retained declaration frame supplies the same passing policy as a source call;
+    synthetic native records use their owned ABI contract.
     """
+    match declaration.declaration_frame.as_ref():
+        Some(boxed) =>
+            frame = boxed.as_ref()
+            if frame.canonical != Some(declaration.canonical.clone()):
+                return Err("invalid Body IR Loaf default frame identity")
+            return default_arguments(module, builder, binding, elements, frame, types, span, parameter_offset, false)
+        None => pass
+    defaults = declaration.parameter_defaults
     if parameter_offset < 0 or len(defaults) != len(types) + parameter_offset:
         return Err("unsupported Body IR stdlib call omitting an argument its record has no default for")
     mut operands = written_operands(builder, binding, elements, types, span, true)?

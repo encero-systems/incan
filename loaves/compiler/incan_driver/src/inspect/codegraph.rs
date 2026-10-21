@@ -798,6 +798,7 @@ impl CodegraphBuilder {
                     file_path: path.to_path_buf(),
                     source,
                     ast,
+                    gated_exports: Vec::new(),
                 };
                 self.collect_module_records_with_degraded(&module, &file_id, true);
             }
