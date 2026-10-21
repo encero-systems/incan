@@ -8310,7 +8310,7 @@ def read_element_field(
     projection: &PlaceElem,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read one field of a model element already copied out of a list, copying scalars and cloning owned values."""
+    """Read a field from a list element, copying scalars and function pointers while cloning owned values."""
     selected = field_projection(
         builder.nominals,
         place_type(builder.locals, place),
@@ -8342,7 +8342,7 @@ def read_element_field(
             span,
         )
         return Ok(output)
-    if not numeric_carrier(ty) and ty != PlanType.Bool:
+    if not numeric_carrier(ty) and ty != PlanType.Bool and not callable_copy_type(ty):
         return Err("unsupported Body IR list element field type")
     output = temporary(builder, ty, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
