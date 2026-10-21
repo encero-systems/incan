@@ -1,4 +1,4 @@
-# behavior: a function with type parameters can draw a comprehension from a compiled iterator default
+# behavior: a function with type parameters can draw a comprehension from an imported iterator default
 # expect-stdout:
 #   checked
 

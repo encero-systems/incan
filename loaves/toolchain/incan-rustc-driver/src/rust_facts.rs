@@ -207,7 +207,8 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
     facts
 }
 
-/// Every public item of the named crates, under each public module path that reaches it.
+/// Every public item of the named crates, under each public module path that reaches it. Standard roots also retain
+/// primitive impl facts, whose scalar carriers have no public item DefId for the module walker.
 fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<String, RustItemMetadata> {
     let mut facts = BTreeMap::new();
     let mut named = HashSet::new();
@@ -231,6 +232,7 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
         .iter()
         .any(|name| matches!(name.as_str(), "std" | "core" | "alloc"))
     {
+        describe_primitives(tcx, &mut facts, &mut named);
         facts.insert(
             "str".into(),
             RustItemMetadata {
@@ -267,6 +269,54 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             .or_insert_with(|| describe(tcx, def, &path, &mut HashSet::new()));
     }
     facts
+}
+
+/// Publish primitive trait facts under their native and standard public paths. Primitive items have no DefId for
+/// the public module walker; their impl templates and associated types still come from rustc's exact scalar type.
+/// Public primitive re-exports are transparent aliases to that scalar, never new nominal layouts.
+fn describe_primitives(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>, named: &mut HashSet<DefId>) {
+    let primitives = [
+        ("bool", tcx.types.bool),
+        ("char", tcx.types.char),
+        ("i8", tcx.types.i8),
+        ("i16", tcx.types.i16),
+        ("i32", tcx.types.i32),
+        ("i64", tcx.types.i64),
+        ("i128", tcx.types.i128),
+        ("isize", tcx.types.isize),
+        ("u8", tcx.types.u8),
+        ("u16", tcx.types.u16),
+        ("u32", tcx.types.u32),
+        ("u64", tcx.types.u64),
+        ("u128", tcx.types.u128),
+        ("usize", tcx.types.usize),
+        ("f32", tcx.types.f32),
+        ("f64", tcx.types.f64),
+    ];
+    for (name, native) in primitives {
+        let info = RustTypeInfo {
+            implemented_traits: trait_impls(tcx, native, named),
+            ..RustTypeInfo::default()
+        };
+        for path in [
+            name.to_owned(),
+            format!("std::primitive::{name}"),
+            format!("core::primitive::{name}"),
+        ] {
+            let definition_path = (path != name).then(|| name.to_owned());
+            let mut selected = info.clone();
+            selected.alias_target = definition_path.clone();
+            facts.insert(
+                path.clone(),
+                RustItemMetadata {
+                    canonical_path: path,
+                    definition_path,
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(selected),
+                },
+            );
+        }
+    }
 }
 
 /// The public items of one crate's module tree, each module walked once under the first path that reaches it.
@@ -683,8 +733,13 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
     implementations
         .into_iter()
         .filter_map(|implementation| {
-            if (owner == tcx.types.str_ || matches!(owner.kind(), ty::Slice(_)))
-                && !concrete_impl_may_apply(tcx, implementation, owner)
+            if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive {
+                return None;
+            }
+            if matches!(
+                owner.kind(),
+                ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::Float(_) | ty::Str | ty::Slice(_)
+            ) && !concrete_impl_may_apply(tcx, implementation, owner)
             {
                 return None;
             }
@@ -756,8 +811,8 @@ fn trait_implementations(tcx: TyCtxt<'_>, owner: DefId, named: &mut HashSet<DefI
         .collect()
 }
 
-/// Eliminate impossible blanket candidates for unsized primitives. A slice element remains unconstrained during
-/// extraction, so applicable conditional templates survive for the checker to instantiate and rustc to verify.
+/// Eliminate impossible blanket candidates for scalar and unsized primitives. A slice element remains unconstrained
+/// during extraction, so applicable conditional templates survive for the checker to instantiate and rustc to verify.
 fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
     use rustc_infer::infer::TyCtxtInferExt;
     use rustc_trait_selection::traits::{ObligationCtxt, query::evaluate_obligation::InferCtxtExt};

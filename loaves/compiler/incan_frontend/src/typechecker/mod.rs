@@ -2235,6 +2235,8 @@ impl TypeChecker {
     /// primitive spellings and `Option` / `Result` wrappers are recognized, including namespaced aliases whose
     /// trailing segment is `Option` or `Result`. Nested generics, lifetimes, and crate paths otherwise become
     /// [`ResolvedType::RustPath`] (or [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
+    /// Native scalar names precede source import lookup, and metadata-selected transparent aliases retain their
+    /// target carrier rather than inventing a nominal layout for a public primitive path.
     ///
     /// ## `Result<T, E>` parsing
     ///
@@ -2246,6 +2248,23 @@ impl TypeChecker {
         let normalized = Self::compact_rust_display(display.as_str());
         if normalized == RUST_NEVER_TYPE_DISPLAY {
             return ResolvedType::Never;
+        }
+        // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
+        if let Some(id) = numerics::from_str(&normalized)
+            && numerics::as_str(id) == normalized
+        {
+            return match id {
+                NumericTypeId::I64 => ResolvedType::Int,
+                NumericTypeId::F64 => ResolvedType::Float,
+                NumericTypeId::Bool => ResolvedType::Bool,
+                id => ResolvedType::Numeric(id),
+            };
+        }
+        if !normalized.contains('<')
+            && let Some(expanded) = self.rust_alias_expansion(&normalized, &[])
+            && expanded != normalized
+        {
+            return self.resolved_type_from_rust_display(&expanded);
         }
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
@@ -2286,21 +2305,6 @@ impl TypeChecker {
         }
         match normalized.as_str() {
             "{unknown}" => ResolvedType::Unknown,
-            "bool" => ResolvedType::Bool,
-            "f64" => ResolvedType::Float,
-            "i64" => ResolvedType::Int,
-            "f32" => ResolvedType::Numeric(NumericTypeId::F32),
-            "i8" => ResolvedType::Numeric(NumericTypeId::I8),
-            "i16" => ResolvedType::Numeric(NumericTypeId::I16),
-            "i32" => ResolvedType::Numeric(NumericTypeId::I32),
-            "i128" => ResolvedType::Numeric(NumericTypeId::I128),
-            "isize" => ResolvedType::Numeric(NumericTypeId::ISize),
-            "u8" => ResolvedType::Numeric(NumericTypeId::U8),
-            "u16" => ResolvedType::Numeric(NumericTypeId::U16),
-            "u32" => ResolvedType::Numeric(NumericTypeId::U32),
-            "u64" => ResolvedType::Numeric(NumericTypeId::U64),
-            "u128" => ResolvedType::Numeric(NumericTypeId::U128),
-            "usize" => ResolvedType::Numeric(NumericTypeId::USize),
             "str" | "&str" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,

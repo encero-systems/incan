@@ -19,7 +19,7 @@ use crate::typechecker::helpers::{
 use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
     CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
-    RustMethodTraitImportUse, RustTraitImportInfo,
+    RustCheckedFieldValue, RustMethodTraitImportUse, RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -197,7 +197,8 @@ impl TypeChecker {
     /// The path is the value's own `RustPath` spelling; the metadata lookup normalizes the `rust::` prefix and any
     /// type arguments, exactly as a field read does. A fast cache entry can carry only nominal metadata, so a missing
     /// field upgrades to complete semantic metadata before the checker rejects it. Field access and field assignment
-    /// resolve through this one lookup, so a field that can be read can also be assigned.
+    /// resolve through this one lookup, so a field that can be read can also be assigned. Retain the native field
+    /// carrier before projecting its source type so subsequent method lookup consumes this same selection.
     pub(in crate::typechecker) fn rust_path_field_type(
         &mut self,
         path: &str,
@@ -225,16 +226,23 @@ impl TypeChecker {
                 Self::synthetic_member_identity(&owner, &rust_field.name, SemanticSourceTargetKind::Field),
             );
         }
-        Some(self.resolved_rust_field_type(path, rust_field))
+        let (source_type, native) = self.resolved_rust_field_types(path, rust_field);
+        self.type_info.rust.field_values.insert((span.start, span.end), native);
+        Some(source_type)
     }
 
-    /// Resolve a Rust field type from its display string against the owning Rust type.
+    /// Resolve source and native field types together from metadata against the instantiated owner.
     ///
     /// Rust field metadata carries both a structural shape and the source display. Field access should use the display
     /// because it preserves exact numeric widths and owner-relative paths that matter when a Rust field is copied back
     /// into another Rust boundary. The structural shape remains useful for broad semantic classification and older
-    /// metadata entries whose display cannot be resolved.
-    fn resolved_rust_field_type(&self, owner_path: &str, field: &RustFieldInfo) -> ResolvedType {
+    /// metadata entries whose display cannot be resolved. Native method lookup keeps the metadata-selected item even
+    /// when the source type projects to a collection.
+    fn resolved_rust_field_types(
+        &self,
+        owner_path: &str,
+        field: &RustFieldInfo,
+    ) -> (ResolvedType, RustCheckedFieldValue) {
         let mut display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
         if let Some((base, arguments)) = Self::rust_generic_base_and_args(owner_path)
             && let Some(metadata) = self.rust_item_metadata_for_path(base)
@@ -247,11 +255,16 @@ impl TypeChecker {
             display = Self::substitute_rust_display_params(&display, &info.type_params, &arguments);
         }
         let resolved = self.resolved_type_from_rust_display(display.as_str());
-        if matches!(resolved, ResolvedType::Unknown) {
+        let source = if matches!(resolved, ResolvedType::Unknown) {
             self.resolved_type_from_rust_shape(&field.type_shape)
         } else {
             resolved
-        }
+        };
+        let native = RustCheckedFieldValue {
+            native_type: self.native_rust_signature_type(&display, owner_path),
+            item_path: self.rust_result_item_path(&display, owner_path),
+        };
+        (source, native)
     }
 
     /// Return the target display for a Rust type alias when the expected destination type names one.
@@ -2826,12 +2839,7 @@ impl TypeChecker {
                     if let Some(sig) = self.rust_associated_function_signature(path, field) {
                         return Some(self.resolved_function_type_from_rust_sig_for_path(&sig, false, path));
                     }
-                    if let Some(meta) = self.rust_item_metadata_for_path(path)
-                        && let RustItemKind::Type(info) = &meta.kind
-                        && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
-                    {
-                        return Some(self.resolved_rust_field_type(path, rust_field));
-                    }
+                    return self.rust_path_field_type(path, field, span);
                 }
                 return None;
             }
@@ -6855,9 +6863,15 @@ impl TypeChecker {
         // Rust callable bounds are not available until receiver metadata selects the method signature below. Defer
         // direct closures on Rust receivers so the selected `Fn`/`FnMut` bound can contextually type them once, rather
         // than first checking their parameters as unknowns and retaining spurious errors from that incomplete pass.
-        let rust_receiver_path = self
-            .rust_canonical_path_for_receiver_type(&base_ty)
-            .or_else(|| self.rust_value_item_path(base));
+        // A source-projected list keeps its list contract when its native field carrier is retained.
+        let source_list_method = matches!(&base_ty, ResolvedType::Generic(name, _)
+            if collection_type_id(name) == Some(CollectionTypeId::List) && list_methods::from_str(method).is_some());
+        let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty).or_else(|| {
+            if source_list_method {
+                return None;
+            }
+            self.rust_value_item_path(base)
+        });
         let defer_rust_closures = rust_receiver_path.is_some();
 
         // `Enum.Variant(payload)` reaches this shared method-call path, and this is the only place its arguments are

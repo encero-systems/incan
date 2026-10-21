@@ -1,0 +1,15 @@
+# behavior: a public Rust vector field keeps its native method surface
+# expect-stdout:
+#   checked
+
+from rust::std::process import Output
+
+
+def discard[T](mut value: Output) -> None:
+    """Clear a native byte vector through its public struct field."""
+    value.stdout.clear()
+
+
+def main() -> None:
+    """Execute after checking the native field method."""
+    println("checked")

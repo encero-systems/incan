@@ -1,0 +1,15 @@
+# behavior: a public Rust Option field keeps its native borrowed method surface
+# expect-stdout:
+#   checked
+
+from rust::incan_lang::interop import RustTypeInfo
+
+
+def inspect[T](value: RustTypeInfo) -> None:
+    """Borrow the optional alias target through its retained Rust field type."""
+    target = value.alias_target.as_ref()
+
+
+def main() -> None:
+    """Execute after checking the native Option field method."""
+    println("checked")
