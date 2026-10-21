@@ -1,0 +1,23 @@
+# behavior: a diverging native match arm has no result assignment or normal continuation
+# expect-stdout:
+#   before
+# expect-stderr-contains:
+#   constraint positive failed
+# expect-exit: 101
+
+from rust::incan_std_core::validation import raise_constraint_error
+
+
+def validate(valid: bool) -> None:
+    """Join only the unit-valued arm; the failing native call cannot reach that join."""
+    match valid:
+        true => pass
+        false => raise_constraint_error("Number", "positive")
+
+
+def main() -> None:
+    """Observe the returning arm before selecting the diverging arm."""
+    validate(true)
+    println("before")
+    validate(false)
+    println("after")
