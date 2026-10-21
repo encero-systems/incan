@@ -10989,7 +10989,7 @@ def enum_payload_read(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Preserve projected copy/borrow facts while materializing the source binding's owned value."""
+    """Preserve projected copy/borrow facts, copying stored shared references and materializing owned bindings."""
     if place_type(builder.locals, place) == PlanType.StrRef:
         owned = owned_slice_text(builder, read_place(place, false, span), span)
         return Ok(read_place(owned, true, span))
@@ -11004,6 +11004,7 @@ def enum_payload_read(
     payload_type = place_type(builder.locals, place)
     match payload_type:
         PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))
         PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
         _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:

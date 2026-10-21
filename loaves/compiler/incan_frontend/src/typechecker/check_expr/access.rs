@@ -5435,16 +5435,20 @@ impl TypeChecker {
         matches!(index_ty, ResolvedType::Int | ResolvedType::Str | ResolvedType::Unknown) || is_frozen_str(index_ty)
     }
 
-    /// Type-check an indexing expression (`base[index]`) and return the element type.
+    /// Type-check an indexing expression (`base[index]`) and return the element type. Explicit references retain the
+    /// collection's element type; mutability and ownership remain governed by the original indexed place.
     pub(in crate::typechecker::check_expr) fn check_index(
         &mut self,
         base: &Spanned<Expr>,
         index: &Spanned<Expr>,
         span: Span,
     ) -> ResolvedType {
-        let base_ty = self.check_type_receiver_expr(base);
+        let mut base_ty = self.check_type_receiver_expr(base);
         if let Some(ty) = self.resolve_type_index_expression(&base_ty, base, index) {
             return ty;
+        }
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = base_ty {
+            base_ty = *inner;
         }
         let index_ty = self.check_expr(index);
         if self.is_std_json_value_type(&base_ty) && !Self::is_std_json_value_index_type(&index_ty) {

@@ -60,6 +60,13 @@ pub struct Envelope {
     pub message: Box<Message>,
 }
 
+impl Message {
+    /// Return a shared enum reference inside an optional native result.
+    pub fn borrowed_message(&self) -> Option<&Message> {
+        Some(self)
+    }
+}
+
 /// Supply the public native field without requiring native record construction in the consumer.
 pub fn message_envelope() -> Envelope {
     Envelope {

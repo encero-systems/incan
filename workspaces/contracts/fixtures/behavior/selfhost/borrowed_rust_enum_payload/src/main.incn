@@ -22,6 +22,7 @@
 #   true
 #   true
 #   Wrapped(Record { count: 7, text: "native", ready: false })
+#   7
 
 from rust::messages import CopyNumber, Message, category, message, boxed_message, message_envelope, wrapped_message
 from rust::messages::category import Kind as Category
@@ -77,6 +78,13 @@ def inspect_positional(value: &Message) -> None:
         _ => pass
 
 
+def inspect_optional(values: &list[Message]) -> None:
+    """Resolve an indexed native method and copy its stored shared enum reference into the arm binding."""
+    match values[0].borrowed_message():
+        Some(value) => inspect_count(value)
+        None => println("missing message")
+
+
 def main() -> None:
     """Keep the native owner alive while its record payload is borrowed."""
     println("checked")
@@ -114,3 +122,4 @@ def main() -> None:
     println(empty == constructed)
     println(empty != value)
     println(f"{constructed:?}")
+    inspect_optional([message()])
