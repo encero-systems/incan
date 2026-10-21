@@ -1731,6 +1731,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Select the Duckborrower fact and last-use marker for reading `place`.
     ///
+    /// Explicit shared-reference values copy their pointer, including projected references; exclusive references
+    /// remain transfers or reborrows. This differs from a borrowed ABI slot whose logical source type is an owner.
     /// Projected reads (`.field`, `[index]`) never move: v0 does not track partial-move state, so a non-Copy
     /// projected read borrows rather than risking an unsound move out of a place the surrounding code still owns.
     /// A checked source enum field instead records an explicit clone when read as a value; reference consumers retain
@@ -1755,7 +1757,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// than `Move` — an over-seeded, never-decremented countdown biases toward `Clone`, not toward an unsound
     /// `Move`, consistent with this module's documented last-use approximation.
     fn ownership_fact_for_place(&mut self, place: &bir::Place, ty: &IncanType) -> (bir::OwnershipFact, bool) {
-        let is_copy = ty.abi_v0_facts().ownership.is_trivially_copy();
+        let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
         if !place.projection.is_empty() {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy

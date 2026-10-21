@@ -7,14 +7,20 @@ use incan_semantics_core::{SemanticSourceTargetKind, body_ir};
 
 use super::TypeChecker;
 use crate::ast::{CallArg, ParamKind, Span};
-use crate::symbols::{CallableParam, ResolvedType};
+use crate::symbols::{CallableParam, ResolvedType, SymbolKind};
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedCall, RustCheckedEnum, RustCheckedLayout};
 
 impl TypeChecker {
     /// Select the checked public binding shared by native signatures, constructors, patterns and coverage. A
-    /// definition path never creates a second carrier when metadata already binds it through a public reexport.
+    /// definition path never creates a second carrier when metadata already binds it through a public reexport;
+    /// an explicit lexical Rust import retains that checked public path before diagnostic aliases are consulted.
     pub(in crate::typechecker) fn rust_public_type_path(&self, path: &str) -> String {
+        if let Some(symbol) = self.lookup_symbol(path)
+            && let SymbolKind::RustItem(info) = &symbol.kind
+        {
+            return info.path.clone();
+        }
         self.type_info
             .rust
             .item_public_paths

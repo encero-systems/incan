@@ -1,8 +1,9 @@
-# behavior: a Rust HashMap answers get with a str literal and with a str local, and a local model whose insert method has a defaulted parameter is dispatched by its own signature beside the map's two-argument insert
+# behavior: a Rust HashMap retains its default generic owner and borrowed scalar results across repeated lookups, while a source model's same-named insert uses its own defaulted signature
 # expect-stdout:
 #   2
 #   1
 #   missing
+#   2
 #   3
 
 from rust::std::collections import HashMap
@@ -30,6 +31,7 @@ def main() -> None:
         None => println("missing")
     println(lookup(counts, "cat"))
     println(lookup(counts, "dog"))
+    println(lookup(counts, "the"))
     mut counter = Counter(total=0)
     counter.insert("a")
     counter.insert("b", 2)

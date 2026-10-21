@@ -224,8 +224,12 @@ impl TypeChecker {
         };
         // ---- Retained native callee ----
         let receiver = (!receiver_is_type && Self::rust_signature_has_receiver(signature))
-            .then(|| self.type_info.expr_type(call.receiver_span).cloned())
-            .flatten();
+            .then(|| {
+                self.rust_native_value_type(call.receiver_expr)
+                    .or_else(|| self.type_info.expr_type(call.receiver_span).cloned())
+            })
+            .flatten()
+            .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path));
         self.retain_checked_rust_method(
             selected,
             owner,
@@ -261,9 +265,9 @@ impl TypeChecker {
             signature.clone()
         };
         let effective = if !receiver_is_type {
-            self.type_info
-                .expr_type(call.receiver_span)
-                .and_then(|receiver| self.rust_owner_type_args(receiver, call.rust_path))
+            self.rust_native_value_type(call.receiver_expr)
+                .or_else(|| self.type_info.expr_type(call.receiver_span).cloned())
+                .and_then(|receiver| self.rust_owner_type_args(&receiver, call.rust_path))
                 .and_then(|mut arguments| {
                     self.complete_rust_owner_arguments(owner, &mut arguments)
                         .then_some(arguments)

@@ -318,7 +318,8 @@ impl TypeChecker {
     }
 
     /// Normalize native identities for comparison without rewriting the public paths retained for executable
-    /// storage. Constructor aliases and leaf aliases share retained defining paths and standard reexport identities.
+    /// storage. Constructor aliases and leaf aliases share retained defining paths and standard reexport identities;
+    /// a checked native nominal keeps its identity when storage freezes its path into a named carrier.
     fn rust_trait_comparison_type(&self, ty: &ResolvedType) -> ResolvedType {
         let ty = self.rust_inference_type(ty, &[]);
         map_resolved_type_leaves(&ty, &|leaf| {
@@ -336,8 +337,16 @@ impl TypeChecker {
                         .collect(),
                 ));
             }
-            let ResolvedType::RustPath(path) = leaf else {
-                return None;
+            let path = match leaf {
+                ResolvedType::RustPath(path) => path,
+                ResolvedType::Named(path)
+                    if self
+                        .rust_item_metadata_for_path(path)
+                        .is_some_and(|metadata| matches!(metadata.kind, RustItemKind::Type(_))) =>
+                {
+                    path
+                }
+                _ => return None,
             };
             if incan_lang::interop::rust_display_is_owned_string(path) {
                 return Some(ResolvedType::Str);

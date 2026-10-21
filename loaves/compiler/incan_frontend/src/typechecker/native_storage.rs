@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeKind};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, IncanType, body_ir};
 
 use super::TypeChecker;
@@ -307,7 +308,9 @@ impl TypeChecker {
         })
     }
 
-    /// Complete native owner defaults from the admitted item before retaining each structural argument.
+    /// Complete native owner defaults from the admitted item before retaining each structural argument. Standard
+    /// collections use the compiler's existing collection carrier only after metadata proves every hidden argument
+    /// equals its declared default; other crates and nondefault allocators or hashers retain exact native storage.
     fn rust_storage_constructor(
         &self,
         base: &str,
@@ -322,6 +325,14 @@ impl TypeChecker {
             }) = self.lookup_rust_item_metadata_for_path(&base)
         {
             self.complete_rust_owner_arguments(&info, &mut arguments);
+            if base.starts_with("std::") || base.starts_with("alloc::") {
+                let projected = self.rust_inference_constructor(&base, &arguments, parameters);
+                if matches!(&projected, ResolvedType::Generic(name, _)
+                    if matches!(collections::from_str(name), Some(CollectionTypeId::List | CollectionTypeId::Dict | CollectionTypeId::Set)))
+                {
+                    return self.rust_storage_resolved(&projected, parameters);
+                }
+            }
         }
         let arguments = arguments
             .iter()
