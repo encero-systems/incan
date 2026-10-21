@@ -2266,6 +2266,8 @@ pub enum ValidatedNewtypeCoercionMode {
 pub struct ValidatedNewtypeCoercionStep {
     /// Newtype being constructed by this step.
     pub newtype_name: String,
+    /// Checker-selected declaration owning the tuple storage, including a signature-only imported newtype.
+    pub owner_identity: Option<CanonicalSymbolId>,
     /// Canonical validation hook to call. `None` means direct newtype wrapping is sufficient.
     pub ctor: Option<String>,
     /// Exact source declaration selected for `ctor`, when the hook has compiler-owned identity metadata.

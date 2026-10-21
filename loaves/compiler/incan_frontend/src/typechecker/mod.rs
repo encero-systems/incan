@@ -8813,6 +8813,7 @@ impl TypeChecker {
             .and_then(|method| method.identity.clone());
         steps.push(ValidatedNewtypeCoercionStep {
             newtype_name: target_name.clone(),
+            owner_identity: self.checked_nominal_type_identities().get(target_name).cloned(),
             ctor,
             ctor_identity,
             constraints: if Self::validated_newtype_ctor_name(target_name, &newtype).is_some() {

@@ -629,12 +629,21 @@ fn declared_newtype_return_owner(body: &bir::Body) -> Option<&CanonicalSymbolId>
         .filter(|owner| owner.kind == SemanticSourceTargetKind::Newtype)
 }
 
-/// Retain a nongeneric source callable's exact return carrier before its private aliases leave the providing module.
+/// Retain a nongeneric source function's or checker-selected validation hook's exact return carrier before its
+/// private aliases leave the provider. Ordinary method results keep their consumer's checked specialization.
 /// Generic callable results keep the consumer's checked instantiation facts; unresolved producer results never
 /// replace a consumer's type. The canonical key identifies the selected declaration, not a written import spelling.
 pub(super) fn collect_published_callable_returns(
     context: &[bir::BodyIrModule],
+    facts: &TypeCheckInfo,
 ) -> HashMap<CanonicalSymbolId, IncanType> {
+    let hooks = facts
+        .expressions
+        .validated_newtype_coercions
+        .values()
+        .flat_map(|coercion| &coercion.steps)
+        .filter_map(|step| step.ctor_identity.as_ref())
+        .collect::<HashSet<_>>();
     context
         .iter()
         .flat_map(|module| &module.bodies)
@@ -647,7 +656,8 @@ pub(super) fn collect_published_callable_returns(
         })
         .filter_map(|body| {
             let identity = body.canonical.as_ref()?;
-            (identity.kind == SemanticSourceTargetKind::Function).then(|| (identity.clone(), body.return_type.clone()))
+            (identity.kind == SemanticSourceTargetKind::Function || hooks.contains(identity))
+                .then(|| (identity.clone(), body.return_type.clone()))
         })
         .collect()
 }
