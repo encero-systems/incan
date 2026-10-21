@@ -1,13 +1,21 @@
-# behavior: a static trait method called through a bounded type parameter returns its declared Result
+# behavior: bounded static methods retain Result types, and package aliases retain the public fields of error results
 # expect-accepted:
 
 from std.traits.convert import TryFrom
+from std.fs import Path
 
 
 def parse[T with TryFrom[str]](text: str) -> Option[T]:
     match T.try_from(text):
         Ok(value) => return Some(value)
         Err(_) => return None
+
+
+def describe_open_error(path: Path) -> str:
+    """Read error fields through the package's canonical IoError alias."""
+    match path.open("rb"):
+        Ok(_) => return "ok"
+        Err(error) => return f"{error.kind}: {error.detail}"
 
 
 def main() -> None:

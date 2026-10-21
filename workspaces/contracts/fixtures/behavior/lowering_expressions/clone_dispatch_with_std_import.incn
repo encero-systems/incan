@@ -1,14 +1,29 @@
-# behavior: clone() on a derived model dispatches natively while Clone is imported from std.derives.copying, and the copy is independent of the original
+# behavior: explicit standard trait imports retain derived Clone dispatch and Iterator's declared parameter, including repeated imports (#2256)
 # expect-stdout:
 #   original 1
 #   copy 5
+#   7
 
 from std.derives.copying import Clone
+from std.derives.collection import Iterator
+from std.derives.collection import Iterator
 
 
 @derive(Clone)
 model Counter:
     value: int
+
+
+model Numbers with Iterator[int]:
+    """Yield one value through the compiled generic trait's checked contract."""
+    current: int
+
+    def __next__(mut self) -> Option[int]:
+        """Advance once, then report exhaustion."""
+        if self.current == 0:
+            self.current = 1
+            return Some(7)
+        return None
 
 
 def main() -> None:
@@ -17,3 +32,7 @@ def main() -> None:
     copy.value = 5
     println(f"original {original.value}")
     println(f"copy {copy.value}")
+    mut numbers = Numbers(current=0)
+    match numbers.__next__():
+        Some(value) => println(value)
+        None => println("missing")
