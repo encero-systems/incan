@@ -6835,7 +6835,7 @@ def lowered_plan(
                 if retained.name == function.name:
                     return Err(f"unsupported Body IR overloaded function {body.name}")
             functions.append(function)
-            if library and body.is_async:
+            if kind == "library" and body.is_async:
                 mut captures: list[PlanType] = []
                 for parameter in function.parameters:
                     captures.append(parameter.ty)

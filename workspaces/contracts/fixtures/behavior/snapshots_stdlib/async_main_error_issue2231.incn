@@ -1,5 +1,5 @@
 # behavior: an error propagated from an awaited function in main reaches stderr and exits unsuccessfully (#2231)
-# pending: #2231 the async standard package is not available to this toolchain
+# pending: #2231 imported sleep is refused as an unresolved canonical call target
 # expect-exit: 1
 # expect-stderr-contains:
 #   this message must reach stderr
