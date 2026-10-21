@@ -1,0 +1,22 @@
+# behavior: a library model stores a callback using its owner type parameters, and separate instantiations preserve the callback's input and result types
+# expect-stdout:
+#   8
+#   v:7
+
+from pub::callbacks import Mapper
+
+
+def double(value: int) -> int:
+    """Double one callback input."""
+    return value * 2
+
+
+def label(value: int) -> str:
+    """Render one callback input."""
+    return f"v:{value}"
+
+
+def main() -> None:
+    """Use the same library model with two distinct callback result types."""
+    println(Mapper(transform=double).apply(4))
+    println(Mapper(transform=label).apply(7))
