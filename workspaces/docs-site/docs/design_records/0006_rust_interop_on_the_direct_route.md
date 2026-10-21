@@ -6,7 +6,7 @@ type: design-decision
 date: 2026-10-19
 review_target: v0.6
 sources:
-  - Maintainer discussion, 2026-10-19 (dev.8 fix stage)
+  - Maintainer discussion, 2026-10-19
   - https://github.com/encero-systems/incan/issues/2256
   - https://github.com/encero-systems/incan/issues/1698
   - DD-0004
@@ -20,108 +20,44 @@ sources:
 
 ## Context
 
-0.6.0-dev.8 removes the Rust source generator, so the direct route (DD-0004) is the only route from checked Incan to an executable. The generator compiled RFC 005 interop by spelling Rust tokens and letting rustc infer the rest. The direct route instead hands rustc a plan of exact types and exact callees, and today that plan covers Rust interop only partially:
-
-- A Rust value has no plan layout unless it is one of a few allowlisted native items (`axum` response and extractor carriers, the validation error, `FieldInfo`). A local of type `core::str::Utf8Error` or a field of type `std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, F>>>` refuses.
-- A call into a Rust crate other than a stdlib facet has no Body IR callee: `String::from_utf8_lossy`, `Arc::new`, `value.lock()` and a trait method on a Rust value refuse. Stdlib facet calls and Incan-declared externs already work.
-- No path calls a Rust value's `Display`, `Debug`, `Clone` or `PartialEq` implementation.
-
-The checker represents a Rust type as a display string, with generic arguments rendered inside it, and records Rust call facts for generated-code emission rather than the resolved callee.
+0.6.0-dev.8 removes the Rust source generator, so the direct route (DD-0004) is the only route from checked Incan to an executable. The generator compiled RFC 005 interop by spelling Rust tokens and letting rustc infer the rest. The direct route instead hands rustc a plan of exact types and exact callees. Before this record, that plan held a Rust value only for a few allowlisted native items, had no callee for a call into a Rust crate, and had no path to a Rust value's own trait implementations. The checker represented a Rust type as a display string.
 
 ## Decision
 
-Rust interop compiles on the direct route from checked facts alone, in three parts.
+Rust interop compiles on the direct route from checked facts alone. The facts come from rustc's metadata (DD-0009); nothing is re-resolved from source spellings or display strings, and nothing is listed by hand.
 
-1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each argument an ordinary Body IR type. Each closed instantiation a program uses becomes one native plan declaration. Uninspected layouts remain opaque, with no fields or derives. A selected public struct layout retains its ordered fields and their canonical identities. The driver resolves the item through rustc (struct, enum or type alias), fills omitted defaulted type parameters from the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s `A = Global`), and treats `std`, `core` and `alloc` as always available.
-2. **Calls.** The checker records the resolved Rust callee of every Rust call site it admits: a free function, an inherent associated function or method, or a trait method with its trait, together with the receiver's borrow mode and the explicit type arguments the checker inferred. Body IR lowers that record to a Rust callee; the driver resolves it and keeps its exact signature check. A call the checker cannot fully resolve refuses at the call site; nothing is re-resolved from source spellings.
-3. **Traits.** `Display`, `Debug`, `Clone` and equality on a Rust value call that value's own Rust implementation through rustc trait resolution, the same way the runtime's generic display helper does for type parameters.
+1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each an ordinary Body IR type. Each closed instantiation a program uses becomes one plan declaration. An item whose public fields or variants the facts expose has that layout, so public fields are readable, variants can be matched and constructed, and named construction infers the owner's type arguments. Any other item is opaque. Lifetime arguments are erased: rustc infers them.
+2. **Calls.** The checker records the resolved callee of every Rust call it admits (a free function, an inherent associated function or method, or a trait method with its trait), with the instantiated signature, the receiver's mode and the type arguments it inferred, using the same unifier as Incan calls. Inherent methods come before trait methods, as in Rust. Body IR carries that record; the lowering calls it through the external-call contract that Loaf calls use, and the driver keeps rustc's signature and predicate check. A call the checker cannot resolve refuses at the call site.
+3. **Traits.** `Display`, `Debug`, `Clone` and equality on a Rust value call that value's own Rust implementation through rustc trait resolution.
+4. **Futures and iteration.** A Rust value that implements `Future`, or `IntoFuture`, can be awaited; `await` yields its `Output`. A Rust value that implements `IntoIterator` can be iterated in loops and comprehensions; the element type is its `Item`.
+5. **Borrowed text and slices.** `str` and `[T]` behind a reference stay distinct from owned strings and lists, and become owned only where an owned value is required.
+
+Source models and newtypes may derive Rust traits (`Serialize`, `Deserialize`, `Default`, `Eq`, `Hash`); the derive becomes the Rust derive on the model's declaration.
 
 ## Consequences
 
-- Programs using `from rust::... import ...` compile on the only remaining route; interop is no longer limited to stdlib facets and Incan-declared externs.
-- The checker's display-string Rust types remain for diagnostics; the structured form is built once at the Body IR boundary from checked facts, so no consumer parses a display.
-- The allowlisted native items become ordinary instances of part 1.
-
-## Checked call inference
-
-Rust function and associated-function inference uses the same structural unifier as Incan functions. Only parameters declared by Rust facts are inference variables. Argument types and an expected result constrain those variables together; contradictory bindings are errors. Owner arguments include the defaults recorded on the Rust type. The checker substitutes the resulting arguments into the callable signature before recording parameter and result types, and retains inferred arguments in declaration order for Body IR. Inference does not make an unresolved Rust callee executable: retaining and lowering the callee remain separate requirements of the calls decision above.
-
-For metadata-selected safe synchronous free functions, the checker retains the public callee path, instantiated parameters, result, and native type arguments. Body IR projects that record into its named call and external callable declaration machinery, retaining reference passing modes in the parameter types. The driver preserves those external declarations when joining project modules. A nongeneric Rust free function therefore uses the same external signature verification and call emission as a linked Loaf function. An absent checked call record grants no foreign execution behavior.
-
-Inherent associated functions and methods retain the enclosing impl's native type parameters and self type from Rust metadata. Their native instantiation orders impl arguments before method arguments; it does not infer the impl's arity from the owner's type declaration. A value receiver becomes an explicit first parameter with the checked shared, mutable, or owned passing mode. Closed Rust signatures use the existing external callable records, selected by item identity and native arguments, and lower through the same instantiated external call machinery as linked Loaf functions. The adapter resolves the item and checks the complete instantiated native signature before MIR construction. Trait methods, async calls, unsafe calls, and signatures with unsupported carriers continue to require their own complete checked facts.
-
-Declared reference arguments retain the caller's place through ordinary argument binding; preparing a reference never copies its referent into a value snapshot. Mutable receiver signatures also require a mutable source binding. Opaque Rust item paths remain type identities, while their plan layout names use identifier-safe encoding.
-
-Native parameter facts distinguish Rust's unsized `str` referent from Incan's owned string carrier before generic substitution. A literal Rust `&str` parameter receives a text slice; a generic `&T` instantiated with Incan `str` receives a reference to its owned `String`. The plan borrows owned strings for `&String` and obtains a slice through `String.as_str()` for `&str`, preserving the owner across both calls.
-
-Awaiting a native value selects `Future::Output` from retained associated-type definitions. A value that instead implements `IntoFuture` retains its exact conversion call before the Body IR suspension. Supertrait projection equalities supply the same output rule for bounded type parameters, and nested projections normalize before native display compaction. Rust async function facts expose the opaque future's logical output. Their calls and compiled Incan async exports use the existing boxed-future constructor ABI; native polling verifies the suspension's checked output type. An owned temporary Option or Result moves a native payload into its pattern binding without introducing a Clone requirement.
-
-An async `main` returning `Result[None, E]` keeps that output through the executor wrapper and returns it to native process termination. An application `Err` is reported and exits with status 1; `Ok(None)` exits successfully. Executor initialization failure remains a separate error boundary. Write `(await task())?` to propagate the realized result; the unparenthesized form currently retains the ordering defect tracked in [#289](https://github.com/encero-systems/incan/issues/289).
-
-A free function reached through an imported Rust module uses that module's public child item metadata, then the same free-function inference and retained callee record as a directly imported function. A module binding's source spelling does not become an executable target.
-
-Native method signatures come only from admitted rustc facts. An absent signature refuses by its requested public item name; no handwritten external-method table supplies a second answer. Compiler-owned runtime ABI contracts remain separate. Owner type arguments may omit trailing metadata defaults; those defaults substitute earlier arguments in declaration order. A value imported as a constant selects methods from its resolved type's metadata. Retained callees keep their exact native return carrier independently of source result conversions. Shared scalar parameters borrow caller storage or a materialized literal, and mutable scalar parameters require an exclusive borrow fact and update the caller's storage. For a retained Rust usize call returned from an Incan int function, the checker records the accepted conversion on the complete return expression. Body IR materializes its selected destination through ordinary numeric assignment; lowering never infers that permission from the return slot's storage type.
-
-Public Rust constants retain their metadata-selected item path and checked carrier through Body IR and the plan. This includes a constant selected through an imported module. The adapter resolves the public constant, verifies its exact type, and leaves evaluation to rustc; the frontend never copies a guessed value into the program. Rust statics require a separate storage contract.
-
-After inherent lookup, extracted trait impl templates can select a closed trait reference. The checker retains the trait item path, Self followed by trait and method arguments, the receiver's passing mode, and the instantiated signature. Competing equally ranked references remain unresolved. Native carrier comparison is stricter than source compatibility: permissive opaque-path compatibility cannot select `From<char>` for a string. Conditional impl templates are candidates; the adapter verifies the selected closed callee's predicates before MIR construction. This uses the existing external-call machinery, including for blanket `ToString` and expected-result-directed `Into`.
-
-Value method lookup considers traits from Rust's edition-2024 prelude and explicitly imported traits. Associated functions do not participate in instance-method lookup. When lookup reaches an inherent method on a `Deref::Target`, the checker retains each shared `Deref` or exclusive `DerefMut` adjustment as a checked external call. Body IR evaluates that chain before ordinary arguments; lowering consumes it without repeating method lookup. Associated result types normalize from the selected impl's retained definitions, with competing values and unresolved binders refused.
-
-An ordinary Incan shared-reference parameter can borrow a native `Deref::Target`, including the content of nested `Box` values. Checking selects each dereference from native impl metadata and records its exact signature on the argument expression. Body IR evaluates the argument once, then emits those retained calls in order before passing the resulting reference. This adjustment does not unbox an owned parameter or make assignment types interchangeable. Native Self retains references during trait selection: `Clone for &String` takes `&&String`, while `Clone for String` takes `&String`.
-
-Source callable aliases expand structurally before native generic inference. Safe function-pointer signatures retain their parameter and result carriers when native storage returns them; a source alias name does not become a native nominal layout.
-
-Native result provenance also retains its exact carrier through canonical local bindings. Borrowed results remain references in their destination slots; moving an exclusive reference transfers the reference itself. Native `str` type arguments remain unsized `str`, independently of source text's owned `String` layout. Omitted trailing native defaults use one storage arity across constructors and adjusted trait calls. Lifetime-only native generics consume no inferred type slot and receive erased region arguments from the adapter.
-
-Concrete standard `Option` and `Result` aliases take their exact types from retained payloads through the metadata type query, including borrowed native text. A pattern projects the carrier's actual payload type before materializing its source binding. Native borrowed text becomes owned text at an owned string boundary, including conversions between standard carriers, so a returned string can outlive the native owner it was read from.
-
-A checked Rust result retains its native item identity when its source type projects to `str` or a collection. Canonical local bindings preserve that provenance independently of their source type and storage. Subsequent native method lookup reads this retained identity. Callable predicates retain input tuples and associated output equalities, so a selected owner's concrete parameters can contextually type a closure expression; its native callable representation must still survive the executable boundary before the foreign call can run.
-
-Generic signature types substitute the checker's structured argument types before Body IR projection. This retains an Incan model's declaration identity across calls such as `swap` and `size_of_val`; a rendered Rust display of that model is not a replacement identity. A source-local declaration supplies its canonical carrier even when an inferred value never required a written type annotation.
-
-Rust lifetime arguments carry no layout and are erased before Body IR carrier construction. The adapter supplies erased regions for metadata lifetime parameters without consuming a type-argument slot. Native carrier aliases take their exact type from rustc metadata through the alias type query, using the same argument binding and defaults as calls. Their AST shells declare only the alias identity; they do not reconstruct a second foreign generic type or invent source lifetime binders. Rustc checks the actual borrowed values in MIR.
-
-Rust tuple elements retain shared and mutable scalar reference carriers explicitly. Mutable references cannot be copied. Nested callable signatures use the same carrier projection as ordinary parameters, and structural collection displays enter the same inference representation whether they come from Rust metadata or an Incan annotation. Executable representation version 22 appends the retained Rust constant form; version 21 payloads are refused before decoding and must be rebuilt.
-
-Native slices retain an unsized element type separately from owned vectors and from shared or exclusive slice references. The signature type walk preserves this distinction inside native type arguments, including `Cow<[u8]>`; unsized referents cannot occupy value frames. Borrowed vector arguments use their exact native slice conversion. Trait-qualified calls select the same checked receiver adjustments as value method calls, including dereferencing an interior-mutability guard. A local native adapter can contain a borrowed argument, but exposing that alias through a source signature or field refuses until a retained lifetime contract exists. Native error display calls the carrier's Rust `Display` implementation.
-
-Native trait selection preserves references that belong to the selected trait's `Self`. Constructor aliases compare by canonical identity, while executable storage retains the public path. The checker retains declaration-order default templates; Body IR completes omitted native owner arguments from those facts so a bare defaulted owner and an explicit generic field template have one storage arity. Explicit method arguments bind the method's own parameters before selection. Public tuple enum constructors are callable facts with their inherited type arguments; public unit variants are exact value facts. Rustc determines their enum layout.
-
-A fresh intrinsic `Option` or `Result` temporary can transfer a whole native payload into an unguarded single binding. That move prevents an implicit clone of a non-Clone error; named reusable carriers, guarded patterns and nested patterns do not acquire this permission. Canonical payload identities also survive source `Result` functions and nested reference carriers. Frame storage distinguishes an explicitly checked reference value from an owned value stored through a borrowed receiver, so assigning a native `&Path` transfers the reference without moving its unsized referent.
-
-Native iteration selects a unique closed `IntoIterator::into_iter` call and `Iterator::next` call from trait facts, including the selected `Item` associated type. The checker retains these hooks independently of the iterable expression's own call. Statement loops and comprehensions consume the same retained protocol: materialize the owned iterator once, poll its storage exclusively, and transfer each `Some` payload through the match result into loop-item storage. Arm cleanup therefore cannot drop an item before its loop body uses it. Nested associated projections normalize in the checker before any executable carrier crosses into Body IR.
-
-Slice facts retain public inherent methods from rustc's primitive impl bucket, including each impl's type parameters and slice Self template. A selected method uses the internal `[]::method` callee identity and ordinary checked receiver adjustments; the adapter resolves that identity through the same primitive bucket and verifies its closed signature and bounds. The slice element type never becomes an owned vector merely to select a method.
-
-A native dereference target retains its native owner when its checked type projects to an intrinsic Option or collection. This keeps `as_ref()` and `take()` behind borrow guards on the same exact method and receiver-adjustment path. Omitted owner parameters receive metadata defaults before method result specialization; a nongeneric native owner keeps its identity, including unsized `str`. Fresh intrinsic Option/Result payload transfer also covers an owned tuple or collection containing native owners, so a non-Clone file in a native tuple result moves with that whole payload. References alone grant no move permission.
-
-A shared native payload reference can call a declared source method with an immutable receiver, retaining the canonical source owner and the borrowed storage. A mutable source method remains refused through a shared reference. Lexical cleanup drops native guard temporaries before earlier owner bindings, so a local owner remains live until its guards have been released.
-
-## Native public layouts and derives
-
-Native enum patterns select complete metadata layouts, retaining ordered variants, exact payload templates, and canonical variant identities. Checked owner arguments substitute the payload templates before reference binding; a missing payload record grants no guessed type. Body IR uses its ordinary enum declarations and patterns, and the adapter verifies the complete instantiated foreign layout. Variant tests compare rustc's actual discriminant value in its native type, so explicit and negative discriminants do not become ordinal indices. Exposing that layout preserves the native owner's Rust Display implementation, borrowing the owner through the existing runtime formatter. Opaque storage alone grants no variant access.
-
-Checking retains a selected public struct's exact field templates and identities. Named construction infers the native owner arguments from already checked field arguments and retains the ordinary constructor slot binding. Body IR uses the same aggregate and field-projection machinery as source nominals. The driver gathers native layouts into their own declaration modules and verifies complete field count, names, public visibility, and instantiated types against rustc before emitting MIR. Missing fields, private fields marked public, and mismatched types refuse; an empty opaque layout still grants no projection.
-
-Source models and newtypes retain supported `@rust.derive(...)` selections before admission. Builtin derives and canonical serde Serialize/Deserialize paths use the existing native derive machinery; automatic and explicit selections are deduplicated. An unknown macro expansion does not grant a native layout or implementation, and serde still requires its exact native dependency artifact.
+- Programs using `from rust::... import ...` compile on the only remaining route, beyond the stdlib facets and Incan-declared externs.
+- The checker's display strings remain for diagnostics only; no consumer parses them.
+- The allowlisted native items are ordinary instances of part 1, and the handwritten method tables go away.
+- Compiler-owned runtime ABI contracts stay separate from third-party Rust facts.
 
 ## Non-goals
 
-- Partial layouts containing hidden native fields and default-filled native field construction.
+- Layouts with hidden fields, and construction of items whose fields are not all public.
 - Const-generic arguments.
+- Borrowed Rust types in Incan signatures and fields, and Rust statics, until a lifetime or storage contract exists.
 - Changing RFC 005's source surface.
 
 ## Revisit condition
 
-Revisit when a consumer needs partial hidden-field layouts, or when rustc's metadata can supply the callee record directly.
+Revisit when a consumer needs layouts with hidden fields, or when a lifetime contract for borrowed Rust types in Incan signatures is designed.
 
 ## Provenance
 
-Derives from DD-0004 (the pinned driver), RFC 005 (Rust interop surface) and RFC 130 (Incan as a second front end to rustc). Supersedes nothing.
+Derives from DD-0004 (the pinned driver), DD-0009 (Rust facts), RFC 005 (Rust interop surface) and RFC 130 (Incan as a second front end to rustc). Supersedes nothing.
 
 ## References
 
 - [Issue #2256](https://github.com/encero-systems/incan/issues/2256)
 - [Issue #1698](https://github.com/encero-systems/incan/issues/1698)
-- DD-0004, RFC 005, RFC 130
+- DD-0004, DD-0009, RFC 005, RFC 130
