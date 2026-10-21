@@ -9039,6 +9039,7 @@ def lower_list_method(
             ListLeaf.Tuple(_fields) => return Err("unsupported Body IR List.contains tuple equality")
             ListLeaf.List(_elements, _depth) => return Err("unsupported Body IR List.contains nested equality")
             ListLeaf.Dict(_elements) => return Err("unsupported Body IR List.contains dictionary equality")
+            ListLeaf.Set(_elements) => return Err("unsupported Body IR List.contains set equality")
             _ => pass
         return lower_list_helper(builder, false, arguments, destination, span)
     if is_collection(receiver_ty):

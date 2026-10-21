@@ -153,6 +153,8 @@ enum Leaf {
     List(Vec<Leaf>, i64),
     /// An owned nested dictionary preserves key/value arity instead of indexing an unchecked vector.
     Dict(Vec<Leaf>),
+    /// An owned nested set preserves its element arity for validation.
+    Set(Vec<Leaf>),
 }
 
 impl Leaf {
@@ -180,6 +182,7 @@ impl Leaf {
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
             ListLeaf::List(elements, depth) => Leaf::List(elements.iter().map(Leaf::of).collect(), *depth),
             ListLeaf::Dict(elements) => Leaf::Dict(elements.iter().map(Leaf::of).collect()),
+            ListLeaf::Set(elements) => Leaf::Set(elements.iter().map(Leaf::of).collect()),
         }
     }
 }
@@ -2074,13 +2077,14 @@ fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
 fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanError> {
     let valid = match leaf {
         ListLeaf::List(elements, _) => elements.len() == 1,
+        ListLeaf::Set(elements) => elements.len() == 1,
         ListLeaf::Dict(elements) => elements.len() == 2,
         _ => true,
     };
     if !valid {
         return Err(PlanError::Invalid {
             function: "collection leaf".into(),
-            reason: "nested collection leaf requires exactly one list child or two dictionary children".into(),
+            reason: "nested collection leaf requires one list or set child, or two dictionary children".into(),
         });
     }
     Ok(list_leaf_type(leaf.clone()))

@@ -75,6 +75,8 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
         // A frozen collection is a view of `'static` storage: it borrows nothing from the guarded cell.
         PlanType::FrozenCollection(..) => true,
         PlanType::List(leaf, depth) => *depth > 0 && guard_owned_leaf(plan, leaf, visiting),
+        PlanType::Set(leaf) => guard_owned_leaf(plan, leaf, visiting),
+        PlanType::Dict(key, value) => guard_owned_leaf(plan, key, visiting) && guard_owned_leaf(plan, value, visiting),
         PlanType::Tuple(elements) => elements
             .iter()
             .all(|element| guard_owned_result(plan, &tuple_element_type(element.clone()), visiting)),
@@ -120,7 +122,7 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
     }
 }
 
-/// Recurse through an owned list's exact element representation without accepting borrowed model fields.
+/// Recurse through each owned collection's exact element representation without accepting borrowed model fields.
 fn guard_owned_leaf(plan: &Plan, leaf: &ListLeaf, visiting: &mut BTreeSet<(bool, i64)>) -> bool {
     match leaf {
         ListLeaf::Model(index, name) => guard_owned_result(plan, &PlanType::Model(*index, name.clone()), visiting),
@@ -133,6 +135,9 @@ fn guard_owned_leaf(plan: &Plan, leaf: &ListLeaf, visiting: &mut BTreeSet<(bool,
         }
         ListLeaf::Dict(elements) => {
             elements.len() == 2 && elements.iter().all(|element| guard_owned_leaf(plan, element, visiting))
+        }
+        ListLeaf::Set(elements) => {
+            elements.len() == 1 && elements.iter().all(|element| guard_owned_leaf(plan, element, visiting))
         }
         ListLeaf::Int
         | ListLeaf::Float
