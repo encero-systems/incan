@@ -1,0 +1,27 @@
+# behavior: all six comparisons use a Rust value's own comparison implementations and leave both operands readable
+# expect-stdout:
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+#   2
+#   3
+
+from rust::std::time import Duration
+
+
+def main() -> None:
+    """Compare native durations, then observe that shared comparison has preserved their owners."""
+    left = Duration.from_secs(2)
+    right = Duration.from_secs(3)
+    same = Duration.from_secs(2)
+    println(left == same)
+    println(left != right)
+    println(left < right)
+    println(left <= same)
+    println(right > left)
+    println(right >= left)
+    println(left.as_secs())
+    println(right.as_secs())
