@@ -2711,6 +2711,11 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
             if collections::from_str(name.as_str()) == Some(CollectionTypeId::Tuple) {
                 return render_rust_tuple(args);
             }
+            if name == "[]"
+                && let [element] = args.as_slice()
+            {
+                return format!("[{}]", render_resolved_type_as_rust_arg(element));
+            }
             let base = match collections::from_str(name.as_str()) {
                 Some(CollectionTypeId::List) => "Vec",
                 Some(CollectionTypeId::Dict) => "std::collections::HashMap",

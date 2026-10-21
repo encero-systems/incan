@@ -375,12 +375,44 @@ impl TypeChecker {
         substitute_resolved_type(&self.rust_inference_type(ty, parameters), bindings)
     }
 
-    /// Retain literal native slice-text referents before generic substitution in parameters and results. A generic `&T`
-    /// instantiated with Incan `str` instead borrows its owned String carrier, so it must not be reclassified after
-    /// inference.
+    /// Retain unsized native string and slice referents structurally before generic substitution in parameters and
+    /// results. `[]` is an internal generic constructor unavailable as a source identifier. A generic `&T` instantiated
+    /// with source text borrows its owned String carrier instead of being reclassified as an unsized string.
     pub(crate) fn native_rust_signature_type(&self, display: &str, owner: &str) -> ResolvedType {
-        if display.trim() == "str" {
+        let display = self.rust_display_for_owner_path(display, owner);
+        let display = Self::rust_display_without_lifetimes(&display);
+        let display = display.trim();
+        if display == "str" {
             return ResolvedType::RustPath("str".into());
+        }
+        // The impossible source identifier `[]` is the structural native slice constructor, never a Vec alias.
+        if let Some(element) = display.strip_prefix('[').and_then(|inner| inner.strip_suffix(']'))
+            && !element.contains(';')
+        {
+            return ResolvedType::Generic("[]".into(), vec![self.native_rust_signature_type(element, owner)]);
+        }
+        if let Some((mutable, inner)) = Self::rust_display_borrow_kind(display) {
+            let inner = Box::new(self.native_rust_signature_type(inner, owner));
+            return if mutable {
+                ResolvedType::RefMut(inner)
+            } else {
+                ResolvedType::Ref(inner)
+            };
+        }
+        if let Some(inner) = display.strip_prefix('(').and_then(|inner| inner.strip_suffix(')'))
+            && inner.contains(',')
+        {
+            return ResolvedType::Tuple(
+                Self::split_top_level_generic_args(inner)
+                    .into_iter()
+                    .map(|element| self.native_rust_signature_type(element, owner))
+                    .collect(),
+            );
+        }
+        if let Some(structural) = self.resolved_structural_rust_param_display(display, |checker, argument| {
+            checker.native_rust_signature_type(argument, owner)
+        }) {
+            return structural;
         }
         let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(display, owner);
         map_resolved_type_leaves(&ty, &|leaf| {

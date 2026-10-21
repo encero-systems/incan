@@ -52,6 +52,8 @@ pub def native_source_type(
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
+            if base == "[]" and len(arguments) == 1:
+                return Ok(PlanType.NativeSlice([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
             if base == "Awaitable" and len(arguments) == 1:
                 return Ok(PlanType.Future([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
             if base == "List" and len(arguments) == 1:
@@ -97,6 +99,7 @@ def is_native_str(ty: &RustType) -> bool:
 pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Borrow the exact retained nominal, text, scalar or collection carrier through the ordinary parameter layout."""
     match ty:
+        PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.String => return Ok(PlanType.StringRef)
@@ -111,6 +114,9 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 
 pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Reuse exclusive source parameter storage for native references, retaining scalar reference carriers explicitly."""
+    match ty:
+        PlanType.NativeSlice(elements) => return Ok(PlanType.SliceMutRef(elements))
+        _ => pass
     match exclusive_reference(ty):
         Some(reference) => return Ok(reference)
         None => pass

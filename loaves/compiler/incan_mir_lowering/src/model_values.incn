@@ -20,7 +20,8 @@ from type_parameters import substitute
 from unions import native_source_type
 from options import carrier_layout
 from text_ownership import drop_borrowed_text_temporaries
-from lowering import scalar_place, text_argument, lower_callable_result
+from lowering import scalar_place, text_argument, lower_callable_result, runtime_text
+from decls import library_item
 
 
 pub def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
@@ -165,12 +166,15 @@ pub def display_model_operand(
     value: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
-    """Call the checked string method or Error message fallback; derive-only Display keeps legacy's Debug text."""
+    """Display native carriers through their Rust implementation; source carriers use their checked string method or derive."""
     match nominal_place(builder, value, span)?:
         None => return Ok(None)
         Some(place) =>
             match place_type(builder.locals, place):
                 PlanType.Model(owner, _name) =>
+                    if library_item(builder.nominals[owner]) != "":
+                        argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
+                        return Ok(Some(runtime_text(builder, "incan_native_runtime::display_value", argument, span)?))
                     match builder.nominals[owner].display_method:
                         Some(_selected) => return Ok(Some(display_checked_model(builder, owner, place, span)?))
                         None => pass

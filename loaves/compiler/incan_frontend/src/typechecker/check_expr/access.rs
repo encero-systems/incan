@@ -2596,6 +2596,7 @@ impl TypeChecker {
     /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
     fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
+            ResolvedType::Generic(base, arguments) if base == "[]" && arguments.len() == 1 => Some(base.clone()),
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
             ResolvedType::RustPath(path) => {
                 Some(Self::rust_generic_base_and_args(path).map_or_else(|| path.clone(), |(base, _)| base.to_owned()))
@@ -3854,59 +3855,11 @@ impl TypeChecker {
             self.preserve_unresolved_rust_call_argument_returns(args);
             return ResolvedType::Unknown;
         }
-        let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
-        if let Some((mutable, _)) = Self::rust_display_borrow_kind(receiver_display.as_str()) {
-            let already_borrowed = match receiver_ty {
-                ResolvedType::RefMut(_) => true,
-                ResolvedType::Ref(_) => !mutable,
-                _ => false,
-            };
-            if matches!(receiver_ty, ResolvedType::Ref(_)) && mutable {
-                self.errors.push(errors::type_mismatch(
-                    receiver_display.as_str(),
-                    &receiver_ty.to_string(),
-                    receiver_expr.span,
-                ));
-            } else if !already_borrowed {
-                let kind = RustArgCoercionKind::Borrow { mutable };
-                if self.validate_rust_borrow_mutability(kind, receiver_expr) {
-                    let target_type = if mutable {
-                        ResolvedType::RefMut(Box::new(receiver_ty.clone()))
-                    } else {
-                        ResolvedType::Ref(Box::new(receiver_ty.clone()))
-                    };
-                    self.type_info.rust.arg_coercions.insert(
-                        (receiver_expr.span.start, receiver_expr.span.end),
-                        RustArgCoercionInfo {
-                            rust_target_type: receiver_display,
-                            target_type,
-                            kind,
-                        },
-                    );
-                }
-            }
+        if let Some(result) = self.retain_rust_trait_qualified_call(&call, receiver_expr, receiver_ty) {
+            return result;
         }
-
-        // ---- The remaining arguments follow the trait method's own parameters ----
-        let self_type = match receiver_ty {
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref().clone(),
-            other => other.clone(),
-        };
-        let ret = self.validate_rust_trait_method_call(RustTraitMethodCall {
-            rust_path,
-            method,
-            sig,
-            type_args,
-            args: &args[1..],
-            arg_types: &arg_types[1..],
-            preserves_lookup_arg_shape,
-            self_type: Some(&self_type),
-            span,
-        });
-        // The call site's parameter list must line up with the source arguments, receiver included, so that
-        // lowering and emission pair each argument with its own parameter shape.
-        self.record_rust_trait_qualified_call_site_params(span, sig, receiver_ty, rust_path);
-        ret
+        self.preserve_unresolved_rust_call_argument_returns(args);
+        ResolvedType::Unknown
     }
 
     /// Return whether `ty` is unknown, directly or behind shared and mutable references.
@@ -3916,48 +3869,6 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::is_unknown_behind_references(inner),
             _ => false,
         }
-    }
-
-    /// Record the call-site parameters of a trait-qualified call with the receiver parameter in first position.
-    ///
-    /// `validate_rust_method_call` records the parameters after the receiver, which is right for `value.method(...)`
-    /// where the receiver is not an argument. A trait-qualified call spells the receiver as its first argument, so the
-    /// receiver parameter is re-added here with the receiver's own resolved shape rather than the opaque `Self`
-    /// display, keeping argument and parameter indexes aligned for the backend.
-    fn record_rust_trait_qualified_call_site_params(
-        &mut self,
-        span: Span,
-        sig: &RustFunctionSig,
-        receiver_ty: &ResolvedType,
-        owner_path: &str,
-    ) {
-        let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
-        let receiver_param_ty = match (Self::rust_display_borrow_kind(receiver_display.as_str()), receiver_ty) {
-            (Some(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => receiver_ty.clone(),
-            (Some((true, _)), _) => ResolvedType::RefMut(Box::new(receiver_ty.clone())),
-            (Some((false, _)), _) => ResolvedType::Ref(Box::new(receiver_ty.clone())),
-            (None, _) => receiver_ty.clone(),
-        };
-        let mut params = vec![CallableParam {
-            name: sig.params[0].name.clone(),
-            ty: receiver_param_ty,
-            kind: ParamKind::Normal,
-            has_default: false,
-            is_partial_preset: false,
-            is_mut: false,
-        }];
-        params.extend(sig.params[1..].iter().map(|param| CallableParam {
-            name: param.name.clone(),
-            ty: self.resolved_rust_boundary_target_from_param_display_for_owner_path(
-                param.type_display.as_str(),
-                owner_path,
-            ),
-            kind: ParamKind::Normal,
-            has_default: false,
-            is_partial_preset: false,
-            is_mut: false,
-        }));
-        self.type_info.record_call_site_callable_params_exact(span, &params);
     }
 
     /// Enforce RFC 054's arity-complete bracket contract for inspected Rust methods.

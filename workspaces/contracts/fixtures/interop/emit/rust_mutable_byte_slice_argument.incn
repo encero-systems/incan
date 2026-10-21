@@ -1,0 +1,18 @@
+# behavior: a Rust reader mutates owned byte storage through its exact exclusive slice argument
+# expect-stdout:
+#   xy
+
+from rust::std::io import Cursor, Read
+from rust::std::str import from_utf8
+
+
+def main() -> None:
+    """Read into a native mutable slice and observe the updated byte owner."""
+    mut cursor = Cursor.new(b"xy")
+    mut buffer = b"ab"
+    match cursor.read_exact(buffer):
+        Ok(_) =>
+            match from_utf8(buffer):
+                Ok(text) => println(text)
+                Err(_) => println("invalid")
+        Err(_) => println("failed")

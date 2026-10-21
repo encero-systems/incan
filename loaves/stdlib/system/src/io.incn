@@ -204,7 +204,7 @@ pub class _BytesIO with (
             match cursor.read_to_end(out):
                 Ok(_) => return Ok(out)
                 Err(err) => return Err(_rust_io_error("read", int(cursor.position()), err))
-        match Read.by_ref(cursor).take(size).read_to_end(out):
+        match Read.by_ref(cursor).take(size.saturating_resize[u64]()).read_to_end(out):
             Ok(_) => return Ok(out)
             Err(err) => return Err(_rust_io_error("read", int(cursor.position()), err))
 

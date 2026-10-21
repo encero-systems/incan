@@ -1,0 +1,12 @@
+# behavior: a Rust UTF-8 error displays through its own native Display implementation
+# expect-stdout:
+#   invalid utf-8 sequence of 1 bytes from index 0
+
+from rust::std::str import from_utf8
+
+
+def main() -> None:
+    """Display the retained native error rather than requiring a source derive."""
+    match from_utf8(b"\xff"):
+        Ok(_) => println("valid")
+        Err(err) => println(f"{err}")

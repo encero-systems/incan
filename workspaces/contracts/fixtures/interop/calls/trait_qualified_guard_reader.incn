@@ -1,0 +1,29 @@
+# behavior: a trait-qualified reader behind a field guard lends its cursor to a bounded read and preserves the cursor for the next read
+# expect-stdout:
+#   2
+#   2
+
+from rust::std::cell import RefCell
+from rust::std::io import Cursor, Read
+from rust::std::rc import Rc
+
+
+class Buffer:
+    """Keep one native cursor in shared interior-mutable storage."""
+
+    handle: Rc[RefCell[Cursor[bytes]]]
+
+    def read(self, size: u64) -> bytes:
+        """Read at most the requested number of bytes through a temporary exclusive guard."""
+        mut out = b""
+        mut cursor = self.handle.borrow_mut()
+        match Read.by_ref(cursor).take(size).read_to_end(out):
+            Ok(_) => return out
+            Err(_) => return b""
+
+
+def main() -> None:
+    """Observe that bounded reads advance the original cursor."""
+    buffer = Buffer(handle=Rc.new(RefCell.new(Cursor.new(b"abcd"))))
+    println(len(buffer.read(2u64)))
+    println(len(buffer.read(2u64)))
