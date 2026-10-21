@@ -1,6 +1,7 @@
 # behavior: A wrapped match scrutinee ends explicitly before its arms start.
 # expect-formatted:
 #   def choose(value: str) -> int:
+#       """Match text after a long transformation chain."""
 #       match (
 #           value
 #               .strip()
@@ -11,5 +12,6 @@
 #           _ => return 1
 
 def choose(value: str) -> int:
+    """Match text after a long transformation chain."""
     match value.strip().replace("before_first", "after_first").replace("before_second", "after_second").replace("before_third", "after_third"):
         _ => return 1

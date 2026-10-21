@@ -1,6 +1,7 @@
 # behavior: Triple-quoted defaults and reassignment values retain Unicode and content indentation.
 # expect-formatted:
 #   def message(text: str = """héllo""") -> str:
+#       """Preserve text spelling in defaults and assignments."""
 #       value = '''
 #       # Embedded text, not a comment.
 #         keep indentation
@@ -9,6 +10,7 @@
 #       return value
 
 def message(text:str="""héllo""")->str:
+    """Preserve text spelling in defaults and assignments."""
     value='''
     # Embedded text, not a comment.
       keep indentation

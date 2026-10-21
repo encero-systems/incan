@@ -1,6 +1,7 @@
 # behavior: A logical header whose calls already have delimiters retains its existing stable layout.
 # expect-formatted:
 #   def library(name: str) -> bool:
+#       """Recognize a library name through a long logical condition."""
 #       if name.startswith("lib") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(
 #           ".so_shared_library",
 #       )):
@@ -8,6 +9,7 @@
 #       return false
 
 def library(name: str) -> bool:
+    """Recognize a library name through a long logical condition."""
     if name.startswith("lib") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so_shared_library")):
         return true
     return false

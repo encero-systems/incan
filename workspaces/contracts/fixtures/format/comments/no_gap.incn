@@ -9,6 +9,7 @@
 #       return 0
 #   # Section comment
 #   def other() -> int:
+#       """Return the value immediately after the comment."""
 #       return 1
 
 def count() -> int:
@@ -20,4 +21,5 @@ def count() -> int:
     return 0
 # Section comment
 def other() -> int:
+    """Return the value immediately after the comment."""
     return 1

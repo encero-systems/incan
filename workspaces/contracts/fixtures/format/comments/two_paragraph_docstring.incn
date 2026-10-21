@@ -13,6 +13,7 @@
 #
 #
 #   def other() -> int:
+#       """Return the value after the separated comment."""
 #       return 1
 
 def count() -> int:
@@ -28,4 +29,5 @@ def count() -> int:
 
 
 def other() -> int:
+    """Return the value after the separated comment."""
     return 1

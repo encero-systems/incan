@@ -1,7 +1,9 @@
 # behavior: Triple-quoted arguments and collection elements preserve their exact escapes and contents.
 # expect-formatted:
 #   def main() -> None:
+#       """Print triple-quoted text in nested expressions."""
 #       println('''a\nb''', ["""quote: " and \\ path"""])
 
 def main()->None:
+    """Print triple-quoted text in nested expressions."""
     println('''a\nb''',["""quote: " and \\ path"""])

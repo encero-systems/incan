@@ -1,6 +1,7 @@
 # behavior: A comment after a function ending in a nested match retains module-level spacing.
 # expect-formatted:
 #   def visit(items: list[int]) -> None:
+#       """Visit items through a nested match."""
 #       for item in items:
 #           match item:
 #               _ => pass
@@ -10,9 +11,11 @@
 #
 #
 #   def other() -> int:
+#       """Return the value after the section comment."""
 #       return 1
 
 def visit(items: list[int]) -> None:
+    """Visit items through a nested match."""
     for item in items:
         match item:
             _ => pass
@@ -22,4 +25,5 @@ def visit(items: list[int]) -> None:
 
 
 def other() -> int:
+    """Return the value after the section comment."""
     return 1

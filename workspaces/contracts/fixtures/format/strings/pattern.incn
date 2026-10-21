@@ -1,12 +1,14 @@
 # behavior: Triple-quoted literal patterns keep their spelling alongside ordinary patterns.
 # expect-formatted:
 #   def choose(value: str) -> int:
+#       """Choose a result from literal text patterns."""
 #       match value:
 #           """hello""" => return 1
 #           "world" => return 2
 #           _ => return 0
 
 def choose(value:str)->int:
+    """Choose a result from literal text patterns."""
     match value:
         """hello""" => return 1
         'world' => return 2

@@ -1,9 +1,13 @@
 # behavior: Model fields receive canonical annotation spacing.
 # expect-formatted:
 #   model Point:
+#       """A point with two integer coordinates."""
+#
 #       x: int
 #       y: int
 
 model Point:
+    """A point with two integer coordinates."""
+
     x:int
     y:int

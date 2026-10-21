@@ -1,6 +1,7 @@
 # behavior: A long method chain in an if let header stays parseable through grouping.
 # expect-formatted:
 #   def present(value: Option[str]) -> bool:
+#       """Check for text after a long optional transformation chain."""
 #       if let Some(text) = (
 #           value
 #               .map((text) => text.strip())
@@ -12,6 +13,7 @@
 #       return false
 
 def present(value: Option[str]) -> bool:
+    """Check for text after a long optional transformation chain."""
     if let Some(text) = value.map((text) => text.strip()).map((text) => text.lower()).map((text) => text.upper()).map((text) => text.strip()):
         return true
     return false

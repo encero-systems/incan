@@ -1,11 +1,13 @@
 # behavior: A break match arm still uses accepted inline syntax.
 # expect-formatted:
 #   def main() -> None:
+#       """Leave the loop from a match arm."""
 #       for value in range(3):
 #           match value:
 #               _ => break
 
 def main() -> None:
+    """Leave the loop from a match arm."""
     for value in range(3):
         match value:
             _ =>

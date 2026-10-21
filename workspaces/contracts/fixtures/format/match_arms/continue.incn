@@ -1,12 +1,14 @@
 # behavior: A continue match arm keeps its parseable indented suite.
 # expect-formatted:
 #   def main() -> None:
+#       """Continue the loop from a match arm."""
 #       for value in range(3):
 #           match value:
 #               _ =>
 #                   continue
 
 def main() -> None:
+    """Continue the loop from a match arm."""
     for value in range(3):
         match value:
             _ =>

@@ -1,12 +1,14 @@
 # behavior: Conditional expressions receive operator spacing.
 # expect-formatted:
 #   def choose(value: int) -> int:
+#       """Choose a result from the sign of the input."""
 #       if value > 0:
 #           return 1
 #       else:
 #           return 0
 
 def choose(value:int)->int:
+    """Choose a result from the sign of the input."""
     if value>0:
         return 1
     else:

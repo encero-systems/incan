@@ -1,6 +1,7 @@
 # behavior: A section comment stays outside a function with nested for and match suites.
 # expect-formatted:
 #   def count(items: list[int]) -> int:
+#       """Count zero-valued items in nested suites."""
 #       mut total = 0
 #       for item in items:
 #           match item:
@@ -14,9 +15,11 @@
 #
 #
 #   def other() -> int:
+#       """Return the value after the section comment."""
 #       return 1
 
 def count(items: list[int]) -> int:
+    """Count zero-valued items in nested suites."""
     mut total = 0
     for item in items:
         match item:
@@ -29,4 +32,5 @@ def count(items: list[int]) -> int:
 
 
 def other() -> int:
+    """Return the value after the section comment."""
     return 1

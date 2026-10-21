@@ -1,11 +1,13 @@
 # behavior: A break with a value remains inline inside a loop expression.
 # expect-formatted:
 #   def value() -> int:
+#       """Return the value supplied by a break arm."""
 #       return loop:
 #           match 0:
 #               _ => break 1
 
 def value() -> int:
+    """Return the value supplied by a break arm."""
     return loop:
         match 0:
             _ =>
