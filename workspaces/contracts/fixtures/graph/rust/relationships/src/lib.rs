@@ -6,7 +6,7 @@ pub mod provider {
     }
 }
 use graph_provider::leaf as external;
-use provider::helper as renamed;
+use provider::{helper as closure_helper, helper as renamed};
 /// A receiver that shares a method name with another receiver.
 pub struct Widget;
 impl Widget {
@@ -58,6 +58,6 @@ pub fn dependency_method() -> i32 {
 
 /// A closure expression keeps its enclosing declared caller.
 pub fn closure_caller() -> i32 {
-    let invoke = || renamed();
+    let invoke = || closure_helper();
     invoke()
 }

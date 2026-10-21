@@ -1,4 +1,4 @@
-# behavior: Rust definitions, aliases, receiver-resolved methods and direct and indirect calls are inspected without running the program.
+# behavior: Rust definitions, grouped imports without blank hits, aliases, receiver-resolved methods and direct and indirect calls are inspected without running the program.
 # graph-commands:
 #   . --query defs helper
 #   . --query callers helper

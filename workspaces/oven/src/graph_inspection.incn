@@ -108,6 +108,8 @@ def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchai
     if owner.is_file():
         owner = owner.parent()
     mut inputs = ["incan.codegraph.presentation/6", root, selected.format, selected.query, selected.term, str(selected.limit)]
+    if selected.query == "imports":
+        inputs.append("nonempty-import-labels/1")
     for unit in paths:
         inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, compiler_digest(owner, unit.path.0)?]
     digest = fingerprint(inputs)?

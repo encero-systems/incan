@@ -17,6 +17,9 @@ pub def compare_graph(incan: str, project: Path, header: Header) -> Result[list[
         arguments = ["inspect", "codegraph"] + invocation.split(" ")
         outcome = invoke(incan, arguments, project)?
         repeated = invoke(incan, arguments, project)?
+        for line in outcome.stdout.split("\n"):
+            if line.startswith("import  "):
+                failures.append(f"an import hit has no identity or source path: {invocation}")
         if repeated.stdout != outcome.stdout or repeated.code != outcome.code:
             failures.append(f"warm inspection differs: {invocation}")
         stdout += outcome.stdout.replace(f"{project.0}/", "")

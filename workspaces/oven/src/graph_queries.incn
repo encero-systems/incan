@@ -109,7 +109,7 @@ def matches(record: JsonValue, term: str) -> bool:
 
 
 def import_labels(record: JsonValue) -> list[str]:
-    """Display checked import bindings, falling back to the recorded module path when no item identity is proved."""
+    """Display checked bindings or the recorded path; grouped-import stems with neither produce no hit."""
     mut labels: list[str] = []
     match nested(record, "bindings").as_array():
         Some(bindings) =>
@@ -119,8 +119,9 @@ def import_labels(record: JsonValue) -> list[str]:
                     if label not in labels:
                         labels.append(label)
         None => pass
-    if len(labels) == 0:
-        labels.append(text(record, "path"))
+    path = text(record, "path")
+    if len(labels) == 0 and path != "":
+        labels.append(path)
     return labels
 
 
