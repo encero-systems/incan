@@ -1,10 +1,11 @@
-# behavior: iterating a const frozen list of models that do not derive Clone reads each element in order
-# pending: the native route iterates a frozen list through a Clone snapshot; a frozen list of models must be borrowed
+# behavior: iterating a const frozen list of models with automatic Clone reads each element in order
 # expect-stdout:
 #   a
 #   b
 
 model Ref:
+    """A frozen list element with automatic Clone and no Copy derive."""
+
     label: FrozenStr
 
 
@@ -12,5 +13,6 @@ const refs: FrozenList[Ref] = [Ref(label="a"), Ref(label="b")]
 
 
 def main() -> None:
+    """Read each model's label in declaration order."""
     for r in refs:
         println(r.label)
