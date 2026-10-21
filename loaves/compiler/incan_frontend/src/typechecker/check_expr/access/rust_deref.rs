@@ -6,6 +6,7 @@ use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::type_info::RustCheckedCall;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{RustItemKind, RustTypeInfo, ancestral_rust_path};
+use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 
 const DEREF_TRAIT: &str = "std::ops::Deref";
 const DEREF_MUT_TRAIT: &str = "std::ops::DerefMut";
@@ -153,7 +154,7 @@ impl TypeChecker {
         let mut owner = source.clone();
         let mut steps = Vec::new();
         for _ in 0..12 {
-            let path = self.rust_canonical_path_for_receiver_type(&owner)?;
+            let path = self.rust_trait_receiver_path(&owner)?;
             let metadata = self.rust_item_metadata_for_path(&path)?;
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
@@ -199,6 +200,22 @@ impl TypeChecker {
             owner = target;
         }
         None
+    }
+
+    /// Select source list storage only at an explicit Rust trait boundary. This grants no native method priority to
+    /// ordinary source lists and leaves their checked source types unchanged throughout generic inference.
+    fn rust_trait_receiver_path(&self, owner: &ResolvedType) -> Option<String> {
+        if let Some(path) = self.rust_canonical_path_for_receiver_type(owner) {
+            return Some(path);
+        }
+        match owner {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_trait_receiver_path(inner),
+            ResolvedType::Generic(base, _) if collection_type(base) == Some(CollectionTypeId::List) => {
+                Some("std::vec::Vec".into())
+            }
+            ResolvedType::Bytes => Some("std::vec::Vec".into()),
+            _ => None,
+        }
     }
 
     /// Attach each selected dereference with the final callee's borrow mode; never repeat method lookup in Body IR.
