@@ -1399,8 +1399,8 @@ impl TypeChecker {
                     && (name == actual_name
                         || (name.contains("::")
                             && actual_name.contains("::")
-                            && incan_lang::interop::ancestral_rust_path(name)
-                                == incan_lang::interop::ancestral_rust_path(actual_name))
+                            && self.rust_native_type_identity_path(name)
+                                == self.rust_native_type_identity_path(actual_name))
                         || self
                             .public_library_type_identities
                             .get(name)
