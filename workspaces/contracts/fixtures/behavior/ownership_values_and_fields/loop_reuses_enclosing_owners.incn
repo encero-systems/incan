@@ -5,6 +5,7 @@
 #   2
 #   4
 #   2
+#   2
 
 model Word:
     """One owned text value reused by a loop."""
@@ -57,6 +58,17 @@ def returned_loop(text: str) -> int:
         iterations += 1
 
 
+def outer_loop_after_break(text: str) -> int:
+    """Breaking an inner loop preserves the enclosing loop's repeated owner reads."""
+    mut count = 0
+    for outer in range(2):
+        selected = loop:
+            break text
+        if present(selected):
+            count += 1
+    return count
+
+
 def main() -> None:
     """Exercise repeated, conditional, and nested reads."""
     println(repeated("yes"))
@@ -65,3 +77,4 @@ def main() -> None:
     println(len([value for value in values if present(value)]))
     println(nested(Word(text="yes")))
     println(returned_loop("yes"))
+    println(outer_loop_after_break("yes"))

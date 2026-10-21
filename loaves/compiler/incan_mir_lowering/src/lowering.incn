@@ -1357,17 +1357,23 @@ def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int])
 
 
 def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str]:
-    """Release loop-local owners while retaining initialized enclosing storage, including a loop expression's result."""
+    """Release loop-local owners on a backedge, requiring enclosing storage to remain initialized for repetition."""
     incoming = builder.loop_owners[-1]
     for owner in incoming:
         if owner not in builder.owned:
             return Err("unsupported Body IR loop changes incoming formatting ownership")
+    drop_loop_local_owners(builder, span)
+    return Ok(None)
+
+
+def drop_loop_local_owners(mut builder: Builder, span: SourceSpan) -> None:
+    """Release only the exited iteration's local storage, retaining its result and all surviving enclosing owners."""
+    incoming = builder.loop_owners[-1]
     retained = builder.owned
     for index in range(len(retained)):
         owner = retained[len(retained) - index - 1]
         if owner not in incoming and loop_local_owner(builder, owner):
             drop_owned(builder, owner, span)
-    return Ok(None)
 
 
 def loop_local_owner(builder: Builder, local: int) -> bool:
@@ -1665,19 +1671,20 @@ def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) -> Res
 
 
 def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Result[None, str]:
-    """Leave the innermost loop (`break`) or start its next iteration (`continue`), dropping its owners first."""
+    """Clean the innermost iteration before an exit or backedge, requiring incoming owners only for repetition."""
     if len(builder.loops) == 0:
         return Err("Body IR Break or Continue outside Loop")
-    drop_loop_owners(builder, span)?
     header, after = builder.loops[-1]
     if repeat:
+        drop_loop_owners(builder, span)?
         builder.finish(TerminatorKind.Goto(header), span)
-    else:
-        end = builder.current
-        owners = builder.owned
-        builder.loop_exit_blocks[-1].append(end)
-        builder.loop_exit_owners[-1].append(owners)
-        builder.finish(TerminatorKind.Goto(after), span)
+        return Ok(None)
+    drop_loop_local_owners(builder, span)
+    end = builder.current
+    owners = builder.owned
+    builder.loop_exit_blocks[-1].append(end)
+    builder.loop_exit_owners[-1].append(owners)
+    builder.finish(TerminatorKind.Goto(after), span)
     return Ok(None)
 
 
