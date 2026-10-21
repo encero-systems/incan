@@ -7448,7 +7448,9 @@ def lower_function(
                 return Err("unsupported Body IR async or generator ExternDelegation")
             mut native_arguments: list[PlanType] = []
             for argument in type_arguments:
-                native_arguments.append(native_source_type(module.nominal_declarations, module.enum_declarations, unions, argument, intrinsics)?)
+                native_arguments.append(
+                    native_source_type(module.nominal_declarations, module.enum_declarations, unions, argument, intrinsics)?,
+                )
             function, externals = delegated_function(
                 selected_name,
                 delegation.rust_path(),

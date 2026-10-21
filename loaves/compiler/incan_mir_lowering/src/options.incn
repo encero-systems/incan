@@ -331,7 +331,7 @@ def retain_call_carriers(
     destination: &Option[RustPlace],
     file: str,
 ) -> Result[None, str]:
-    """Retain checked free-function signatures before calls, including constant-only carriers absent from locals."""
+    """Retain closed source and published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
     match target.canonical:
         Some(identity) =>
             if identity.kind != SemanticSourceTargetKind.Function:
