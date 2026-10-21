@@ -105,7 +105,7 @@ fn argument_type(argument: &str, facts: &TypeCheckInfo) -> IncanType {
     if let Some(checked) = checked_name(argument.trim(), facts) {
         return checked;
     }
-    let resolved = crate::typechecker::TypeChecker::new().resolved_type_from_rust_display(argument);
+    let resolved = crate::typechecker::TypeChecker::new().native_rust_signature_type(argument, "");
     super::runtime_nominals::project_type(semantic_type_from_resolved(&resolved), facts)
 }
 
@@ -117,9 +117,9 @@ fn checked_name(name: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
     if let Some(target) = facts.type_alias_target(name) {
         return Some(super::parameter_types::checked_semantic_type(target, facts));
     }
-    facts
-        .declarations
-        .named_type_identities
-        .contains_key(name)
-        .then(|| IncanType::Named(name.to_owned()))
+    let identity = facts.declarations.named_type_identities.get(name)?;
+    if matches!(identity.origin, incan_semantics_core::SymbolOrigin::RustCrate(_)) {
+        return bir::native_opaque_name(identity).map(IncanType::Named);
+    }
+    Some(IncanType::Named(name.to_owned()))
 }

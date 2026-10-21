@@ -1,0 +1,18 @@
+# behavior: borrowed string results infer Rust AsRef parameters and reusable builder references keep their owner
+# expect-stdout:
+#   configured
+
+from rust::std::string import String as RustString
+from rust::tempfile import Builder
+
+
+def main() -> None:
+    """Configure borrowed builder inputs without losing the native result or lifetime arguments."""
+    mut builder = Builder.new()
+    prefix = RustString.from("lane-")
+    suffix = RustString.from(".txt")
+    prefix_ref = prefix.as_str()
+    suffix_ref = suffix.as_str()
+    builder.prefix(prefix_ref)
+    builder.suffix(suffix_ref)
+    println("configured")

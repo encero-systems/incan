@@ -49,6 +49,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    NativeStr,
     UnitFunction,
     Int,
     Float,
@@ -186,6 +187,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::NativeStr => Scalar::NativeStr,
         PlanType::ScalarRef(elements) => Scalar::ScalarRef(elements.iter().map(scalar).collect()),
         PlanType::ScalarMutRef(elements) => Scalar::ScalarMutRef(elements.iter().map(scalar).collect()),
         PlanType::Future(outputs) => Scalar::Future(outputs.iter().map(scalar).collect()),
@@ -451,6 +453,9 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         }
     }
     for local in &function.locals {
+        if matches!(local.ty, PlanType::NativeStr) {
+            return Err(invalid(function, "unsized str cannot occupy a value frame"));
+        }
         span(&local.span)?;
         validate_model_type(plan, &local.ty)?;
         validate_array_length(plan, function, scalar(&local.ty))?;
@@ -2349,7 +2354,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             });
         }
         for argument in &declaration.library_type_arguments {
-            if !source_signature_type(&scalar(argument)) {
+            if !matches!(argument, PlanType::NativeStr) && !source_signature_type(&scalar(argument)) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported SDK alias type argument".into(),
@@ -2363,15 +2368,6 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 function: declaration.name.clone(),
                 reason: "native type arguments on a source-owned model".into(),
             });
-        }
-        for argument in &declaration.library_type_arguments {
-            if !source_signature_type(&scalar(argument)) {
-                return Err(PlanError::Unsupported {
-                    function: declaration.name.clone(),
-                    reason: "stdlib layout argument has no admitted native type".into(),
-                });
-            }
-            validate_model_type(plan, argument)?;
         }
         for field in &declaration.fields {
             span(&field.span)?;

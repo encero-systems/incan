@@ -173,6 +173,18 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
     (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
 }
 
+/// Resolve an opaque native carrier by its public type identity. Empty model layouts grant no field or variant
+/// access, so structs, enums and type aliases use the same metadata-owned type query without exposing their shape.
+pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    [DefKind::Struct, DefKind::Enum, DefKind::TyAlias]
+        .into_iter()
+        .find_map(|kind| library_item(tcx, path, kind).ok())
+        .ok_or_else(|| PlanError::Invalid {
+            function: path.into(),
+            reason: "native carrier names no public struct, enum or type alias".into(),
+        })
+}
+
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
 ///
 /// A segment inside a module selects by kind as well as name, as [`library_item`] does: a class with field defaults

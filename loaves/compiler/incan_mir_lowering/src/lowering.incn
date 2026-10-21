@@ -275,7 +275,7 @@ from tuples import (
     carrier_element,
     owned_carrier,
 )
-from text_plan import format_parts, clone_text, owned_literal
+from text_plan import format_parts, clone_text, owned_literal, owned_slice_text
 from options import (
     intrinsic_declarations,
     retain_body_carriers,
@@ -619,6 +619,13 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
             if is_element_place(builder, value)?:
                 return Err("unsupported Body IR mutable list element borrow")
         _ => pass
+    if fact == OwnershipFact.Move and len(value.projection) == 0:
+        match value.local_id():
+            Some(local) =>
+                index = int(local.index()) + 1 + builder.local_offset
+                if is_exclusive_borrow(builder.locals[index].ty):
+                    return Ok(read_place(plan_place(index, span), true, span))
+            None => pass
     match element_read(builder, value, span)?:
         Some(operand) => return Ok(operand)
         None => pass
@@ -4090,11 +4097,7 @@ def lower_library_method(
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
     type_arguments = sdk_callable_type_arguments(builder, delegation, names, closed, owned)?
-    mut output = temporary(builder, result, span)
-    match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
-        None => pass
+    output = call_destination(builder, destination, result, span)?
     match fallible_factory(module, target, result, builder.intrinsics)?:
         Some(factory) =>
             match place_type(builder.locals, reference):
@@ -4815,11 +4818,7 @@ def lower_delegated_call(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
     operands = library_call_operands(module, builder, delegation, target.binding, arguments, parameters, span, 0, true)?
-    mut output = temporary(builder, result, span)
-    match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
-        None => pass
+    output = call_destination(builder, destination, result, span)?
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib delegation native identity")
         Some(published_path) =>
@@ -6317,6 +6316,8 @@ pub def display_plan_value(
         return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
+    if ty == PlanType.StrRef:
+        return Ok(owned_slice_text(builder, operand, span))
     if has_sized_numeric(ty):
         result = temporary(builder, PlanType.String, span)
         external_call(
@@ -6514,6 +6515,10 @@ def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
     """Pass literal slice text directly or borrow owned text through String's own as_str method."""
     match value:
         RustOperand.Constant(RustConstant.Str(text)) => return Ok(text_literal(str(text), span))
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.StrRef:
+                return Ok(read_place(place, false, span))
         _ => pass
     reference = borrow_text_operand(builder, value, span)?
     output = temporary(builder, PlanType.StrRef, span)
@@ -6538,6 +6543,12 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             if is_element_place(builder, read.place)?:
                 return borrow_element_text(builder, value, read.fact, span)
             place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.StrRef:
+                owner = owned_slice_text(builder, read_place(place, false, span), span)
+                builder.owned.append(owner.local)
+                reference = temporary(builder, PlanType.StringRef, span)
+                builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) == PlanType.FrozenStr:
                 if read.fact == OwnershipFact.MutBorrow or read.fact == OwnershipFact.Unknown:
                     return Err("unsupported Body IR unproven FrozenStr text borrow")
@@ -8325,7 +8336,11 @@ def call_destination(
 ) -> Result[Place, str]:
     """Select the checked destination or a typed temporary for a discarded call."""
     match destination:
-        Some(place) => return list_root_place(builder, place, span)
+        Some(place) =>
+            root = list_root_place(builder, place, span)?
+            if place_type(builder.locals, root) == ty:
+                return Ok(root)
+            return scalar_place(builder, place, span)
         None => return Ok(temporary(builder, ty, span))
 
 

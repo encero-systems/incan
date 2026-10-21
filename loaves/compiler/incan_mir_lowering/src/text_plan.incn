@@ -74,3 +74,18 @@ pub def owned_literal(mut builder: Builder, text: str, span: SourceSpan) -> Plac
     path = "incan_std_core::strings::str_concat"
     external_call(builder, path, [PlanType.StrRef, PlanType.StrRef], PlanType.String, arguments, result, span)
     return result
+
+
+pub def owned_slice_text(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
+    """Materialize a retained native str view as the owned text the checked source result contract requires."""
+    result = temporary(builder, PlanType.String, span)
+    external_call(
+        builder,
+        "incan_std_core::strings::str_concat",
+        [PlanType.StrRef, PlanType.StrRef],
+        PlanType.String,
+        [value, text_literal("", span)],
+        result,
+        span,
+    )
+    return result

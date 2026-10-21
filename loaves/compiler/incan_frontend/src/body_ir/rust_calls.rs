@@ -2,6 +2,7 @@
 
 use super::args::DeclaredSlot;
 use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span, nominal_carriers, parameter_types};
+use crate::typechecker::RustCheckedCall;
 
 /// Declare each checked Rust instantiation once, keeping native argument order and reference passing modes.
 /// The signature is already instantiated by checking. Source-local declarations supply the canonical carrier for an
@@ -23,7 +24,10 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
     let mut calls = Vec::new();
     let mut checked_calls = facts.rust.checked_calls.iter().collect::<Vec<_>>();
     checked_calls.sort_by_key(|(span, _)| **span);
-    for (_, call) in checked_calls {
+    for call in checked_calls
+        .into_iter()
+        .flat_map(|(_, call)| call.receiver_adjustments.iter().chain(std::iter::once(call)))
+    {
         let Some(canonical) = bir::rust_item_identity(&call.path) else {
             continue;
         };
@@ -62,7 +66,14 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let call = self.type_info.rust.checked_calls.get(&(span.start, span.end))?.clone();
-        let canonical = bir::rust_item_identity(&call.path)?;
+        if !call.receiver_adjustments.is_empty() {
+            return Some(
+                match self.lower_adjusted_rust_call(&call, receiver?, args, span, scope, out) {
+                    Ok(value) => value,
+                    Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
+                },
+            );
+        }
         let mut arguments = Vec::new();
         if call.has_receiver {
             arguments.push(ast::CallArg::Positional(receiver?.clone()));
@@ -80,6 +91,20 @@ impl BodyBuilder<'_, '_> {
             Ok(bound) => bound,
             Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
         };
+        self.emit_checked_rust_call(&call, operands, binding, span, scope, out)
+    }
+
+    /// Emit an already bound call through the shared canonical external target; no method resolution occurs here.
+    fn emit_checked_rust_call(
+        &mut self,
+        call: &RustCheckedCall,
+        operands: Vec<bir::ArgumentElement>,
+        binding: bir::ArgumentBinding,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let canonical = bir::rust_item_identity(&call.path)?;
         let type_args = call
             .type_arguments
             .iter()
@@ -88,7 +113,7 @@ impl BodyBuilder<'_, '_> {
         let result: IncanType = self.checked_type(&call.return_type);
         Some(self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                name: call.path,
+                name: call.path.clone(),
                 direct_call_id: None,
                 builtin: None,
                 type_args,
@@ -104,4 +129,92 @@ impl BodyBuilder<'_, '_> {
             out,
         ))
     }
+
+    /// Evaluate the receiver and its checked dereference chain before binding the written ordinary arguments.
+    fn lower_adjusted_rust_call(
+        &mut self,
+        call: &RustCheckedCall,
+        receiver: &ast::Spanned<ast::Expr>,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        let initial = call
+            .receiver_adjustments
+            .first()
+            .and_then(|step| step.parameters.first())
+            .ok_or("native receiver adjustment without an input")?;
+        let slot = DeclaredSlot {
+            ty: self.checked_type(&initial.ty),
+            ..DeclaredSlot::from_checked_param(initial)
+        };
+        let (mut inputs, _) = self.bind_declared_args(
+            "native receiver",
+            Some(vec![slot]),
+            &[ast::CallArg::Positional(receiver.clone())],
+            scope,
+            out,
+        )?;
+        let mut adjusted = inputs.pop().ok_or("native receiver adjustment without a value")?;
+        for step in &call.receiver_adjustments {
+            let value = self
+                .emit_checked_rust_call(
+                    step,
+                    vec![adjusted],
+                    bir::ArgumentBinding::resolved_positional(1),
+                    span,
+                    scope,
+                    out,
+                )
+                .ok_or("native receiver adjustment without an identity")?;
+            adjusted = bir::ArgumentElement::One(value);
+        }
+        let slots = call
+            .parameters
+            .iter()
+            .skip(1)
+            .map(|parameter| DeclaredSlot {
+                ty: self.checked_type(&parameter.ty),
+                ..DeclaredSlot::from_checked_param(parameter)
+            })
+            .collect();
+        let (mut operands, mut binding) = self.bind_declared_args(&call.path, Some(slots), args, scope, out)?;
+        prepend_receiver_binding(&mut binding)?;
+        operands.insert(0, adjusted);
+        self.emit_checked_rust_call(call, operands, binding, span, scope, out)
+            .ok_or_else(|| "native method without an identity".into())
+    }
+}
+
+/// Shift a resolved ordinary binding once when a pre-evaluated receiver takes native slot zero.
+fn prepend_receiver_binding(binding: &mut bir::ArgumentBinding) -> Result<(), String> {
+    let (arguments, defaults) = match binding {
+        bir::ArgumentBinding::Resolved {
+            arguments,
+            defaulted_slots,
+        }
+        | bir::ArgumentBinding::ResolvedDeclarationOrder {
+            arguments,
+            defaulted_slots,
+        } => (arguments, defaulted_slots),
+        bir::ArgumentBinding::UnresolvedPositional => {
+            return Err("native adjusted call without a resolved binding".into());
+        }
+    };
+    for argument in arguments.iter_mut() {
+        argument.slot += 1;
+        argument.written_position += 1;
+    }
+    for slot in defaults {
+        *slot += 1;
+    }
+    arguments.insert(
+        0,
+        bir::BoundArgument {
+            slot: 0,
+            written_position: 0,
+        },
+    );
+    Ok(())
 }

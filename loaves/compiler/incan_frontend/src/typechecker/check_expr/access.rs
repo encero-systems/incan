@@ -54,6 +54,8 @@ use super::calls::PublicModuleConstructorContext;
 
 use super::{GenericPartialTarget, TypeChecker};
 
+mod rust_deref;
+mod rust_projections;
 mod rust_traits;
 
 /// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
@@ -2997,7 +2999,16 @@ impl TypeChecker {
 
     /// Resolve type arguments from one contextual Rust receiver specialization.
     fn rust_owner_type_args(&self, receiver: &ResolvedType, rust_path: &str) -> Option<Vec<ResolvedType>> {
+        let native_vec =
+            incan_lang::interop::ancestral_rust_path(rust_path) == incan_lang::interop::ancestral_rust_path("Vec");
         match receiver {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_owner_type_args(inner, rust_path),
+            ResolvedType::Bytes if native_vec => Some(vec![ResolvedType::Numeric(numerics::NumericTypeId::U8)]),
+            ResolvedType::Generic(name, args)
+                if native_vec && collection_type_id(name) == Some(CollectionTypeId::List) =>
+            {
+                Some(args.clone())
+            }
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
             ResolvedType::Generic(name, args)
@@ -3015,7 +3026,8 @@ impl TypeChecker {
                 }
                 Some(
                     args.into_iter()
-                        .map(|arg| self.resolved_type_from_rust_display(arg))
+                        .filter(|arg| !Self::rust_generic_arg_is_lifetime(arg))
+                        .map(|arg| self.native_rust_signature_type(arg, rust_path))
                         .collect(),
                 )
             }
@@ -3167,7 +3179,11 @@ impl TypeChecker {
             .zip(type_args)
             .map(|(param, arg)| (param.as_str(), render_resolved_type_as_rust_arg(arg)))
             .collect::<HashMap<_, _>>();
-        Self::specialize_rust_signature(sig, &substitutions, receiver_display.as_str())
+        self.rust_signature_projections(Self::specialize_rust_signature(
+            sig,
+            &substitutions,
+            receiver_display.as_str(),
+        ))
     }
 
     /// Specialize one inspected method signature with explicit, non-placeholder method type arguments.
@@ -3210,6 +3226,17 @@ impl TypeChecker {
             .chain(&method.signature.type_params)
             .cloned()
             .collect::<Vec<_>>();
+        let refreshed_types = args
+            .iter()
+            .zip(arg_types)
+            .map(|(arg, original)| {
+                self.type_info
+                    .expr_type(Self::call_arg_expr(arg).span)
+                    .cloned()
+                    .unwrap_or_else(|| original.clone())
+            })
+            .collect::<Vec<_>>();
+        let arg_types = refreshed_types.as_slice();
         let mut bindings = self.infer_rust_signature_bindings(
             &method.signature,
             path,
@@ -3219,6 +3246,10 @@ impl TypeChecker {
             Some(result),
         );
         if let (Some(receiver), Some(template)) = (receiver, method.impl_self_type.as_deref()) {
+            let receiver = match receiver {
+                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+                other => other,
+            };
             let template = self.resolved_type_from_rust_display(template);
             self.infer_type_param_bindings(
                 &self.rust_inference_type(&template, &native_parameters),
@@ -3242,6 +3273,12 @@ impl TypeChecker {
         let Some(type_arguments) = arguments else {
             return;
         };
+        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+            eprintln!(
+                "rust method: {path}.{} native arguments {type_arguments:?}, bindings {bindings:?}",
+                method.name
+            );
+        }
         for (parameter, argument) in native_parameters.iter().zip(&type_arguments) {
             bindings.entry(parameter.clone()).or_insert_with(|| argument.clone());
         }
@@ -3256,40 +3293,59 @@ impl TypeChecker {
             parameter.ty = self.instantiate_rust_signature_type(&template, &native_parameters, &bindings);
         }
         if let Some(receiver) = receiver {
-            let display = method
-                .signature
-                .params
-                .first()
-                .map(|parameter| parameter.type_display.trim())
-                .unwrap_or("");
-            let referent = match receiver {
-                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
-                other => other,
+            let Some(parameter) = Self::checked_rust_receiver_parameter(&method.signature, receiver) else {
+                return;
             };
-            let ty = match Self::rust_display_borrow_kind(display) {
-                Some((true, _)) => ResolvedType::RefMut(Box::new(referent.clone())),
-                Some((false, _)) => ResolvedType::Ref(Box::new(referent.clone())),
-                None if display == "self" || display == "Self" => receiver.clone(),
-                None => return,
-            };
-            parameters.insert(0, CallableParam::positional(ty));
+            parameters.insert(0, parameter);
         }
-        let native_result = self.instantiate_rust_signature_type(
+        let mut native_result = self.instantiate_rust_signature_type(
             &self.native_rust_signature_type(&method.signature.return_type, path),
             &native_parameters,
             &bindings,
         );
+        if method.signature.return_type.contains(" as ") {
+            let displays = bindings
+                .iter()
+                .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
+                .collect();
+            let owner = receiver
+                .map(render_resolved_type_as_rust_arg)
+                .unwrap_or_else(|| path.to_owned());
+            let display = Self::substitute_rust_owner_display(&method.signature.return_type, &displays, &owner);
+            if let Some(projected) = self.rust_projected_type(&display, 0) {
+                native_result = projected;
+            }
+        }
+        let result_item_path = self.rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path);
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                receiver_adjustments: Vec::new(),
                 path: format!("{path}::{}", method.name),
                 type_arguments,
                 parameters,
                 return_type: native_result,
-                result_item_path: self.rust_result_item_path(&method.signature.return_type, path),
+                result_item_path,
                 has_receiver: receiver.is_some(),
             },
         );
+    }
+
+    /// Preserve the declared ordinary receiver mode for a checked native self type. Typed arbitrary receivers require
+    /// their own retained carrier and are refused rather than treated as an owned Self.
+    fn checked_rust_receiver_parameter(signature: &RustFunctionSig, receiver: &ResolvedType) -> Option<CallableParam> {
+        let display = signature.params.first()?.type_display.trim();
+        let referent = match receiver {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        let ty = match Self::rust_display_borrow_kind(display) {
+            Some((true, _)) => ResolvedType::RefMut(Box::new(referent.clone())),
+            Some((false, _)) => ResolvedType::Ref(Box::new(referent.clone())),
+            None if display == "self" || display == "Self" => receiver.clone(),
+            None => return None,
+        };
+        Some(CallableParam::positional(ty))
     }
 
     /// Resolve and validate a method call on a rust-inspect-backed path.
@@ -3367,9 +3423,40 @@ impl TypeChecker {
             self.preserve_unresolved_rust_call_argument_returns(args);
             return None;
         };
+        let receiver_is_type = matches!(
+            self.type_info.ident_kind(receiver_span),
+            Some(IdentKind::TypeName | IdentKind::RustImport)
+        );
         if let RustItemKind::Type(info) = &metadata.kind
-            && !info.methods.iter().any(|candidate| candidate.name == method)
+            && !info.methods.iter().any(|candidate| {
+                candidate.name == method
+                    && (receiver_is_type || Self::rust_signature_has_receiver(&candidate.signature))
+            })
             && let Some(result) = self.resolve_retained_rust_trait_call(
+                RustPathMethodCall {
+                    rust_path,
+                    method,
+                    receiver_metadata,
+                    receiver_binding,
+                    receiver_expr,
+                    type_args,
+                    args,
+                    arg_types,
+                    receiver_span,
+                    expected_return_ty,
+                    span,
+                },
+                info,
+            )
+        {
+            return Some(result);
+        }
+        if let RustItemKind::Type(info) = &metadata.kind
+            && !info
+                .methods
+                .iter()
+                .any(|candidate| candidate.name == method && Self::rust_signature_has_receiver(&candidate.signature))
+            && let Some(result) = self.resolve_rust_autoderef_call(
                 RustPathMethodCall {
                     rust_path,
                     method,
@@ -3393,7 +3480,10 @@ impl TypeChecker {
                 let Some(sig) = type_info
                     .methods
                     .iter()
-                    .find(|candidate| candidate.name == method)
+                    .find(|candidate| {
+                        candidate.name == method
+                            && (receiver_is_type || Self::rust_signature_has_receiver(&candidate.signature))
+                    })
                     .map(|candidate| candidate.signature.clone())
                     .or_else(|| metadata_free_method_signature(rust_path, method))
                 else {

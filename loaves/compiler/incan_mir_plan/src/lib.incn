@@ -206,6 +206,8 @@ pub enum PlanType:
     CallableArguments(list[PlanType])
     # Exactly one output carrier; the owned pinned future executes only when polled.
     Future(list[PlanType])
+    # Rust's unsized str is permitted as a native type argument; source text remains owned String.
+    NativeStr
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:

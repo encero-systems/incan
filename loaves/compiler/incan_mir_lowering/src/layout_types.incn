@@ -33,6 +33,9 @@ pub def native_source_type(
         Some(result) => return Ok(result)
         None => pass
     match ty:
+        RustType.RustInteropPath(path) =>
+            if str(path) == "str":
+                return Ok(PlanType.NativeStr)
         RustType.Ref(inner) =>
             if is_native_str(inner):
                 return Ok(PlanType.StrRef)

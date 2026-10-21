@@ -143,6 +143,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
+        PlanType::NativeStr => tcx.types.str_,
         PlanType::Decimal => decimal_type(tcx)?,
         PlanType::ValidationError => validation_error_type(tcx)?,
         PlanType::ValidationErrorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, validation_error_type(tcx)?),
