@@ -709,6 +709,35 @@ impl TypeChecker {
             && self.rust_trait_carriers_match(&elements[0], &arguments[0])
     }
 
+    /// Keep impl and method binders in distinct scopes when both declarations use the same source name.
+    /// Renaming only the method signature preserves native argument order and leaves imported metadata unchanged.
+    fn disjoint_rust_method_binders(
+        signature: &RustFunctionSig,
+        implementation: &RustImplementedTrait,
+    ) -> Option<RustFunctionSig> {
+        let mut substitutions = HashMap::new();
+        for (index, parameter) in signature.type_params.iter().enumerate() {
+            if !implementation.type_params.contains(parameter) {
+                continue;
+            }
+            let mut name = format!("__incan_method_{index}");
+            while implementation.type_params.contains(&name) || signature.type_params.contains(&name) {
+                name.push('_');
+            }
+            substitutions.insert(parameter.as_str(), name);
+        }
+        if substitutions.is_empty() {
+            return None;
+        }
+        let mut scoped = Self::specialize_rust_signature(signature, &substitutions, "Self");
+        scoped.type_params = signature
+            .type_params
+            .iter()
+            .map(|name| substitutions.get(name.as_str()).unwrap_or(name).clone())
+            .collect();
+        Some(scoped)
+    }
+
     /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
     /// Impl predicates remain native obligations: this selects an exact trait reference, and the adapter verifies
     /// that rustc can satisfy it before emitting MIR. Competing equally ranked trait references remain ambiguous.
@@ -738,6 +767,8 @@ impl TypeChecker {
         if original.is_async || original.is_unsafe {
             return None;
         }
+        let scoped = Self::disjoint_rust_method_binders(original, implementation);
+        let original = scoped.as_ref().unwrap_or(original);
         let mut variables = implementation.type_params.clone();
         variables.extend(original.type_params.iter().cloned());
         let mut bindings = self.rust_impl_self_bindings(implementation, owner)?;
