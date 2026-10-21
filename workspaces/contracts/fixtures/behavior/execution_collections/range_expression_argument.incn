@@ -1,0 +1,52 @@
+# behavior: for loops and comprehensions accept range-expression arguments with once-only ordered bounds and preserve inclusivity
+# expect-stdout:
+#   start
+#   end
+#   [2, 3, 4]
+#   [2, 3, 4, 5]
+#   []
+#   [2, 3]
+#   [2, 3, 4]
+#   [2, 3, 4]
+
+model Bounds:
+    """Own a lower bound that the upper-bound computation can change."""
+
+    lower: int
+
+
+def finish(mut bounds: Bounds) -> int:
+    """Change the original lower-bound storage after its read."""
+    bounds.lower = 4
+    return 5
+
+
+def start() -> int:
+    """Expose the lower bound's evaluation order."""
+    println("start")
+    return 2
+
+
+def end() -> int:
+    """Expose the upper bound's evaluation order."""
+    println("end")
+    return 5
+
+
+def main() -> None:
+    """Iterate inline and retained range bounds in loops and comprehensions."""
+    mut values: list[int] = []
+    for value in range(start()..end()):
+        values.append(value)
+    println(values)
+    println([value for value in range((2..=5))])
+    println([value for value in range(5..2)])
+    bounds = 2..4
+    println([value for value in bounds])
+    mut changing = Bounds(lower=2)
+    mut retained: list[int] = []
+    for value in range(changing.lower..finish(changing)):
+        retained.append(value)
+    println(retained)
+    changing.lower = 2
+    println([value for value in range(changing.lower..finish(changing))])

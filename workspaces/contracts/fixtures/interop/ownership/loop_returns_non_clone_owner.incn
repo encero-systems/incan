@@ -1,5 +1,6 @@
-# behavior: returning from a loop transfers an enclosing non-Clone value to the caller
+# behavior: return and break transfer an enclosing non-Clone value on terminal loop paths
 # expect-stdout:
+#   false
 #   false
 
 from rust::std::sync import Mutex
@@ -12,7 +13,16 @@ def make() -> Mutex[int]:
         return value
 
 
+def make_with_break() -> Mutex[int]:
+    """Move the owner through the value of a loop expression."""
+    value = Mutex.new(9)
+    return loop:
+        break value
+
+
 def main() -> None:
     """Observe the transferred native owner."""
     value = make()
     println(value.is_poisoned())
+    other = make_with_break()
+    println(other.is_poisoned())
