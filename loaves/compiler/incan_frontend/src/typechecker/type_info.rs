@@ -2440,10 +2440,25 @@ impl TypeCheckInfo {
     ) -> SemanticFactStore {
         let module_identity = semantic_module_identity(module_path);
         let mut facts = Vec::new();
+        let declarations = self.semantic_reference_declarations();
+        self.record_semantic_type_facts(&module_identity, &mut facts);
+        Self::record_semantic_declaration_facts(&module_identity, &declarations, &mut facts);
+        self.record_semantic_reference_facts(&module_identity, &declarations, &mut facts);
+        self.record_semantic_iteration_facts(&module_identity, &declarations, &mut facts);
+        self.record_semantic_registry_facts(&module_identity, package_identity, &mut facts);
+        facts.sort();
+        let mut store = SemanticFactStore::new();
+        for fact in facts {
+            store.insert(fact);
+        }
+        store
+    }
 
+    /// Retain the checker's expression and function types without resolving source syntax a second time.
+    fn record_semantic_type_facts(&self, module_identity: &str, facts: &mut Vec<SemanticFact>) {
         for (&span, ty) in &self.expressions.expr_types {
             facts.push(SemanticFact::new(
-                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                CompilerNodeId::expression_span(module_identity, span.0, span.1),
                 SemanticFactKind::Type,
                 SemanticFactValue::semantic_type(self.semantic_type(ty)),
             ));
@@ -2451,16 +2466,25 @@ impl TypeCheckInfo {
 
         for (&span, target) in &self.expressions.source_targets {
             facts.push(SemanticFact::new(
-                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                CompilerNodeId::expression_span(module_identity, span.0, span.1),
                 SemanticFactKind::SymbolTarget,
                 SemanticFactValue::source_target(semantic_source_target_from_typecheck(target)),
             ));
         }
+        for (name, binding) in &self.declarations.function_bindings {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::declaration(module_identity, name),
+                SemanticFactKind::Type,
+                SemanticFactValue::semantic_type(
+                    self.qualify_semantic_type(semantic_type_from_function_binding(binding)),
+                ),
+            ));
+        }
+    }
 
-        // Relationship ownership is projected once beside the existing identity facts. Execution and inspection
-        // consume this shared product; neither reconstructs owners from its own syntax traversal.
-        let declarations = self
-            .declarations
+    /// Select physical checked declarations that can own references; generated members retain their nominal owner.
+    fn semantic_reference_declarations(&self) -> BTreeSet<&CanonicalSymbolId> {
+        self.declarations
             .declaration_identities
             .values()
             .chain(self.declarations.member_declaration_identities.values())
@@ -2478,11 +2502,19 @@ impl TypeCheckInfo {
                         | SemanticSourceTargetKind::Other(_)
                 )
             })
-            .collect::<std::collections::BTreeSet<_>>();
-        for identity in &declarations {
+            .collect()
+    }
+
+    /// Record declaration identities and the containing owner required by a field or enum variant.
+    fn record_semantic_declaration_facts(
+        module_identity: &str,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
+        for identity in declarations {
             facts.push(SemanticFact::new(
                 CompilerNodeId::declaration_span(
-                    &module_identity,
+                    module_identity,
                     identity.declaration_span.start,
                     identity.declaration_span.end,
                 ),
@@ -2498,7 +2530,7 @@ impl TypeCheckInfo {
             ) {
                 facts.push(SemanticFact::new(
                     CompilerNodeId::declaration_span(
-                        &module_identity,
+                        module_identity,
                         identity.declaration_span.start,
                         identity.declaration_span.end,
                     ),
@@ -2507,7 +2539,13 @@ impl TypeCheckInfo {
                 ));
             }
         }
+    }
 
+    /// Give nested bindings stable owner-relative ordinals without using process-local scope identifiers.
+    fn stable_declaration_contexts(
+        &self,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+    ) -> BTreeMap<CanonicalSymbolId, CanonicalStableDeclarationContext> {
         let mut stable_context_groups = BTreeMap::<
             (CanonicalSymbolId, SymbolNamespace, SemanticSourceTargetKind, String),
             BTreeSet<CanonicalSymbolId>,
@@ -2548,18 +2586,26 @@ impl TypeCheckInfo {
                 }
             }
         }
+        stable_contexts
+    }
+
+    /// Project written references and nominal type leaves once for both dependency execution and inspection.
+    fn record_semantic_reference_facts(
+        &self,
+        module_identity: &str,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
+        let stable_contexts = self.stable_declaration_contexts(declarations);
         for (&span, identity) in &self.references.resolved_identities {
-            let subject = CompilerNodeId::expression_span(&module_identity, span.0, span.1);
-            facts.push(SemanticFact::new(
-                subject.clone(),
-                SemanticFactKind::ReferenceSpan,
-                SemanticFactValue::SourceSpan(incan_semantics_core::HirSourceSpan::new(span.0, span.1)),
-            ));
-            facts.push(SemanticFact::new(
-                subject.clone(),
-                SemanticFactKind::SymbolIdentity,
-                SemanticFactValue::canonical_identity(identity.clone()),
-            ));
+            let subject = CompilerNodeId::expression_span(module_identity, span.0, span.1);
+            Self::record_semantic_reference(
+                facts,
+                &subject,
+                incan_semantics_core::HirSourceSpan::new(span.0, span.1),
+                identity,
+                declarations,
+            );
             if let Some(context) = stable_contexts.get(identity) {
                 facts.push(SemanticFact::new(
                     subject.clone(),
@@ -2574,66 +2620,82 @@ impl TypeCheckInfo {
                     SemanticFactValue::canonical_identity(owner.clone()),
                 ));
             }
-            if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
-                declarations.iter().copied(),
-                incan_semantics_core::HirSourceSpan::new(span.0, span.1),
-            ) {
-                facts.push(SemanticFact::new(
-                    subject,
-                    SemanticFactKind::ReferenceOwner,
-                    SemanticFactValue::canonical_identity(owner.clone()),
-                ));
-            }
         }
 
         for (&span, identities) in &self.expressions.expression_type_identities {
             let source_span = incan_semantics_core::HirSourceSpan::new(span.0, span.1);
             for (indices, identity) in identities {
-                let subject = CompilerNodeId::expression_type_component(&module_identity, span.0, span.1, indices);
-                facts.push(SemanticFact::new(
-                    subject.clone(),
-                    SemanticFactKind::ReferenceSpan,
-                    SemanticFactValue::SourceSpan(source_span),
-                ));
-                facts.push(SemanticFact::new(
-                    subject.clone(),
-                    SemanticFactKind::SymbolIdentity,
-                    SemanticFactValue::canonical_identity(identity.clone()),
-                ));
-                if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
-                    declarations.iter().copied(),
-                    source_span,
-                ) {
-                    facts.push(SemanticFact::new(
-                        subject,
-                        SemanticFactKind::ReferenceOwner,
-                        SemanticFactValue::canonical_identity(owner.clone()),
-                    ));
-                }
+                let subject = CompilerNodeId::expression_type_component(module_identity, span.0, span.1, indices);
+                Self::record_semantic_reference(facts, &subject, source_span, identity, declarations);
             }
         }
+    }
 
-        for (name, binding) in &self.declarations.function_bindings {
+    /// Keep each synthetic iteration call's canonical target separate from the written iterable's call facts.
+    /// Dependency loading must see the selected defaults before Body IR lowers the loop into calls.
+    fn record_semantic_iteration_facts(
+        &self,
+        module_identity: &str,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
+        for (&(start, end), hooks) in &self.protocols.body_ir_iterations {
+            let span = incan_semantics_core::HirSourceSpan::new(start, end);
+            for (role, hook) in [("iter", &hooks.iter), ("next", &hooks.next)] {
+                let Some(identity) = &hook.canonical else {
+                    continue;
+                };
+                let subject = CompilerNodeId::protocol_call_span(module_identity, start, end, role);
+                Self::record_semantic_reference(facts, &subject, span, identity, declarations);
+            }
+        }
+    }
+
+    /// Attach one exact canonical target and its unique nearest owner, shared by written and synthetic references.
+    fn record_semantic_reference(
+        facts: &mut Vec<SemanticFact>,
+        subject: &CompilerNodeId,
+        span: incan_semantics_core::HirSourceSpan,
+        identity: &CanonicalSymbolId,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+    ) {
+        facts.push(SemanticFact::new(
+            subject.clone(),
+            SemanticFactKind::ReferenceSpan,
+            SemanticFactValue::SourceSpan(span),
+        ));
+        facts.push(SemanticFact::new(
+            subject.clone(),
+            SemanticFactKind::SymbolIdentity,
+            SemanticFactValue::canonical_identity(identity.clone()),
+        ));
+        if let Some(owner) =
+            incan_semantics_core::dependencies::closest_declaring_owner(declarations.iter().copied(), span)
+        {
             facts.push(SemanticFact::new(
-                CompilerNodeId::declaration(&module_identity, name),
-                SemanticFactKind::Type,
-                SemanticFactValue::semantic_type(
-                    self.qualify_semantic_type(semantic_type_from_function_binding(binding)),
-                ),
+                subject.clone(),
+                SemanticFactKind::ReferenceOwner,
+                SemanticFactValue::canonical_identity(owner.clone()),
             ));
         }
+    }
 
+    /// Retain registry subjects from their checked declarations and the session's explicit package identity.
+    fn record_semantic_registry_facts(
+        &self,
+        module_identity: &str,
+        package_identity: Option<&str>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
         for description in &self.registry.descriptions {
             let registry = match &description.registry {
-                RegistryDescriptionRegistry::Local { binding } => {
-                    CompilerNodeId::declaration(&module_identity, binding)
-                }
+                RegistryDescriptionRegistry::Local { binding } => CompilerNodeId::declaration(module_identity, binding),
                 RegistryDescriptionRegistry::Imported {
                     module_path, binding, ..
                 } => CompilerNodeId::declaration(&module_path.join("::"), binding),
             };
             facts.push(SemanticFact::new(
-                CompilerNodeId::declaration(&module_identity, &description.declaration_name),
+                CompilerNodeId::declaration(module_identity, &description.declaration_name),
                 SemanticFactKind::Registry,
                 SemanticFactValue::registry_entry(SemanticRegistryEntry {
                     registry,
@@ -2648,7 +2710,7 @@ impl TypeCheckInfo {
         for entry in &self.registry.explicit_entries {
             let (subject, subject_identity) = match entry.subject_kind {
                 SemanticRegistrySubjectKind::CompilationUnit => {
-                    (CompilerNodeId::module(&module_identity), module_identity.clone())
+                    (CompilerNodeId::module(module_identity), module_identity.to_owned())
                 }
                 SemanticRegistrySubjectKind::Package => {
                     let package_identity = package_identity
@@ -2664,7 +2726,7 @@ impl TypeCheckInfo {
                 subject,
                 SemanticFactKind::Registry,
                 SemanticFactValue::registry_entry(SemanticRegistryEntry {
-                    registry: CompilerNodeId::declaration(&module_identity, &entry.registry_name),
+                    registry: CompilerNodeId::declaration(module_identity, &entry.registry_name),
                     key: entry.key.clone(),
                     descriptor: entry.descriptor.clone(),
                     subject_kind: entry.subject_kind,
@@ -2672,14 +2734,6 @@ impl TypeCheckInfo {
                 }),
             ));
         }
-
-        facts.sort();
-
-        let mut store = SemanticFactStore::new();
-        for fact in facts {
-            store.insert(fact);
-        }
-        store
     }
 
     /// Return the resolved type recorded for the expression at `span`, if any.

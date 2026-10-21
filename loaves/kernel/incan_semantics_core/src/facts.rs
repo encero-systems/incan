@@ -101,6 +101,15 @@ impl CompilerNodeId {
         )
     }
 
+    /// Address a checker-selected protocol call separately from its written receiver expression and sibling hooks.
+    /// The role names the checked hook, while its target remains a separate canonical identity fact.
+    pub fn protocol_call_span(module_identity: &str, start: usize, end: usize, role: &str) -> Self {
+        Self::new(
+            CompilerNodeKind::Expression,
+            format!("{module_identity}#protocol.{start}..{end}.{role}"),
+        )
+    }
+
     /// Address one named leaf of an expression's checked type by structural child indices, independent of aliases.
     pub fn expression_type_component(module_identity: &str, start: usize, end: usize, indices: &[usize]) -> Self {
         let path = indices.iter().map(usize::to_string).collect::<Vec<_>>().join(".");

@@ -353,8 +353,13 @@ impl LoafCallable {
     /// The declaration record of a Loaf's callable body: its parameters, result, type parameters and defaults, and the
     /// compiled item its package identity names. Async items expose a future constructor rather than the resumed
     /// body output, so consumers use the same retained boxed-future ABI as calls within the declaring package.
-    /// `None` for a body no Loaf declares.
+    /// `None` for a body no Loaf declares or a governed template that must first close its named type parameters or
+    /// open `Self` receiver at the checked adopter.
     pub fn from_body(body: &Body) -> Option<Self> {
+        if !body.type_parameters.is_empty() || body.locals.first().is_some_and(|local| local.ty == IncanType::SelfType)
+        {
+            return None;
+        }
         let canonical = body.canonical.clone()?;
         let item = loaf_item_path(&canonical)?;
         let mut frame = body.clone();

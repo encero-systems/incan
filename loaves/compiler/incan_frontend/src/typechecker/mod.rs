@@ -3543,6 +3543,7 @@ impl TypeChecker {
                 _ => {}
             }
         }
+        self.record_standard_trait_metadata_for_lowering();
         for (qualified_trait_name, info) in &self.dependency_module_traits {
             for (method_name, method) in &info.methods {
                 self.type_info
@@ -3623,6 +3624,33 @@ impl TypeChecker {
                     supports_string_conversion,
                 },
             );
+        }
+    }
+
+    /// Retain loaded standard supertraits under their declaring module, without exposing their bare names in source.
+    /// An imported Ord's Eq slots must survive even when the consumer imports no Eq or declares its own Eq.
+    fn record_standard_trait_metadata_for_lowering(&mut self) {
+        for (name, info) in &self.standard_traits {
+            let Some(module) = info
+                .methods
+                .values()
+                .filter_map(|method| method.identity.as_ref())
+                .find_map(|identity| self.standard_declaring_module(identity))
+            else {
+                continue;
+            };
+            let key = format!("{}.{name}", module.join("."));
+            self.type_info
+                .traits
+                .direct_supertraits
+                .insert(key.clone(), info.supertraits.clone());
+            self.type_info
+                .traits
+                .type_params
+                .insert(key.clone(), info.type_params.clone());
+            for (method_name, method) in &info.methods {
+                self.type_info.traits.record_method(&key, method_name, method);
+            }
         }
     }
 
