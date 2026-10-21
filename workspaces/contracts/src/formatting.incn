@@ -1,0 +1,49 @@
+"""Compare formatting text, check-mode immutability and repeated formatting through the public command."""
+
+from std.fs import Path
+from header import Header
+from run import invoke
+
+
+pub def compare_format(incan: str, project: Path, header: Header, source: str) -> Result[list[str], str]:
+    """Strip the expectation header, check without writing, format exactly, then prove the result is stable."""
+    mut body: list[str] = []
+    mut in_header = true
+    for line in source.split("\n"):
+        if in_header and line.startswith("#"):
+            continue
+        if in_header and line == "":
+            in_header = false
+            continue
+        in_header = false
+        body.append(line)
+    original = "\n".join(body)
+    expected = "\n".join(header.items("expect-formatted")) + "\n"
+    path = project.joinpath("src").joinpath("main.incn")
+    path.write_text(original, "utf-8", "strict", None).map_err((error) => error.message())?
+    mut failures: list[str] = []
+    mut check_code = 0
+    if original != expected:
+        check_code = 1
+    if header.declares("expect-exit"):
+        check_code = header.expected_exit()
+    before = invoke(incan, ["fmt", "--check", "src/main.incn"], project)?
+    if before.code != Some(check_code):
+        failures.append(f"initial --check: expected {check_code}, got {before.exit_text()}: {before.stderr}")
+    unchanged = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    if unchanged != original:
+        failures.append("--check changed the input")
+    formatted = invoke(incan, ["fmt", "src/main.incn"], project)?
+    if formatted.code != Some(0):
+        failures.append(f"fmt failed: {formatted.exit_text()}: {formatted.stderr}")
+    actual = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    if actual != expected:
+        failures.append(f"formatted text differs\nexpected:\n{expected}\nactual:\n{actual}")
+    after = invoke(incan, ["fmt", "--check", "src/main.incn"], project)?
+    if after.code != Some(0):
+        failures.append(f"formatted --check failed: {after.exit_text()}: {after.stderr}")
+    repeated = invoke(incan, ["fmt", "src/main.incn"], project)?
+    stable = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    if repeated.code != Some(0) or stable != actual:
+        failures.append("repeated formatting failed or changed the output")
+    return Ok(failures)

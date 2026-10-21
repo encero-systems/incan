@@ -12,6 +12,7 @@ The contract families say what `incan` must do, each case as a program that carr
 | `interop` | as `behavior`, for programs that import through `rust::` | as `behavior` |
 | `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
 | `project` | `incan describe-unit src/main.incn` | the unit description's dependencies, standard packages and active features, or the refusal's stderr and exit code |
+| `format` | `incan fmt [--check] src/main.incn` | exact formatted text, check exit codes, check immutability and repeated-format stability |
 
 ## Layout
 
@@ -45,6 +46,7 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# expect-dependencies:` | Exactly these dependencies, one `<key> <package>` per line; an empty block means none. |
 | `# expect-std-packages:` | Standard packages the unit must reach. |
 | `# expect-active-features:` | Exactly these active features; an empty block means none. |
+| `# expect-formatted:` | Exact formatted source, indented as a block. Required for a single-file `format` case. The header and its separating blank line are removed before formatting; the expected text has one final newline. |
 | `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
 
 A directive is `#`, one space, the key, a colon. Block lines follow their directive, each `#` and at least two spaces; the first line sets the indentation. A bare `#` inside a block is an empty line. A blank line or any other non-comment line ends the header, and a directive after it is refused. Every case declares at least one expectation its family compares; a family refuses the expectations it does not compare.
@@ -52,6 +54,8 @@ A directive is `#`, one space, the key, a colon. Block lines follow their direct
 Output is compared as lines: `\n` ends a line, a trailing `\r` is dropped, a final newline adds no empty line. An expected line that ends with whitespace is refused, because a report could not show the difference.
 
 ## Running
+
+For `format`, the initial `--check` must exit 1 when the input differs from the expected text, otherwise 0; `expect-exit:` can state that initial code explicitly. Check mode must leave the file unchanged. Formatting must exit 0 and produce the exact expected text. Checking that output must exit 0, and formatting it again must succeed without changing it.
 
 ```bash
 incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures [--scratch DIR] [SELECTOR...]

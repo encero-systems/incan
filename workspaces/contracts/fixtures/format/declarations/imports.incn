@@ -1,0 +1,7 @@
+# behavior: Adjacent imports remain adjacent.
+# expect-formatted:
+#   from std.collections import Dict
+#   from std.fs import Path
+
+from std.collections import Dict
+from std.fs import Path

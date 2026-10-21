@@ -1,0 +1,5 @@
+# behavior: List elements receive comma spacing.
+# expect-formatted:
+#   const ITEMS: list[int] = [1, 2, 3]
+
+const ITEMS:list[int]=[1,2,3]

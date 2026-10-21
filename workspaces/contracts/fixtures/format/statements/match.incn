@@ -1,0 +1,10 @@
+# behavior: A single return in a match arm uses accepted inline syntax.
+# expect-formatted:
+#   def choose(value: int) -> int:
+#       match value:
+#           _ => return 1
+
+def choose(value:int)->int:
+    match value:
+        _ =>
+            return 1

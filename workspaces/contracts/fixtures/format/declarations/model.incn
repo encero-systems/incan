@@ -1,0 +1,9 @@
+# behavior: Model fields receive canonical annotation spacing.
+# expect-formatted:
+#   model Point:
+#       x: int
+#       y: int
+
+model Point:
+    x:int
+    y:int

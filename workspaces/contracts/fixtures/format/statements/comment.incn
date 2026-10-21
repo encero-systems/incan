@@ -1,0 +1,7 @@
+# behavior: Inline comments stay on the statement they describe.
+# expect-formatted:
+#   def value() -> int:
+#       return 1  # Keep this explanation.
+
+def value()->int:
+    return 1 # Keep this explanation.

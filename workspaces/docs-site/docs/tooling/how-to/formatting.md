@@ -22,12 +22,11 @@ incan fmt src/
 # Check if files need formatting (CI mode)
 incan fmt --check .
 
-# Show what would change without modifying
-incan fmt --diff myfile.incn
+# Format several paths in one invocation
+incan fmt src/ tests/ myfile.incn
 ```
 
-!!! note "`--diff` output can look empty for EOF-only changes"
-    If the only change is at end-of-file (like adding/removing a trailing newline), some diff viewers may not display an obvious change even though `incan fmt` would update the file.
+In dev.8, `--check` lists files that would change and leaves their contents untouched. Directories are searched recursively, skipping hidden directories, `target`, and `node_modules`. Formatting uses each file's unit vocabulary. Use `--` before a path that starts with `-`.
 
 ## Relationship To The Style Guide
 
@@ -54,9 +53,9 @@ RFC 053 remains the historical design record for the vertical-spacing portion of
 
 | Option             | Description                                                 |
 | ------------------ | ----------------------------------------------------------- |
-| `incan fmt <path>` | Format file(s) in place                                     |
+| `incan fmt <path>...` | Format files or directories in place                    |
 | `--check`          | Exit non-zero if files would be reformatted (useful for CI) |
-| `--diff`           | Show what would change without modifying files              |
+| `--`               | Treat subsequent arguments as paths                         |
 
 ## Exit Codes
 

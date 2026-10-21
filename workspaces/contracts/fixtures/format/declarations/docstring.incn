@@ -1,0 +1,9 @@
+# behavior: Function docstrings retain triple quotes.
+# expect-formatted:
+#   def value() -> int:
+#       """The stored value."""
+#       return 1
+
+def value()->int:
+    """The stored value."""
+    return 1

@@ -1,0 +1,5 @@
+# behavior: Ordinary strings use double quotes.
+# expect-formatted:
+#   const TEXT: str = "hello"
+
+const TEXT:str='hello'

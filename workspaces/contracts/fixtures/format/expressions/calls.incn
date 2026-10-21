@@ -1,0 +1,7 @@
+# behavior: Call arguments receive comma spacing.
+# expect-formatted:
+#   def main() -> None:
+#       println("hello", "world")
+
+def main()->None:
+    println('hello','world')

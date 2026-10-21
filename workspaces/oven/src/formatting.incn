@@ -1,0 +1,63 @@
+"""Oven's formatting invocation; the compiler owns parsing and the single formatter implementation."""
+
+from std.fs import Path
+from features import FeatureRequest
+from incan_units import format_unit
+from toolchain import load_toolchain
+from unit_rust import describe_native
+
+
+pub def format_paths(arguments: list[str]) -> Result[i32, str]:
+    """Format each source in the supplied files or trees, or check without writing; continue after file failures."""
+    mut check = false
+    mut paths: list[str] = []
+    mut options = true
+    for argument in arguments:
+        if options and argument == "--":
+            options = false
+        elif options and argument == "--check":
+            check = true
+        elif options and argument.startswith("-"):
+            return Err(f"unknown option `{argument}`; usage: incan fmt [--check] PATH...")
+        else:
+            paths.append(argument)
+    if len(paths) == 0:
+        return Err("a PATH is required; usage: incan fmt [--check] PATH...")
+    mut files: list[str] = []
+    for path in paths:
+        for file in sources(Path(path))?:
+            if file not in files:
+                files.append(file)
+    if len(files) == 0:
+        return Err("no .incn files found")
+    toolchain = load_toolchain()?
+    mut code: i32 = 0
+    for file in files:
+        match describe_native(Path(file), "debug", FeatureRequest()):
+            Err(reason) =>
+                println(f"Error formatting {file}: {reason}")
+                code = 1
+            Ok(unit) =>
+                if format_unit(unit, toolchain, file, check)? != 0:
+                    code = 1
+    return Ok(code)
+
+
+def sources(path: Path) -> Result[list[str], str]:
+    """Discover source files deterministically, skipping hidden directories and generated or vendored trees."""
+    if path.is_file():
+        if path.name().endswith(".incn"):
+            absolute = path.resolve().map_err((error) => f"{path.0}: {error.message()}")?
+            return Ok([absolute.0])
+        return Ok([])
+    if not path.is_dir():
+        return Err(f"{path.0}: path does not exist")
+    entries = path.iterdir().map_err((error) => f"{path.0}: {error.message()}")?
+    mut files: list[str] = []
+    for entry in entries:
+        name = entry.name()
+        if entry.is_dir() and (name.startswith(".") or name == "target" or name == "node_modules"):
+            continue
+        for file in sources(entry)?:
+            files.append(file)
+    return Ok(sorted(files))

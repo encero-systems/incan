@@ -1,0 +1,7 @@
+# behavior: Arithmetic operators and parameters receive canonical spacing.
+# expect-formatted:
+#   def add(a: int, b: int) -> int:
+#       return a + b
+
+def add(a:int,b:int)->int:
+    return a+b

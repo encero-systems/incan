@@ -1,0 +1,13 @@
+# behavior: Top-level functions are separated by two blank lines.
+# expect-formatted:
+#   def first() -> int:
+#       return 1
+#
+#
+#   def second() -> int:
+#       return 2
+
+def first()->int:
+    return 1
+def second()->int:
+    return 2

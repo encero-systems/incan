@@ -5,6 +5,7 @@
     incan check PATH [--format text|json] [UNIT OPTIONS]
     incan describe-unit PATH [UNIT OPTIONS]
     incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]
+    incan fmt [--check] PATH...
     incan --version
 
 UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
@@ -22,6 +23,7 @@ from incan_units import check_unit, compile_unit, crate_name, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
 from toolchain import load_toolchain
 from std.environ import get_or
+from formatting import format_paths
 
 
 pub model Options:
@@ -56,12 +58,15 @@ def main() -> None:
     if command == "describe-unit":
         describe_unit(rest)
         return
+    if command == "fmt":
+        finish("fmt", format_paths(rest))
+        return
     fail(f"incan: unknown command `{command}`\n{usage()}", 2)
 
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
+    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:

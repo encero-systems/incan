@@ -1,0 +1,9 @@
+# behavior: Loop calls receive canonical spacing.
+# expect-formatted:
+#   def main() -> None:
+#       for item in range(3):
+#           println(item)
+
+def main()->None:
+    for item in range(3):
+        println( item )

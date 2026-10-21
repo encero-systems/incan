@@ -26,6 +26,15 @@ pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> 
     return run_compiler(toolchain, arguments)
 
 
+pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
+    """Ask the compiler to format one source with its unit's vocabulary, preserving its exit status."""
+    path = write_unit(unit, crate_name(unit))?
+    mut arguments = ["--fmt", path.0, source]
+    if check:
+        arguments.append("--check")
+    return run_compiler(toolchain, arguments)
+
+
 pub def compile_unit(unit: UnitDescription, toolchain: Toolchain, output: Path, library: bool) -> Result[i32, str]:
     """Compile the unit to `output`, a binary or a library's rlib. Returns the compiler's exit code."""
     compiled = crate_name(unit)
