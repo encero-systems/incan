@@ -78,13 +78,21 @@ Rust tuple elements retain shared and mutable scalar reference carriers explicit
 
 Native slices retain an unsized element type separately from owned vectors and from shared or exclusive slice references. The signature type walk preserves this distinction inside native type arguments, including `Cow<[u8]>`; unsized referents cannot occupy value frames. Borrowed vector arguments use their exact native slice conversion. Trait-qualified calls select the same checked receiver adjustments as value method calls, including dereferencing an interior-mutability guard. A local native adapter can contain a borrowed argument, but exposing that alias through a source signature or field refuses until a retained lifetime contract exists. Native error display calls the carrier's Rust `Display` implementation.
 
-Native trait selection preserves references that belong to the selected trait's `Self`. Constructor aliases compare by canonical identity, while executable storage retains the public path and only omits arguments matching the declaration's defaults. Explicit method arguments bind the method's own parameters before selection. Public tuple enum constructors are callable facts with their inherited type arguments; public unit variants are exact value facts. Rustc determines their enum layout. Neither form grants native variant pattern matching.
+Native trait selection preserves references that belong to the selected trait's `Self`. Constructor aliases compare by canonical identity, while executable storage retains the public path. The checker retains declaration-order default templates; Body IR completes omitted native owner arguments from those facts so a bare defaulted owner and an explicit generic field template have one storage arity. Explicit method arguments bind the method's own parameters before selection. Public tuple enum constructors are callable facts with their inherited type arguments; public unit variants are exact value facts. Rustc determines their enum layout.
 
 A fresh intrinsic `Option` or `Result` temporary can transfer a whole native payload into an unguarded single binding. That move prevents an implicit clone of a non-Clone error; named reusable carriers, guarded patterns and nested patterns do not acquire this permission. Canonical payload identities also survive source `Result` functions and nested reference carriers. Frame storage distinguishes an explicitly checked reference value from an owned value stored through a borrowed receiver, so assigning a native `&Path` transfers the reference without moving its unsized referent.
 
 Native iteration selects a unique closed `IntoIterator::into_iter` call and `Iterator::next` call from trait facts, including the selected `Item` associated type. The checker retains these hooks independently of the iterable expression's own call. Statement loops and comprehensions consume the same retained protocol: materialize the owned iterator once, poll its storage exclusively, and transfer each `Some` payload through the match result into loop-item storage. Arm cleanup therefore cannot drop an item before its loop body uses it. Nested associated projections normalize in the checker before any executable carrier crosses into Body IR.
 
+Slice facts retain public inherent methods from rustc's primitive impl bucket, including each impl's type parameters and slice Self template. A selected method uses the internal `[]::method` callee identity and ordinary checked receiver adjustments; the adapter resolves that identity through the same primitive bucket and verifies its closed signature and bounds. The slice element type never becomes an owned vector merely to select a method.
+
+A native dereference target retains its native owner when its checked type projects to an intrinsic Option or collection. This keeps `as_ref()` and `take()` behind borrow guards on the same exact method and receiver-adjustment path. Omitted owner parameters receive metadata defaults before method result specialization; a nongeneric native owner keeps its identity, including unsized `str`. Fresh intrinsic Option/Result payload transfer also covers an owned tuple or collection containing native owners, so a non-Clone file in a native tuple result moves with that whole payload. References alone grant no move permission.
+
+A shared native payload reference can call a declared source method with an immutable receiver, retaining the canonical source owner and the borrowed storage. A mutable source method remains refused through a shared reference. Lexical cleanup drops native guard temporaries before earlier owner bindings, so a local owner remains live until its guards have been released.
+
 ## Native public layouts and derives
+
+Native enum patterns select complete metadata layouts, retaining ordered variants, exact payload templates, and canonical variant identities. Checked owner arguments substitute the payload templates before reference binding; a missing payload record grants no guessed type. Body IR uses its ordinary enum declarations and patterns, and the adapter verifies the complete instantiated foreign layout. Variant tests compare rustc's actual discriminant value in its native type, so explicit and negative discriminants do not become ordinal indices. Exposing that layout preserves the native owner's Rust Display implementation, borrowing the owner through the existing runtime formatter. Opaque storage alone grants no variant access.
 
 Checking retains a selected public struct's exact field templates and identities. Named construction infers the native owner arguments from already checked field arguments and retains the ordinary constructor slot binding. Body IR uses the same aggregate and field-projection machinery as source nominals. The driver gathers native layouts into their own declaration modules and verifies complete field count, names, public visibility, and instantiated types against rustc before emitting MIR. Missing fields, private fields marked public, and mismatched types refuse; an empty opaque layout still grants no projection.
 
@@ -92,13 +100,13 @@ Source models and newtypes retain supported `@rust.derive(...)` selections befor
 
 ## Non-goals
 
-- Partial layouts containing hidden native fields, default-filled native field construction, and pattern matching on Rust variants.
+- Partial layouts containing hidden native fields and default-filled native field construction.
 - Const-generic arguments.
 - Changing RFC 005's source surface.
 
 ## Revisit condition
 
-Revisit when a consumer needs partial hidden-field layouts or variant access on Rust values, or when rustc's metadata can supply the callee record directly.
+Revisit when a consumer needs partial hidden-field layouts, or when rustc's metadata can supply the callee record directly.
 
 ## Provenance
 

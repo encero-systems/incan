@@ -804,7 +804,7 @@ impl TypeChecker {
                 let incan_resolution =
                     self.incan_enum_constructor_payload_types(expected_ty, variant_name, enum_qualifier_opt);
                 let rust_resolution =
-                    self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), positional_count);
+                    self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), name.span);
                 let field_types: Option<Vec<ResolvedType>> =
                     incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
                         Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
@@ -816,6 +816,8 @@ impl TypeChecker {
                         if incan_resolution.is_some() {
                             self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
                             self.record_incan_enum_pattern_path(expected_ty, variant_name, name.span);
+                        }
+                        if incan_resolution.is_some() || rust_resolution.is_some() {
                             // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.
                             let all_positional =
                                 sub_patterns.iter().all(|arg| matches!(arg, PatternArg::Positional(_)));
@@ -1182,71 +1184,85 @@ impl TypeChecker {
         )
     }
 
-    /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.
-    ///
-    /// Incan registers [`SymbolKind::Variant`] for source/manifest enums; imported Rust enums and prost-style oneofs
-    /// are usually spelled as a `rusttype` / [`TypeInfo::Newtype`] wrapper over [`ResolvedType::RustPath`]. For a
-    /// single positional sub-pattern, the payload type is `RustPath("{backing}::{variant}")`, consistent with Rust
-    /// field/member path composition in `check_expr::access`. Multiple positional patterns without precise metadata use
-    /// [`ResolvedType::Unknown`] per slot.
-    ///
-    /// When the scrutinee is already [`ResolvedType::RustPath`], any `Type::Variant` prefix in the pattern is not
-    /// validated against that path (unlike [`ResolvedType::Named`] rusttypes, where the prefix must match the Incan
-    /// type name). Payload typing still uses `{scrutinee_rust_path}::{variant}`.
+    /// Select a native enum pattern from complete metadata, retaining its declaration layout and variant identity.
+    /// Payload templates close in the subject's native owner arguments before match ergonomics adds references.
+    /// Missing metadata never manufactures a payload path or authorizes a partial foreign layout.
     fn rust_enum_constructor_payload_types(
-        &self,
+        &mut self,
         expected_ty: &ResolvedType,
         pattern_full_name: &str,
-        positional_count: usize,
+        span: Span,
     ) -> Option<RustEnumPatternResolution> {
         let (expected_ty, borrow) = borrowed_pattern_subject(expected_ty);
-        let bind_payload = |field| borrowed_pattern_payload(field, borrow);
-        let (enum_qualifier_opt, variant_segment) = match pattern_full_name.rsplit_once("::") {
-            Some((e, v)) => (Some(e), v),
-            None => (None, pattern_full_name),
-        };
-
-        let base_rust_path: String = match expected_ty {
-            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
-                if let Some(q) = enum_qualifier_opt
-                    && q != type_name.as_str()
-                {
-                    return Some(RustEnumPatternResolution::QualifierMismatch);
-                }
-                let info = self.lookup_type_info(type_name)?;
-                match info {
-                    TypeInfo::Newtype(nt) if nt.is_rusttype => match &nt.underlying {
-                        ResolvedType::RustPath(p) => p.clone(),
-                        _ => return None,
-                    },
-                    _ => return None,
-                }
+        let path = self.rust_canonical_path_for_receiver_type(expected_ty)?;
+        let (qualifier, variant) = pattern_full_name
+            .rsplit_once("::")
+            .map_or((None, pattern_full_name), |(owner, variant)| (Some(owner), variant));
+        if let Some(qualifier) = qualifier {
+            let selected = self
+                .rust_canonical_path_for_receiver_type(&ResolvedType::Named(qualifier.to_owned()))
+                .unwrap_or_else(|| qualifier.to_owned());
+            if selected != path {
+                return Some(RustEnumPatternResolution::QualifierMismatch);
             }
-            ResolvedType::RustPath(p) => p.clone(),
-            _ => return None,
+        }
+        let metadata = self.rust_item_metadata_for_complete_type(&path)?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return None;
         };
-
-        let (metadata_rust_path, _) = self.rust_path_base_and_args(base_rust_path.as_str());
-        if let Some(meta) = self.known_rust_metadata_for_path(metadata_rust_path.as_str())
-            && let RustItemKind::Type(info) = meta.kind
-            && let Some(variant) = info.variants.iter().find(|variant| variant.name == variant_segment)
-        {
-            let fields: Vec<ResolvedType> = variant
-                .fields
+        if info.variants.is_empty()
+            || info
+                .variants
                 .iter()
-                .map(|field| bind_payload(self.resolved_type_from_rust_shape(field)))
-                .collect();
+                .any(|variant| variant.fields.len() != variant.field_type_displays.len())
+        {
+            return None;
+        }
+        let variants = info
+            .variants
+            .iter()
+            .map(|variant| {
+                (
+                    variant.name.clone(),
+                    variant
+                        .field_type_displays
+                        .iter()
+                        .map(|field| self.native_rust_signature_type(field, &path))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let fields = &variants.iter().find(|(name, _)| name == variant)?.1;
+        let mut arguments = self.rust_owner_type_args(expected_ty, &path)?;
+        if !self.complete_rust_owner_arguments(&info, &mut arguments) {
+            return None;
+        }
+        let substitution = type_param_subst_map(&info.type_params, &arguments);
+        let fields = fields
+            .iter()
+            .map(|field| borrowed_pattern_payload(substitute_resolved_type(field, &substitution), borrow))
+            .collect();
+        // Rust Option/Result already project to intrinsic carriers. Their imported spellings keep the same builtin
+        // constructor identity rather than declaring a competing native layout for the identical storage.
+        let ancestral = incan_lang::interop::ancestral_rust_path(&path);
+        if matches!(ancestral.as_str(), "core::option::Option" | "core::result::Result") {
+            let constructor = constructors::from_str(variant)?;
+            self.type_info.record_resolved_identity(
+                span,
+                crate::symbols::canonical_builtin_constructor_identity(constructor),
+            );
             return Some(RustEnumPatternResolution::payloads(fields));
         }
-
-        let fields = match positional_count {
-            0 => vec![],
-            1 => vec![ResolvedType::RustPath(format!("{base_rust_path}::{variant_segment}"))],
-            n => (0..n).map(|_| ResolvedType::Unknown).collect(),
-        };
-        Some(RustEnumPatternResolution::payloads(
-            fields.into_iter().map(bind_payload).collect(),
-        ))
+        let (identity, _) = incan_semantics_core::body_ir::native_enum_variant(&path, variant)?;
+        self.type_info.record_resolved_identity(span, identity);
+        self.type_info.rust.checked_enums.insert(
+            path,
+            crate::typechecker::type_info::RustCheckedEnum {
+                type_parameters: info.type_params,
+                variants,
+            },
+        );
+        Some(RustEnumPatternResolution::payloads(fields))
     }
 
     /// Check that a match expression covers all possible cases.

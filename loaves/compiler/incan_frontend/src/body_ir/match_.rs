@@ -199,10 +199,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(payload) = self.locals.get(binding.local.index()) else {
             return;
         };
-        let native = match &payload.ty {
-            IncanType::Named(name) | IncanType::Generic { base: name, .. } => bir::rust_item_identity(name).is_some(),
-            _ => false,
-        };
+        let native = super::rust_values::contains_native_owner(&payload.ty);
         if native
             && matches!(
                 binding.fact,

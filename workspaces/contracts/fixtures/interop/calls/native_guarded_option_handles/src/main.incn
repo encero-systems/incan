@@ -1,0 +1,100 @@
+# behavior: Option payloads behind native borrow guards keep their path methods and transfer ownership through take
+# expect-stdout:
+#   true
+#   true
+#   true
+#   true
+
+from rust::std::cell import RefCell
+from rust::std::fs import remove_file, remove_dir_all
+from rust::std::rc import Rc
+from rust::tempfile import NamedTempFile, TempDir
+
+
+@derive(Clone)
+type SavedPath = newtype str:
+    """A source path value read back from a native shared Option view."""
+
+    def label(self) -> str:
+        """Observe a source method on the owned result of cloning the borrowed value."""
+        return "saved"
+
+
+model FileHandle:
+    """Keep a native temporary file behind an interior-mutability guard."""
+
+    handle: Rc[RefCell[Option[NamedTempFile]]]
+    saved: Rc[RefCell[Option[SavedPath]]]
+
+    def saved_label(self) -> str:
+        """Clone a saved source path through its shared native guard."""
+        match self.saved.borrow().as_ref():
+            Some(path) => return path.clone().label()
+            None => return ""
+
+    def path(self) -> str:
+        """Read the path through a shared Option payload without taking the handle."""
+        match self.handle.borrow().as_ref():
+            Some(file) => return file.path().to_string_lossy().into_owned()
+            None => return ""
+
+    def keep(self) -> str:
+        """Take the owned handle and retain the native path returned by persistence."""
+        mut guard = self.handle.borrow_mut()
+        match guard.take():
+            Some(file) =>
+                match file.keep():
+                    Ok(kept) => return kept.1.to_string_lossy().into_owned()
+                    Err(error) => return error.error.to_string()
+            None => return ""
+
+
+model DirectoryHandle:
+    """Keep a native temporary directory behind an interior-mutability guard."""
+
+    handle: Rc[RefCell[Option[TempDir]]]
+
+    def path(self) -> str:
+        """Read the directory's path through a shared Option payload."""
+        match self.handle.borrow().as_ref():
+            Some(directory) => return directory.path().to_string_lossy().into_owned()
+            None => return ""
+
+    def keep(self) -> str:
+        """Take the directory and retain the native path returned by persistence."""
+        mut guard = self.handle.borrow_mut()
+        match guard.take():
+            Some(directory) => return directory.keep().to_string_lossy().into_owned()
+            None => return ""
+
+
+def main() -> None:
+    """Read and persist both guarded handles, then remove their persisted filesystem entries."""
+    match NamedTempFile.new():
+        Ok(native) =>
+            file = FileHandle(
+                handle=Rc.new(RefCell.new(Some(native))),
+                saved=Rc.new(RefCell.new(Some(SavedPath("saved")))),
+            )
+            assert file.saved_label() == "saved"
+            println(len(file.path()) > 0)
+            path = file.keep()
+            println(len(path) > 0)
+            match remove_file(path):
+                Ok(_) => pass
+                Err(_) => println("file cleanup failed")
+        Err(_) => println("file creation failed")
+    match TempDir.new():
+        Ok(native) =>
+            directory = DirectoryHandle(handle=Rc.new(RefCell.new(Some(native))))
+            println(len(directory.path()) > 0)
+            path = directory.keep()
+            println(len(path) > 0)
+            match remove_dir_all(path):
+                Ok(_) => pass
+                Err(_) => println("directory cleanup failed")
+        Err(_) => println("directory creation failed")
+    saved = Rc.new(RefCell.new(Some(SavedPath("saved"))))
+    match saved.borrow().as_ref():
+        Some(path) => assert path.clone().label() == "saved"
+        None => assert false

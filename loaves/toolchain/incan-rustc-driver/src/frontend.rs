@@ -233,9 +233,11 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
     // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
     let opaque = incan_semantics_core::body_ir::held_rust_items(&bodies);
     let layouts = take_rust_layouts(&mut bodies)?;
+    let native_enums = take_rust_enums(&mut bodies)?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()
         .map(|declaration| declaration.canonical.clone())
+        .chain(native_enums.iter().map(|declaration| declaration.canonical.clone()))
         .collect();
     let held = rust_value_modules(
         layouts
@@ -246,6 +248,7 @@ fn checked_modules(unit: &UnitDescription, library: bool, rust: &RustFactsSetup)
                     .filter(|declaration| !owners.contains(&declaration.canonical)),
             )
             .collect(),
+        native_enums,
     );
     let held_modules = held.len();
     files.splice(
@@ -299,7 +302,10 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
 
 /// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
 /// lowering lays a value of it out as the item itself.
-fn rust_value_modules(held: Vec<NominalDeclaration>) -> Vec<BodyIrModule> {
+fn rust_value_modules(
+    held: Vec<NominalDeclaration>,
+    enums: Vec<incan_semantics_core::body_ir::EnumDeclaration>,
+) -> Vec<BodyIrModule> {
     let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
     for declaration in held {
         let Some(owner) = incan_semantics_core::body_ir::native_nominal_module(&declaration.canonical) else {
@@ -311,7 +317,46 @@ fn rust_value_modules(held: Vec<NominalDeclaration>) -> Vec<BodyIrModule> {
             .nominal_declarations
             .push(declaration);
     }
+    for declaration in enums {
+        let Some(owner) = incan_semantics_core::body_ir::native_nominal_module(&declaration.canonical) else {
+            continue;
+        };
+        owners
+            .entry(owner.clone())
+            .or_insert_with(|| BodyIrModule::declarations_only(owner))
+            .enum_declarations
+            .push(declaration);
+    }
     owners.into_values().collect()
+}
+
+/// Hoist checked native enum layouts once per foreign owner, refusing conflicting templates from separate modules.
+fn take_rust_enums(
+    modules: &mut [BodyIrModule],
+) -> Result<Vec<incan_semantics_core::body_ir::EnumDeclaration>, String> {
+    let mut layouts = std::collections::BTreeMap::new();
+    for module in modules {
+        for declaration in std::mem::take(&mut module.enum_declarations) {
+            if !matches!(
+                declaration.canonical.origin,
+                incan_semantics_core::SymbolOrigin::RustCrate(_)
+            ) {
+                module.enum_declarations.push(declaration);
+                continue;
+            }
+            if let Some(previous) = layouts.get(&declaration.native_item) {
+                if previous != &declaration {
+                    return Err(format!(
+                        "conflicting native enum layouts for {}",
+                        declaration.native_item
+                    ));
+                }
+            } else {
+                layouts.insert(declaration.native_item.clone(), declaration);
+            }
+        }
+    }
+    Ok(layouts.into_values().collect())
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
@@ -780,11 +825,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     for external in &plan.externals {
-        let root = external
-            .path
-            .split("::")
-            .next()
-            .ok_or("native external path has no crate")?;
+        let root = crate::native_crates::callee_root(&external.path).ok_or("native external path has no crate")?;
         if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
             return Err(format!(
                 "unsupported Body IR native dependency `{root}` for canonical call `{}`",

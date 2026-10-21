@@ -253,6 +253,11 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
                 kind: RustItemKind::Type(RustTypeInfo {
                     type_params: vec!["T".into()],
                     type_param_defaults: vec![None],
+                    methods: inherent_methods(
+                        tcx,
+                        tcx.incoherent_impls(ty::fast_reject::SimplifiedType::Slice),
+                        &mut named,
+                    ),
                     implemented_traits: trait_impls(tcx, Ty::new_slice(tcx, element), &mut named),
                     ..RustTypeInfo::default()
                 }),
@@ -423,8 +428,56 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
             _ => None,
         })
         .collect();
-    let methods = tcx
-        .inherent_impls(def)
+    let methods = inherent_methods(tcx, tcx.inherent_impls(def), named);
+    let adt = tcx.adt_def(def);
+    let fields = if adt.is_struct() {
+        adt.all_fields()
+            .filter(|field| field.vis.is_public())
+            .map(|field| RustFieldInfo {
+                name: field.name.to_string(),
+                type_display: display(tcx.type_of(field.did).instantiate_identity().skip_normalization()),
+                type_shape: RustTypeShape::Unknown,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let variants = if adt.is_enum() {
+        adt.variants()
+            .iter()
+            .map(|variant| RustVariantInfo {
+                name: variant.name.to_string(),
+                fields: variant.fields.iter().map(|_| RustTypeShape::Unknown).collect(),
+                field_type_displays: variant
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let ty = tcx.type_of(field.did).instantiate_identity().skip_normalization();
+                        note_named(ty, named);
+                        display(ty)
+                    })
+                    .collect(),
+                field_carriers: Vec::new(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    RustTypeInfo {
+        type_params: parameters.iter().map(|parameter| parameter.name.to_string()).collect(),
+        type_param_defaults,
+        methods,
+        implemented_traits: trait_impls(tcx, tcx.type_of(def).instantiate_identity().skip_normalization(), named),
+        fields,
+        variants,
+        ..RustTypeInfo::default()
+    }
+}
+
+/// Read public inherent methods through one extractor for nominal and primitive impl owners. Impl binders and Self
+/// remain native templates; the checker must close them before retaining an executable call.
+fn inherent_methods(tcx: TyCtxt<'_>, implementations: &[DefId], named: &mut HashSet<DefId>) -> Vec<RustMethodSig> {
+    implementations
         .iter()
         .flat_map(|implementation| tcx.associated_item_def_ids(*implementation).iter().copied())
         .filter(|item| tcx.def_kind(*item) == DefKind::AssocFn && tcx.visibility(*item).is_public())
@@ -448,41 +501,7 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
                 .parent
                 .map(|parent| display(tcx.type_of(parent).instantiate_identity().skip_normalization())),
         })
-        .collect();
-    let adt = tcx.adt_def(def);
-    let fields = if adt.is_struct() {
-        adt.all_fields()
-            .filter(|field| field.vis.is_public())
-            .map(|field| RustFieldInfo {
-                name: field.name.to_string(),
-                type_display: display(tcx.type_of(field.did).instantiate_identity().skip_normalization()),
-                type_shape: RustTypeShape::Unknown,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let variants = if adt.is_enum() {
-        adt.variants()
-            .iter()
-            .map(|variant| RustVariantInfo {
-                name: variant.name.to_string(),
-                fields: variant.fields.iter().map(|_| RustTypeShape::Unknown).collect(),
-                field_carriers: Vec::new(),
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    RustTypeInfo {
-        type_params: parameters.iter().map(|parameter| parameter.name.to_string()).collect(),
-        type_param_defaults,
-        methods,
-        implemented_traits: trait_impls(tcx, tcx.type_of(def).instantiate_identity().skip_normalization(), named),
-        fields,
-        variants,
-        ..RustTypeInfo::default()
-    }
+        .collect()
 }
 
 /// Extract the exact signature of a function or tuple-variant constructor. A method retains its written receiver;

@@ -3,6 +3,7 @@
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType};
+use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::RustCheckedCall;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{RustItemKind, RustTypeInfo, ancestral_rust_path};
@@ -34,7 +35,7 @@ impl TypeChecker {
                 return None;
             }
             steps.push((owner, target.clone()));
-            let path = self.rust_canonical_path_for_receiver_type(&target)?;
+            let path = self.rust_adjusted_owner_path(&target)?;
             let metadata = self.rust_item_metadata_for_path(&path)?;
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
@@ -122,7 +123,7 @@ impl TypeChecker {
         let mut owner = source.clone();
         let mut steps = Vec::new();
         for _ in 0..12 {
-            let path = self.rust_canonical_path_for_receiver_type(&owner)?;
+            let path = self.rust_adjusted_owner_path(&owner)?;
             let metadata = self.rust_item_metadata_for_path(&path)?;
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
@@ -168,6 +169,14 @@ impl TypeChecker {
             owner = target;
         }
         None
+    }
+
+    /// Recover the native owner of an already selected dereference target, including Option or a collection whose
+    /// checked type uses a source carrier. This lookup stays within native trait facts; ordinary source lookup is
+    /// unchanged.
+    fn rust_adjusted_owner_path(&self, owner: &ResolvedType) -> Option<String> {
+        self.rust_canonical_path_for_receiver_type(owner)
+            .or_else(|| self.rust_result_item_path(&render_resolved_type_as_rust_arg(owner), ""))
     }
 
     /// Attach each selected dereference with the final callee's borrow mode; never repeat method lookup in Body IR.
