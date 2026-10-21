@@ -15,34 +15,25 @@ from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, Sema
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, place_type, external_call
-from models import model_place
 from type_parameters import substitute
 from unions import native_source_type
 from options import carrier_layout
 from text_ownership import drop_borrowed_text_temporaries
 from lowering import scalar_place, text_argument, lower_callable_result, runtime_text
 from decls import library_item
+from element_places import is_element_place
 
 
 pub def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
-    """Locate a checked model operand without applying value-read cloning before a shared trait call."""
+    """Locate whole or structurally projected model storage without cloning it before a shared trait call."""
     match value:
         RustOperand.Place(read) =>
-            if len(read.place.projection) != 0:
+            if is_element_place(builder, read.place)?:
                 return Ok(None)
             match read.place.local_id():
                 None => return Ok(None)
                 Some(_local) => pass
-            mut place = model_place(
-                builder.nominals,
-                builder.locals[builder.local_offset:],
-                read.place,
-                span,
-                builder.enums,
-                builder.unions,
-                builder.intrinsics,
-            )?
-            place.local += builder.local_offset
+            place = scalar_place(builder, read.place, span)?
             match place_type(builder.locals, place):
                 PlanType.Model(_owner, _name) => return Ok(Some(place))
                 _ => pass
