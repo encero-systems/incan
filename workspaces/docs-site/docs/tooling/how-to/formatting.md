@@ -128,6 +128,8 @@ enriched = orders
 
 Short method-call chains remain inline when they fit.
 
+In suite headers such as `if let`, `for`, and `match`, wrapped fluent chains are grouped in parentheses so their continuation indentation stays separate from the following suite. Reformatting keeps this grouping stable.
+
 ## Expression Vocab Blocks
 
 For expression-position vocab blocks, `incan fmt` preserves the brace/no-colon surface exposed by the active vocab metadata:

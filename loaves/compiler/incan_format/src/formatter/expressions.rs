@@ -369,7 +369,7 @@ impl Formatter {
             }
             Expr::Match(value, arms) => {
                 self.writer.write("match ");
-                self.format_spanned_expr(value);
+                self.format_suite_header_expr(value);
                 self.writer.writeln(":");
                 self.writer.indent();
                 for arm in arms {
@@ -468,9 +468,7 @@ impl Formatter {
                 if Self::is_logical_binary_chain(&inner.node) {
                     self.format_parenthesized_logical_chain(inner);
                 } else {
-                    self.writer.write("(");
-                    self.format_spanned_expr(inner);
-                    self.writer.write(")");
+                    self.format_parenthesized_expr(inner);
                 }
             }
             Expr::Constructor(name, args) => {

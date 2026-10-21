@@ -195,7 +195,7 @@ impl Formatter {
 
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
             self.writer.write("elif ");
-            self.format_spanned_expr(elif_cond);
+            self.format_suite_header_expr(elif_cond);
             self.writer.writeln(":");
             self.writer.indent();
             for stmt in elif_body {
@@ -253,7 +253,7 @@ impl Formatter {
         self.writer.write("for ");
         self.format_for_pattern(&for_stmt.pattern.node);
         self.writer.write(" in ");
-        self.format_spanned_expr(&for_stmt.iter);
+        self.format_suite_header_expr(&for_stmt.iter);
         self.writer.writeln(":");
         self.writer.indent();
         for stmt in &for_stmt.body {
@@ -295,14 +295,55 @@ impl Formatter {
     /// Format a conditional expression.
     fn format_condition(&mut self, condition: &Condition) {
         match condition {
-            Condition::Expr(expr) => self.format_spanned_expr(expr),
+            Condition::Expr(expr) => self.format_suite_header_expr(expr),
             Condition::Let { pattern, value } => {
                 self.writer.write("let ");
                 self.format_spanned_pattern(pattern);
                 self.writer.write(" = ");
-                self.format_spanned_expr(value);
+                self.format_suite_header_expr(value);
             }
         }
+    }
+
+    /// Group an exposed fluent header chain so its continuation indentation cannot consume the following suite.
+    ///
+    /// Unparenthesized fluent chains are valid in assignments, but in a header their continuation indent would also
+    /// be the suite's indent. An explicit closing parenthesis ends the expression before the suite's colon.
+    pub(super) fn format_suite_header_expr(&mut self, expr: &Spanned<Expr>) {
+        let checkpoint = self.writer.checkpoint();
+        self.format_spanned_expr(expr);
+        if !self.writer.output_since_contains_newline(checkpoint) || !Self::has_fluent_header_chain(&expr.node) {
+            return;
+        }
+        self.writer.restore(checkpoint);
+        self.format_parenthesized_expr(expr);
+    }
+
+    /// Identify an ungrouped chain with at least two method segments, including a trailing propagation operator.
+    fn has_fluent_header_chain(expr: &Expr) -> bool {
+        match expr {
+            Expr::Try(inner) => Self::has_fluent_header_chain(&inner.node),
+            Expr::MethodCall(receiver, _, _, _) => matches!(receiver.node, Expr::MethodCall(_, _, _, _)),
+            _ => false,
+        }
+    }
+
+    /// Render one explicit grouping consistently, putting a multiline expression between separate delimiter lines.
+    pub(super) fn format_parenthesized_expr(&mut self, expr: &Spanned<Expr>) {
+        let checkpoint = self.writer.checkpoint();
+        self.writer.write("(");
+        self.format_spanned_expr(expr);
+        self.writer.write(")");
+        if !self.writer.output_since_contains_newline(checkpoint) {
+            return;
+        }
+        self.writer.restore(checkpoint);
+        self.writer.writeln("(");
+        self.writer.indent();
+        self.format_spanned_expr(expr);
+        self.writer.newline();
+        self.writer.dedent();
+        self.writer.write(")");
     }
 }
 

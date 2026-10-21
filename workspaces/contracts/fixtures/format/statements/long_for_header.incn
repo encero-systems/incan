@@ -1,0 +1,15 @@
+# behavior: A wrapped for iterable ends explicitly before the loop suite starts.
+# expect-formatted:
+#   def visit(value: str) -> None:
+#       for character in (
+#           value
+#               .strip()
+#               .replace("before_first", "after_first")
+#               .replace("before_second", "after_second")
+#               .replace("before_third", "after_third")
+#       ):
+#           println(character)
+
+def visit(value: str) -> None:
+    for character in value.strip().replace("before_first", "after_first").replace("before_second", "after_second").replace("before_third", "after_third"):
+        println(character)
