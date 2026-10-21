@@ -3096,28 +3096,18 @@ impl TypeChecker {
                 Some(args.clone())
             }
             ResolvedType::Generic(name, args)
-<<<<<<< HEAD
-                if RustCollectionFamily::for_canonical_path(rust_path)
-                    .is_some_and(|family| RustCollectionFamily::for_type_name(name) == Some(family)) =>
-=======
                 if matches!(
                     collection_type_id(name),
                     Some(CollectionTypeId::Dict | CollectionTypeId::Set)
-                ) && incan_lang::interop::RustCollectionFamily::for_canonical_path(rust_path).is_some_and(
-                    |family| incan_lang::interop::RustCollectionFamily::for_type_name(name) == Some(family),
-                ) =>
->>>>>>> 0d79709db (fix - #2256 retain native generic owners and borrowed scalar results)
+                ) && RustCollectionFamily::for_canonical_path(rust_path)
+                    .is_some_and(|family| RustCollectionFamily::for_type_name(name) == Some(family)) =>
             {
                 Some(args.clone())
             }
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
-<<<<<<< HEAD
-            ResolvedType::Generic(_name, args) if Self::contextual_type_matches_rust_owner(receiver, rust_path) => {
-=======
             ResolvedType::Generic(name, args)
-                if incan_lang::interop::ancestral_rust_path(name)
-                    == incan_lang::interop::ancestral_rust_path(rust_path)
+                if Self::contextual_type_matches_rust_owner(receiver, rust_path)
                     || self
                         .rust_canonical_path_for_nominal_receiver(name, None)
                         .is_some_and(|path| {
@@ -3125,7 +3115,6 @@ impl TypeChecker {
                                 == incan_lang::interop::ancestral_rust_path(rust_path)
                         }) =>
             {
->>>>>>> 0d79709db (fix - #2256 retain native generic owners and borrowed scalar results)
                 Some(args.clone())
             }
             ResolvedType::RustPath(display) => {

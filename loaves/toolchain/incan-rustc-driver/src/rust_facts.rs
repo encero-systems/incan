@@ -12,8 +12,7 @@ use std::path::{Path, PathBuf};
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
     RustMacroInfo, RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustPayloadCarrier,
-    RustTraitAssoc,
-    RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
+    RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use rustc_hir::def::{DefKind, MacroKinds};
 use rustc_hir::def_id::DefId;
