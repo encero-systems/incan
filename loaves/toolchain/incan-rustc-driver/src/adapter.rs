@@ -532,9 +532,6 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if model.fields.is_empty() {
         return Ok(());
     }
-    if tcx.def_kind(def) != rustc_hir::def::DefKind::Struct {
-        return Err(invalid("native field layout requires a struct"));
-    }
     let adt = tcx.adt_def(def);
     let declared = &adt.non_enum_variant().fields;
     if declared.len() != model.fields.len() {
@@ -557,7 +554,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
 /// Only an opaque declaration admits enums and type aliases; any retained fields require a struct.
 fn library_model_item(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<DefId, PlanError> {
     if model.fields.is_empty() {
-        return callees::library_type(tcx, &model.library_item);
+        return callees::native_type_item(tcx, &model.library_item);
     }
     callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)
 }

@@ -130,8 +130,9 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
     public_item(tcx, path, &[kind], reason)
 }
 
-/// Resolve an opaque carrier's public type item without granting any field or variant projections.
-pub fn library_type(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+/// Resolve an opaque carrier's public type item without granting field or variant projections. An alias keeps its
+/// own metadata parameters; field-bearing layout queries use [`library_item`] to select the underlying ADT instead.
+pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     public_item(
         tcx,
         path,
@@ -194,18 +195,6 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
         return None;
     };
     (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
-}
-
-/// Resolve an opaque native carrier by its public type identity. Empty model layouts grant no field or variant
-/// access, so structs, enums and type aliases use the same metadata-owned type query without exposing their shape.
-pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    [DefKind::Struct, DefKind::Enum, DefKind::TyAlias]
-        .into_iter()
-        .find_map(|kind| library_item(tcx, path, kind).ok())
-        .ok_or_else(|| PlanError::Invalid {
-            function: path.into(),
-            reason: "native carrier names no public struct, enum or type alias".into(),
-        })
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
