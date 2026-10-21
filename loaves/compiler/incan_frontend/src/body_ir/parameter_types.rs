@@ -263,6 +263,19 @@ pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
     let mut identities = facts.declarations.named_type_identities.clone();
+    for call in facts.rust.checked_calls.values().chain(
+        facts
+            .rust
+            .iteration_hooks
+            .values()
+            .flat_map(|hooks| [&hooks.iter, &hooks.next]),
+    ) {
+        for call in call.receiver_adjustments.iter().chain(std::iter::once(call)) {
+            if let Some(storage) = &call.storage {
+                identities.extend(storage.identities.clone());
+            }
+        }
+    }
     for identity in facts.declarations.named_type_identities.values() {
         if has_nominal_name_conflict(identity, facts) {
             let encoded = incan_semantics_core::encode_incan_symbol_identity(identity);

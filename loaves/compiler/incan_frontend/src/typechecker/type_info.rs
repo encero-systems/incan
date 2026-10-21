@@ -944,6 +944,8 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Structural storage types retained by the accepting checker for diagnostic-only Rust display spellings.
+    pub storage_types: HashMap<String, IncanType>,
     /// Declaration-order native type binders and checked defaults. Body IR completes opaque owner arguments from
     /// these facts so an omitted default and its explicit spelling never create different storage arities.
     pub owner_parameters: HashMap<String, Vec<(String, Option<ResolvedType>)>>,
@@ -1083,6 +1085,10 @@ pub struct RustCheckedEnum {
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustCheckedCall {
+    /// Fully qualified structural signature, published by the accepting checker before Body IR construction.
+    pub storage: Option<RustCheckedSignature>,
+    /// Source declaration binders active when this native call was admitted, independently of nominal spellings.
+    pub source_type_parameters: Vec<String>,
     /// Flat, checked Deref/DerefMut callees evaluated on the receiver before written ordinary arguments.
     pub receiver_adjustments: Vec<RustCheckedCall>,
     /// Public item path of the selected free function or associated function.
@@ -1097,6 +1103,19 @@ pub struct RustCheckedCall {
     pub result_item_path: Option<String>,
     /// Whether the source receiver is a value passed in the first parameter slot.
     pub has_receiver: bool,
+}
+
+/// Native call storage and source nominal owners selected in the checker's declaration environment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustCheckedSignature {
+    /// Native argument types, including the receiver's exact reference mode.
+    pub parameters: Vec<IncanType>,
+    /// Native result before source boundary conversions.
+    pub return_type: IncanType,
+    /// Native type arguments in declaration order.
+    pub type_arguments: Vec<IncanType>,
+    /// Exact source owners backing identity-encoded storage leaves.
+    pub identities: BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// Native iteration retains both calls independently of the written expression's call facts.

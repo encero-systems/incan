@@ -87,6 +87,8 @@ impl TypeChecker {
             return None;
         }
         Some(crate::typechecker::type_info::RustCheckedCall {
+            storage: None,
+            source_type_parameters: self.native_call_type_parameters(),
             receiver_adjustments: Vec::new(),
             path: selected.path,
             type_arguments: selected.arguments,
@@ -761,6 +763,8 @@ impl TypeChecker {
         self.type_info.rust.checked_calls.insert(
             (call.span.start, call.span.end),
             crate::typechecker::type_info::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
                 receiver_adjustments: Vec::new(),
                 path: selected.path,
                 type_arguments: selected.arguments,

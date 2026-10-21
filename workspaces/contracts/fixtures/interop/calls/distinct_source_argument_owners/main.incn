@@ -1,0 +1,31 @@
+# behavior: Rust generic calls preserve three distinct source types with the same declaration name
+# expect-stdout:
+#   8 16 24
+#   1 2 3
+#   ready
+
+"""Pass distinct module-owned values through Rust generic signatures."""
+
+from left import Item as LeftItem
+from left import Signal as SourceSignal
+from middle import Item as MiddleItem
+from right import Item as RightItem
+from rust::std::mem import size_of_val
+from rust::std::cell import Cell
+from rust::std::convert import identity
+
+
+def main() -> None:
+    """Keep each source owner's layout through free functions and nested native owners."""
+    left = LeftItem(value=1)
+    middle = MiddleItem(value=2, extra=20)
+    right = RightItem(value=3, extra=30, tail=300)
+    println(f"{size_of_val(left)} {size_of_val(middle)} {size_of_val(right)}")
+    left_cell = Cell.new(left)
+    middle_cell = Cell.new(middle)
+    right_cell = Cell.new(right)
+    println(f"{left_cell.into_inner().value} {middle_cell.into_inner().value} {right_cell.into_inner().value}")
+    signal = identity(SourceSignal.Ready)
+    match signal:
+        SourceSignal.Ready => println("ready")
+        SourceSignal.Done => println("done")

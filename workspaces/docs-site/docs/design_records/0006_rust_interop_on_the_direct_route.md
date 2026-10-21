@@ -39,7 +39,7 @@ Rust interop compiles on the direct route from checked facts alone, in three par
 ## Consequences
 
 - Programs using `from rust::... import ...` compile on the only remaining route; interop is no longer limited to stdlib facets and Incan-declared externs.
-- The checker's display-string Rust types remain for diagnostics; the structured form is built once at the Body IR boundary from checked facts, so no consumer parses a display.
+- The checker's display-string Rust types remain for diagnostics; the accepting checker retains the structural native signature and exact argument owners before publishing its facts. Body IR copies those types without parsing displays or rebuilding nominal bindings.
 - The allowlisted native items become ordinary instances of part 1.
 
 ## Checked call inference
@@ -70,7 +70,7 @@ Concrete standard `Option` and `Result` aliases take their exact types from reta
 
 A checked Rust result retains its native item identity when its source type projects to `str` or a collection. Canonical local bindings preserve that provenance independently of their source type and storage. Subsequent native method lookup reads this retained identity. Callable predicates retain input tuples and associated output equalities, so a selected owner's concrete parameters can contextually type a closure expression; its native callable representation must still survive the executable boundary before the foreign call can run.
 
-Generic signature types substitute the checker's structured argument types before Body IR projection. This retains an Incan model's declaration identity across calls such as `swap` and `size_of_val`; a rendered Rust display of that model is not a replacement identity. A source-local declaration supplies its canonical carrier even when an inferred value never required a written type annotation.
+Generic signature types substitute the checker's structured argument types before Body IR projection. This retains an Incan model's declaration identity across calls such as `swap` and `size_of_val`; a rendered Rust display of that model is not a replacement identity. The call record carries the exact source owner and its qualified carrier even when an inferred value never required a written type annotation. Distinct declarations with the same name do not share a signature binding.
 
 Rust lifetime arguments carry no layout and are erased before Body IR carrier construction. The adapter supplies erased regions for metadata lifetime parameters without consuming a type-argument slot. Native carrier aliases take their exact type from rustc metadata through the alias type query, using the same argument binding and defaults as calls. Their AST shells declare only the alias identity; they do not reconstruct a second foreign generic type or invent source lifetime binders. Rustc checks the actual borrowed values in MIR.
 
