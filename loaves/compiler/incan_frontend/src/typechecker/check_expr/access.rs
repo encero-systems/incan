@@ -4685,6 +4685,41 @@ impl TypeChecker {
         Some(ResolvedType::Unknown)
     }
 
+    /// Authenticate a builtin receiver or the exact standard trait declaration its registered interface names. A
+    /// same-spelled declaration from another module or package supplies no builtin authority.
+    fn is_builtin_receiver_owner(&self, name: &str) -> bool {
+        let Some(identity) = self
+            .symbols
+            .lookup(name)
+            .and_then(|symbol| self.symbols.identity_of(symbol))
+        else {
+            return false;
+        };
+        let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+            return identity.origin == SymbolOrigin::Builtin;
+        };
+        let Some(trait_id) = core_traits::from_qualified_str(name) else {
+            return false;
+        };
+        if identity.kind != SemanticSourceTargetKind::Trait
+            || identity.declaration_name != core_traits::as_str(trait_id)
+        {
+            return false;
+        }
+        let Some(owner) = core_traits::source_module(trait_id) else {
+            return false;
+        };
+        let source: Vec<String> = owner.split('.').map(str::to_owned).collect();
+        let Some(declaring_module) = source.get(1..) else {
+            return false;
+        };
+        module_path.as_slice() == declaring_module
+            && self
+                .loaves
+                .owner_of(&source)
+                .is_some_and(|entry| entry.artifact.manifest.name.as_str() == library.as_str())
+    }
+
     /// Resolve a source-defined method when its owner has exactly one direct implementation for the requested name.
     ///
     /// Ordinary method checking computes argument types before overload selection. That is useful for overloaded
@@ -4701,11 +4736,7 @@ impl TypeChecker {
             _ => return None,
         };
         if Self::compiler_builtin_method_identity(call.receiver_ty, call.method).is_some()
-            && self
-                .symbols
-                .lookup(type_name)
-                .and_then(|symbol| self.symbols.identity_of(symbol))
-                .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin)
+            && self.is_builtin_receiver_owner(type_name)
         {
             return None;
         }
