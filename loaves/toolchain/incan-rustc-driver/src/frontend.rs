@@ -12,8 +12,8 @@ use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_mir_lowering::caller::incan::{library_plan, program_plan, program_refusals};
+use incan_semantics_core::SymbolOrigin;
 use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -863,7 +863,9 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     for item in library_items {
         let root = item.split("::").next().unwrap_or_default();
         // The standard library's own crates are always linked, as for external calls below.
-        if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
+        if !matches!(root, "std" | "core" | "alloc" | "crate")
+            && !dependencies.externs.iter().any(|(name, _)| name == root)
+        {
             return Err(format!("unsupported Body IR native dependency `{root}` for Loaf layout `{item}`").into());
         }
     }

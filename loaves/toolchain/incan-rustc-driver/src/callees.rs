@@ -153,13 +153,7 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
             return Err(unknown());
         }
         let wanted = if segments.peek().is_some() { DefKind::Mod } else { kind };
-        current = tcx
-            .module_children(current)
-            .iter()
-            .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-            .filter_map(|child| child.res.opt_def_id())
-            .find(|child| tcx.def_kind(*child) == wanted)
-            .ok_or_else(unknown)?;
+        current = public_layout_child(tcx, current, segment, wanted).ok_or_else(unknown)?;
     }
     if tcx.def_kind(current) != kind {
         return Err(unknown());
@@ -177,6 +171,48 @@ pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError>
             function: path.into(),
             reason: "native carrier names no public struct, enum or type alias".into(),
         })
+}
+
+/// Resolve a public module item in its owning query domain. Local injected ADTs are HIR items; the external-only
+/// `module_children` query must never receive the current crate's definitions.
+fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kind: DefKind) -> Option<DefId> {
+    if module.is_local() {
+        return tcx
+            .hir_crate_items(())
+            .free_items()
+            .map(|item| item.owner_id.to_def_id())
+            .filter(|def| {
+                tcx.parent(*def) == module
+                    && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+                    && tcx.visibility(*def).is_public()
+            })
+            .find_map(|def| layout_definition(tcx, def, kind));
+    }
+    tcx.module_children(module)
+        .iter()
+        .filter(|child| child.ident.name.as_str() == name && child.vis.is_public())
+        .filter_map(|child| child.res.opt_def_id())
+        .find_map(|def| layout_definition(tcx, def, kind))
+}
+
+/// Read a public layout item's exact ADT definition, following a type alias through metadata without interpreting
+/// the export's spelling. A module segment and a nonalias ADT must retain their declared kind.
+fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> Option<DefId> {
+    if tcx.def_kind(definition) == expected {
+        return Some(definition);
+    }
+    if tcx.def_kind(definition) != DefKind::TyAlias || !matches!(expected, DefKind::Struct | DefKind::Enum) {
+        return None;
+    }
+    let rustc_middle::ty::Adt(adt, _) = tcx
+        .type_of(definition)
+        .instantiate_identity()
+        .skip_normalization()
+        .kind()
+    else {
+        return None;
+    };
+    (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.

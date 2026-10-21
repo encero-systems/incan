@@ -1,0 +1,16 @@
+# behavior: a provider and consumer share a generic model's storage across different type arguments, and Debug shows only authored fields when a type parameter has no field
+# expect-stdout:
+#   Parcel { value: 7 }
+#   ok
+#   Marker { label: "hidden" }
+
+from pub::parcels import Marker, Parcel, unpack, wrap
+
+
+def main() -> None:
+    """Round-trip generic model instances through compiled provider functions."""
+    packet = wrap(7)
+    println(f"{packet:?}")
+    println(unpack(Parcel[str](value="ok")))
+    marker = Marker[int](label="hidden")
+    println(f"{marker:?}")

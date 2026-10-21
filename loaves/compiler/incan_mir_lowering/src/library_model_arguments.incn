@@ -6,6 +6,14 @@ from nominal_instances import NominalInstance, nominal_symbol
 from unions import native_source_type, collect_unions
 
 
+pub def local_generic_item(declaration: &NominalDeclaration, instances: list[NominalInstance]) -> Result[str, str]:
+    """Select the retained template of a local closed carrier, so its storage aliases the ADT published by this Loaf."""
+    for instance in instances:
+        if instance.declaration.canonical == declaration.canonical and nominal_symbol(str(instance.declaration.name), instance.arguments) == declaration.name:
+            return Ok("crate::" + str(instance.declaration.name))
+    return Err("invalid Body IR local generic layout without its template")
+
+
 pub def library_model_arguments(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
