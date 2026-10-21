@@ -196,21 +196,25 @@ impl TypeChecker {
             };
             let expected = normalized(&parameter.ty, &names, &self.type_info);
             let actual = testing_argument.unwrap_or_else(|| self.body_ir_argument_type(expression, actual));
+            // A native slice is not the source byte buffer used by legacy inference. Preserve the selected
+            // reference at the source instantiation boundary, before argument storage is chosen.
+            let native_slice = self.body_ir_native_slice_argument(expression);
+            let actual = native_slice.as_ref().unwrap_or(&actual);
             if testing_channel {
                 self.type_info
                     .expressions
                     .body_ir_expr_types
                     .insert(key, actual.clone());
             }
-            let actual = normalized(&actual, &[], &self.type_info);
+            let actual = normalized(actual, &[], &self.type_info);
             let actual = self.body_ir_adopted_trait_type(&expected, &actual).unwrap_or(actual);
             if let ResolvedType::TypeVar(name) = &expected {
                 let first_actual = native_binders.insert(name.clone());
                 if first_actual
-                    && matches!(&actual, ResolvedType::Generic(base, outputs) if base == "Awaitable" && outputs.len() == 1)
+                    && (native_slice.is_some()
+                        || matches!(&actual, ResolvedType::Generic(base, outputs) if base == "Awaitable" && outputs.len() == 1))
                 {
-                    // Replace only a legacy eventual-output seed, preserving every preceding native argument's
-                    // evidence.
+                    // Replace only a legacy representation seed, preserving every preceding argument's evidence.
                     bindings.remove(name);
                 }
             }
@@ -379,6 +383,21 @@ impl TypeChecker {
             }
         }
         selected
+    }
+
+    /// Read an exact native slice before source byte-buffer projection. The selected call result takes priority over
+    /// legacy return coercions, matching the carrier Body IR emits; canonical locals use their retained provenance.
+    fn body_ir_native_slice_argument(&self, expression: &Spanned<Expr>) -> Option<ResolvedType> {
+        self.type_info
+            .rust
+            .checked_calls
+            .get(&(expression.span.start, expression.span.end))
+            .map(|call| call.return_type.clone())
+            .or_else(|| self.rust_native_value_type(expression))
+            .filter(|ty| {
+                matches!(ty, ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)
+                if matches!(inner.as_ref(), ResolvedType::Generic(base, _) if base == "[]"))
+            })
     }
 
     /// Retain a checked async call as a future argument while leaving legacy's eventual-output expression type alone.

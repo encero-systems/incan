@@ -1,0 +1,29 @@
+# behavior: an ordinary function with a type parameter preserves a native byte slice and returns an independent owned copy
+# expect-stdout:
+#   abc
+#   abc
+
+from rust::std::convert import Into as RustInto
+from rust::std::ffi import CString
+
+
+def own[Source with RustInto[bytes]](value: Source) -> bytes:
+    """Copy the exact native slice through the checked type parameter."""
+    return RustInto.into(value)
+
+
+def observe() -> Result[None, ValidationError]:
+    """Observe two independent owned copies from one retained native byte owner."""
+    match CString.new(b"abc"):
+        Ok(value) =>
+            println(own(value.as_bytes()).decode()?)
+            println(own(value.as_bytes()).decode()?)
+        Err(error) => println(error)
+    return Ok(None)
+
+
+def main() -> None:
+    """Report an unexpected decoding error without changing the native entry contract."""
+    match observe():
+        Ok(_) => pass
+        Err(error) => println(error)
