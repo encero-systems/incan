@@ -1,4 +1,4 @@
-# behavior: a Rust Duration held in a model field is added to another model's field through saturating_add, which takes its argument by value, and the sum reads back in seconds as an int, as an exact f32 that passes the finite-value check and as an ordinary float
+# behavior: Rust Duration fields retain value arguments, exact numeric results, and PartialEq comparisons through source receivers and nested fields
 # expect-stdout:
 #   5
 #   7
@@ -9,15 +9,33 @@ from rust::std::time import Duration as RustDuration
 
 
 model Span:
+    """Retain a native duration as source-owned field storage."""
     value: RustDuration
 
     def plus(self, other: Span) -> RustDuration:
+        """Add native field values through the checked by-value signature."""
         return self.value.saturating_add(other.value)
+
+    def __eq__(self, other: Span) -> bool:
+        """Compare native fields through their Rust PartialEq implementation."""
+        return self.value == other.value
+
+
+model Timer:
+    """Keep native values behind a nested source field path."""
+    span: Span
 
 
 def main() -> None:
+    """Exercise native field calls and equality without consuming their owners."""
     left = Span(value=RustDuration.from_secs(2))
     right = Span(value=RustDuration.from_secs(3))
+    same = Span(value=RustDuration.from_secs(2))
+    assert left == same
+    assert not (left == right)
+    assert left.value == same.value
+    assert left.value != right.value
+    assert Timer(span=left).span.value == Timer(span=same).span.value
     println(left.plus(right).as_secs())
     println(left.plus(Span(value=RustDuration.from_secs(5))).as_secs())
     half = Span(value=RustDuration.from_millis(3500))
