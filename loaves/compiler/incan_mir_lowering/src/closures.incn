@@ -559,14 +559,14 @@ def loaf_item_signature(
             return Err("invalid Body IR Loaf function-item parameter contract")
         component = item_component(builder, declaration.parameters[index])?
         mut input = packed_input(component, parameter.kind, parameter.mutable)?
-        match declaration.declaration_frame:
+        match declaration.declaration_frame.as_ref():
             Some(boxed) =>
                 frame = boxed.as_ref()
                 input = call_parameter_type(builder, frame, frame.params[index])?
             None => pass
         signature.append(input)
     mut result = item_result(builder, declaration.return_type)?
-    match declaration.declaration_frame:
+    match declaration.declaration_frame.as_ref():
         Some(boxed) => result = return_representation(boxed.as_ref(), result)?
         None => pass
     signature.append(result)
