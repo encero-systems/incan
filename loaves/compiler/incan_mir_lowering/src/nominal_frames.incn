@@ -28,9 +28,10 @@ pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
     """Project frozen return, parameter and local types from imported default frames, without copying or scheduling their implementation bodies."""
     mut types: list[RustType] = []
     for callable in module.loaf_callables:
-        match callable.declaration_frame:
+        match callable.declaration_frame.as_ref():
             None => pass
-            Some(body) =>
+            Some(boxed) =>
+                body: &Body = boxed.as_ref()
                 types.append(body.return_type.clone())
                 for parameter in body.params:
                     types.append(parameter.ty.clone())

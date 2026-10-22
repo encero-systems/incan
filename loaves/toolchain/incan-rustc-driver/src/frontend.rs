@@ -15,7 +15,7 @@ use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_mir_lowering::{program_refusals, unit_plan};
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NominalDeclaration};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
