@@ -1,4 +1,4 @@
-# behavior: generic Rust receivers preserve independent binders, infer trait-bound results, and adapt source ranges with once-only endpoint evaluation
+# behavior: generic Rust receivers preserve independent binders, infer trait-bound results, adapt source ranges with once-only endpoints, and retain approved borrowed owner arguments
 # expect-stdout:
 #   7
 #   8
@@ -34,6 +34,11 @@ def main() -> None:
     println(value.get())
     value.set(8)
     println(value.get())
+    text = "borrowed"
+    shared: Cell[&str] = Cell.new(text)
+    assert len(shared.get()) == 8
+    assert len(shared.get()) == 8
+    assert text == "borrowed"
     assert choose(7, 8) == 7
     assert choose_source(9, 10) == 9
     mut observed: list[int] = []

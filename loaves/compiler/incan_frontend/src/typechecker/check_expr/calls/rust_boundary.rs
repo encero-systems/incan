@@ -356,12 +356,16 @@ impl TypeChecker {
         }
     }
 
-    /// Select a native argument carrier without changing a source range binding's ordinary four-field storage.
-    /// A half-open range literal constructs Rust's public Range layout only at an admitted native boundary.
+    /// Select the native argument carrier after an already approved boundary conversion, preserving the checked borrow
+    /// or numeric conversion when a call is retained. A source range keeps ordinary storage; a half-open literal
+    /// constructs Rust's public Range only at this boundary.
     pub(in crate::typechecker::check_expr) fn rust_argument_native_type(
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
+        if let Some(coercion) = self.type_info.rust_arg_coercion(expression.span) {
+            return Some(coercion.target_type.clone());
+        }
         match &expression.node {
             Expr::Paren(inner) => self.rust_argument_native_type(inner),
             Expr::Range { inclusive: false, .. } => Some(self.native_rust_signature_type("std::ops::Range<i64>", "")),
