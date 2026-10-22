@@ -274,13 +274,23 @@ impl TypeChecker {
     }
 
     /// Reuse storage projection recursively, normalizing admitted associated types before freezing structural storage.
+    /// A transparent alias already selects its native owner; freeze that owner before diagnostic runtime projection
+    /// can translate it back into the same source alias.
     fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(binder) = source_binder(leaf, parameters) {
                 return Some(binder);
             }
             if let Some(target) = self.rusttype_native_target(leaf) {
-                return Some(self.rust_storage_resolved(&target, parameters));
+                return Some(match target {
+                    ResolvedType::RustPath(path) if body_ir::rust_item_identity(&path).is_some() => {
+                        self.rust_storage_constructor(&path, Vec::new(), parameters)
+                    }
+                    ResolvedType::Generic(base, arguments) if body_ir::rust_item_identity(&base).is_some() => {
+                        self.rust_storage_constructor(&base, arguments, parameters)
+                    }
+                    target => self.rust_storage_resolved(&target, parameters),
+                });
             }
             if let ResolvedType::Generic(base, arguments) = leaf {
                 return Some(self.rust_storage_constructor(base, arguments.clone(), parameters));
