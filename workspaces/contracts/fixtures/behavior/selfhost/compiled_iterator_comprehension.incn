@@ -1,0 +1,19 @@
+# behavior: a function with type parameters can draw a comprehension from an imported iterator default
+# expect-stdout:
+#   checked
+
+from std.derives.collection import Iterator, ListIterator, ZipIterator
+from std.derives.copying import Clone
+from std.rust import Static
+
+
+def pairs[T with (Clone, Static), U with (Clone, Static)](
+    values: ZipIterator[T, ListIterator[T], U, ListIterator[U]],
+) -> Generator[tuple[T, U]]:
+    """Draw the checked tuple item from the compiled iterator's default method."""
+    return (pair for pair in values.iter())
+
+
+def main() -> None:
+    """Execute after checking the generic comprehension declaration."""
+    println("checked")

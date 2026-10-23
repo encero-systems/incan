@@ -1,0 +1,26 @@
+# behavior: a boxed source model supplies its shared content to a source function
+# expect-stdout:
+#   retained
+#   retained
+#   nested
+
+from rust::std::boxed import Box
+
+
+model Value:
+    """Keep a source model's declaration identity through native Box storage."""
+    text: str
+
+
+def read(value: &Value) -> str:
+    """Read the borrowed model's field while its box keeps owning it."""
+    return value.text
+
+
+def main() -> None:
+    """Borrow one boxed source model repeatedly."""
+    value: Box[Value] = Box.new(Value(text="retained"))
+    println(read(value))
+    println(read(value=value))
+    nested: Box[Box[Value]] = Box.new(Box.new(Value(text="nested")))
+    println(read(nested))

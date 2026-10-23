@@ -95,9 +95,16 @@ pub(in crate::typechecker) enum TupleShape {
 /// underdetermined, and `T` can be instantiated as `int`. Incan's bounds are trait-based, so no caller can promise
 /// a tuple shape. This does not affect `tuple[K, V]`, whose *elements* are type variables but whose shape is
 /// known; that takes the [`TupleShape::Tuple`] arm above.
+/// A shared tuple reference binds a shared reference to each component, preserving the native iterator's borrow.
 pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleShape {
     match ty {
         ResolvedType::Tuple(types) => TupleShape::Tuple(types.clone()),
+        ResolvedType::Ref(inner) => match classify_tuple_shape(inner) {
+            TupleShape::Tuple(types) => {
+                TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::Ref(Box::new(ty))).collect())
+            }
+            _ => TupleShape::NotTuple,
+        },
         ResolvedType::Generic(name, args)
             if matches!(collection_type_id(name.as_str()), Some(CollectionTypeId::Tuple)) =>
         {
@@ -2261,6 +2268,7 @@ impl TypeChecker {
             }
         }
         match iter_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.infer_iterator_element_type(inner),
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
             ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),
             ResolvedType::Generic(name, args) => {
@@ -2299,7 +2307,8 @@ impl TypeChecker {
     ///
     /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
     /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter. Builtin
-    /// iterator values retain builtin polling; structural hooks are selected only by the custom protocol resolver.
+    /// iterator values retain builtin polling. Native iterator items come from the retained `Iterator::Item`
+    /// projection; structural hooks are selected only by the custom protocol resolver.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
@@ -2314,6 +2323,9 @@ impl TypeChecker {
         let elem_ty = self.infer_iterator_element_type(iter_ty);
         if !matches!(elem_ty, ResolvedType::Unknown) || matches!(iter_ty, ResolvedType::Unknown) {
             return elem_ty;
+        }
+        if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::Iterator", "Item") {
+            return item;
         }
         if self.is_user_operator_receiver(iter_ty) {
             return self

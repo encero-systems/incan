@@ -23,12 +23,14 @@ pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
         HelperOp.StrReplace => return Some(("replace_text", PlanType.String))
         HelperOp.StrNotContains => return Some(("not_contains_text", PlanType.Bool))
         HelperOp.StrContains => return Some(("contains_text", PlanType.Bool))
+        HelperOp.TextCodecEncodingValid => return Some(("text_codec_encoding_valid", PlanType.Bool))
+        HelperOp.TextCodecErrorsValid => return Some(("text_codec_errors_valid", PlanType.Bool))
         _ => return None
 
 
 pub def text_helper_arity(name: str) -> int:
     """Retain the positional runtime signatures for text-only helpers."""
-    if name in ["length_text", "upper_text", "lower_text", "strip_text", "clone_text", "split_whitespace_text"]:
+    if name in ["length_text", "upper_text", "lower_text", "strip_text", "clone_text", "split_whitespace_text", "text_codec_encoding_valid", "text_codec_errors_valid"]:
         return 1
     if name == "replace_text":
         return 3

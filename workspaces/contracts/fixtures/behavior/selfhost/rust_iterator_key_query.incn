@@ -1,0 +1,16 @@
+# behavior: a Rust iterator item supplies the type argument of an independent generic key query
+# expect-stdout:
+#   checked
+
+from rust::std::collections import BTreeMap
+
+
+def inspect[T](values: &BTreeMap[str, T]) -> None:
+    """Infer each key query from the iterator's retained Item associated type."""
+    for key in values.keys():
+        found = values.get(key)
+
+
+def main() -> None:
+    """Execute after checking the generic Rust iterator declaration."""
+    println("checked")

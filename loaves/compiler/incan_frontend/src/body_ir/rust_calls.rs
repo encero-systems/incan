@@ -22,11 +22,17 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
         }
     }
     let mut calls = Vec::new();
+    let argument_calls = facts
+        .rust
+        .argument_adjustments
+        .iter()
+        .flat_map(|(span, steps)| steps.iter().map(move |step| (span, step)));
     let mut checked_calls = facts
         .rust
         .checked_calls
         .iter()
         .chain(&facts.rust.await_conversions)
+        .chain(argument_calls)
         .collect::<Vec<_>>();
     checked_calls.sort_by_key(|(span, _)| **span);
     for call in checked_calls
@@ -60,6 +66,40 @@ pub(super) fn declarations(facts: &TypeCheckInfo, locals: &[bir::NominalDeclarat
 }
 
 impl BodyBuilder<'_, '_> {
+    /// Evaluate one argument and its retained native dereference steps in source order. The initial owner is borrowed
+    /// according to the checked adjustment signature; each result keeps its reference carrier for the source callee.
+    pub(super) fn lower_adjusted_argument(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<Result<bir::Operand, String>> {
+        let steps = self
+            .type_info
+            .rust
+            .argument_adjustments
+            .get(&(expr.span.start, expr.span.end))?
+            .clone();
+        let mut value = self.lower_expr_to_operand(expr, scope, out);
+        for step in &steps {
+            if let bir::Operand::Place(read) = &mut value {
+                self.retain_argument_borrow(read, false);
+            }
+            let Some(adjusted) = self.emit_checked_rust_call(
+                step,
+                vec![bir::ArgumentElement::One(value)],
+                bir::ArgumentBinding::resolved_positional(1),
+                expr.span,
+                scope,
+                out,
+            ) else {
+                return Some(Err("native argument adjustment without an identity".into()));
+            };
+            value = adjusted;
+        }
+        Some(Ok(value))
+    }
+
     /// Lower a metadata-selected Rust call through ordinary declared-slot binding and a named external target.
     /// An absent record grants no foreign call behavior; existing source and builtin resolution keeps priority.
     pub(super) fn lower_checked_rust_call(

@@ -223,7 +223,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Retain one checked reference argument's owner and passing mode without copying or snapshotting the referent.
     /// The caller selects shared versus exclusive from its declared parameter type, including for foreign receivers.
-    fn retain_argument_borrow(&mut self, read: &mut bir::PlaceOperand, mutable: bool) {
+    pub(super) fn retain_argument_borrow(&mut self, read: &mut bir::PlaceOperand, mutable: bool) {
         if read.fact == bir::OwnershipFact::Move
             && read.place.projection.is_empty()
             && let Some(local) = read.place.local_id()
@@ -334,7 +334,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 Some(IncanType::RefMut(_)) => Some(true),
                 _ => None,
             };
-            let mut operand = if reference.is_some() || mut_slots.get(*slot).copied().unwrap_or(false) {
+            let mut operand = if let Some(adjusted) = self.lower_adjusted_argument(expr, scope, out) {
+                adjusted?
+            } else if reference.is_some() || mut_slots.get(*slot).copied().unwrap_or(false) {
                 self.lower_expr_to_operand(expr, scope, out)
             } else {
                 self.lower_boundary_value(expr, slot_types.get(*slot), scope, out)

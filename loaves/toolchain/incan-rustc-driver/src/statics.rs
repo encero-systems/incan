@@ -139,6 +139,7 @@ fn guard_owned_leaf(plan: &Plan, leaf: &ListLeaf, visiting: &mut BTreeSet<(bool,
         | ListLeaf::Bool
         | ListLeaf::Str
         | ListLeaf::U8
+        | ListLeaf::USize
         | ListLeaf::Unit
         | ListLeaf::Decimal
         | ListLeaf::FrozenStr

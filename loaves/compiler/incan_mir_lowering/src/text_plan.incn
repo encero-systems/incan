@@ -89,3 +89,18 @@ pub def owned_slice_text(mut builder: Builder, value: Operand, span: SourceSpan)
         span,
     )
     return result
+
+
+pub def owned_borrowed_text(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
+    """Copy a shared String through its native slice without calling the runtime's own clone wrapper."""
+    view = temporary(builder, PlanType.StrRef, span)
+    external_call(
+        builder,
+        "alloc::string::String::as_str",
+        [PlanType.StringRef],
+        PlanType.StrRef,
+        [value],
+        view,
+        span,
+    )
+    return owned_slice_text(builder, read_place(view, false, span), span)

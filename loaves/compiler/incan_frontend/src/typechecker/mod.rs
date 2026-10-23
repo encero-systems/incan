@@ -1916,22 +1916,26 @@ impl TypeChecker {
         None
     }
 
-    /// Resolve a Rust callable bound display into an Incan function type.
+    /// Resolve a safe Rust function pointer or callable bound display into an Incan function type.
     ///
     /// Rust generic callback parameters often surface as `impl FnMut(&mut T, &U)` or through a generic bound that is
     /// normalized to that display. Treating those as ordinary type variables lets by-value Incan function values reach
     /// rustc and fail there. This resolver preserves the callback input borrow shape so the frontend can reject
     /// incompatible named callbacks before emission.
     fn resolved_function_type_from_rust_callable_bound_display(&self, rust_ty: &str) -> Option<ResolvedType> {
-        let body = Self::rust_callable_bound_body(rust_ty)?;
-        let body = body
-            .strip_prefix("std::ops::")
-            .or_else(|| body.strip_prefix("core::ops::"))
-            .unwrap_or(body);
-        let after_name = ["FnOnce", "FnMut", "Fn"]
-            .into_iter()
-            .find_map(|name| body.strip_prefix(name))?
-            .trim_start();
+        let after_name = if let Some(pointer) = rust_ty.trim().strip_prefix("fn") {
+            pointer.trim_start()
+        } else {
+            let body = Self::rust_callable_bound_body(rust_ty)?;
+            let body = body
+                .strip_prefix("std::ops::")
+                .or_else(|| body.strip_prefix("core::ops::"))
+                .unwrap_or(body);
+            ["FnOnce", "FnMut", "Fn"]
+                .into_iter()
+                .find_map(|name| body.strip_prefix(name))?
+                .trim_start()
+        };
         if !after_name.starts_with('(') {
             return None;
         }
@@ -2235,6 +2239,8 @@ impl TypeChecker {
     /// primitive spellings and `Option` / `Result` wrappers are recognized, including namespaced aliases whose
     /// trailing segment is `Option` or `Result`. Nested generics, lifetimes, and crate paths otherwise become
     /// [`ResolvedType::RustPath`] (or [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
+    /// Native scalar names precede source import lookup, and metadata-selected transparent aliases retain their
+    /// target carrier rather than inventing a nominal layout for a public primitive path.
     ///
     /// ## `Result<T, E>` parsing
     ///
@@ -2246,6 +2252,23 @@ impl TypeChecker {
         let normalized = Self::compact_rust_display(display.as_str());
         if normalized == RUST_NEVER_TYPE_DISPLAY {
             return ResolvedType::Never;
+        }
+        // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
+        if let Some(id) = numerics::from_str(&normalized)
+            && numerics::as_str(id) == normalized
+        {
+            return match id {
+                NumericTypeId::I64 => ResolvedType::Int,
+                NumericTypeId::F64 => ResolvedType::Float,
+                NumericTypeId::Bool => ResolvedType::Bool,
+                id => ResolvedType::Numeric(id),
+            };
+        }
+        if !normalized.contains('<')
+            && let Some(expanded) = self.rust_alias_expansion(&normalized, &[])
+            && expanded != normalized
+        {
+            return self.resolved_type_from_rust_display(&expanded);
         }
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
@@ -2286,21 +2309,6 @@ impl TypeChecker {
         }
         match normalized.as_str() {
             "{unknown}" => ResolvedType::Unknown,
-            "bool" => ResolvedType::Bool,
-            "f64" => ResolvedType::Float,
-            "i64" => ResolvedType::Int,
-            "f32" => ResolvedType::Numeric(NumericTypeId::F32),
-            "i8" => ResolvedType::Numeric(NumericTypeId::I8),
-            "i16" => ResolvedType::Numeric(NumericTypeId::I16),
-            "i32" => ResolvedType::Numeric(NumericTypeId::I32),
-            "i128" => ResolvedType::Numeric(NumericTypeId::I128),
-            "isize" => ResolvedType::Numeric(NumericTypeId::ISize),
-            "u8" => ResolvedType::Numeric(NumericTypeId::U8),
-            "u16" => ResolvedType::Numeric(NumericTypeId::U16),
-            "u32" => ResolvedType::Numeric(NumericTypeId::U32),
-            "u64" => ResolvedType::Numeric(NumericTypeId::U64),
-            "u128" => ResolvedType::Numeric(NumericTypeId::U128),
-            "usize" => ResolvedType::Numeric(NumericTypeId::USize),
             "str" | "&str" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
@@ -2555,7 +2563,8 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
-    /// Project named leaves through the module/provider or native metadata binding retained by this compilation.
+    /// Project named leaves through the module/provider or native metadata binding retained by this compilation,
+    /// retaining an inspected runtime carrier's identity before Body IR normalizes its dedicated builtin type.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2635,10 +2644,17 @@ impl TypeChecker {
             return;
         }
         if let Some(builtin) = incan_semantics_core::RuntimeBuiltinType::from_carrier_path(display) {
-            if let Some(identity) = self.type_info.body_ir_runtime_types.values().find(|identity| {
-                incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(&builtin)
-            }) {
-                identities.insert(path.clone(), identity.clone());
+            let identity = self
+                .type_info
+                .body_ir_runtime_types
+                .values()
+                .find(|identity| {
+                    incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(&builtin)
+                })
+                .cloned()
+                .or_else(|| incan_semantics_core::body_ir::rust_item_identity(display));
+            if let Some(identity) = identity {
+                identities.insert(path.clone(), identity);
             }
             return;
         }

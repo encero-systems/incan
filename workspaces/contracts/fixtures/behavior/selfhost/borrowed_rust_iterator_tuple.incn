@@ -1,0 +1,18 @@
+# behavior: borrowed Rust iterator tuples destructure into borrowed component bindings
+# expect-stdout:
+#   checked
+
+from rust::incan_std_core::frozen import FrozenDict
+from std.rust import Static
+
+
+def inspect[T with Static](values: FrozenDict[T, int]) -> None:
+    """Keep the reference on each component of a borrowed iterator item."""
+    for value, index in values.iter():
+        retained: &T = value
+        position: &int = index
+
+
+def main() -> None:
+    """Execute after checking the borrowed tuple bindings."""
+    println("checked")

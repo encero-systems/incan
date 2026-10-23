@@ -34,9 +34,18 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
         .collect()
 }
 
-/// Preserve checked Incan nominal bases before projecting native slices, references and opaque Rust items. Unsupported
-/// trait objects and function types retain their refusal; a provider-qualified Incan name never becomes a Rust crate.
+/// Preserve checked Incan nominal bases before projecting native slices, references and opaque Rust items. Native
+/// owned strings share source text storage. Unsupported trait objects and function types retain their refusal;
+/// a provider-qualified Incan name never becomes a Rust crate.
 pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
+    let public = facts
+        .rust
+        .item_public_paths
+        .get(display.trim())
+        .map_or(display.trim(), String::as_str);
+    if incan_lang::interop::rust_display_is_owned_string(public) {
+        return Some(IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str));
+    }
     if (display.trim().starts_with('[') && display.trim() != "[]") || display.trim().starts_with('&') {
         let resolved = crate::typechecker::TypeChecker::new().native_rust_signature_type(display, "");
         if !matches!(&resolved, crate::symbols::ResolvedType::RustPath(path) if path == display) {

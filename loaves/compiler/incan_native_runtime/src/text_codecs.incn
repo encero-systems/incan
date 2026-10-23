@@ -2,11 +2,23 @@
 
 from rust::std::string import String as RustString
 from rust::std::vec import Vec as RustVec
+from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozenStr, FrozenBytes as RuntimeFrozenBytes
 from rust::incan_std_core::strings import utf8_error_message
 from rust::incan_lang::lang::text_codecs import normalize_encoding_label, is_utf8_encoding_label
 from rust::incan_std_core::validation import ValidationError as RuntimeError
 from rust::incan_std_core::errors import raise_value_error
 from validation_errors import make_coded_validation_error
+from frozen_collections import own_static_bytes
+
+
+pub def text_codec_encoding_valid(encoding: &RustString) -> bool:
+    """Validate the normalized encoding before a computed receiver or error policy is evaluated."""
+    return is_utf8_encoding_label(normalize_encoding_label(encoding.as_str()))
+
+
+pub def text_codec_errors_valid(errors: &RustString) -> bool:
+    """Admit only the decoder's strict and replacement policies before reading its receiver."""
+    return errors.as_str() == "strict" or errors.as_str() == "replace"
 
 
 pub def encode_text(value: &RustString, encoding: &RustString) -> bytes:
@@ -18,9 +30,10 @@ pub def encode_text(value: &RustString, encoding: &RustString) -> bytes:
     return copy.into_bytes()
 
 
-pub def encode_frozen_text(value: FrozenStr, encoding: &RustString) -> bytes:
-    """Read the immutable wrapper through the existing builtin encoder and its identical label guard."""
-    return value.encode(str(encoding.as_str()))
+pub def encode_frozen_text(value: RuntimeFrozenStr, encoding: &RustString) -> bytes:
+    """Materialize the frozen carrier's text and reuse the owned encoder without invoking this boundary recursively."""
+    owned: RustString = str(value)
+    return encode_text(owned, encoding)
 
 
 pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustString) -> Result[str, RuntimeError]:
@@ -35,7 +48,7 @@ pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustSt
         )
     if errors.as_str() == "replace":
         return Ok(RustString.from_utf8_lossy(value.as_slice()).into_owned())
-    if errors.as_str() != "strict":
+    if not text_codec_errors_valid(errors):
         return Err(
             make_coded_validation_error(
                 f"bytes.decode() errors must be \"strict\" or \"replace\", got '{errors}'",
@@ -50,9 +63,10 @@ pub def decode_bytes(value: &RustVec[u8], encoding: &RustString, errors: &RustSt
 
 
 pub def decode_frozen_bytes(
-    value: FrozenBytes,
+    value: RuntimeFrozenBytes,
     encoding: &RustString,
     errors: &RustString,
 ) -> Result[str, ValidationError]:
-    """Decode static bytes through the frozen builtin without replacing their source storage."""
-    return value.decode(str(encoding.as_str()), str(errors.as_str()))
+    """Copy the frozen slice into ordinary byte storage and reuse the decoder without calling this boundary recursively."""
+    owned: RustVec[u8] = own_static_bytes(value.as_slice())
+    return decode_bytes(owned, encoding, errors)

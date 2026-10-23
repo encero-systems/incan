@@ -188,7 +188,8 @@ pub fn from_str(name: &str) -> Option<TraitId> {
         .map(|t| t.id)
 }
 
-/// Resolve a bare, canonical source-qualified, or generated-provider spelling to a builtin trait identifier.
+/// Resolve a bare, canonical source-qualified, compiled-Loaf, or generated-provider spelling to a builtin trait
+/// identifier.
 ///
 /// Qualified lookup uses each source-owned trait's registered module instead of accepting any `std.derives` path with a
 /// familiar final segment. This keeps source and generated-provider identities exact while preventing an unrelated
@@ -206,6 +207,14 @@ pub fn from_qualified_str(name: &str) -> Option<TraitId> {
     let source_path = format!("{source_module}.{}", as_str(canonical));
     if name == source_path {
         return Some(canonical);
+    }
+
+    if let Some((package, item)) = name.strip_prefix("pub::").and_then(|path| path.split_once("::")) {
+        let module = source_module.strip_prefix("std.")?;
+        let root = module.split('.').next()?;
+        let policy = super::standard_packages::standard_package_namespace_policy(package)?;
+        let compiled_item = format!("{}::{}", module.replace('.', "::"), as_str(canonical));
+        return (policy.namespace_roots.contains(&root) && item == compiled_item).then_some(canonical);
     }
 
     let generated_module = generated_module(canonical)?;

@@ -1,0 +1,17 @@
+# behavior: a Result retains its native error carrier through construction and matching
+# expect-stdout:
+#   invalid: bad
+
+from rust::incan_std_core::validation import ValidationError as NativeError
+
+
+def decoded() -> Result[str, NativeError]:
+    """Construct the native validation error inside its declared result carrier."""
+    return Err(NativeError.with_code("bad", "invalid"))
+
+
+def main() -> None:
+    """Read the constructed error through the same public result contract."""
+    match decoded():
+        Ok(value) => println(value)
+        Err(error) => println(error)

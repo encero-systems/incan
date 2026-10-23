@@ -948,6 +948,11 @@ pub struct RustInteropArtifacts {
     /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
     /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
     pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
+    /// Checked native dereference calls at source borrowed-argument boundaries, keyed by argument expression span.
+    /// Body IR emits these steps before the source call and never infers a dereference from compatible types.
+    pub argument_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Exact native values of public field expressions before source collection and scalar projection.
+    pub field_values: HashMap<(usize, usize), RustCheckedFieldValue>,
     /// Native result item selected for each local binding, even when its source type projects to str or a collection.
     pub value_item_paths: HashMap<CanonicalSymbolId, String>,
     /// Native carriers of Rust-derived local values before source reference and collection projection.
@@ -1063,6 +1068,15 @@ pub struct RustCheckedLayout {
     pub fields: Vec<CallableParam>,
     /// Canonical field targets minted with the same owner as the retained layout.
     pub field_identities: Vec<CanonicalSymbolId>,
+}
+
+/// A public field's native carrier and item identity before source type projection.
+#[derive(Debug, Clone)]
+pub struct RustCheckedFieldValue {
+    /// Instantiated native field type, including references and type arguments.
+    pub native_type: ResolvedType,
+    /// Public native item selected from metadata, when the field has a nominal carrier.
+    pub item_path: Option<String>,
 }
 
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.

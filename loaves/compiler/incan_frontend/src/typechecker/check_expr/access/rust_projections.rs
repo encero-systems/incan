@@ -7,6 +7,7 @@ use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use incan_lang::interop::{RustFunctionSig, RustItemKind, ancestral_rust_path};
+use incan_lang::lang::types::numerics;
 use quote::ToTokens;
 
 impl TypeChecker {
@@ -42,6 +43,7 @@ impl TypeChecker {
     }
 
     /// Bound recursive projection normalization and refuse competing associated values rather than choosing one.
+    /// Scalar carriers select their native primitive cache entry; the associated value still requires an impl fact.
     fn rust_associated_type_at_depth(
         &self,
         ty: &ResolvedType,
@@ -63,7 +65,13 @@ impl TypeChecker {
         {
             return self.rust_bound_associated_type(name, trait_path, member, depth + 1);
         }
-        let path = self.rust_canonical_path_for_receiver_type(ty)?;
+        let path = match ty {
+            ResolvedType::Int => "i64".to_owned(),
+            ResolvedType::Float => "f64".to_owned(),
+            ResolvedType::Bool => "bool".to_owned(),
+            ResolvedType::Numeric(id) => numerics::as_str(*id).to_owned(),
+            _ => self.rust_canonical_path_for_receiver_type(ty)?,
+        };
         let metadata = self.rust_item_metadata_for_path(&path)?;
         let RustItemKind::Type(info) = metadata.kind else {
             return None;

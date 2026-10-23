@@ -1,0 +1,26 @@
+# behavior: borrowed text supports display, debug, numeric parsing and JSON without consuming its owner
+# expect-stdout:
+#   value: 42
+#   42
+#   "42"
+#   42
+#   42.0
+#   "42"
+#   42!
+
+def observe(value: &str) -> None:
+    """Read shared text through formatting and conversion boundaries."""
+    println(f"value: {value}")
+    println(str(value))
+    println(f"{value:?}")
+    println(int(value))
+    println(float(value))
+    println(json_stringify(value))
+
+
+def main() -> None:
+    """Keep the source string available after each borrowed observation."""
+    mut value = "42"
+    observe(value)
+    value += "!"
+    println(value)

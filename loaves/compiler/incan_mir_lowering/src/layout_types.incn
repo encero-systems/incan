@@ -102,6 +102,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
+        PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
         PlanType.String => return Ok(PlanType.StringRef)
         _ => pass
     collection = list_parameter_type(ty, false)
@@ -265,6 +266,7 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.FrozenStr => return Ok(ListLeaf.FrozenStr)
         PlanType.FrozenBytes => return Ok(ListLeaf.FrozenBytes)
         PlanType.U8 => return Ok(ListLeaf.U8)
+        PlanType.USize => return Ok(ListLeaf.USize)
         PlanType.Unit => return Ok(ListLeaf.Unit)
         PlanType.Decimal => return Ok(ListLeaf.Decimal)
         PlanType.Tuple(elements) => return Ok(ListLeaf.Tuple(elements))
@@ -273,4 +275,4 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.FunctionPointer(signature) => return Ok(ListLeaf.FunctionPointer(signature))
         PlanType.List(leaf, depth) => return Ok(ListLeaf.List([leaf], depth))
         PlanType.Dict(key, value) => return Ok(ListLeaf.Dict([key, value]))
-        _ => return Err("unsupported Body IR collection element representation")
+        _ => return Err(f"unsupported Body IR collection element representation {ty:?}")

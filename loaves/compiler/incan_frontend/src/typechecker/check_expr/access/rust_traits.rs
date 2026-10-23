@@ -40,11 +40,20 @@ impl TypeChecker {
         matches!(metadata.kind, RustItemKind::Type(_)).then_some(metadata.canonical_path)
     }
 
-    /// Read a native result's retained item from its call or canonical local binding, never from a method spelling.
+    /// Read a native value's retained item from its public field, call or canonical local binding, never from a method
+    /// spelling.
     pub(in crate::typechecker::check_expr) fn rust_value_item_path(
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<String> {
+        if let Some(field) = self
+            .type_info
+            .rust
+            .field_values
+            .get(&(expression.span.start, expression.span.end))
+        {
+            return field.item_path.clone();
+        }
         if let Expr::Paren(inner) = &expression.node {
             return self.rust_value_item_path(inner);
         }
@@ -83,11 +92,19 @@ impl TypeChecker {
         }
     }
 
-    /// Recover the exact native carrier of a selected Rust call or its local alias for generic inference.
+    /// Recover the exact native carrier of a public Rust field, selected call or local alias for generic inference.
     pub(in crate::typechecker::check_expr) fn rust_native_value_type(
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
+        if let Some(field) = self
+            .type_info
+            .rust
+            .field_values
+            .get(&(expression.span.start, expression.span.end))
+        {
+            return Some(field.native_type.clone());
+        }
         if let Some(conversion) = self
             .type_info
             .rust
@@ -120,7 +137,7 @@ impl TypeChecker {
 
     /// Compare canonical native carriers for trait selection. The source compatibility relation deliberately admits
     /// opaque Rust paths, so it cannot distinguish competing trait instantiations such as From<char> and From<String>.
-    pub(super) fn rust_trait_carriers_match(&self, left: &ResolvedType, right: &ResolvedType) -> bool {
+    pub(in crate::typechecker) fn rust_trait_carriers_match(&self, left: &ResolvedType, right: &ResolvedType) -> bool {
         self.rust_trait_comparison_type(left) == self.rust_trait_comparison_type(right)
     }
 

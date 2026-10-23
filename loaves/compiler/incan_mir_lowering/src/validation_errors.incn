@@ -1,7 +1,7 @@
 """Plan construction and borrowed observation of the checked builtin validation error carrier."""
 
 from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPlace
-from pub::incan_mir_plan import PlanType, SourceSpan, Place, RvalueKind, CalleeKind, ExternalFunction
+from pub::incan_mir_plan import PlanType, SourceSpan, Place, Operand, RvalueKind, CalleeKind, ExternalFunction
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, temporary, read_place, external_call
 from lowering import argument_type, fixed_arguments, scalar_place, lower_callable_result
@@ -47,21 +47,27 @@ pub def lower_validation_error(
             )
 
 
-pub def display_validation_error(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
-    """Borrow dependency-owned Display without consuming either a local error or an active Result payload."""
+pub def validation_error_reference(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow an owned native validation error or preserve its existing shared reference without cloning its payload."""
     mut reference = source
     if place_type(builder.locals, source) == PlanType.ValidationError:
         reference = temporary(builder, PlanType.ValidationErrorRef, span)
         builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
     elif place_type(builder.locals, source) != PlanType.ValidationErrorRef:
         return Err("unsupported Body IR validation error display source")
+    return Ok(read_place(reference, false, span))
+
+
+pub def display_validation_error(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Borrow dependency-owned Display without consuming either a local error or an active Result payload."""
+    reference = validation_error_reference(builder, source, span)?
     output = temporary(builder, PlanType.String, span)
     external_call(
         builder,
         "incan_native_runtime::format_validation_error",
         [PlanType.ValidationErrorRef],
         PlanType.String,
-        [read_place(reference, false, span)],
+        [reference],
         output,
         span,
     )

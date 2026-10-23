@@ -19,6 +19,7 @@ pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
 pub from frozen_text import length_frozen_bytes
 pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
+pub from text_codecs import text_codec_encoding_valid, text_codec_errors_valid
 pub from diverging_errors import raise_value_error
 pub from frozen_collections import freeze_list, frozen_list_length, frozen_list_items, frozen_list_text_items
 pub from frozen_collections import frozen_list_length_ref, frozen_set_length_ref, frozen_dict_length_ref

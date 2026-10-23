@@ -1,0 +1,25 @@
+# behavior: codec encoding and policy guards evaluate once before the receiver
+# expect-stdout:
+#   encoding
+#   errors
+#   receiver
+#   abc
+
+
+def data() -> bytes:
+    """Observe receiver evaluation independently of label evaluation."""
+    println("receiver")
+    return "abc".encode()
+
+
+def label(name: str, value: str) -> str:
+    """Observe each supplied label before returning it."""
+    println(name)
+    return value
+
+
+def main() -> None:
+    """Evaluate encoding, policy and receiver in their guarded order."""
+    match data().decode(errors=label("errors", "strict"), encoding=label("encoding", "utf-8")):
+        Ok(value) => println(value)
+        Err(error) => println(error)

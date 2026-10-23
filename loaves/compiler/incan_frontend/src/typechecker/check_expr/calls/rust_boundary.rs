@@ -249,11 +249,10 @@ impl TypeChecker {
 
     /// Project declared Rust parameters and canonical native constructors into ordinary structural inference.
     /// Re-exported owners normalize once, and checked generic placeholders retain their declared binders.
+    /// Source aliases expand before native inference; lowering receives their structural carrier, never an alias
+    /// name embedded inside a native generic argument. Opaque generic paths are opened here once.
     pub(in crate::typechecker) fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
-            if let ResolvedType::Generic(base, arguments) = leaf {
-                return Some(self.rust_inference_constructor(base, arguments, parameters));
-            }
             if let ResolvedType::Named(name) = leaf
                 && parameters.contains(name)
             {
@@ -261,6 +260,20 @@ impl TypeChecker {
             }
             if let Some(name) = self.generic_placeholder_name(leaf) {
                 return Some(ResolvedType::TypeVar(name.to_owned()));
+            }
+            if matches!(leaf, ResolvedType::Named(_) | ResolvedType::Generic(_, _)) {
+                let expanded = self.expand_type_aliases(leaf.clone());
+                if expanded != *leaf {
+                    return Some(self.rust_inference_type(&expanded, parameters));
+                }
+            }
+            if let ResolvedType::Generic(base, arguments) = leaf {
+                let path = self.rust_canonical_path_for_receiver_type(leaf);
+                let canonical = path
+                    .as_ref()
+                    .map(|path| self.type_info.rust.item_public_paths.get(path).unwrap_or(path))
+                    .map_or(base.as_str(), String::as_str);
+                return Some(self.rust_inference_constructor(canonical, arguments, parameters));
             }
             if *leaf == ResolvedType::Bytes {
                 return Some(ResolvedType::Generic(
@@ -277,6 +290,11 @@ impl TypeChecker {
                     .is_some()
             {
                 return Some(ResolvedType::TypeVar(path.trim().to_owned()));
+            }
+            let source_alias = ResolvedType::Named(path.clone());
+            let expanded = self.expand_type_aliases(source_alias.clone());
+            if expanded != source_alias {
+                return Some(self.rust_inference_type(&expanded, parameters));
             }
             let (base, arguments) = Self::rust_generic_base_and_args(path)?;
             if let Some(structural) = self.resolved_structural_rust_param_display(path, |checker, argument| {

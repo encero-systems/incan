@@ -123,7 +123,7 @@ def compare_places(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Require matching retained nominal carriers before borrowing the two comparison operands."""
+    """Borrow matching carriers; native traits are verified by rustc, while source traits require retained witnesses."""
     match nominal_place(builder, right, span)?:
         None => return Err("unsupported Body IR mixed model comparison")
         Some(second) =>
@@ -139,7 +139,11 @@ def compare_places(
                     mut count = 5
                     if required == "PartialEq":
                         count = 1
-                    if library_item(builder.nominals[owner]) == "" and required not in builder.nominals[owner].derives and len(builder.comparison_functions[owner]) < count:
+                    if (
+                        library_item(builder.nominals[owner]) == ""
+                        and required not in builder.nominals[owner].derives
+                        and len(builder.comparison_functions[owner]) < count
+                    ):
                         return Err(f"unsupported Body IR model comparison without derived {required}")
                 _ => return Err("unsupported Body IR model comparison carrier")
             arguments = [borrow_model(builder, first, ty, span)?, borrow_model(builder, second, ty, span)?]
@@ -155,7 +159,7 @@ pub def compare_models(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Route model comparisons through retained derives or validated source implementation frames."""
+    """Use native Rust comparison implementations or retained source derives and implementation frames."""
     match nominal_place(builder, left, span)?:
         None => return Ok(false)
         Some(first) => return compare_places(builder, destination, operator, first, right, span)

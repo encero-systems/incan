@@ -38,6 +38,13 @@ pub def is_computed_static(declaration: &StaticDeclaration) -> bool:
         _ => return false
 
 
+pub def has_native_static_cell(declaration: &StaticDeclaration) -> bool:
+    """Use guarded adapter storage for computed values and literal dictionaries, without making literals effectful."""
+    match declaration.initial:
+        StaticInitializer.Dict(_entries) => return true
+        _ => return is_computed_static(declaration)
+
+
 pub def static_owner(declaration: &StaticDeclaration) -> str:
     """The declaring module of a static, read from its canonical identity."""
     match canonical_module_identity(declaration.canonical):
